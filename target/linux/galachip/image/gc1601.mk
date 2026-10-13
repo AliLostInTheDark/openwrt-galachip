@@ -41,3 +41,25 @@ define Image/Prepare
 	# directories, and dropbear refuses public keys below one of them
 	find $(TARGET_DIR) ! -type l -perm /022 ! -perm -1000 -exec chmod go-w {} +
 endef
+
+define Device/tplink_xz000-g7
+  DEVICE_VENDOR := TP-Link
+  DEVICE_MODEL := XZ000-G7
+  DEVICE_VARIANT := v1
+  DEVICE_DTS := gc1601-tplink-xz000-g7
+  SOC := gc1601
+  BLOCKSIZE := 64k
+  # 3776k firmware partition; keep at least four erase blocks for the overlay.
+  IMAGE_SIZE := 3520k
+  KERNEL := kernel-bin | append-dtb | check-dma-gap vmlinux.debug | gc1601-tag
+  IMAGES := sysupgrade.bin
+  IMAGE/sysupgrade.bin := append-kernel | pad-to $$(BLOCKSIZE) | \
+    append-rootfs | pad-rootfs | check-size | append-metadata
+  DEVICE_PACKAGES := kmod-gc1601-gpon-diag kmod-gc1601-epon-diag xpon-report \
+    omci-agent luci-app-omci \
+    epon-oamd luci-app-epon \
+    -uclient-fetch -urandom-seed -urngd -ca-bundle \
+    -libustream-mbedtls -rpcd-mod-iwinfo -libiwinfo-data -libiwinfo \
+    -luci-lib-uqr
+endef
+TARGET_DEVICES += tplink_xz000-g7
