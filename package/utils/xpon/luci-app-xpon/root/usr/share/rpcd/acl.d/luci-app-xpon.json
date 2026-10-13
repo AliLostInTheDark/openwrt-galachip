@@ -1,0 +1,23 @@
+{
+	"luci-app-xpon": {
+		"description": "Grant access to the PON mode setting",
+		"read": {
+			"uci": [
+				"xpon"
+			]
+		},
+		"write": {
+			"ubus": {
+				"uci": [
+					"commit"
+				],
+				"system": [
+					"reboot"
+				]
+			},
+			"uci": [
+				"xpon"
+			]
+		}
+	}
+}
