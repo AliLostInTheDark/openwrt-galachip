@@ -1,0 +1,12 @@
+{
+	"unauthenticated": {
+		"description": "Read-only ONU status for the router behind the ONU (luci-app-omci-stats)",
+		"read": {
+			"ubus": {
+				"omci.agent": [ "status" ],
+				"omci.optstat": [ "stats" ],
+				"omci.vlan": [ "status" ]
+			}
+		}
+	}
+}

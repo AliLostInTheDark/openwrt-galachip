@@ -1,0 +1,293 @@
+#!/usr/bin/ucode
+'use strict';
+
+/*
+ * LAN VLAN mode of the GPON bridge, as the vendor firmware offers it:
+ *
+ *   transparent  pon0 is a br-lan port and frames pass unchanged
+ *   tagged       pon0.<vid> is the br-lan port: the VLAN is added towards
+ *                the OLT and removed towards the LAN
+ *   olt          follow the VLAN objects the OLT writes: tagged with the VLAN
+ *                its Extended VLAN tagging operation (ME 171) rules give
+ *                untagged UNI traffic, or transparent when it only provisions
+ *                tagged traffic, as the vendor remote mode does
+ *
+ * Configured in omci.vlan, applied to the network config and reported on
+ * ubus as omci.vlan.
+ *
+ * A driver that forwards the services in its switch (sfu_untag_vlan) adds
+ * and removes the VLAN itself: then pon0 stays the bridge port and the VLAN
+ * goes to omci.main.untag_vlan, which omci-agent hands to the driver. A
+ * pon0.<vid> port there would tag the switch's frames a second time.
+ */
+
+import * as uloop from 'uloop';
+import * as ubus from 'ubus';
+import { cursor } from 'uci';
+import { glob } from 'fs';
+
+const PON = 'pon0';
+const BRIDGE = 'br-lan';
+const SECTION = 'omci_vlan';
+const POLL = 30;
+
+/* ME 84 and ME 171 */
+const CLASS_VLAN_FILTER = 84;
+const CLASS_EXTENDED_VLAN = 171;
+const PBIT_NO_TAG = 15;
+const TAGS_DISCARD = 3;
+
+uloop.init();
+
+let conn = ubus.connect();
+let state = {};
+
+function number(value) {
+	let n = int(value ?? '');
+
+	return type(n) == 'int' ? n : null;
+}
+
+function read_config() {
+	let s = cursor().get_all('omci', 'vlan') || {};
+
+	return {
+		mode: s.mode || 'transparent',
+		vid: number(s.vid),
+		prio: number(s.prio) ?? 0
+	};
+}
+
+/*
+ * The rule an OLT writes for untagged frames from the UNI: both filter
+ * priorities say "no tag". Its treatment either adds one tag, leaves the
+ * frame untagged, or discards it. Rules for one ethertype only are taken
+ * when no catch-all rule exists.
+ */
+function untagged_rule(rules) {
+	let found;
+
+	for (let rule in rules) {
+		if (rule.filter_outer_pbit != PBIT_NO_TAG ||
+		    rule.filter_inner_pbit != PBIT_NO_TAG ||
+		    rule.tags_to_remove == TAGS_DISCARD)
+			continue;
+		if (!rule.filter_ethertype)
+			return rule;
+		found ??= rule;
+	}
+
+	return found;
+}
+
+/* A single-tagged rule that swaps the customer VLAN for another one */
+function translating_rule(rules) {
+	for (let rule in rules)
+		if (rule.filter_outer_pbit == PBIT_NO_TAG &&
+		    rule.filter_inner_pbit != PBIT_NO_TAG &&
+		    rule.tags_to_remove == 1 &&
+		    rule.treat_outer_pbit == PBIT_NO_TAG &&
+		    rule.treat_inner_pbit != PBIT_NO_TAG &&
+		    rule.filter_inner_vid <= 4094 && rule.treat_inner_vid <= 4094 &&
+		    rule.treat_inner_vid != rule.filter_inner_vid)
+			return rule;
+
+	return null;
+}
+
+/* null while the OLT has not provisioned any VLAN object yet */
+function olt_vlan() {
+	let objects = conn.call('omci.agent', 'mib_list', {})?.objects;
+	let rules = [], filters = 0;
+
+	for (let object in objects ?? []) {
+		if (object.origin_name != 'olt')
+			continue;
+		if (object.class_id == CLASS_EXTENDED_VLAN) {
+			for (let rule in object.extended_vlan?.rules ?? [])
+				if (!rule.delete)
+					push(rules, rule);
+		} else if (object.class_id == CLASS_VLAN_FILTER &&
+			   length(object.vlan_filter?.entries ?? [])) {
+			filters++;
+		}
+	}
+
+	if (!length(rules) && !filters)
+		return null;
+
+	let rule = untagged_rule(rules);
+	if (rule) {
+		if (rule.treat_inner_pbit == PBIT_NO_TAG)
+			return { vid: null, prio: null };
+		if (rule.treat_outer_pbit != PBIT_NO_TAG ||
+		    rule.treat_inner_vid < 1 || rule.treat_inner_vid > 4094)
+			return { error: 'unsupported OLT VLAN treatment' };
+
+		return {
+			vid: rule.treat_inner_vid,
+			prio: rule.treat_inner_pbit <= 7 ? rule.treat_inner_pbit : 0
+		};
+	}
+
+	/* Only tagged traffic is provisioned: it passes the bridge as it is */
+	rule = translating_rule(rules);
+	if (rule)
+		return { error: sprintf('the OLT translates VLAN %d to %d, unsupported',
+					rule.filter_inner_vid, rule.treat_inner_vid) };
+
+	return { vid: null, prio: null };
+}
+
+function resolve() {
+	let config = read_config();
+
+	switch (config.mode) {
+	case 'tagged':
+		if (config.vid == null || config.vid < 1 || config.vid > 4094)
+			return { mode: 'tagged', error: 'invalid VLAN ID' };
+		if (config.prio < 0 || config.prio > 7)
+			return { mode: 'tagged', error: 'invalid VLAN priority' };
+		return { mode: 'tagged', source: 'config', vid: config.vid,
+			 prio: config.prio };
+
+	case 'olt': {
+		let olt = olt_vlan();
+		if (!olt)
+			return { mode: 'olt', source: 'pending' };
+		return { ...olt, mode: 'olt', source: 'olt' };
+	}
+
+	default:
+		return { mode: 'transparent', source: 'config', vid: null,
+			 prio: null };
+	}
+}
+
+function bridge_section(uci) {
+	let name;
+
+	uci.foreach('network', 'device', (s) => {
+		if (s.name == BRIDGE)
+			name = s['.name'];
+	});
+
+	return name;
+}
+
+function set_option(uci, section, option, value) {
+	if (`${uci.get('network', section, option)}` == `${value}`)
+		return false;
+
+	if (value == null)
+		uci.delete('network', section, option);
+	else
+		uci.set('network', section, option, value);
+	return true;
+}
+
+function pon_ports(uci, bridge) {
+	let ports = uci.get('network', bridge, 'ports') ?? [];
+
+	return type(ports) == 'array' ? ports : [ ports ];
+}
+
+function is_pon_port(port) {
+	return match(port, regexp(`^${PON}(\\.[0-9]+)?$`)) != null;
+}
+
+function current_port() {
+	let uci = cursor();
+	let bridge = bridge_section(uci);
+
+	return bridge ? filter(pon_ports(uci, bridge), is_pon_port)[0] : null;
+}
+
+/* With switch offload, the driver tags: keep pon0 and set omci.main.untag_vlan. */
+function offload_untag(uci, vid) {
+	if (!glob('/sys/class/xpon/*/device/sfu_untag_vlan')?.[0])
+		return false;
+
+	if (int(uci.get('omci', 'main', 'untag_vlan') ?? '0') != (vid ?? 0)) {
+		uci.set('omci', 'main', 'untag_vlan', `${vid ?? 0}`);
+		uci.commit('omci');
+	}
+	return true;
+}
+
+/* Returns the PON port of br-lan */
+function apply(vid, prio) {
+	let uci = cursor();
+	let bridge = bridge_section(uci);
+	let offload = offload_untag(uci, vid);
+	let port = vid && !offload ? `${PON}.${vid}` : PON;
+	let changed = false;
+
+	if (!bridge) {
+		warn(`omci-vlan: no ${BRIDGE} device found in the network configuration\n`);
+		return null;
+	}
+
+	if (port != PON) {
+		if (uci.get('network', SECTION) != 'device') {
+			uci.delete('network', SECTION);
+			uci.set('network', SECTION, 'device');
+			changed = true;
+		}
+		changed = set_option(uci, SECTION, 'type', '8021q') || changed;
+		changed = set_option(uci, SECTION, 'ifname', PON) || changed;
+		changed = set_option(uci, SECTION, 'vid', `${vid}`) || changed;
+		changed = set_option(uci, SECTION, 'name', port) || changed;
+		/* Bridged frames have priority 0: map it to the VLAN priority */
+		changed = set_option(uci, SECTION, 'egress_qos_mapping',
+				     prio ? [ `0:${prio}` ] : null) || changed;
+	} else if (uci.get('network', SECTION) != null) {
+		uci.delete('network', SECTION);
+		changed = true;
+	}
+
+	let wanted = filter(pon_ports(uci, bridge), (p) => !is_pon_port(p));
+	push(wanted, port);
+	changed = set_option(uci, bridge, 'ports', wanted) || changed;
+
+	if (changed) {
+		uci.commit('network');
+		conn.call('network', 'reload', {});
+	}
+
+	return port;
+}
+
+function update() {
+	let next = resolve();
+
+	if (next.error || next.source == 'pending')
+		next.port = current_port();
+	else
+		next.port = apply(next.vid, next.prio);
+
+	if (next.error && next.error != state.error)
+		warn(`omci-vlan: ${next.error}, network config left unchanged\n`);
+
+	state = next;
+}
+
+let object = conn.publish('omci.vlan', {
+	status: {
+		/* rpcd adds the session to every call made over HTTP */
+		args: { ubus_rpc_session: '' },
+		call: () => state
+	}
+});
+
+update();
+
+if (state.mode == 'olt') {
+	let timer;
+	timer = uloop.timer(POLL * 1000, function() {
+		update();
+		timer.set(POLL * 1000);
+	});
+}
+
+uloop.run();

@@ -1,0 +1,110 @@
+{
+	"luci-app-omci": {
+		"description": "Grant access to the OMCI control plane",
+		"read": {
+			"ubus": {
+				"omci.agent": [
+					"family",
+					"status",
+					"config_list",
+					"config_details",
+					"config_get",
+					"config_inspect",
+					"class_list",
+					"class_get",
+					"mib_list",
+					"mib_get",
+					"profile_list"
+				],
+				"omci.optstat": [
+					"stats"
+				],
+				"omci.vlan": [
+					"status"
+				]
+			},
+			"uci": [
+				"omci"
+			],
+			"file": {
+				"/sys/class/net/pon0/device/allow_tx": [
+					"read"
+				],
+				"/sys/devices/platform/soc/*.pon/allow_tx": [
+					"read"
+				],
+				"/sys/class/net/pon0/device/tx_hold": [
+					"read"
+				],
+				"/sys/devices/platform/soc/*.pon/tx_hold": [
+					"read"
+				],
+				"/sys/class/net/pon0/device/sfu_offload": [
+					"read"
+				],
+				"/sys/devices/platform/soc/*.pon/sfu_offload": [
+					"read"
+				],
+				"/sys/class/net/pon0/device/gpon_ber": [
+					"read"
+				],
+				"/sys/devices/platform/soc/*.pon/gpon_ber": [
+					"read"
+				],
+				"/sys/class/net/pon0/device/pon_counters": [
+					"read"
+				],
+				"/sys/devices/platform/soc/*.pon/pon_counters": [
+					"read"
+				],
+				"/sys/class/net/pon0/device/tcont_stats": [
+					"read"
+				],
+				"/sys/devices/platform/soc/*.pon/tcont_stats": [
+					"read"
+				],
+				"/etc/xpon-rogue": [
+					"read"
+				]
+			}
+		},
+		"write": {
+			"ubus": {
+				"omci.agent": [
+					"agent_set",
+					"config_set",
+					"mib_set",
+					"mib_delete",
+					"mib_reset",
+					"raw_tx",
+					"apply",
+					"profile_apply"
+				],
+				"omci.optstat": [
+					"reset"
+				],
+				"file": [
+					"remove",
+					"stat"
+				]
+			},
+			"file": {
+				"/usr/sbin/omci-vlanscan *": [
+					"exec"
+				],
+				"/sys/class/net/pon0/device/tx_hold": [
+					"write"
+				],
+				"/sys/devices/platform/soc/*.pon/tx_hold": [
+					"write"
+				],
+				"/etc/xpon-rogue": [
+					"write"
+				]
+			},
+			"uci": [
+				"omci"
+			]
+		}
+	}
+}

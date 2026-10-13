@@ -1,0 +1,133 @@
+#!/usr/bin/ucode
+'use strict';
+
+/*
+ * Optical telemetry statistics: sample the BOSA readings reported by
+ * omci.agent and serve min/mean/median/max over the last day on ubus as
+ * omci.optstat, in °C, V, mA and dBm.
+ */
+
+import * as uloop from 'uloop';
+import * as ubus from 'ubus';
+import { log } from 'math';
+
+const INTERVAL = 10;
+const WINDOW = 8640;
+
+/* ucode divides two integers as integers, so keep the divisors floating */
+function dbm(nw) {
+	return 10 * log(nw / 1000000.0) / log(10);
+}
+
+/* OPTICAL_FRONTEND_ALARM_RX_LOW_POWER: no usable light on the fibre */
+const ALARM_RX_LOW_POWER = 0x10;
+
+/*
+ * TX power and bias only mean something while the laser bursts in O5, and
+ * RX power only while light arrives: with LOS the receiver reads its floor.
+ */
+const metrics = {
+	temperature: { field: 'bosa_temperature_mc', convert: (v) => v / 1000.0 },
+	voltage: { field: 'bosa_voltage_uv', convert: (v) => v / 1000000.0 },
+	bias: { field: 'bosa_bias_ua', convert: (v) => v / 1000.0, o5: true },
+	tx_power: { field: 'bosa_tx_power_nw', convert: dbm, o5: true, positive: true },
+	rx_power: { field: 'bosa_rx_power_nw', convert: dbm, positive: true, light: true }
+};
+
+uloop.init();
+
+let conn = ubus.connect();
+let samples = {};
+let since;
+
+function reset() {
+	for (let name in metrics)
+		samples[name] = [];
+	since = time();
+}
+
+function sample() {
+	let status = conn.call('omci.agent', 'status', {})?.status;
+
+	if (!status)
+		return;
+
+	for (let name, metric in metrics) {
+		let value = status[metric.field];
+
+		if (value == null || (metric.o5 && status.state != 5) ||
+		    (metric.positive && value <= 0) ||
+		    (metric.light && (status.bosa_alarms & ALARM_RX_LOW_POWER)))
+			continue;
+
+		push(samples[name], metric.convert(value));
+		if (length(samples[name]) > WINDOW)
+			shift(samples[name]);
+	}
+}
+
+function round(value) {
+	return +sprintf('%.3f', value);
+}
+
+function summarize(values) {
+	let n = length(values);
+
+	if (!n)
+		return { count: 0 };
+
+	let sorted = sort(slice(values), (a, b) => a - b);
+	let half = int(n / 2);
+	let sum = 0;
+
+	for (let v in values)
+		sum += v;
+
+	return {
+		count: n,
+		last: round(values[n - 1]),
+		min: round(sorted[0]),
+		mean: round(sum / n),
+		median: round(n % 2 ? sorted[half] : (sorted[half - 1] + sorted[half]) / 2.0),
+		max: round(sorted[n - 1])
+	};
+}
+
+reset();
+
+/* rpcd adds the session to every call made over HTTP */
+const args = { ubus_rpc_session: '' };
+
+let object = conn.publish('omci.optstat', {
+	stats: {
+		args: args,
+		call: function() {
+			let result = {};
+
+			for (let name in metrics)
+				result[name] = summarize(samples[name]);
+
+			return {
+				interval: INTERVAL,
+				window: INTERVAL * WINDOW,
+				since: since,
+				metrics: result
+			};
+		}
+	},
+	reset: {
+		args: args,
+		call: function() {
+			reset();
+			return {};
+		}
+	}
+});
+
+let timer;
+timer = uloop.timer(1000, function() {
+	sample();
+	timer.set(INTERVAL * 1000);
+});
+
+uloop.run();
