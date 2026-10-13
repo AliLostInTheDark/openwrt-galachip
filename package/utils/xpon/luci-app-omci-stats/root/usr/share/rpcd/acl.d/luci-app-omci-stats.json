@@ -1,0 +1,14 @@
+{
+	"luci-app-omci-stats": {
+		"description": "Grant access to the GPON ONU status",
+		"read": {
+			"file": {
+				"/usr/bin/omci-stats --json": [ "exec" ]
+			},
+			"uci": [ "omci-stats" ]
+		},
+		"write": {
+			"uci": [ "omci-stats" ]
+		}
+	}
+}

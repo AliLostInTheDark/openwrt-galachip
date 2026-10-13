@@ -1,0 +1,13 @@
+{
+	"admin/status/omci_stats": {
+		"title": "GPON ONU",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "omci-stats/status"
+		},
+		"depends": {
+			"acl": [ "luci-app-omci-stats" ]
+		}
+	}
+}

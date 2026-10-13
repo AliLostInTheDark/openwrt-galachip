@@ -1,0 +1,216 @@
+#!/bin/sh
+# Live status of the GPON ONU in front of this router (TP-Link XZ000-G3 with
+# the OpenWrt OMCI agent), read from its read-only ubus API over HTTP.
+#
+#   omci-stats            show everything once
+#   omci-stats -w [SEC]   refresh every SEC seconds (default 5), Ctrl+C to stop
+#   omci-stats --json     the raw data, for scripts and LuCI
+#
+# The ONU address is omci-stats.main.host (default 192.168.1.1). This router
+# needs an address in the ONU's management subnet on the port the ONU is
+# connected to.
+
+HOST=$(uci -q get omci-stats.main.host)
+HOST=${HOST:-192.168.1.1}
+TIMEOUT=$(uci -q get omci-stats.main.timeout)
+TIMEOUT=${TIMEOUT:-3}
+SID=00000000000000000000000000000000
+
+call() {
+	local req reply
+
+	req="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"call\",\"params\":[\"$SID\",\"$1\",\"$2\",{}]}"
+	reply=$(uclient-fetch -q -T "$TIMEOUT" -O - --post-data "$req" \
+		"http://$HOST/ubus" 2>/dev/null) || return 1
+	jsonfilter -s "$reply" -e '@.result[1]' 2>/dev/null
+}
+
+fetch() {
+	STATUS=$(call omci.agent status) || return 1
+	STATUS=$(jsonfilter -s "$STATUS" -e '@.status')
+	[ -n "$STATUS" ] || return 1
+	STATS=$(call omci.optstat stats)
+	VLAN=$(call omci.vlan status)
+}
+
+print_json() {
+	if ! fetch; then
+		printf '{"host":"%s","error":"unreachable"}\n' "$HOST"
+		return 1
+	fi
+	printf '{"host":"%s","status":%s,"stats":%s,"vlan":%s}\n' \
+		"$HOST" "$STATUS" "${STATS:-null}" "${VLAN:-null}"
+}
+
+get() {
+	jsonfilter -s "$1" -e "$2" 2>/dev/null
+}
+
+scaled() {
+	awk -v n="$1" -v d="$2" -v f="$3" \
+		'BEGIN { if (n == "") print "-"; else printf f, n / d }'
+}
+
+dbm() {
+	awk -v n="$1" 'BEGIN {
+		if (n == "" || n <= 0) print "-"
+		else printf "%.2f dBm", 10 * log(n / 1e6) / log(10)
+	}'
+}
+
+state_name() {
+	case $1 in
+	1) echo "O1 initial" ;;
+	2) echo "O2 standby" ;;
+	3) echo "O3 serial number" ;;
+	4) echo "O4 ranging" ;;
+	5) echo "O5 operation" ;;
+	6) echo "O6 popup" ;;
+	7) echo "O7 emergency stop" ;;
+	*) echo "${1:--}" ;;
+	esac
+}
+
+# OPTICAL_FRONTEND_ALARM_* bits
+alarm_names() {
+	local bits=${1:-0} names="" i=0
+
+	for name in "TX low power" "TX high power" "TX low bias" "TX high bias" \
+		    "RX low power (LOS)" "RX high power" "low voltage" \
+		    "high voltage" "low temperature" "high temperature"; do
+		[ $(( (bits >> i) & 1 )) = 1 ] && names="$names${names:+, }$name"
+		i=$((i + 1))
+	done
+	echo "${names:-none}"
+}
+
+# Alarms the ONU reports to the OLT, from the kernel omci/alarms attribute
+omci_alarm_line() {
+	local s=$1 i=0 class entity names out=""
+
+	[ -n "$(get "$s" '@.omci_alarms')" ] || { echo "-"; return; }
+	while class=$(get "$s" "@.omci_alarms[$i].class"); [ -n "$class" ]; do
+		entity=$(get "$s" "@.omci_alarms[$i].entity")
+		names=$(get "$s" "@.omci_alarms[$i].alarms[*]" | tr '\n' ',')
+		if [ "$class" = 263 ]; then
+			out="$out${out:+; }ANI-G: ${names%,}"
+		else
+			out="$out${out:+; }UNI $(( entity & 0xff )): ${names%,}"
+		fi
+		[ "$(get "$s" "@.omci_alarms[$i].reported")" = true ] ||
+			out="$out (held by ARC)"
+		i=$((i + 1))
+	done
+	echo "${out:-none}"
+}
+
+stat_row() {
+	local label=$1 metric=$2 unit=$3 count
+
+	count=$(get "$STATS" "@.metrics.$metric.count")
+	if [ -z "$count" ] || [ "$count" = 0 ]; then
+		printf '  %-18s %10s %10s %10s %10s %8s\n' "$label" - - - - 0
+		return
+	fi
+	printf '  %-18s %10s %10s %10s %10s %8s\n' "$label" \
+		"$(get "$STATS" "@.metrics.$metric.min")$unit" \
+		"$(get "$STATS" "@.metrics.$metric.mean")$unit" \
+		"$(get "$STATS" "@.metrics.$metric.median")$unit" \
+		"$(get "$STATS" "@.metrics.$metric.max")$unit" \
+		"$count"
+}
+
+vlan_line() {
+	local mode vid prio port source error
+
+	[ -n "$VLAN" ] || { echo "-"; return; }
+	mode=$(get "$VLAN" '@.mode')
+	vid=$(get "$VLAN" '@.vid')
+	prio=$(get "$VLAN" '@.prio')
+	port=$(get "$VLAN" '@.port')
+	source=$(get "$VLAN" '@.source')
+	error=$(get "$VLAN" '@.error')
+
+	if [ -n "$error" ]; then
+		echo "$mode: error: $error ($port)"
+	elif [ "$source" = pending ]; then
+		echo "$mode: waiting for the OLT VLAN rule ($port)"
+	elif [ -n "$vid" ]; then
+		echo "$mode: VLAN $vid, priority ${prio:-0} ($port)"
+	else
+		echo "$mode: untagged ($port)"
+	fi
+}
+
+print_text() {
+	local s state
+
+	if ! fetch; then
+		echo "ONU at $HOST is not reachable: check omci-stats.main.host and that"
+		echo "this router has an address in its subnet on the port it is connected to."
+		return 1
+	fi
+	s=$STATUS
+	state=$(get "$s" '@.state')
+
+	printf 'GPON ONU %s  (%s)\n\n' "$HOST" "$(date '+%Y-%m-%d %H:%M:%S')"
+	printf '  %-10s %s, ONU-ID %s, OMCC GEM %s, FEC down/up %s/%s\n' "GPON" \
+		"$(state_name "$state")" "$(get "$s" '@.onu_id')" \
+		"$(get "$s" '@.gem_port')" "$(get "$s" '@.fec_downstream')" \
+		"$(get "$s" '@.fec_upstream')"
+	printf '  %-10s %s, OLT profile %s, MIB sync %s (%s objects)\n' "OMCI" \
+		"$( [ "$(get "$s" '@.agent_operational')" = 1 ] && echo operational || echo "not operational")" \
+		"$(get "$s" '@.olt_profile_effective_name')" "$(get "$s" '@.mib_sync')" \
+		"$(get "$s" '@.mib_objects')"
+	printf '  %-10s rx %s, tx %s, responses %s, dropped %s, tx errors %s\n' "" \
+		"$(get "$s" '@.rx_packets')" "$(get "$s" '@.tx_packets')" \
+		"$(get "$s" '@.responses')" "$(get "$s" '@.rx_dropped')" \
+		"$(get "$s" '@.tx_errors')"
+	printf '  %-10s %s, %s, %s, sw %s / %s\n' "Identity" \
+		"$(get "$s" '@.identity.serial')" "$(get "$s" "@.identity['vendor-id']")" \
+		"$(get "$s" "@.identity['equipment-id']")" \
+		"$(get "$s" "@.identity['software-version-0']")" \
+		"$(get "$s" "@.identity['software-version-1']")"
+	printf '  %-10s %s\n\n' "LAN VLAN" "$(vlan_line)"
+
+	printf '  %-10s RX %s   TX %s   bias %s   supply %s   %s\n' "Optics" \
+		"$(dbm "$(get "$s" '@.bosa_rx_power_nw')")" \
+		"$(dbm "$(get "$s" '@.bosa_tx_power_nw')")" \
+		"$(scaled "$(get "$s" '@.bosa_bias_ua')" 1000 '%.2f mA')" \
+		"$(scaled "$(get "$s" '@.bosa_voltage_uv')" 1000000 '%.3f V')" \
+		"$(scaled "$(get "$s" '@.bosa_temperature_mc')" 1000 '%.1f C')"
+	printf '  %-10s %s\n' "Alarms" "$(alarm_names "$(get "$s" '@.bosa_alarms')")"
+	printf '  %-10s %s\n\n' "OLT alarms" "$(omci_alarm_line "$s")"
+
+	[ -n "$STATS" ] || return 0
+	printf '  %-18s %10s %10s %10s %10s %8s\n' \
+		"Statistics" min mean median max samples
+	stat_row "RX power (dBm)" rx_power
+	stat_row "TX power (dBm)" tx_power
+	stat_row "Laser bias (mA)" bias
+	stat_row "Supply (V)" voltage
+	stat_row "Temperature (C)" temperature
+	printf '  (last %s h, one sample every %s s; TX and bias only in O5, RX only with light)\n' \
+		"$(( $(get "$STATS" '@.window') / 3600 ))" "$(get "$STATS" '@.interval')"
+}
+
+case ${1:-} in
+--json)
+	print_json
+	;;
+-w|--watch)
+	interval=${2:-5}
+	while :; do
+		out=$(print_text)
+		printf '\033[H\033[2J%s\n' "$out"
+		sleep "$interval"
+	done
+	;;
+"")
+	print_text
+	;;
+*)
+	sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+	exit 2
+	;;
+esac
