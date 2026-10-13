@@ -1,0 +1,76 @@
+From b5c230c5fe405b834f2eb0a1e02ae1c8cb4c0e24 Mon Sep 17 00:00:00 2001
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Date: Mon, 12 Oct 2026 23:38:45 +0530
+Subject: [PATCH] net: ethernet, mdio: hook up the GalaChip GC1601
+ packet engine
+
+Build the GC1601 packet engine (GE UNI, PON datapath, SFU switch
+offload) and its MDIO bus controller.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+ drivers/net/ethernet/Kconfig  | 1 +
+ drivers/net/ethernet/Makefile | 1 +
+ drivers/net/mdio/Kconfig      | 8 ++++++++
+ drivers/net/mdio/Makefile     | 1 +
+ 4 files changed, 11 insertions(+)
+
+diff --git a/drivers/net/ethernet/Kconfig b/drivers/net/ethernet/Kconfig
+index aead145dd..b6777d131 100644
+--- a/drivers/net/ethernet/Kconfig
++++ b/drivers/net/ethernet/Kconfig
+@@ -76,6 +76,7 @@ source "drivers/net/ethernet/faraday/Kconfig"
+ source "drivers/net/ethernet/freescale/Kconfig"
+ source "drivers/net/ethernet/fujitsu/Kconfig"
+ source "drivers/net/ethernet/fungible/Kconfig"
++source "drivers/net/ethernet/galachip/Kconfig"
+ source "drivers/net/ethernet/google/Kconfig"
+ source "drivers/net/ethernet/hisilicon/Kconfig"
+ source "drivers/net/ethernet/huawei/Kconfig"
+diff --git a/drivers/net/ethernet/Makefile b/drivers/net/ethernet/Makefile
+index 998dd628b..9b2ed937c 100644
+--- a/drivers/net/ethernet/Makefile
++++ b/drivers/net/ethernet/Makefile
+@@ -44,6 +44,7 @@ obj-$(CONFIG_NET_VENDOR_FARADAY) += faraday/
+ obj-$(CONFIG_NET_VENDOR_FREESCALE) += freescale/
+ obj-$(CONFIG_NET_VENDOR_FUJITSU) += fujitsu/
+ obj-$(CONFIG_NET_VENDOR_FUNGIBLE) += fungible/
++obj-$(CONFIG_NET_VENDOR_GALACHIP) += galachip/
+ obj-$(CONFIG_NET_VENDOR_GOOGLE) += google/
+ obj-$(CONFIG_NET_VENDOR_HISILICON) += hisilicon/
+ obj-$(CONFIG_NET_VENDOR_HUAWEI) += huawei/
+diff --git a/drivers/net/mdio/Kconfig b/drivers/net/mdio/Kconfig
+index 4da50e55b..e1c865c8d 100644
+--- a/drivers/net/mdio/Kconfig
++++ b/drivers/net/mdio/Kconfig
+@@ -22,6 +22,14 @@ config ACPI_MDIO
+ 	help
+ 	  ACPI MDIO bus (Ethernet PHY) accessors
+ 
++config MDIO_GC1601
++	tristate "GalaChip GC1601 MDIO controller"
++	depends on ARCH_GALACHIP || COMPILE_TEST
++	depends on OF_MDIO && HAS_IOMEM
++	help
++	  Support the standalone Clause 22 MDIO controller in GC1601 SoCs.
++	  This does not initialize the shared xPON packet or DMA engines.
++
+ config MDIO_AIROHA
+ 	tristate "Airoha AN7583 MDIO bus controller"
+ 	depends on ARCH_AIROHA || COMPILE_TEST
+diff --git a/drivers/net/mdio/Makefile b/drivers/net/mdio/Makefile
+index fbec63670..1209f9674 100644
+--- a/drivers/net/mdio/Makefile
++++ b/drivers/net/mdio/Makefile
+@@ -17,6 +17,7 @@ obj-$(CONFIG_MDIO_I2C)			+= mdio-i2c.o
+ obj-$(CONFIG_MDIO_IPQ4019)		+= mdio-ipq4019.o
+ obj-$(CONFIG_MDIO_IPQ8064)		+= mdio-ipq8064.o
+ obj-$(CONFIG_MDIO_MOXART)		+= mdio-moxart.o
++obj-$(CONFIG_MDIO_GC1601)		+= mdio-gc1601.o
+ obj-$(CONFIG_MDIO_MSCC_MIIM)		+= mdio-mscc-miim.o
+ obj-$(CONFIG_MDIO_MVUSB)		+= mdio-mvusb.o
+ obj-$(CONFIG_MDIO_OCTEON)		+= mdio-octeon.o
+-- 
+2.43.0
+
