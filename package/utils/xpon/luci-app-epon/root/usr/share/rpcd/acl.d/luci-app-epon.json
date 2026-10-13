@@ -1,0 +1,74 @@
+{
+	"luci-app-epon": {
+		"description": "Grant access to EPON status and configuration",
+		"read": {
+			"file": {
+				"/var/run/epon-oamd.json": [
+					"read"
+				],
+				"/tmp/run/epon-oamd.json": [
+					"read"
+				],
+				"/sys/class/net/pon0/device/epon_state": [
+					"read"
+				],
+				"/sys/devices/platform/soc/*.pon/epon_state": [
+					"read"
+				],
+				"/sys/devices/platform/soc/*.pon/bosa_ddm": [
+					"read"
+				],
+				"/sys/class/net/pon0/device/allow_tx": [
+					"read"
+				],
+				"/sys/devices/platform/soc/*.pon/allow_tx": [
+					"read"
+				],
+				"/sys/class/net/pon0/device/tx_hold": [
+					"read"
+				],
+				"/sys/devices/platform/soc/*.pon/tx_hold": [
+					"read"
+				],
+				"/sys/class/net/pon0/device/bosa_ddm": [
+					"read"
+				],
+				"/sys/class/net/pon0/device/epon_counters": [
+					"read"
+				],
+				"/sys/devices/platform/soc/*.pon/epon_counters": [
+					"read"
+				],
+				"/etc/xpon-rogue": [
+					"read"
+				]
+			},
+			"uci": [
+				"epon",
+				"xpon"
+			]
+		},
+		"write": {
+			"uci": [
+				"epon"
+			],
+			"file": {
+				"/sys/class/net/pon0/device/tx_hold": [
+					"write"
+				],
+				"/sys/devices/platform/soc/*.pon/tx_hold": [
+					"write"
+				],
+				"/etc/xpon-rogue": [
+					"write"
+				]
+			},
+			"ubus": {
+				"file": [
+					"remove",
+					"stat"
+				]
+			}
+		}
+	}
+}
