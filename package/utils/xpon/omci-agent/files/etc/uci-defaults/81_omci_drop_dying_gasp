@@ -1,0 +1,5 @@
+#!/bin/sh
+# The OMCI dying gasp switch is gone: the GC1601 MAC sends the PLOAM
+# Dying_Gasp itself.
+uci -q delete omci.main.dying_gasp && uci commit omci
+exit 0
