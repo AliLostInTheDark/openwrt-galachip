@@ -60,6 +60,7 @@ define Device/tplink_xz000-g7
     epon-oamd luci-app-epon \
     -uclient-fetch -urandom-seed -urngd -ca-bundle \
     -libustream-mbedtls -rpcd-mod-iwinfo -libiwinfo-data -libiwinfo \
-    -luci-lib-uqr
+    -luci-lib-uqr -odhcpd -odhcpd-ipv6only -odhcp6c -dnsmasq \
+    -firewall4 -nftables -ppp -ppp-mod-pppoe
 endef
 TARGET_DEVICES += tplink_xz000-g7
