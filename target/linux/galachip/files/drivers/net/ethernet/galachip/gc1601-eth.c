@@ -456,6 +456,40 @@ static int gc1601_cvrd_verify(struct gc1601_eth *priv)
 }
 
 /*
+ * gala_eth_initialize from U-Boot: SCU 0x90a00810 bit 13 enables the PHY block
+ * clock/reset, followed by the 5-step PHY SerDes sequence at 0x91400000.
+ * Cold boots from flash never run U-Boot networking, leaving the PHY at
+ * 0x09e000b1 instead of 0x09e400b3.
+ */
+static void gc1601_cold_phy_init(struct gc1601_eth *priv)
+{
+	void __iomem *scu810 = ioremap(0x90a00810, 4);
+	void __iomem *phy_serdes = ioremap(0x91400000, 4);
+
+	if (scu810 && phy_serdes) {
+		if (!(readl(scu810) & BIT(13))) {
+			writel(readl(scu810) | BIT(13), scu810);
+			usleep_range(50000, 51000);
+			writel(0x4000, phy_serdes);
+			usleep_range(10000, 11000);
+			writel(0x20000, phy_serdes);
+			usleep_range(10000, 11000);
+			writel(0x00020002, phy_serdes);
+			usleep_range(10000, 11000);
+			writel(0x00020003, phy_serdes);
+			usleep_range(10000, 11000);
+			writel(0x3, phy_serdes);
+			usleep_range(100000, 101000);
+			dev_info(priv->dev, "cold init: PHY SerDes initialized\n");
+		}
+	}
+	if (scu810)
+		iounmap(scu810);
+	if (phy_serdes)
+		iounmap(phy_serdes);
+}
+
+/*
  * The loader's gala_eth_init up to its SRAM commands, minus the shared
  * global reset and optical writes: switch defaults, TX queue configuration
  * and buffer enable must be in place before SRAM initialisation.
@@ -466,6 +500,7 @@ static int gc1601_cold_prepare(struct gc1601_eth *priv)
 	    !priv->base[GC1601_BUFFER_ENABLE])
 		return -ENODEV;
 
+	gc1601_cold_phy_init(priv);
 	writel(1, priv->base[GC1601_BUFFER_ENABLE]);
 	writel(U32_MAX, priv->switch_base + 0x38);
 	writel(U32_MAX, priv->switch_base + 0x3c);
@@ -730,6 +765,41 @@ static const struct kernel_param_ops sr_src8_dec24_ops = {
 module_param_cb(sr_src8_dec24, &sr_src8_dec24_ops, &sr_src8_dec24, 0644);
 MODULE_PARM_DESC(sr_src8_dec24, "set switch SRC+0x08 to 0xbd as the 2024-12 stock image does");
 
+static int gc1601_sfu_apply(struct gc1601_eth *priv,
+			    const struct gc1601_sfu_flow *flows, unsigned int n);
+
+/*
+ * When sfu_queue_zero is set, all upstream SFU flows forward to hardware
+ * Queue 0 of their T-CONT (word 0 = 0x02200084 for GEM 256), matching the
+ * known-fast 2026-10-12 image and stock firmware default.
+ */
+static bool sfu_queue_zero;
+
+static int sfu_queue_zero_set(const char *val, const struct kernel_param *kp)
+{
+	struct net_device *netdev;
+	struct gc1601_eth *priv;
+	int ret;
+
+	rtnl_lock();
+	ret = param_set_bool(val, kp);
+	netdev = READ_ONCE(gc1601_pe_netdev);
+	if (!ret && netdev) {
+		priv = netdev_priv(netdev);
+		if (priv->switch_base && priv->sfu_flows)
+			gc1601_sfu_apply(priv, priv->sfu_active, priv->sfu_flows);
+	}
+	rtnl_unlock();
+	return ret;
+}
+
+static const struct kernel_param_ops sfu_queue_zero_ops = {
+	.set = sfu_queue_zero_set,
+	.get = param_get_bool,
+};
+module_param_cb(sfu_queue_zero, &sfu_queue_zero_ops, &sfu_queue_zero, 0644);
+MODULE_PARM_DESC(sfu_queue_zero, "force SFU upstream flows to T-CONT hardware queue 0");
+
 /* Indirect L3 table write: index, then the data words, last word first. */
 static int gc1601_sr_tbl_write(struct gc1601_eth *priv, u32 table, u32 index,
 			       const u32 *w, unsigned int n)
@@ -928,10 +998,12 @@ static void gc1601_sfu_flow_words(u32 *w, bool up, const struct gc1601_sfu_flow 
 
 	memset(w, 0, 15 * sizeof(*w));
 	if (up) {
+		u8 q = sfu_queue_zero ? 0 : (f->queue & 7);
+
 		/* Vendor flow encoder: queue in bits 5:3, bit 6 when nonzero. */
 		w[0] = BIT(25) | (f->gem_port & 0xfff) << 13 |
-			(f->tcont & 0x3f) << 7 | (f->queue & 7) << 3 |
-			(f->queue ? BIT(6) : 0) | 4;
+			(f->tcont & 0x3f) << 7 | (q & 7) << 3 |
+			(q ? BIT(6) : 0) | 4;
 		w[1] = 0x1000;
 		w[3] = 0x0040c1c0;
 	} else {
@@ -1318,6 +1390,32 @@ static void gc1601_rx_drain_inherited(struct gc1601_eth *priv)
 	 */
 	for (c = 0; c < GC1601_RX_CONTAINERS; c++)
 		gc1601_rx_ack_phantom(priv, c);
+}
+
+static void gc1601_log_handoff(struct gc1601_eth *priv, const char *stage)
+{
+	void __iomem *pm = priv->base[GC1601_BUFFERS];
+	void __iomem *tx = priv->base[GC1601_TX_CONFIG];
+
+	dev_info(priv->dev,
+		 "handoff %s: gmac=%08x/%08x/%08x pm=%08x/%08x/%08x/%08x/%08x mtu=%08x ctrl=%08x\n",
+		 stage, readl(priv->base[GC1601_GMAC] + GC_GMAC_CFG),
+		 readl(priv->base[GC1601_GMAC] + GC_GMAC_IER),
+		 readl(priv->base[GC1601_GMAC] + GC_GMAC_MACCR),
+		 readl(pm + GC_BUF_READ_CLEAR), readl(pm + GC_BUF_CTRL),
+		 readl(pm + GC_BUF_FREE_LIST_BASE),
+		 readl(pm + GC_BUF_PKT_POOL_BASE), readl(pm + GC_BUF_POOL_CFG),
+		 readl(pm + GC_BUF_MTU), readl(pm + GC_BUF_PM_CTRL));
+	dev_info(priv->dev,
+		 "handoff %s: rx=%08x/%08x/%08x tx=%08x/%08x/%08x/%08x/%08x sched=%08x switch=%08x/%08x\n",
+		 stage, readl(priv->base[GC1601_RX] + GC_RX_ENABLE),
+		 readl(priv->base[GC1601_RX] + GC_RX_PARTITION),
+		 readl(priv->base[GC1601_RX] + GC_RX_CTRL),
+		 readl(tx), readl(tx + 0x08), readl(tx + 0x0c),
+		 readl(tx + 0x10), readl(tx + 0x14),
+		 priv->sched_base ? readl(priv->sched_base) : 0,
+		 priv->switch_base ? readl(priv->switch_base + 0x60) : 0,
+		 priv->switch_base ? readl(priv->switch_base + 0x4198) : 0);
 }
 
 static int gc1601_hw_setup(struct gc1601_eth *priv)
@@ -2678,6 +2776,7 @@ static int gc1601_eth_open(struct net_device *netdev)
 	}
 
 	napi_enable(&priv->napi);
+	gc1601_log_handoff(priv, "open");
 	ret = gc1601_hw_setup(priv);
 	if (ret) {
 		napi_disable(&priv->napi);
@@ -3511,6 +3610,7 @@ static int gc1601_eth_probe(struct platform_device *pdev)
 	priv->switch_base = devm_ioremap(dev, 0x90f80000, 0x20000);
 	priv->os_base = devm_ioremap(dev, 0x90de0000, 0x30);
 	priv->queue_base = devm_ioremap(dev, 0x90dd8000, 0x30);
+	gc1601_log_handoff(priv, "probe");
 
 	priv->phy_node = of_parse_phandle(dev->of_node, "phy-handle", 0);
 	ret = of_get_phy_mode(dev->of_node, &priv->phy_interface);
