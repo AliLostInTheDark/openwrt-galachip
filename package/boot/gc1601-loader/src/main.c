@@ -60,6 +60,7 @@ typedef unsigned char u8;
 #define XMODEM_MAX		0x00800000	/* up to the reserved DMA area */
 
 #define KEY_WAIT_POLLS		1500000		/* about 1 s of LSR reads */
+#define HW_WAIT_POLLS		10000000
 
 void jump(u32 entry, u32 r0, u32 r1, u32 r2);
 
@@ -135,34 +136,46 @@ static int con_getc(void)
 
 /* ---- DDR ---- */
 
-static void ddr_init(void)
+static int ddr_init(void)
 {
-	unsigned int i;
+	u32 i, wait;
 
 	for (i = 0; i < sizeof(ddr_table) / sizeof(ddr_table[0]); i++)
 		REG(DDR + ddr_table[i][0]) = ddr_table[i][1];
 	REG(DDR + 0x04) = 1;
-	while (REG(DDR + 0x04) != 0xc100)
-		;
-	while (!(REG(DDR + 0x20) & 0x03000000))
-		;
+	for (wait = HW_WAIT_POLLS; wait; wait--)
+		if (REG(DDR + 0x04) == 0xc100)
+			break;
+	if (!wait)
+		return -1;
+	for (wait = HW_WAIT_POLLS; wait; wait--)
+		if (REG(DDR + 0x20) & 0x03000000)
+			return 0;
+	return -1;
 }
 
 /* ---- SPI-NOR ---- */
 
-static void spi_reset(void)
+static int spi_reset(void)
 {
+	u32 wait;
+
 	REG(SPI_RESET) = 1;
-	while (REG(SPI_RESET) & 1)
-		;
+	for (wait = HW_WAIT_POLLS; wait; wait--)
+		if (!(REG(SPI_RESET) & 1))
+			break;
+	if (!wait)
+		return -1;
 	REG(SPI_ISR) = 2;
 	REG(SPI_CTRL) &= ~0x13;
+	return 0;
 }
 
 /* READ (0x03), 3-byte address, no dummy cycles; @len a multiple of 4. */
-static void spi_read_chunk(u32 addr, u32 *dst, u32 len)
+static int spi_read_chunk(u32 addr, u32 *dst, u32 len)
 {
 	u32 fifo = (REG(SPI_FEATURE) >> 6) & 0x3fc;	/* RX FIFO bytes */
+	u32 wait;
 
 	if (!fifo)
 		fifo = 4;
@@ -175,18 +188,25 @@ static void spi_read_chunk(u32 addr, u32 *dst, u32 len)
 	while (len) {
 		u32 n = len < fifo ? len : fifo;
 
-		while (!(REG(SPI_STATUS) & SPI_STATUS_RX))
-			;
+		for (wait = HW_WAIT_POLLS; wait; wait--)
+			if (REG(SPI_STATUS) & SPI_STATUS_RX)
+				break;
+		if (!wait)
+			return -1;
 		len -= n;
 		for (; n; n -= 4)
 			*dst++ = REG(SPI_DATA);
 	}
-	while (!(REG(SPI_ISR) & SPI_ISR_CMD_DONE))
-		;
+	for (wait = HW_WAIT_POLLS; wait; wait--)
+		if (REG(SPI_ISR) & SPI_ISR_CMD_DONE)
+			break;
+	if (!wait)
+		return -1;
 	REG(SPI_ISR) = SPI_ISR_CMD_DONE;
+	return 0;
 }
 
-static void spi_read(u32 addr, void *dst, u32 len)
+static int spi_read(u32 addr, void *dst, u32 len)
 {
 	u32 *p = dst;
 
@@ -194,11 +214,13 @@ static void spi_read(u32 addr, void *dst, u32 len)
 	while (len) {
 		u32 n = len > 0x10000 ? 0x10000 : len;
 
-		spi_read_chunk(addr, p, n);
+		if (spi_read_chunk(addr, p, n))
+			return -1;
 		addr += n;
 		p += n / 4;
 		len -= n;
 	}
+	return 0;
 }
 
 /* ---- boot paths ---- */
@@ -217,7 +239,10 @@ static int boot_flash(void)
 	u32 *tag = (u32 *)LOAD_ADDR;
 	u32 len;
 
-	spi_read(FW_FLASH, tag, TAG_SIZE);
+	if (spi_read(FW_FLASH, tag, TAG_SIZE)) {
+		con_puts("SPI read failed\n");
+		return -1;
+	}
 	len = tag[TAG_KERNEL_LEN / 4];
 	if (tag[0] != TAG_MAGIC || !len || len > FW_MAX) {
 		con_puts("No kernel at flash ");
@@ -232,7 +257,10 @@ static int boot_flash(void)
 	con_puts("Loading kernel, ");
 	con_puthex(len);
 	con_puts(" bytes\n");
-	spi_read(FW_FLASH, tag, len + TAG_SIZE);
+	if (spi_read(FW_FLASH, tag, len + TAG_SIZE)) {
+		con_puts("Kernel SPI read failed\n");
+		return -1;
+	}
 	boot_zimage(LOAD_ADDR + TAG_SIZE);
 	return 0;
 }
@@ -240,7 +268,10 @@ static int boot_flash(void)
 static void boot_uboot(void)
 {
 	con_puts("Starting stock U-Boot\n");
-	spi_read(UBOOT_FLASH, (void *)UBOOT_ENTRY, UBOOT_SIZE);
+	if (spi_read(UBOOT_FLASH, (void *)UBOOT_ENTRY, UBOOT_SIZE)) {
+		con_puts("U-Boot SPI read failed\n");
+		return;
+	}
 	jump(UBOOT_ENTRY, 0, 0, 0);
 }
 
@@ -375,9 +406,16 @@ int main(void)
 {
 	uart_init();
 	con_puts("\nGC1601 loader " LOADER_VERSION "\n");
-	ddr_init();
+	if (ddr_init()) {
+		con_puts("DDR init failed; power-cycle to stock loader\n");
+		for (;;)
+			;
+	}
 	con_puts("DDR ready\n");
-	spi_reset();
+	if (spi_reset()) {
+		con_puts("SPI reset failed; UART recovery available\n");
+		menu();
+	}
 
 	con_puts("Press any key for the boot menu... ");
 	if (con_getc_timeout(KEY_WAIT_POLLS) >= 0) {
