@@ -1019,6 +1019,7 @@ static void gc1601_sfu_flow_words(u32 *w, bool up, const struct gc1601_sfu_flow 
 	} else if (up && f->pcp_match) {
 		u16 tci = (f->pcp & 7) << 13 | (vid & 0xfff);
 
+		w[3] = (w[3] & ~0x0007c000) | (5 << 14);
 		w[4] |= (tci & 0xff) << 24 | 6 << 14 | 0x100;
 		w[5] = tci >> 8;
 	} else {
