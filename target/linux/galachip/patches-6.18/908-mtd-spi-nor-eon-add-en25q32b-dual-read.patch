@@ -1,0 +1,34 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Date: Thu, 15 Oct 2026 01:52:00 +0530
+Subject: [PATCH] mtd: spi-nor: eon: add SPI_NOR_DUAL_READ to en25q32b
+
+The cFeon QH32B-104HIP / Eon EN25Q32B 32 Mbit (4 MiB) SPI NOR flash
+supports Dual Output Fast Read (instruction 3Bh) up to 80 MHz, but
+lacks SFDP parameter tables.
+
+Without no_sfdp_flags, Linux defaults to single-bit Standard Read (03h),
+doubling read latency on boards with dual-channel SPI wiring such as
+the TP-Link XZ000-G7.
+
+Enable SPI_NOR_DUAL_READ so systems with dual-capable controllers
+can use high-speed dual output reads while preserving 64 KiB erase blocks.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+ drivers/mtd/spi-nor/eon.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/mtd/spi-nor/eon.c b/drivers/mtd/spi-nor/eon.c
+index c1ddf662f..52212b987 100644
+--- a/drivers/mtd/spi-nor/eon.c
++++ b/drivers/mtd/spi-nor/eon.c
+@@ -26,6 +26,7 @@ static const struct flash_info eon_nor_parts[] = {
+ 		.id = SNOR_ID(0x1c, 0x30, 0x16),
+ 		.name = "en25q32b",
+ 		.size = SZ_4M,
++		.no_sfdp_flags = SPI_NOR_DUAL_READ,
+ 	}, {
+ 		.id = SNOR_ID(0x1c, 0x30, 0x17),
+ 		.name = "en25q64",
+-- 
+2.46.1
