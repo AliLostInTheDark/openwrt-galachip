@@ -210,6 +210,7 @@ void omci_agent_receive(struct omci_device *odev, const struct sk_buff *skb);
 void omci_agent_channel_changed(struct omci_device *odev, bool valid);
 int omci_agent_put_status(struct sk_buff *msg, struct omci_device *odev);
 ssize_t omci_agent_show_alarms(struct omci_device *odev, char *buf);
+ssize_t omci_agent_show_traffic(struct omci_device *odev, char *buf);
 int omci_agent_config_get(struct omci_device *odev, u16 key,
 			  void *value, size_t *len);
 int omci_agent_config_set(struct omci_device *odev, u16 key,

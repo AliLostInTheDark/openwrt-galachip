@@ -288,6 +288,7 @@ struct gc1601_eth {
 	/* CVRD words written by setup, compared against hardware readback. */
 	bool cvrd_inmax_written;
 	bool sr_ready;		/* SR_hw_init has run */
+	u32 sr_src8;		/* SRC+0x08 as SR_hw_init leaves it with sr_src8_dec24 off */
 	bool sfu_rules;		/* stock traps, parser rules and index lists loaded */
 	unsigned int sfu_flows;	/* services with flows installed */
 	struct gc1601_sfu_flow sfu_active[GC1601_SFU_FLOWS];
@@ -606,6 +607,18 @@ static void gc1601_sr_update(struct gc1601_eth *priv, u32 off, u32 clear, u32 se
  */
 static void gc1601_uni_attrs_apply(struct gc1601_eth *priv);
 
+/*
+ * The 2024-12 stock image ends S03sdk with "w e4002 bd" on dbg_reg, setting
+ * SRC+0x08 to 0xbd in every PON mode; the 2023 images leave the SR_hw_init
+ * value. Its other users are the multicast tables, so this is A/B only.
+ */
+static bool sr_src8_dec24;
+
+static void gc1601_sr_src8_apply(struct gc1601_eth *priv)
+{
+	writel(sr_src8_dec24 ? 0xbd : priv->sr_src8, priv->switch_base + GC_SR_SRC + 0x08);
+}
+
 static int gc1601_sr_hw_init(struct gc1601_eth *priv)
 {
 	void __iomem *sw = priv->switch_base;
@@ -624,7 +637,8 @@ static int gc1601_sr_hw_init(struct gc1601_eth *priv)
 	gc1601_sr_update(priv, GC_SR_L2 + 0x40, 0x0f000000, 0);
 	writel(0x00050003, sw + GC_SR_SRC + 0x60);
 	writel(0xff, sw + GC_SR_SRC + 0x64);
-	gc1601_sr_update(priv, GC_SR_SRC + 0x08, 0x42, 0xb1);
+	priv->sr_src8 = (readl(sw + GC_SR_SRC + 0x08) & ~0x42) | 0xb1;
+	gc1601_sr_src8_apply(priv);
 	writel(0x03000503, sw + GC_SR_SRC + 0x70);
 	writel(0x00030000, sw + GC_SR_SRC + 0x74);
 	writel(0x000a0000, sw + GC_SR_SRC + 0x78);
@@ -693,6 +707,28 @@ static void gc1601_sr_bypass(struct gc1601_eth *priv, bool on, u32 gem)
 /* The packet engine is shared with the GPON driver, which reaches it here. */
 static struct net_device *gc1601_pe_netdev;
 static DEFINE_MUTEX(gc1601_uni_lock);
+
+/* Applied at once when the switch is already set up, for back-to-back A/B. */
+static int sr_src8_dec24_set(const char *val, const struct kernel_param *kp)
+{
+	struct net_device *netdev;
+	int ret;
+
+	rtnl_lock();
+	ret = param_set_bool(val, kp);
+	netdev = READ_ONCE(gc1601_pe_netdev);
+	if (!ret && netdev && ((struct gc1601_eth *)netdev_priv(netdev))->sr_ready)
+		gc1601_sr_src8_apply(netdev_priv(netdev));
+	rtnl_unlock();
+	return ret;
+}
+
+static const struct kernel_param_ops sr_src8_dec24_ops = {
+	.set = sr_src8_dec24_set,
+	.get = param_get_bool,
+};
+module_param_cb(sr_src8_dec24, &sr_src8_dec24_ops, &sr_src8_dec24, 0644);
+MODULE_PARM_DESC(sr_src8_dec24, "set switch SRC+0x08 to 0xbd as the 2024-12 stock image does");
 
 /* Indirect L3 table write: index, then the data words, last word first. */
 static int gc1601_sr_tbl_write(struct gc1601_eth *priv, u32 table, u32 index,
@@ -1965,8 +2001,6 @@ EXPORT_SYMBOL_GPL(gc1601_pe_set_uni);
  * requested values are always logged.
  */
 static bool uni_omci_attrs;
-module_param(uni_omci_attrs, bool, 0644);
-MODULE_PARM_DESC(uni_omci_attrs, "apply the OLT's UNI pause, MAC table and rate attributes");
 
 #define GC_GMAC_PAUSE_RX	0x90	/* honour received pause frames */
 #define GC_GMAC_PAUSE_TX	0x70	/* quanta << 16 | send pause << 1 */
@@ -2026,14 +2060,14 @@ static int gc1601_uni_shape(struct gc1601_eth *priv, u32 kbps)
 	return ret;
 }
 
-static void gc1601_uni_attrs_apply(struct gc1601_eth *priv)
+/* All zero gives the defaults: no pause, ageing 300 s, no MAC limit, no rate limits. */
+static void gc1601_uni_attrs_write(struct gc1601_eth *priv, const struct gc1601_uni_attrs *a)
 {
-	const struct gc1601_uni_attrs *a = &priv->uni_attrs;
 	void __iomem *gmac = priv->base[GC1601_GMAC];
 	u32 ageing = a->ageing_s ?: 300;
 	u16 learn = min_t(u16, a->learn_limit, 1023);
 
-	if (!uni_omci_attrs || !priv->switch_base)
+	if (!priv->switch_base)
 		return;
 
 	writel(!!a->pause_quanta, gmac + GC_GMAC_PAUSE_RX);
@@ -2050,6 +2084,41 @@ static void gc1601_uni_attrs_apply(struct gc1601_eth *priv)
 	if (gc1601_uni_shape(priv, a->down_kbps) || gc1601_uni_police(priv, a->up_kbps))
 		dev_warn(priv->dev, "UNI rate limit tables did not answer\n");
 }
+
+static void gc1601_uni_attrs_apply(struct gc1601_eth *priv)
+{
+	if (uni_omci_attrs)
+		gc1601_uni_attrs_write(priv, &priv->uni_attrs);
+}
+
+/* Writes take effect at once: the OLT's values on 1, the defaults back on 0. */
+static int uni_omci_attrs_set(const char *val, const struct kernel_param *kp)
+{
+	static const struct gc1601_uni_attrs defaults;
+	bool was = uni_omci_attrs;
+	struct gc1601_eth *priv;
+	int ret;
+
+	mutex_lock(&gc1601_uni_lock);
+	ret = param_set_bool(val, kp);
+	if (!ret && was != uni_omci_attrs && gc1601_pe_netdev) {
+		priv = netdev_priv(gc1601_pe_netdev);
+		if (READ_ONCE(priv->running)) {
+			gc1601_uni_attrs_write(priv, uni_omci_attrs ? &priv->uni_attrs : &defaults);
+			dev_info(priv->dev, "UNI attributes from the OLT %s\n",
+				 uni_omci_attrs ? "applied" : "removed, defaults restored");
+		}
+	}
+	mutex_unlock(&gc1601_uni_lock);
+	return ret;
+}
+
+static const struct kernel_param_ops uni_omci_attrs_ops = {
+	.set = uni_omci_attrs_set,
+	.get = param_get_bool,
+};
+module_param_cb(uni_omci_attrs, &uni_omci_attrs_ops, &uni_omci_attrs, 0644);
+MODULE_PARM_DESC(uni_omci_attrs, "apply the OLT's UNI pause, MAC table and rate attributes");
 
 int gc1601_pe_set_uni_attrs(const struct gc1601_uni_attrs *attrs)
 {
@@ -3321,11 +3390,12 @@ static ssize_t sfu_snapshot_show(struct device *dev,
 		priv->sr_ready, priv->sfu_rules, priv->sfu_flows,
 		priv->sfu_hashed_count, readl(l3), readl(l3 + 0x0c),
 		readl(l3 + 0xe8));
-	len += sysfs_emit_at(buf, len, "src=%08x/%08x/%08x/%08x\n",
+	len += sysfs_emit_at(buf, len, "src=%08x/%08x/%08x/%08x src8=%08x\n",
 		readl(priv->switch_base + GC_SR_SRC + 0x60),
 		readl(priv->switch_base + GC_SR_SRC + 0x64),
 		readl(priv->switch_base + GC_SR_SRC + 0x70),
-		readl(priv->switch_base + GC_SR_SRC + 0x74));
+		readl(priv->switch_base + GC_SR_SRC + 0x74),
+		readl(priv->switch_base + GC_SR_SRC + 0x08));
 	if (priv->sfu_read_failed) {
 		len += sysfs_emit_at(buf, len, "table reads blocked after timeout\n");
 		goto out;

@@ -457,6 +457,14 @@ static ssize_t alarms_show(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR_RO(alarms);
 
+/* Traffic descriptors and the GEM ports and bridge ports pointing at them. */
+static ssize_t traffic_show(struct device *dev, struct device_attribute *attr,
+			    char *buf)
+{
+	return omci_agent_show_traffic(omci_dev_from_dev(dev), buf);
+}
+static DEVICE_ATTR_RO(traffic);
+
 struct omci_onu_type_name {
 	u8 type;
 	const char *name;
@@ -748,6 +756,7 @@ static struct attribute *omci_attrs[] = {
 	&dev_attr_loid_password.attr,
 	&dev_attr_loid_status.attr,
 	&dev_attr_alarms.attr,
+	&dev_attr_traffic.attr,
 	&dev_attr_equipment_id.attr,
 	&dev_attr_hardware_version.attr,
 	&dev_attr_software_version_0.attr,

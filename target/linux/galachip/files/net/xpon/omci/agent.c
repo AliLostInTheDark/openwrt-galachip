@@ -5140,6 +5140,49 @@ ssize_t omci_agent_show_alarms(struct omci_device *odev, char *buf)
 	return len;
 }
 
+/*
+ * What the OLT provisioned for traffic management: the traffic descriptor
+ * pointers of each GEM port network CTP (attributes 5 and 9) and bridge
+ * port (ME 47 attributes 11 and 12), and every ME 280 with its rates in
+ * kbit/s. Read-only; nothing here is applied to the hardware.
+ */
+ssize_t omci_agent_show_traffic(struct omci_device *odev, char *buf)
+{
+	struct omci_agent *agent = &odev->agent;
+	struct omci_mib_object *object;
+	unsigned long index;
+	ssize_t len = 0;
+
+	mutex_lock(&agent->lock);
+	xa_for_each(&agent->mib, index, object) {
+		if (!omci_mib_object_active(agent, object))
+			continue;
+		if (object->class_id == OMCI_CLASS_GEM_PORT_CTP && object->data_len >= 15)
+			len += sysfs_emit_at(buf, len,
+				"268 %#06x port=%u tcont=%#06x tm=%#06x td_up=%#06x td_down=%#06x\n",
+				object->entity_id, get_unaligned_be16(object->data),
+				get_unaligned_be16(object->data + 2),
+				get_unaligned_be16(object->data + 5),
+				get_unaligned_be16(object->data + 7),
+				get_unaligned_be16(object->data + 13));
+		else if (object->class_id == OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA &&
+			 object->data_len >= 23)
+			len += sysfs_emit_at(buf, len, "47 %#06x tp_type=%u td_out=%#06x td_in=%#06x\n",
+				object->entity_id, object->data[3],
+				get_unaligned_be16(object->data + 19),
+				get_unaligned_be16(object->data + 21));
+		else if (object->class_id == OMCI_CLASS_TRAFFIC_DESCRIPTOR && object->data_len >= 8)
+			len += sysfs_emit_at(buf, len, "280 %#06x cir=%u pir=%u kbit/s len=%u\n",
+				object->entity_id,
+				DIV_ROUND_UP(get_unaligned_be32(object->data), 125),
+				DIV_ROUND_UP(get_unaligned_be32(object->data + 4), 125),
+				object->data_len);
+	}
+	mutex_unlock(&agent->lock);
+
+	return len;
+}
+
 static int
 omci_agent_build_response_locked(struct omci_device *odev,
 				 const struct omci_wire_request *request,
