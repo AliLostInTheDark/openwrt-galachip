@@ -3196,10 +3196,10 @@ static bool omci_agent_has_olt_gem_ctp_locked(struct omci_agent *agent)
  * G.988 9.2.3: with priority-controlled upstream traffic management (ONU-G
  * option 0), a GEM port's upstream traffic management pointer names the
  * priority queue it uses; the queue's related port carries the T-CONT and
- * the priority, 0 highest. Off by default until checked on hardware: the
- * P-bit picks the queue instead.
+ * the priority, 0 highest. Off by default: on Airtel (Nokia OLT) the P-bit
+ * queues of the earlier builds upload faster.
  */
-static bool upstream_queue_tm = true;
+static bool upstream_queue_tm;
 
 /* Services keep the queue they were staged with: stage them again. */
 static int upstream_queue_tm_set(const char *val, const struct kernel_param *kp)

@@ -1084,7 +1084,9 @@ static void gc1601_gpon_work(struct work_struct *w)
  * chipset_GMAC_dbru_chk: a T-CONT whose upstream report is stuck while no
  * data goes up gets its reported queue level lowered and the report
  * reloaded, with the queue manager's almost-full level raised meanwhile.
- * Called with pon->lock held, once a second in O5.
+ * Only an idle upstream qualifies, and stock runs it on every line, so it
+ * is logged on the first release and every 100th after. Called with
+ * pon->lock held, once a second in O5.
  */
 static void gc1601_gpon_dbru_check(struct gc1601_pon *pon)
 {
@@ -1092,7 +1094,7 @@ static void gc1601_gpon_dbru_check(struct gc1601_pon *pon)
 	u32 stuck = readl(tx_reg(pon, TX_DBRU_ERR));
 	unsigned long now = jiffies;
 	unsigned int t, ms;
-	u32 bytes, rate;
+	u32 bytes, rate, rem;
 
 	/* The watchdog sampled the counters just before. */
 	bytes = g->counter[CNT_UP_BYTES] - g->dbru_bytes;
@@ -1127,9 +1129,10 @@ static void gc1601_gpon_dbru_check(struct gc1601_pon *pon)
 	}
 	writel(1, tx_reg(pon, TX_DBRU_CLEAR));
 	writel(0, tx_reg(pon, TX_DBRU_CLEAR));
-	g->dbru_fixes++;
-	dev_info_ratelimited(pon->dev, "GPON upstream reports stuck (T-CONTs %08x): released\n",
-			     stuck);
+	div_u64_rem(g->dbru_fixes++, 100, &rem);
+	if (!rem)
+		dev_info(pon->dev, "GPON upstream reports stuck (T-CONTs %08x): released, %llu so far\n",
+			 stuck, g->dbru_fixes);
 }
 
 /* local_handle_O5 timers 3 and 4: MAC hang and DBRu, once a second. */
