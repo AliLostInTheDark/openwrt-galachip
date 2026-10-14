@@ -190,9 +190,11 @@ static void gc1601_xpon_epon_lan_map(struct gc1601_xpon *xp)
 }
 
 /*
- * LLID 0 on T-CONT queue set 0, one flow per Port VLAN, or one untagged
- * flow in transparent mode. Only while the OAM link is up: before that the
- * ONU must not forward data upstream.
+ * LLID 0 on T-CONT queue set 0. Transparent mode gets a single untagged flow.
+ * Tagged VLANs get one upstream flow per 802.1p priority (P-bits 0..7) to use
+ * parser rule 6 (TCI match): as found on Airtel, a single VID-only upstream
+ * key caps upload to ~45% of wire speed. The first P-bit handles downstream;
+ * the remaining P-bit flows are upstream-only. Only while the OAM link is up.
  */
 static unsigned int gc1601_xpon_epon_flows(struct gc1601_pon *pon,
 					   struct gc1601_sfu_flow *flows)
@@ -206,10 +208,30 @@ static unsigned int gc1601_xpon_epon_flows(struct gc1601_pon *pon,
 	spin_lock_bh(&xp->service_lock);
 	if (!xp->lan_maps)
 		flows[n++].untagged = true;
-	for (i = 0; i < xp->lan_maps; i++, n++) {
-		flows[n].vlan_id = xp->lan_map[i].wan;
-		flows[n].lan = xp->lan_map[i].mode;
-		flows[n].lan_vid = xp->lan_map[i].lan;
+	for (i = 0; i < xp->lan_maps && n < GC1601_SFU_FLOWS; i++) {
+		if (xp->lan_map[i].mode == GC1601_SFU_LAN_UNTAGGED) {
+			flows[n].vlan_id = xp->lan_map[i].wan;
+			flows[n].lan = xp->lan_map[i].mode;
+			flows[n].lan_vid = xp->lan_map[i].lan;
+			n++;
+		} else if (n + 8 <= GC1601_SFU_FLOWS) {
+			unsigned int p;
+
+			for (p = 0; p < 8; p++, n++) {
+				flows[n].vlan_id = xp->lan_map[i].wan;
+				flows[n].lan = xp->lan_map[i].mode;
+				flows[n].lan_vid = xp->lan_map[i].lan;
+				flows[n].pcp_match = true;
+				flows[n].pcp = p;
+				if (p > 0)
+					flows[n].up_only = true;
+			}
+		} else {
+			flows[n].vlan_id = xp->lan_map[i].wan;
+			flows[n].lan = xp->lan_map[i].mode;
+			flows[n].lan_vid = xp->lan_map[i].lan;
+			n++;
+		}
 	}
 	spin_unlock_bh(&xp->service_lock);
 	return n;

@@ -114,6 +114,7 @@
 #define EMAC_LLID_MAC_LO(n)	(0x84 + 8 * (n))
 #define EMAC_KEY		0xc0	/* churning key, 24 bits */
 #define EMAC_KEY_CTRL		0xe4	/* bit n LLID, bit 8 key index, bit 9 load */
+#define EMAC_SHAPER		0xf4	/* bit 31 on, bits 20:1 rate: LLID upstream shaper */
 #define EMAC_CFGF8		0xf8
 #define EMAC_CFG134		0x134
 #define EMAC_MTU		0x13c	/* bits 26:16: frame limit */
