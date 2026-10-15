@@ -330,6 +330,8 @@ struct gc1601_xpon {
 	unsigned int sfu_count;
 	u8 sfu_retries;
 	u16 sfu_untag_vlan;		/* VLAN the LAN side sends untagged, 0: none */
+	u16 epon_vlans[GC1601_SFU_FLOWS / 8];	/* transparent client VLANs */
+	unsigned int epon_vlan_count;	/* under service_lock */
 	/* Manual LAN-side VLANs (sfu_vlan_map), ahead of what OMCI asks for. */
 	struct gc1601_vlan_map {
 		u16 wan;

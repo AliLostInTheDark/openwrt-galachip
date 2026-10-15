@@ -190,7 +190,8 @@ static void gc1601_xpon_epon_lan_map(struct gc1601_xpon *xp)
 }
 
 /*
- * LLID 0 on T-CONT queue set 0. Transparent mode gets a single untagged flow.
+ * LLID 0 on T-CONT queue set 0. Transparent mode also uses VLANs observed
+ * on client data; an untagged flow is retained while table capacity permits.
  * Tagged VLANs get one upstream flow per 802.1p priority (P-bits 0..7) to use
  * parser rule 6 (TCI match): as found on Airtel, a single VID-only upstream
  * key caps upload to ~45% of wire speed. The first P-bit handles downstream;
@@ -206,8 +207,20 @@ static unsigned int gc1601_xpon_epon_flows(struct gc1601_pon *pon,
 	if (!epon_offload || !READ_ONCE(pon->epon.oam_link))
 		return 0;
 	spin_lock_bh(&xp->service_lock);
-	if (!xp->lan_maps)
-		flows[n++].untagged = true;
+	if (!xp->lan_maps) {
+		for (i = 0; i < xp->epon_vlan_count; i++) {
+			unsigned int p;
+
+			for (p = 0; p < 8; p++, n++) {
+				flows[n].vlan_id = xp->epon_vlans[i];
+				flows[n].pcp_match = true;
+				flows[n].pcp = p;
+				flows[n].up_only = p > 0;
+			}
+		}
+		if (n < GC1601_SFU_FLOWS)
+			flows[n++].untagged = true;
+	}
 	for (i = 0; i < xp->lan_maps && n < GC1601_SFU_FLOWS; i++) {
 		if (xp->lan_map[i].mode == GC1601_SFU_LAN_UNTAGGED) {
 			flows[n].vlan_id = xp->lan_map[i].wan;
@@ -240,6 +253,11 @@ static unsigned int gc1601_xpon_epon_flows(struct gc1601_pon *pon,
 /* EPON: the OAM link came up or went down; apply now, not a second later. */
 void gc1601_xpon_sfu_kick(struct gc1601_pon *pon)
 {
+	if (!READ_ONCE(pon->epon.data_up)) {
+		spin_lock_bh(&pon->xp.service_lock);
+		pon->xp.epon_vlan_count = 0;
+		spin_unlock_bh(&pon->xp.service_lock);
+	}
 	pon->xp.sfu_retries = 0;
 	mod_delayed_work(system_wq, &pon->xp.sfu_work, 0);
 }
@@ -323,6 +341,52 @@ static void gc1601_xpon_sfu_update(struct gc1601_xpon *xp)
 	mod_delayed_work(system_wq, &xp->sfu_work, HZ);
 }
 
+/* Learn only outbound client data, never PON broadcasts or management OAM. */
+static void gc1601_xpon_epon_learn_vlan(struct gc1601_pon *pon,
+				      const struct sk_buff *skb)
+{
+	struct gc1601_xpon *xp = &pon->xp;
+	struct vlan_ethhdr buf;
+	const struct vlan_ethhdr *hdr;
+	unsigned int i;
+	u16 tci, vid;
+
+	if (READ_ONCE(pon->mode) != GC1601_PON_EPON ||
+	    !READ_ONCE(sfu_offload) || !READ_ONCE(epon_offload))
+		return;
+	hdr = skb_header_pointer(skb, 0, sizeof(buf), &buf);
+	if (!hdr || hdr->h_vlan_proto != htons(ETH_P_8021Q) ||
+	    !is_valid_ether_addr(hdr->h_dest) ||
+	    ether_addr_equal(hdr->h_dest, xp->netdev->dev_addr))
+		return;
+	switch (hdr->h_vlan_encapsulated_proto) {
+	case htons(ETH_P_IP):
+	case htons(ETH_P_IPV6):
+	case htons(ETH_P_PPP_DISC):
+	case htons(ETH_P_PPP_SES):
+		break;
+	default:
+		return;
+	}
+	tci = ntohs(hdr->h_vlan_TCI);
+	vid = tci & VLAN_VID_MASK;
+	if (!vid || vid == VLAN_VID_MASK || (tci & VLAN_CFI_MASK))
+		return;
+
+	spin_lock_bh(&xp->service_lock);
+	if (!READ_ONCE(pon->epon.data_up) || xp->sfu_untag_vlan || xp->vlan_maps)
+		goto out;
+	for (i = 0; i < xp->epon_vlan_count; i++)
+		if (xp->epon_vlans[i] == vid)
+			goto out;
+	if (xp->epon_vlan_count == ARRAY_SIZE(xp->epon_vlans))
+		goto out;
+	xp->epon_vlans[xp->epon_vlan_count++] = vid;
+	gc1601_xpon_sfu_update(xp);
+out:
+	spin_unlock_bh(&xp->service_lock);
+}
+
 static void gc1601_xpon_reconcile_work(struct work_struct *work)
 {
 	struct gc1601_xpon *xp = container_of(work, struct gc1601_xpon, reconcile_work);
@@ -373,7 +437,10 @@ static ssize_t sfu_untag_vlan_store(struct device *dev,
 		return ret;
 	if (vid > 4094)
 		return -ERANGE;
+	spin_lock_bh(&pon->xp.service_lock);
 	WRITE_ONCE(pon->xp.sfu_untag_vlan, vid);
+	pon->xp.epon_vlan_count = 0;
+	spin_unlock_bh(&pon->xp.service_lock);
 	gc1601_xpon_sfu_update(&pon->xp);
 	return count;
 }
@@ -435,6 +502,7 @@ static ssize_t sfu_vlan_map_store(struct device *dev,
 	spin_lock_bh(&xp->service_lock);
 	memcpy(xp->vlan_map, map, n * sizeof(*map));
 	xp->vlan_maps = n;
+	xp->epon_vlan_count = 0;
 	spin_unlock_bh(&xp->service_lock);
 	gc1601_xpon_sfu_update(xp);
 	return count;
@@ -1060,6 +1128,7 @@ static netdev_tx_t gc1601_pon0_xmit_epon(struct gc1601_pon *pon, struct sk_buff 
 		dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
 	}
+	gc1601_xpon_epon_learn_vlan(pon, skb);
 	gc1601_epon_tx_seen(pon, skb->data, len, 0);
 	ret = gc1601_pe_pon_xmit(skb, 0, 0, 0);
 	if (ret == -EBUSY)
