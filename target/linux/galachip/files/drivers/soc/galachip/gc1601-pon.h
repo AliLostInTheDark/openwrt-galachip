@@ -328,10 +328,15 @@ struct gc1601_xpon {
 	struct notifier_block netdev_nb;	/* warns about a bridged pon0.N */
 	struct gc1601_sfu_flow sfu[GC1601_SFU_FLOWS];	/* last flows handed to the switch */
 	unsigned int sfu_count;
+	int sfu_last_error;
 	u8 sfu_retries;
 	u16 sfu_untag_vlan;		/* VLAN the LAN side sends untagged, 0: none */
-	u16 epon_vlans[GC1601_SFU_FLOWS / 8];	/* transparent client VLANs */
-	unsigned int epon_vlan_count;	/* under service_lock */
+	struct {
+		u16 vid;
+		u8 pcp;
+	} epon_learned[GC1601_SFU_FLOWS - 1];	/* reserve one untagged flow */
+	unsigned int epon_learned_count;	/* under service_lock */
+	unsigned long epon_capacity_misses;	/* eligible packets, not unique keys */
 	/* Manual LAN-side VLANs (sfu_vlan_map), ahead of what OMCI asks for. */
 	struct gc1601_vlan_map {
 		u16 wan;

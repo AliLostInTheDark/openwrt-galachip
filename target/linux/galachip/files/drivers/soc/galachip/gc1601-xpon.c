@@ -190,36 +190,35 @@ static void gc1601_xpon_epon_lan_map(struct gc1601_xpon *xp)
 }
 
 /*
- * LLID 0 on T-CONT queue set 0. Transparent mode also uses VLANs observed
- * on client data; an untagged flow is retained while table capacity permits.
- * Tagged VLANs get one upstream flow per 802.1p priority (P-bits 0..7) to use
- * parser rule 6 (TCI match): as found on Airtel, a single VID-only upstream
- * key caps upload to ~45% of wire speed. The first P-bit handles downstream;
- * the remaining P-bit flows are upstream-only. Only while the OAM link is up.
+ * LLID 0 on T-CONT queue set 0. Transparent mode installs only observed
+ * VLAN/P-bit pairs, plus one untagged flow. Explicit tagged mappings cover
+ * all eight priorities. Both use parser rule 6 (TCI match): a VID-only
+ * upstream key capped upload to ~45% of wire speed on Airtel. The first
+ * pair for a VLAN also handles downstream, independently of its P-bit.
+ * Only while the OAM link is up.
  */
 static unsigned int gc1601_xpon_epon_flows(struct gc1601_pon *pon,
 					   struct gc1601_sfu_flow *flows)
 {
 	struct gc1601_xpon *xp = &pon->xp;
-	unsigned int i, n = 0;
+	unsigned int i, j, n = 0;
 
 	gc1601_xpon_epon_lan_map(xp);
 	if (!epon_offload || !READ_ONCE(pon->epon.oam_link))
 		return 0;
 	spin_lock_bh(&xp->service_lock);
 	if (!xp->lan_maps) {
-		for (i = 0; i < xp->epon_vlan_count; i++) {
-			unsigned int p;
-
-			for (p = 0; p < 8; p++, n++) {
-				flows[n].vlan_id = xp->epon_vlans[i];
-				flows[n].pcp_match = true;
-				flows[n].pcp = p;
-				flows[n].up_only = p > 0;
-			}
+		for (i = 0; i < xp->epon_learned_count; i++, n++) {
+			flows[n].vlan_id = xp->epon_learned[i].vid;
+			flows[n].pcp_match = true;
+			flows[n].pcp = xp->epon_learned[i].pcp;
+			for (j = 0; j < n; j++)
+				if (flows[j].vlan_id == flows[n].vlan_id) {
+					flows[n].up_only = true;
+					break;
+				}
 		}
-		if (n < GC1601_SFU_FLOWS)
-			flows[n++].untagged = true;
+		flows[n++].untagged = true;
 	}
 	for (i = 0; i < xp->lan_maps && n < GC1601_SFU_FLOWS; i++) {
 		if (xp->lan_map[i].mode == GC1601_SFU_LAN_UNTAGGED) {
@@ -255,7 +254,8 @@ void gc1601_xpon_sfu_kick(struct gc1601_pon *pon)
 {
 	if (!READ_ONCE(pon->epon.data_up)) {
 		spin_lock_bh(&pon->xp.service_lock);
-		pon->xp.epon_vlan_count = 0;
+		pon->xp.epon_learned_count = 0;
+		pon->xp.epon_capacity_misses = 0;
 		spin_unlock_bh(&pon->xp.service_lock);
 	}
 	pon->xp.sfu_retries = 0;
@@ -322,17 +322,21 @@ apply:
 	if (!sfu_offload)
 		return;
 
-	if (n == xp->sfu_count && !memcmp(flows, xp->sfu, n * sizeof(*flows)))
+	if (!READ_ONCE(xp->sfu_last_error) && n == xp->sfu_count &&
+	    !memcmp(flows, xp->sfu, n * sizeof(*flows)))
 		return;
 	ret = gc1601_pe_sfu_set(flows, n);
 	GPON_DIAG(flows, pon, flows, n, ret);
+	spin_lock_bh(&xp->service_lock);
+	xp->sfu_last_error = ret;
 	if (!ret) {
 		memcpy(xp->sfu, flows, n * sizeof(*flows));
 		xp->sfu_count = n;
 		xp->sfu_retries = 0;
-	} else if (xp->sfu_retries++ < 2) {
-		mod_delayed_work(system_wq, &xp->sfu_work, 5 * HZ);
 	}
+	spin_unlock_bh(&xp->service_lock);
+	if (ret && xp->sfu_retries++ < 2)
+		mod_delayed_work(system_wq, &xp->sfu_work, 5 * HZ);
 }
 
 static void gc1601_xpon_sfu_update(struct gc1601_xpon *xp)
@@ -350,6 +354,7 @@ static void gc1601_xpon_epon_learn_vlan(struct gc1601_pon *pon,
 	const struct vlan_ethhdr *hdr;
 	unsigned int i;
 	u16 tci, vid;
+	u8 pcp;
 
 	if (READ_ONCE(pon->mode) != GC1601_PON_EPON ||
 	    !READ_ONCE(sfu_offload) || !READ_ONCE(epon_offload))
@@ -372,16 +377,20 @@ static void gc1601_xpon_epon_learn_vlan(struct gc1601_pon *pon,
 	vid = tci & VLAN_VID_MASK;
 	if (!vid || vid == VLAN_VID_MASK || (tci & VLAN_CFI_MASK))
 		return;
+	pcp = (tci & VLAN_PRIO_MASK) >> VLAN_PRIO_SHIFT;
 
 	spin_lock_bh(&xp->service_lock);
 	if (!READ_ONCE(pon->epon.data_up) || xp->sfu_untag_vlan || xp->vlan_maps)
 		goto out;
-	for (i = 0; i < xp->epon_vlan_count; i++)
-		if (xp->epon_vlans[i] == vid)
+	for (i = 0; i < xp->epon_learned_count; i++)
+		if (xp->epon_learned[i].vid == vid && xp->epon_learned[i].pcp == pcp)
 			goto out;
-	if (xp->epon_vlan_count == ARRAY_SIZE(xp->epon_vlans))
+	if (xp->epon_learned_count == ARRAY_SIZE(xp->epon_learned)) {
+		xp->epon_capacity_misses++;
 		goto out;
-	xp->epon_vlans[xp->epon_vlan_count++] = vid;
+	}
+	xp->epon_learned[xp->epon_learned_count].vid = vid;
+	xp->epon_learned[xp->epon_learned_count++].pcp = pcp;
 	gc1601_xpon_sfu_update(xp);
 out:
 	spin_unlock_bh(&xp->service_lock);
@@ -439,7 +448,8 @@ static ssize_t sfu_untag_vlan_store(struct device *dev,
 		return -ERANGE;
 	spin_lock_bh(&pon->xp.service_lock);
 	WRITE_ONCE(pon->xp.sfu_untag_vlan, vid);
-	pon->xp.epon_vlan_count = 0;
+	pon->xp.epon_learned_count = 0;
+	pon->xp.epon_capacity_misses = 0;
 	spin_unlock_bh(&pon->xp.service_lock);
 	gc1601_xpon_sfu_update(&pon->xp);
 	return count;
@@ -502,7 +512,8 @@ static ssize_t sfu_vlan_map_store(struct device *dev,
 	spin_lock_bh(&xp->service_lock);
 	memcpy(xp->vlan_map, map, n * sizeof(*map));
 	xp->vlan_maps = n;
-	xp->epon_vlan_count = 0;
+	xp->epon_learned_count = 0;
+	xp->epon_capacity_misses = 0;
 	spin_unlock_bh(&xp->service_lock);
 	gc1601_xpon_sfu_update(xp);
 	return count;
@@ -538,18 +549,77 @@ static ssize_t sfu_offload_store(struct device *dev,
 		mod_delayed_work(system_wq, &xp->sfu_work, 0);
 	else {
 		ret = gc1601_pe_sfu_set(NULL, 0);
+		spin_lock_bh(&xp->service_lock);
+		xp->sfu_last_error = ret;
+		if (!ret)
+			xp->sfu_count = 0;
+		spin_unlock_bh(&xp->service_lock);
 		if (ret)
 			return ret;
-		xp->sfu_count = 0;
 	}
 	return count;
 }
 static DEVICE_ATTR_RW(sfu_offload);
 
+static ssize_t epon_offload_status_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	struct gc1601_pon *pon = dev_get_drvdata(dev);
+	struct gc1601_xpon *xp = &pon->xp;
+	const char *policy;
+	unsigned int i, j, cached;
+	bool valid, learning;
+	ssize_t len;
+
+	spin_lock_bh(&xp->service_lock);
+	if (READ_ONCE(pon->mode) != GC1601_PON_EPON)
+		policy = "inactive";
+	else if (!READ_ONCE(sfu_offload) || !READ_ONCE(epon_offload))
+		policy = "disabled";
+	else if (!READ_ONCE(pon->epon.data_up))
+		policy = "link-down";
+	else if (xp->sfu_untag_vlan || xp->vlan_maps)
+		policy = "explicit";
+	else
+		policy = "learning";
+	learning = !strcmp(policy, "learning");
+	cached = READ_ONCE(xp->sfu_count);
+	valid = cached <= ARRAY_SIZE(xp->sfu) && !xp->sfu_last_error;
+	len = sysfs_emit(buf,
+		"policy=%s learned=%u capacity=%zu capacity_misses=%lu\n",
+		policy, xp->epon_learned_count, ARRAY_SIZE(xp->epon_learned),
+		xp->epon_capacity_misses);
+	len += sysfs_emit_at(buf, len,
+		"cached_flows=%u cache_valid=%u last_error=%d hardware_hits=unavailable aging=off\n",
+		cached <= ARRAY_SIZE(xp->sfu) ? cached : 0, valid, xp->sfu_last_error);
+	for (i = 0; i < xp->epon_learned_count; i++) {
+		bool up = false, down = false;
+
+		for (j = 0; valid && learning && j < cached; j++) {
+			const struct gc1601_sfu_flow *f = &xp->sfu[j];
+
+			if (f->untagged || f->gem_port || f->tcont ||
+			    f->lan != GC1601_SFU_LAN_SAME ||
+			    f->vlan_id != xp->epon_learned[i].vid)
+				continue;
+			up |= !f->down_only && f->pcp_match &&
+			      f->pcp == xp->epon_learned[i].pcp;
+			down |= !f->up_only;
+		}
+		len += sysfs_emit_at(buf, len,
+			"vlan=%u pbit=%u programmed_up=%u programmed_down=%u\n",
+			xp->epon_learned[i].vid, xp->epon_learned[i].pcp, up, down);
+	}
+	spin_unlock_bh(&xp->service_lock);
+	return len;
+}
+static DEVICE_ATTR_RO(epon_offload_status);
+
 static struct attribute *gc1601_xpon_attrs[] = {
 	&dev_attr_sfu_untag_vlan.attr,
 	&dev_attr_sfu_offload.attr,
 	&dev_attr_sfu_vlan_map.attr,
+	&dev_attr_epon_offload_status.attr,
 	NULL
 };
 
