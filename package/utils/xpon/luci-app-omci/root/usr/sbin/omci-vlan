@@ -24,7 +24,7 @@
 import * as uloop from 'uloop';
 import * as ubus from 'ubus';
 import { cursor } from 'uci';
-import { glob } from 'fs';
+import { readfile } from 'fs';
 
 const PON = 'pon0';
 const BRIDGE = 'br-lan';
@@ -205,7 +205,7 @@ function current_port() {
 
 /* With switch offload, the driver tags: keep pon0 and set omci.main.untag_vlan. */
 function offload_untag(uci, vid) {
-	if (!glob('/sys/class/xpon/*/device/sfu_untag_vlan')?.[0])
+	if (readfile(`/sys/class/net/${PON}/device/sfu_untag_vlan`) == null)
 		return false;
 
 	if (int(uci.get('omci', 'main', 'untag_vlan') ?? '0') != (vid ?? 0)) {

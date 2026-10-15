@@ -306,7 +306,7 @@ return view.extend({
 		var m, s, o;
 
 		m = new form.Map('omci', _('OMCI configuration'),
-			_('Settings for the OMCI agent in the kernel. Changes take effect as soon as they are saved. Leave an identity field empty to keep the value provided by the device.'));
+			_('Settings for the GC1601 OMCI agent in the kernel. Changes take effect as soon as they are saved. Empty identity fields leave the current kernel values unchanged.'));
 
 		s = m.section(form.NamedSection, 'main', 'agent', _('Agent'));
 		s.anonymous = true;
@@ -332,7 +332,7 @@ return view.extend({
 		o.rmempty = false;
 
 		o = s.option(form.Flag, 'reboot', _('Allow OLT-requested reboot'));
-		o.default = o.enabled;
+		o.default = o.disabled;
 		o.rmempty = false;
 
 		o = s.option(form.DynamicList, 'vlan_translate', _('VLAN translation'));
@@ -362,12 +362,12 @@ return view.extend({
 
 		o = s.option(form.Value, 'serial', _('GPON serial number'));
 		o.datatype = 'maxlength(32)';
-		o.placeholder = 'MSTC12345678';
+		o.placeholder = 'TPLG12345678';
 		o.description = _('Serial number reported to the OLT: four vendor characters followed by eight hexadecimal digits.');
 
 		o = s.option(form.Value, 'vendor_id', _('Vendor ID'));
 		o.datatype = 'maxlength(16)';
-		o.placeholder = 'MSTC';
+		o.placeholder = 'TPLG';
 
 		o = s.option(form.Value, 'hardware_version', _('Hardware version'));
 		o.datatype = 'maxlength(14)';
@@ -399,6 +399,7 @@ return view.extend({
 
 		o = s.option(form.Value, 'traffic_management_option', _('Traffic management option'));
 		o.datatype = 'range(0,255)';
+		o.description = _('Advertised OMCI capability. Leave empty to keep the GC1601 driver default; this setting does not enable hardware traffic shaping.');
 
 		o = s.option(form.ListValue, 'onu_type', _('ONU type'));
 		o.value('', _('Keep kernel value'));
@@ -407,7 +408,8 @@ return view.extend({
 		});
 
 		o = s.option(form.Value, 'uni_count', _('UNI count'));
-		o.datatype = 'range(0,255)';
+		o.datatype = 'range(1,16)';
+		o.description = _('Number of Ethernet UNIs advertised to the OLT. Leave empty to use the board description. Advertising extra UNIs does not add physical Ethernet ports.');
 
 		s = m.section(form.NamedSection, 'vlan', 'vlan', _('LAN VLAN mode'),
 			_('How the bridge carries the service VLAN between the OLT and the LAN port.'));

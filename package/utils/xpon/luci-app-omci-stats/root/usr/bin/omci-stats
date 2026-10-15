@@ -1,6 +1,6 @@
 #!/bin/sh
-# Live status of the GPON ONU in front of this router (TP-Link XZ000-G3 with
-# the OpenWrt OMCI agent), read from its read-only ubus API over HTTP.
+# Live status of the GPON ONU in front of this router running the OpenWrt
+# OMCI agent, read from its read-only ubus API over HTTP.
 #
 #   omci-stats            show everything once
 #   omci-stats -w [SEC]   refresh every SEC seconds (default 5), Ctrl+C to stop

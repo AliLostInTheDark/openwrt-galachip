@@ -1,6 +1,6 @@
 {
 	"luci-app-omci": {
-		"description": "Grant access to the OMCI control plane",
+		"description": "Grant access to the GC1601 OMCI control plane",
 		"read": {
 			"ubus": {
 				"omci.agent": [
@@ -24,43 +24,44 @@
 				]
 			},
 			"uci": [
-				"omci"
+				"omci",
+				"network"
 			],
 			"file": {
 				"/sys/class/net/pon0/device/allow_tx": [
 					"read"
 				],
-				"/sys/devices/platform/soc/*.pon/allow_tx": [
+				"/sys/devices/platform/soc/90cc0000.pon/allow_tx": [
 					"read"
 				],
 				"/sys/class/net/pon0/device/tx_hold": [
 					"read"
 				],
-				"/sys/devices/platform/soc/*.pon/tx_hold": [
+				"/sys/devices/platform/soc/90cc0000.pon/tx_hold": [
 					"read"
 				],
 				"/sys/class/net/pon0/device/sfu_offload": [
 					"read"
 				],
-				"/sys/devices/platform/soc/*.pon/sfu_offload": [
+				"/sys/devices/platform/soc/90cc0000.pon/sfu_offload": [
 					"read"
 				],
 				"/sys/class/net/pon0/device/gpon_ber": [
 					"read"
 				],
-				"/sys/devices/platform/soc/*.pon/gpon_ber": [
+				"/sys/devices/platform/soc/90cc0000.pon/gpon_ber": [
 					"read"
 				],
 				"/sys/class/net/pon0/device/pon_counters": [
 					"read"
 				],
-				"/sys/devices/platform/soc/*.pon/pon_counters": [
+				"/sys/devices/platform/soc/90cc0000.pon/pon_counters": [
 					"read"
 				],
 				"/sys/class/net/pon0/device/tcont_stats": [
 					"read"
 				],
-				"/sys/devices/platform/soc/*.pon/tcont_stats": [
+				"/sys/devices/platform/soc/90cc0000.pon/tcont_stats": [
 					"read"
 				],
 				"/etc/xpon-rogue": [
@@ -95,7 +96,7 @@
 				"/sys/class/net/pon0/device/tx_hold": [
 					"write"
 				],
-				"/sys/devices/platform/soc/*.pon/tx_hold": [
+				"/sys/devices/platform/soc/90cc0000.pon/tx_hold": [
 					"write"
 				],
 				"/etc/xpon-rogue": [
