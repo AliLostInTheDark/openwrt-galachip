@@ -174,7 +174,8 @@ static void diag_tx(struct gc1601_pon *pon, const u8 *data, unsigned int len, in
 	if (atomic_inc_return(&tx_logged) > tx_log)
 		return;
 	dev_info(pon->dev, "epon-diag: tx len=%u %pM -> %pM type %04x: %s\n", len,
-		 data + ETH_ALEN, data, type, ret ? "refused, LLID 0 not registered" : "sent on LLID 0");
+		 data + ETH_ALEN, data, type,
+		 ret ? "blocked by EPON registration/OAM gate" : "accepted for LLID 0 TX");
 }
 
 static const struct gc1601_epon_diag_ops diag_ops = {

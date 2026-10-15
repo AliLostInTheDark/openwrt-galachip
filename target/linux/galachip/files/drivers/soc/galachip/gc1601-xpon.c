@@ -1083,6 +1083,12 @@ static netdev_tx_t gc1601_pon0_xmit_frame(struct sk_buff *skb, struct net_device
 	bool tagged;
 	u16 vid = 0;
 
+	/* OAM discovery must stay untagged, independent of the service VLAN. */
+	if (READ_ONCE(pon->mode) == GC1601_PON_EPON &&
+	    skb->len >= ETH_HLEN &&
+	    get_unaligned_be16(skb->data + 2 * ETH_ALEN) == ETH_P_SLOW)
+		return gc1601_pon0_xmit_epon(pon, skb, dev);
+
 	tagged = !__vlan_get_tag(skb, &vid);
 	if (gc1601_xpon_lan_map(&pon->xp, true, tagged, vid & VLAN_VID_MASK, &map)) {
 		if (map.mode == GC1601_SFU_LAN_TRANSLATE) {
