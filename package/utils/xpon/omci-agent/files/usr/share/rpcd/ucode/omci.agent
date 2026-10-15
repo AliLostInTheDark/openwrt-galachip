@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * rpcd backend for Linux net/omci.
+ * GC1601 rpcd backend for Linux xPON OMCI.
  *
  * There is intentionally no process execution in this file. Every kernel
  * operation goes through the native ucode module installed as omci.so.
@@ -11,13 +11,15 @@ import * as omci from 'omci';
 import { connect } from 'ubus';
 import { cursor } from 'uci';
 import { interval } from 'uloop';
-import { glob, readfile, writefile } from 'fs';
+import { readfile, writefile } from 'fs';
 
 const uci = cursor();
 const event_bus = connect();
 const DEVICE_DEFAULT = 0;
 const CONFIG_POLL_MS = 2000;
 const CONFIG_RETRY_POLLS = 15;
+const XPON_SYSFS = '/sys/class/xpon/pon0';
+const PON_SYSFS = '/sys/class/net/pon0/device';
 
 let auto_apply_busy = false;
 let last_applied_signature = null;
@@ -281,18 +283,17 @@ function decorate_status(device, status) {
 	}
 
 	/* ONU-G credentials status the OLT last wrote for the LOID (G.988) */
-	let path = glob('/sys/class/xpon/*/omci/loid_status')?.[0];
-	let loid_status = path ? int(trim(readfile(path) ?? '')) : null;
+	let loid_status = int(trim(readfile(`${XPON_SYSFS}/omci/loid_status`) ?? ''));
 	if (type(loid_status) == 'int') {
 		status.loid_status = loid_status;
 		status.loid_status_name = credentials_names[loid_status] ?? `unknown-${loid_status}`;
 	}
 
 	/* ANI-G and PPTP Ethernet UNI alarms the agent reports to the OLT */
-	path = glob('/sys/class/xpon/*/omci/alarms')?.[0];
-	if (path) {
+	let alarms = readfile(`${XPON_SYSFS}/omci/alarms`);
+	if (alarms != null) {
 		status.omci_alarms = [];
-		for (let line in split(trim(readfile(path) ?? ''), '\n')) {
+		for (let line in split(trim(alarms), '\n')) {
 			let f = split(line, ' ');
 			if (length(f) == 4)
 				push(status.omci_alarms, {
@@ -722,8 +723,9 @@ function sync_transmit(fresh) {
 	if ((uci_main(fresh).transmit ?? '1') == '0')
 		return;
 
-	let path = glob('/sys/class/xpon/*/device/allow_tx')?.[0];
-	if (path && trim(readfile(path) ?? '') != '1')
+	let path = `${PON_SYSFS}/allow_tx`;
+	let current = readfile(path);
+	if (current != null && trim(current) != '1')
 		writefile(path, '1');
 }
 
@@ -733,14 +735,15 @@ function sync_transmit(fresh) {
  * 0 leaves every service tagged on the LAN.
  */
 function sync_untag_vlan(fresh) {
-	let path = glob('/sys/class/xpon/*/device/sfu_untag_vlan')?.[0];
-	if (!path)
+	let path = `${PON_SYSFS}/sfu_untag_vlan`;
+	let current = readfile(path);
+	if (current == null)
 		return;
 
 	let vid = int(uci_main(fresh).untag_vlan ?? '0');
 	if (vid == null || vid < 0 || vid > 4094)
 		vid = 0;
-	if (int(trim(readfile(path) ?? '0')) != vid)
+	if (int(trim(current)) != vid)
 		writefile(path, `${vid}`);
 }
 
@@ -751,7 +754,7 @@ function sync_untag_vlan(fresh) {
  * on every poll, so a bridge saved from LuCI is corrected within seconds.
  */
 function migrate_pon_vlan_ports() {
-	if (!glob('/sys/class/xpon/*/device/sfu_untag_vlan')?.[0])
+	if (readfile(`${PON_SYSFS}/sfu_untag_vlan`) == null)
 		return;
 
 	let net = cursor(), vid = 0, changed = false;
@@ -805,8 +808,9 @@ function vlan_map_entries(out, list, mode) {
 }
 
 function sync_vlan_map(fresh) {
-	let path = glob('/sys/class/xpon/*/device/sfu_vlan_map')?.[0];
-	if (!path)
+	let path = `${PON_SYSFS}/sfu_vlan_map`;
+	let current = readfile(path);
+	if (current == null)
 		return;
 
 	let main = uci_main(fresh), entries = [];
@@ -815,13 +819,13 @@ function sync_vlan_map(fresh) {
 	vlan_map_entries(entries, main.vlan_stack, 's');
 	let want = join(' ', entries);
 	/* A zero-byte write never reaches the driver: a newline clears the map. */
-	if (trim(readfile(path) ?? '') != want)
+	if (trim(current) != want)
 		writefile(path, `${want}\n`);
 }
 
 /* In EPON mode epon-oamd owns the LAN VLAN rewrite (CTC Port VLAN). */
 function pon_mode_epon() {
-	return trim(readfile('/sys/class/xpon/pon0/mode_current') ?? '') == 'epon';
+	return trim(readfile(`${XPON_SYSFS}/mode_current`) ?? '') == 'epon';
 }
 
 /* omci-vlanscan clears the LAN VLAN rewrite while it probes pon0. */
@@ -853,8 +857,8 @@ if (!pon_mode_epon())
  * The xPON driver holds the first GPON activation until the identity above is
  * applied, so the OLT never sees the flash serial ranging first. Release it.
  */
-let identity_wait = glob('/sys/class/xpon/*/device/gpon_identity_wait')?.[0];
-if (identity_wait)
+let identity_wait = `${PON_SYSFS}/gpon_identity_wait`;
+if (readfile(identity_wait) != null)
 	writefile(identity_wait, '0');
 
 sync_transmit(true);

@@ -4,7 +4,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=omci-agent
 PKG_VERSION:=0.9.2
-PKG_RELEASE:=15
+PKG_RELEASE:=16
 PKG_MAINTAINER:=Matheus Sampaio Queiroga <srherobrine20@gmail.com>
 PKG_LICENSE:=GPL-2.0-only
 
@@ -14,13 +14,14 @@ define Package/omci-agent
   SECTION:=utils
   CATEGORY:=Utilities
   SUBMENU:=xPON
-  TITLE:=Native ucode userspace control plane for Linux OMCI
-  DEPENDS:=+ucode +libucode +ucode-mod-ubus +ucode-mod-uci +ucode-mod-uloop +rpcd +rpcd-mod-ucode +libuci +libubus
+  TITLE:=GC1601 OMCI userspace control plane
+  DEPENDS:=@TARGET_galachip_gc1601 +ucode +libucode +ucode-mod-ubus +ucode-mod-uci +ucode-mod-uloop +rpcd +rpcd-mod-ucode +libuci +libubus
 endef
 
 define Package/omci-agent/description
- Native C ucode binding for the Linux net/omci Generic Netlink API, an rpcd
- ucode service exposing omci.agent over ubus, and an omcictl ubus client.
+ Native C ucode binding for the Linux xPON OMCI Generic Netlink API, an rpcd
+ ucode service exposing omci.agent over ubus, and an omcictl ubus client
+ for the GalaChip GC1601.
  No helper process is used between rpcd and the kernel.
 endef
 

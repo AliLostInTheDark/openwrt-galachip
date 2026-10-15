@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Native ucode binding for Linux net/omci Generic Netlink.
+ * Native ucode binding for Linux xPON OMCI Generic Netlink.
  *
  * The module deliberately contains the entire kernel/userspace transport.
  * The rpcd ucode backend imports this .so directly; it does not execute a
