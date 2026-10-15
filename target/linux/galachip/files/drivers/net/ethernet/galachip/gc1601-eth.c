@@ -640,7 +640,7 @@ static void gc1601_sr_update(struct gc1601_eth *priv, u32 off, u32 clear, u32 se
  * leaves the engine minimal, so frames the switch takes are dropped without
  * it. car_init (CPU trap rate limits) is left out.
  */
-static void gc1601_uni_attrs_apply(struct gc1601_eth *priv);
+static int gc1601_uni_attrs_apply(struct gc1601_eth *priv);
 
 /*
  * The 2024-12 stock image ends S03sdk with "w e4002 bd" on dbg_reg, setting
@@ -707,8 +707,7 @@ static int gc1601_sr_hw_init(struct gc1601_eth *priv)
 
 	gc1601_sr_update(priv, GC_SR_HA + 0x2c, ~0xffffe328, 9000);
 	gc1601_sr_update(priv, GC_SR_HA + 0x2c, 0x8000, 0x4000);
-	gc1601_uni_attrs_apply(priv);
-	return 0;
+	return gc1601_uni_attrs_apply(priv);
 }
 
 /* chipset_default_flow word 0: flow info 0, queue, egress GEM or UNI. */
@@ -2160,14 +2159,15 @@ static int gc1601_uni_shape(struct gc1601_eth *priv, u32 kbps)
 }
 
 /* All zero gives the defaults: no pause, ageing 300 s, no MAC limit, no rate limits. */
-static void gc1601_uni_attrs_write(struct gc1601_eth *priv, const struct gc1601_uni_attrs *a)
+static int gc1601_uni_attrs_write(struct gc1601_eth *priv, const struct gc1601_uni_attrs *a)
 {
 	void __iomem *gmac = priv->base[GC1601_GMAC];
 	u32 ageing = a->ageing_s ?: 300;
 	u16 learn = min_t(u16, a->learn_limit, 1023);
+	int shape_ret, police_ret;
 
 	if (!priv->switch_base)
-		return;
+		return -ENODEV;
 
 	writel(!!a->pause_quanta, gmac + GC_GMAC_PAUSE_RX);
 	writel((u32)a->pause_quanta << 16 | (a->pause_quanta ? BIT(1) : 0),
@@ -2180,20 +2180,26 @@ static void gc1601_uni_attrs_write(struct gc1601_eth *priv, const struct gc1601_
 	gc1601_sr_update(priv, GC_SR_SRC, GC_SR_LEARN_UNI, learn ? GC_SR_LEARN_UNI : 0);
 	writel(learn, priv->switch_base + GC_SR_SRC + 0x84);
 
-	if (gc1601_uni_shape(priv, a->down_kbps) || gc1601_uni_police(priv, a->up_kbps))
-		dev_warn(priv->dev, "UNI rate limit tables did not answer\n");
+	shape_ret = gc1601_uni_shape(priv, a->down_kbps);
+	police_ret = gc1601_uni_police(priv, a->up_kbps);
+	if (shape_ret || police_ret)
+		dev_warn(priv->dev, "UNI rate limit tables failed: shaper %d, policer %d\n",
+			 shape_ret, police_ret);
+	return shape_ret ?: police_ret;
 }
 
-static void gc1601_uni_attrs_apply(struct gc1601_eth *priv)
+static int gc1601_uni_attrs_apply(struct gc1601_eth *priv)
 {
 	if (uni_omci_attrs)
-		gc1601_uni_attrs_write(priv, &priv->uni_attrs);
+		return gc1601_uni_attrs_write(priv, &priv->uni_attrs);
+	return 0;
 }
 
 /* Writes take effect at once: the OLT's values on 1, the defaults back on 0. */
 static int uni_omci_attrs_set(const char *val, const struct kernel_param *kp)
 {
 	static const struct gc1601_uni_attrs defaults;
+	const struct gc1601_uni_attrs *requested, *rollback;
 	bool was = uni_omci_attrs;
 	struct gc1601_eth *priv;
 	int ret;
@@ -2203,9 +2209,17 @@ static int uni_omci_attrs_set(const char *val, const struct kernel_param *kp)
 	if (!ret && was != uni_omci_attrs && gc1601_pe_netdev) {
 		priv = netdev_priv(gc1601_pe_netdev);
 		if (READ_ONCE(priv->running)) {
-			gc1601_uni_attrs_write(priv, uni_omci_attrs ? &priv->uni_attrs : &defaults);
-			dev_info(priv->dev, "UNI attributes from the OLT %s\n",
-				 uni_omci_attrs ? "applied" : "removed, defaults restored");
+			requested = uni_omci_attrs ? &priv->uni_attrs : &defaults;
+			ret = gc1601_uni_attrs_write(priv, requested);
+			if (ret) {
+				uni_omci_attrs = was;
+				rollback = was ? &priv->uni_attrs : &defaults;
+				if (gc1601_uni_attrs_write(priv, rollback))
+					dev_warn(priv->dev, "UNI attributes rollback failed\n");
+			} else {
+				dev_info(priv->dev, "UNI attributes from the OLT %s\n",
+					 uni_omci_attrs ? "applied" : "removed, defaults restored");
+			}
 		}
 	}
 	mutex_unlock(&gc1601_uni_lock);
@@ -2222,6 +2236,7 @@ MODULE_PARM_DESC(uni_omci_attrs, "apply the OLT's UNI pause, MAC table and rate 
 int gc1601_pe_set_uni_attrs(const struct gc1601_uni_attrs *attrs)
 {
 	struct gc1601_eth *priv;
+	struct gc1601_uni_attrs previous;
 	int ret = 0;
 
 	mutex_lock(&gc1601_uni_lock);
@@ -2230,6 +2245,7 @@ int gc1601_pe_set_uni_attrs(const struct gc1601_uni_attrs *attrs)
 		goto out;
 	}
 	priv = netdev_priv(gc1601_pe_netdev);
+	previous = priv->uni_attrs;
 	priv->uni_attrs = *attrs;
 	dev_info(priv->dev,
 		 "UNI attributes from the OLT: pause %u quanta, ageing %u s, MAC limit %u, down %u kbit/s, up %u kbit/s%s\n",
@@ -2238,7 +2254,12 @@ int gc1601_pe_set_uni_attrs(const struct gc1601_uni_attrs *attrs)
 		 uni_omci_attrs ? "" : " (not applied: uni_omci_attrs=0)");
 	/* Interface start applies them too; the switch init resets the ageing. */
 	if (READ_ONCE(priv->running))
-		gc1601_uni_attrs_apply(priv);
+		ret = gc1601_uni_attrs_apply(priv);
+	if (ret) {
+		priv->uni_attrs = previous;
+		if (gc1601_uni_attrs_apply(priv))
+			dev_warn(priv->dev, "UNI attributes rollback failed\n");
+	}
 out:
 	mutex_unlock(&gc1601_uni_lock);
 	return ret;

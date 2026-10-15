@@ -3638,7 +3638,7 @@ static u32 omci_agent_td_kbps(struct omci_agent *agent, u16 entity_id)
  * 12). Handed to the device only when they change; when the OLT removes
  * the bridge port, the defaults (all zero) go back.
  */
-static void omci_agent_apply_uni_attrs_locked(struct omci_device *odev)
+static int omci_agent_apply_uni_attrs_locked(struct omci_device *odev)
 {
 	struct omci_agent *agent = &odev->agent;
 	const struct omci_device_ops *ops = odev->ops;
@@ -3646,9 +3646,10 @@ static void omci_agent_apply_uni_attrs_locked(struct omci_device *odev)
 	struct omci_mib_object *port, *pptp, *bsp;
 	unsigned long index;
 	u16 uni_entity = 0;
+	int ret;
 
 	if (!ops->set_uni_attrs)
-		return;
+		return 0;
 
 	xa_for_each(&agent->mib, index, port) {
 		if (!omci_mib_object_active(agent, port) ||
@@ -3677,15 +3678,17 @@ static void omci_agent_apply_uni_attrs_locked(struct omci_device *odev)
 	}
 
 	if (agent->uni_attrs_set && !memcmp(&attrs, &agent->uni_attrs, sizeof(attrs)))
-		return;
+		return 0;
 	if (!uni_entity && !agent->uni_attrs_set)
-		return;
+		return 0;
 	uni_entity = omci_profile_normalize_uni_entity(agent->profile_effective,
 						       uni_entity);
-	if (!ops->set_uni_attrs(odev, uni_entity, &attrs)) {
-		agent->uni_attrs = attrs;
-		agent->uni_attrs_set = true;
-	}
+	ret = ops->set_uni_attrs(odev, uni_entity, &attrs);
+	if (ret)
+		return ret;
+	agent->uni_attrs = attrs;
+	agent->uni_attrs_set = true;
+	return 0;
 }
 
 static int omci_agent_reconcile_services_locked(struct omci_device *odev)
@@ -3715,7 +3718,8 @@ static int omci_agent_reconcile_services_locked(struct omci_device *odev)
 	}
 
 	ret = omci_agent_apply_services_locked(odev, &desired);
-	omci_agent_apply_uni_attrs_locked(odev);
+	if (!ret)
+		ret = omci_agent_apply_uni_attrs_locked(odev);
 
 out:
 	omci_agent_free_service_array(&desired);
@@ -3834,6 +3838,8 @@ rollback:
 	if (hardware_applied)
 		omci_agent_hw_update(odev, object, OMCI_MSG_TYPE_DELETE,
 				     object->data);
+	if (stored && omci_agent_datapath_class(agent, class_id))
+		omci_agent_reconcile_services_locked(odev);
 out:
 	kfree(object);
 	return result;
@@ -4014,6 +4020,8 @@ rollback_processing:
 					     object->data);
 		kfree(object);
 	}
+	if (omci_agent_datapath_class(agent, class_id))
+		omci_agent_reconcile_services_locked(odev);
 	ret = OMCI_RESULT_PROCESSING_ERROR;
 
 out_free_previous:
