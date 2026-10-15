@@ -183,6 +183,8 @@ static void gc1601_gpon_del_alloc(struct gc1601_pon *pon, unsigned int index)
 		writel(readl(reg) & ~ONU_ALLOC_VALID, reg);
 		return;
 	}
+	/* No old grant may transmit a queued burst after this slot is reused. */
+	gc1601_pe_flush_tcont(index);
 	reg = onu_reg(pon, ONU_ALLOC + 4 * (index / 2));
 	writel(readl(reg) & ~(0x1fff << (16 * (index % 2))), reg);
 	gc1601_gpon_set_instance(pon, index, ONU_INSTANCE_FREE);
@@ -720,7 +722,7 @@ static void gc1601_gpon_assign_alloc(struct gc1601_pon *pon, const u8 *msg)
 {
 	struct gc1601_gpon *g = &pon->gpon;
 	u16 id = msg[2] << 4 | msg[3] >> 4;
-	bool changed = false;
+	bool changed = false, removed = false;
 	int index;
 
 	index = gc1601_gpon_find_alloc(g, id);
@@ -748,9 +750,13 @@ static void gc1601_gpon_assign_alloc(struct gc1601_pon *pon, const u8 *msg)
 	} else if (msg[4] == 0xff && index > 0) {
 		gc1601_gpon_del_alloc(pon, index);
 		changed = true;
+		removed = true;
 	}
-	if (changed)
+	if (changed) {
 		gc1601_xpon_report_alloc(pon);
+		if (removed)
+			gc1601_xpon_sfu_kick(pon);
+	}
 	gc1601_gpon_ack(pon, msg);
 }
 
