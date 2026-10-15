@@ -256,6 +256,9 @@ struct gc1601_epon {
 	unsigned int head;		/* written by the poll */
 	unsigned int tail;		/* read by the work */
 	unsigned int dropped;
+	bool loss_pending;		/* preserve transitions across event overflow */
+	bool oam_reset_pending;
+	bool nack_pending;
 	u64 rx_frames;
 	u64 rx_mpcp;
 	u64 rx_oam;

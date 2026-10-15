@@ -245,14 +245,21 @@ static enum hrtimer_restart gc1601_epon_poll(struct hrtimer *t)
 	/* Vendor EMAC IRQ status is read-clear; repeated bits are new events. */
 	gc1601_epon_count(e->llid_irq_count, llid_irq);
 	gc1601_epon_count(e->mpcp_irq_count, mpcp_irq);
+	if (llid_irq & EMAC_IRQ_NACK(0))
+		e->nack_pending = true;
+	if ((e->registered & ~registered) || (e->signal && !signal))
+		e->loss_pending = true;
+	if ((e->registered & ~registered & BIT(0)) || (e->signal && !signal))
+		e->oam_reset_pending = true;
 	if (llid_irq || mpcp_irq ||
 	    signal != e->signal || sync != e->sync || registered != e->registered) {
 		struct gc1601_epon_event *ev = &e->ring[e->head % EPON_EVENTS];
 
-		if (e->head - e->tail >= EPON_EVENTS)
+		if (e->head - e->tail >= EPON_EVENTS) {
 			e->dropped++;
-		else
-			e->head++;
+			e->tail++;
+		}
+		e->head++;
 		*ev = (struct gc1601_epon_event) {
 			.ns = ktime_get_ns(),
 			.llid_irq = llid_irq,
@@ -321,12 +328,19 @@ static void gc1601_epon_work(struct work_struct *w)
 	struct gc1601_pon *pon = container_of(e, struct gc1601_pon, epon);
 	const struct gc1601_epon_diag_ops *diag;
 	struct gc1601_epon_event ev, last = { };
-	bool have = false;
+	bool have = false, loss, oam_reset;
 	u32 nack = 0;
 
 	for (;;) {
 		spin_lock_irq(&e->lock);
 		if (e->tail == e->head) {
+			loss = e->loss_pending;
+			oam_reset = e->oam_reset_pending;
+			if (e->nack_pending)
+				nack |= EMAC_IRQ_NACK(0);
+			e->loss_pending = false;
+			e->oam_reset_pending = false;
+			e->nack_pending = false;
 			spin_unlock_irq(&e->lock);
 			break;
 		}
@@ -356,8 +370,8 @@ static void gc1601_epon_work(struct work_struct *w)
 	}
 
 	/* local_pre_handle_init: back to discovery drops what LLIDs 0-3 queued. */
-	if (e->reported && ((e->reported_registered & ~last.registered) ||
-			    (e->reported_signal && !last.signal))) {
+	if (loss || (e->reported && ((e->reported_registered & ~last.registered) ||
+			    (e->reported_signal && !last.signal)))) {
 		unsigned int t;
 
 		for (t = 0; t < EPON_LLIDS; t++)
@@ -365,13 +379,14 @@ static void gc1601_epon_work(struct work_struct *w)
 	}
 
 	if (last.registered != e->reported_registered || last.signal != e->reported_signal ||
-	    last.sync != e->reported_sync || !e->reported) {
+	    last.sync != e->reported_sync || !e->reported || oam_reset) {
 		if ((last.registered ^ e->reported_registered) & BIT(0)) {
 			dev_info(pon->dev, "EPON: LLID 0 %s\n",
 				 last.registered & BIT(0) ? "registered" : "deregistered");
 			/* A new registration starts OAM discovery over. */
-			WRITE_ONCE(e->oam_link, false);
 		}
+		if (oam_reset || ((last.registered ^ e->reported_registered) & BIT(0)))
+			WRITE_ONCE(e->oam_link, false);
 		if (last.signal != e->reported_signal || !e->reported)
 			dev_info(pon->dev, "EPON: optical signal %s\n",
 				 last.signal ? "present" : "lost");
@@ -392,6 +407,9 @@ void gc1601_epon_start(struct gc1601_pon *pon)
 		return;
 	spin_lock_irq(&e->lock);
 	e->head = e->tail = 0;
+	e->loss_pending = false;
+	e->oam_reset_pending = false;
+	e->nack_pending = false;
 	e->signal = e->sync = false;
 	e->registered = 0;
 	e->llid_irq_last = e->mpcp_irq_last = 0;
