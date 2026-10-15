@@ -291,5 +291,11 @@ backups.
 ## Credits and license
 
 Maintained by Ifran Ali, based on OpenWrt, Linux, LuCI and the credited
-xPON/OMCI work. Original authorship and file-level license notices are retained.
+xPON/OMCI work.
+
+The `omci-agent` and `luci-app-omci` packages are based on the original Airoha
+GPON OMCI packages by [@Sirherobrine23](https://github.com/Sirherobrine23)
+(**Matheus Sampaio Queiroga**).
+
+Original authorship and file-level license notices are retained.
 OpenWrt is licensed under GPL-2.0; component licenses remain applicable.
