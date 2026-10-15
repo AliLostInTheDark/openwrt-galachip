@@ -688,6 +688,31 @@ static int gc1601_xpon_set_uni_attrs(struct omci_device *odev, u16 entity_id,
 	return gc1601_pe_set_uni_attrs(&a);
 }
 
+static void gc1601_xpon_disable_unused_gem(struct gc1601_pon *pon, u16 gem_port)
+{
+	struct gc1601_xpon *xp = &pon->xp;
+	bool used = false;
+	unsigned int i;
+
+	if (gem_port == U16_MAX ||
+	    (READ_ONCE(pon->gpon.omcc_valid) &&
+	     READ_ONCE(pon->gpon.omcc_port) == gem_port))
+		return;
+
+	spin_lock_bh(&xp->service_lock);
+	for (i = 0; i < GPON_SERVICES; i++) {
+		if ((xp->service[i].used && xp->service[i].gem_port == gem_port) ||
+		    (xp->multicast[i].used && xp->multicast[i].gem_port == gem_port)) {
+			used = true;
+			break;
+		}
+	}
+	spin_unlock_bh(&xp->service_lock);
+
+	if (!used)
+		gc1601_gpon_omci_set_gem(pon, gem_port, false, false);
+}
+
 /* Hardware forwarding comes with the data path; record what OMCI asked for. */
 /*
  * The pon0 data path carries the unicast services through the CPU: upstream
@@ -700,6 +725,7 @@ static int gc1601_xpon_replace_service(struct omci_device *odev,
 	struct gc1601_pon *pon = omci_device_priv(odev);
 	struct gc1601_xpon *xp = &pon->xp;
 	struct gc1601_service *svc = NULL;
+	u16 old_gem = U16_MAX;
 	unsigned int i;
 	int ret;
 
@@ -709,8 +735,35 @@ static int gc1601_xpon_replace_service(struct omci_device *odev,
 		service->vlan_valid ? service->vlan_id : 0,
 		service->multicast ? " multicast" : "");
 	GPON_DIAG(service, pon, service);
-	if (service->multicast)
+	if (service->gem_port_id > 0xfff)
+		return -ERANGE;
+	if (service->multicast) {
+		unsigned int free_slot = GPON_SERVICES;
+
+		spin_lock_bh(&xp->service_lock);
+		for (i = 0; i < GPON_SERVICES; i++) {
+			if (xp->multicast[i].used &&
+			    xp->multicast[i].cookie == service->cookie)
+				break;
+			if (!xp->multicast[i].used && free_slot == GPON_SERVICES)
+				free_slot = i;
+		}
+		if (i == GPON_SERVICES)
+			i = free_slot;
+		if (i < GPON_SERVICES) {
+			if (xp->multicast[i].used)
+				old_gem = xp->multicast[i].gem_port;
+			xp->multicast[i].cookie = service->cookie;
+			xp->multicast[i].gem_port = service->gem_port_id;
+			xp->multicast[i].used = true;
+		}
+		spin_unlock_bh(&xp->service_lock);
+		if (i == GPON_SERVICES)
+			return -ENOSPC;
+		if (old_gem != service->gem_port_id)
+			gc1601_xpon_disable_unused_gem(pon, old_gem);
 		return 0;
+	}
 	ret = gc1601_gpon_restore_service(pon, service->gem_port_id, service->alloc_id);
 	if (ret)
 		return ret;
@@ -725,6 +778,8 @@ static int gc1601_xpon_replace_service(struct omci_device *odev,
 			svc = &xp->service[i];
 	}
 	if (svc) {
+		if (svc->used)
+			old_gem = svc->gem_port;
 		if (!svc->used)
 			xp->services++;
 		*svc = (struct gc1601_service) {
@@ -749,6 +804,8 @@ static int gc1601_xpon_replace_service(struct omci_device *odev,
 				     service->cookie);
 		return -ENOSPC;
 	}
+	if (old_gem != service->gem_port_id)
+		gc1601_xpon_disable_unused_gem(pon, old_gem);
 	gc1601_xpon_sfu_update(xp);
 	return 0;
 }
@@ -757,17 +814,24 @@ static int gc1601_xpon_delete_service(struct omci_device *odev, u32 cookie)
 {
 	struct gc1601_pon *pon = omci_device_priv(odev);
 	struct gc1601_xpon *xp = &pon->xp;
+	u16 gem_port = U16_MAX;
 	unsigned int i;
 
 	GPON_DIAG(service_delete, pon, cookie);
 	spin_lock_bh(&xp->service_lock);
 	for (i = 0; i < GPON_SERVICES; i++) {
 		if (xp->service[i].used && xp->service[i].cookie == cookie) {
+			gem_port = xp->service[i].gem_port;
 			xp->service[i].used = false;
 			xp->services--;
 		}
+		if (xp->multicast[i].used && xp->multicast[i].cookie == cookie) {
+			gem_port = xp->multicast[i].gem_port;
+			xp->multicast[i].used = false;
+		}
 	}
 	spin_unlock_bh(&xp->service_lock);
+	gc1601_xpon_disable_unused_gem(pon, gem_port);
 	gc1601_xpon_sfu_update(xp);
 	return 0;
 }

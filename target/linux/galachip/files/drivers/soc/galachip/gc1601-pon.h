@@ -354,6 +354,12 @@ struct gc1601_xpon {
 		u8 uni_mode;		/* enum gc1601_sfu_lan, from OMCI */
 		u16 uni_vid;
 	} service[GPON_SERVICES];
+	/* Multicast has no pon0/SFU rule, but can share a hardware GEM. */
+	struct {
+		u32 cookie;
+		u16 gem_port;
+		bool used;
+	} multicast[GPON_SERVICES];
 	int olt_profile;		/* last effective profile, -1 before the first */
 	unsigned long omci_rx_errors;	/* not OMCI-shaped */
 	unsigned long omci_crc_errors;
