@@ -1,0 +1,42 @@
+From 089e98432c4ab48d4b12a23a9aa6cffcfbbb644c Mon Sep 17 00:00:00 2001
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Date: Mon, 12 Oct 2026 23:38:45 +0530
+Subject: [PATCH] usr: tune XZ initramfs compression for small flash
+
+Use the ARM BCJ filter and the LZMA2 lc/lp/pb settings OpenWrt uses for
+squashfs. This saves about 45 KiB on the XZ000-G7 initramfs and keeps the
+RAM-boot kernel image below the loader's packet-engine DMA buffers.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+ usr/Makefile | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/usr/Makefile b/usr/Makefile
+index 90398a751..d283d6eff 100644
+--- a/usr/Makefile
++++ b/usr/Makefile
+@@ -7,13 +7,18 @@ compress-y					:= copy
+ compress-$(CONFIG_INITRAMFS_COMPRESSION_GZIP)	:= gzip
+ compress-$(CONFIG_INITRAMFS_COMPRESSION_BZIP2)	:= bzip2
+ compress-$(CONFIG_INITRAMFS_COMPRESSION_LZMA)	:= lzma
+-compress-$(CONFIG_INITRAMFS_COMPRESSION_XZ)	:= xzmisc
++compress-$(CONFIG_INITRAMFS_COMPRESSION_XZ)	:= xzinitramfs
+ compress-$(CONFIG_INITRAMFS_COMPRESSION_LZO)	:= lzo
+ compress-$(CONFIG_INITRAMFS_COMPRESSION_LZ4)	:= lz4
+ compress-$(CONFIG_INITRAMFS_COMPRESSION_ZSTD)	:= zstd
+ 
+ obj-$(CONFIG_BLK_DEV_INITRD) := initramfs_data.o
+ 
++# Same LZMA2 tuning as OpenWrt's squashfs, plus the ARM BCJ filter.
++quiet_cmd_xzinitramfs = XZ      $@
++      cmd_xzinitramfs = cat $(real-prereqs) | $(XZ) --check=crc32 --arm \
++			--lzma2=preset=9e,lc=0,lp=2,pb=2,dict=1MiB > $@
++
+ $(obj)/initramfs_data.o: $(obj)/initramfs_inc_data
+ 
+ ramfs-input := $(CONFIG_INITRAMFS_SOURCE)
+-- 
+2.43.0
+

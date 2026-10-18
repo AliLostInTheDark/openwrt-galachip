@@ -1,0 +1,46 @@
+From c8fc344f7edb242c40b57fb5932ac10b36bc3ea1 Mon Sep 17 00:00:00 2001
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Date: Mon, 12 Oct 2026 23:38:45 +0530
+Subject: [PATCH] mtd: mtdsplit: add GalaChip GC1601 firmware parser
+
+Hook up the parser for the GC1601 stock loader image tag, which splits
+the firmware partition into kernel and rootfs.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+ drivers/mtd/mtdsplit/Kconfig  | 5 +++++
+ drivers/mtd/mtdsplit/Makefile | 1 +
+ 2 files changed, 6 insertions(+)
+
+diff --git a/drivers/mtd/mtdsplit/Kconfig b/drivers/mtd/mtdsplit/Kconfig
+index 268eaf163..e34b26bcb 100644
+--- a/drivers/mtd/mtdsplit/Kconfig
++++ b/drivers/mtd/mtdsplit/Kconfig
+@@ -41,6 +41,11 @@ config MTD_SPLIT_CFE_BOOTFS
+ 	  it and run init from it. This parser is responsible for
+ 	  finding appended rootfs.
+ 
++config MTD_SPLIT_GC1601_FW
++	bool "GalaChip GC1601 firmware parser"
++	depends on MTD_SPLIT_SUPPORT
++	select MTD_SPLIT
++
+ config MTD_SPLIT_SEAMA_FW
+ 	bool "Seama firmware parser"
+ 	depends on MTD_SPLIT_SUPPORT
+diff --git a/drivers/mtd/mtdsplit/Makefile b/drivers/mtd/mtdsplit/Makefile
+index 435b475d5..7cc687cdd 100644
+--- a/drivers/mtd/mtdsplit/Makefile
++++ b/drivers/mtd/mtdsplit/Makefile
+@@ -2,6 +2,7 @@ obj-$(CONFIG_MTD_SPLIT)		+= mtdsplit.o
+ obj-$(CONFIG_MTD_SPLIT_BCM63XX_FW) += mtdsplit_bcm63xx.o
+ obj-$(CONFIG_MTD_SPLIT_BCM_WFI_FW) += mtdsplit_bcm_wfi.o
+ obj-$(CONFIG_MTD_SPLIT_CFE_BOOTFS) += mtdsplit_cfe_bootfs.o
++obj-$(CONFIG_MTD_SPLIT_GC1601_FW) += mtdsplit_gc1601.o
+ obj-$(CONFIG_MTD_SPLIT_SEAMA_FW) += mtdsplit_seama.o
+ obj-$(CONFIG_MTD_SPLIT_SEIL_FW) += mtdsplit_seil.o
+ obj-$(CONFIG_MTD_SPLIT_SQUASHFS_ROOT) += mtdsplit_squashfs.o
+-- 
+2.43.0
+

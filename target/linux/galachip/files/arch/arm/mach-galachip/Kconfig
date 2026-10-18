@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config ARCH_GALACHIP
+	bool "GalaChip GC1601A support"
+	depends on ARCH_MULTI_V5
+	depends on CPU_LITTLE_ENDIAN && !CPU_FA526
+	select CPU_FA626TE
+	select COMMON_CLK_GC1601
+	select FARADAY_FTINTC030
+	select GC1601_TIMER
+	help
+	  Support for GalaChip GC1601A platforms using the Faraday FA626TE.
+	  This enables the RAM, serial console, interrupt and timer foundation.
