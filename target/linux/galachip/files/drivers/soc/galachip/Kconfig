@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config GC1601_PACKET_DIAG
+	bool "GC1601 packet-engine diagnostics"
+	depends on ARCH_GALACHIP || COMPILE_TEST
+	depends on OF && HAS_IOMEM
+	help
+	  Expose selected packet-engine configuration registers through sysfs
+	  for GC1601 bring-up. Completion reads require an explicit sysfs
+	  trigger with MAC/RX disabled and no pending RX or scheduler-ready
+	  bits. This does not enable DMA or reset the shared xPON hardware.
+
+config GC1601_PACKET_DMA_TEST
+	bool "GC1601 packet DMA allocation test"
+	depends on GC1601_PACKET_DIAG
+	help
+	  Test Linux-owned coherent packet buffers and descriptor storage at
+	  probe time, then free them without programming hardware addresses.
+	  This does not test device DMA or enable Ethernet packet transfer.
+
+config GC1601_PACKET_SRAM_TEST
+	bool "GC1601 guarded SRAM initialization test"
+	depends on GC1601_PACKET_DIAG && !GC1601_PACKET_DMA_TEST
+	help
+	  Permit one explicit PM/OS SRAM initialization attempt per boot,
+	  with ingress disabled and no pending RX or scheduler-ready bits.
+	  This changes allocator state, but does not publish DMA pointers,
+	  enable traffic or reset shared xPON hardware. Power-cycle afterward.
+
+config GC1601_PACKET_TX_TEST
+	bool "GC1601 one-shot inherited-pool TX test"
+	depends on GC1601_PACKET_DIAG && HAS_DMA
+	depends on !GC1601_PACKET_DMA_TEST && !GC1601_PACKET_SRAM_TEST
+	help
+	  Permit one explicitly requested TX frame using the reserved loader
+	  pool and a Linux-owned descriptor ring. Enable the PMU gate and GMAC
+	  during transmission, hold briefly, then restore quiescent state.
+	  No shared reset or SRAM initialization is issued. DMA storage is retained even
+	  after failure. Capture LAN traffic and power-cycle after the test.
+
+config GC1601_PACKET_RX_TEST
+	bool "GC1601 one-shot guarded RX test"
+	depends on GC1601_PACKET_DIAG && HAS_DMA
+	depends on !GC1601_PACKET_DMA_TEST && !GC1601_PACKET_SRAM_TEST
+	depends on !GC1601_PACKET_TX_TEST
+	help
+	  Permit one explicitly requested RX packet capture using the reserved
+	  loader pool and descriptor ring. Enable PMU gate and GMAC to receive
+	  one frame, acknowledge the descriptor, release the buffer and return
+	  to quiescent state. Power-cycle after the test.
+
+config GC1601_PACKET_LOADER_STATE
+	bool "GC1601 read-only loader state capture"
+	depends on GC1601_PACKET_DIAG && ARCH_GALACHIP
+	depends on !GC1601_PACKET_DMA_TEST && !GC1601_PACKET_SRAM_TEST
+	depends on !GC1601_PACKET_TX_TEST && !GC1601_PACKET_RX_TEST
+	help
+	  Expose the reserved XZ000-G7 loader free-list through its existing
+	  CPU mapping. Disable completion sampling, TX and SRAM tests.
+	  Require the loader arena to remain reserved for the entire boot.
+	  Reads do not establish cache coherency or idle DMA ownership.
+
+config GC1601_PACKET_GATE_TEST
+	bool "GC1601 one-shot RX-gate allocation test"
+	depends on GC1601_PACKET_LOADER_STATE
+	help
+	  Permit one explicit allocation with the RX-engine gate enabled
+	  and MAC ingress disabled. Restore the gate on every exit path.
+	  Retain any allocated buffer until a power cycle; no packet is sent.
+	  This changes allocator state and requires disconnected fiber.
+
+config GC1601_PON
+	tristate "GC1601 GPON/EPON MAC and PON SerDes"
+	depends on ARCH_GALACHIP || COMPILE_TEST
+	depends on OF && HAS_IOMEM && I2C && MTD
+	depends on GC1601_ETH
+	depends on XPON_OMCI
+	help
+	  Report PON SerDes, optical and ONU state through sysfs. Bring up
+	  the PON SerDes in GPON or EPON mode, initialise the matching MAC
+	  with optical RX on, program the BOSA from the hwconfig partition,
+	  run GPON activation or EPON registration and provide the
+	  xPON/OMCI device (pon0). Optical TX stays off until userspace
+	  allows it (allow_tx).
+
+config GC1601_GPON_DIAG
+	tristate "GC1601 GPON diagnostics"
+	depends on GC1601_PON
+	help
+	  Log the GPON activation, PLOAMs, OMCI messages, T-CONT, GEM port
+	  and service set-up and the switch flows to the kernel log, for
+	  bring-up on a new OLT. Read-only; load it only when asked for a
+	  report.
+
+config GC1601_EPON_DIAG
+	tristate "GC1601 EPON diagnostics"
+	depends on GC1601_PON
+	help
+	  Log EPON MAC registers, registration events and the first
+	  downstream and upstream frames to the kernel log, for bring-up on
+	  an EPON OLT. Read-only; load it only when asked for a report.
