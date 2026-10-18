@@ -1,0 +1,57 @@
+{
+	"admin/network/epon": {
+		"title": "EPON",
+		"order": 66,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-epon"
+			],
+			"uci": {
+				"xpon": {
+					"main": {
+						"mode": "epon"
+					}
+				}
+			}
+		}
+	},
+	"admin/network/epon/status": {
+		"title": "Status",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "epon/status"
+		}
+	},
+	"admin/network/epon/config": {
+		"title": "Configuration",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "epon/config"
+		}
+	},
+	"admin/network/epon_off": {
+		"title": "EPON",
+		"order": 66,
+		"action": {
+			"type": "view",
+			"path": "xpon/off"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-xpon"
+			],
+			"uci": {
+				"xpon": {
+					"main": {
+						"mode": "gpon"
+					}
+				}
+			}
+		}
+	}
+}
