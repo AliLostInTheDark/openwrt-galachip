@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 430" width="720" height="430" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>XZ000-G7 firmware architecture</title>
+  <style>
+    .lane { fill: none; stroke: #d0d7de; stroke-dasharray: 4 4; }
+    .label { fill: #59636e; font-size: 11px; font-weight: 600; letter-spacing: .08em; }
+    .box { fill: #f6f8fa; stroke: #d0d7de; }
+    .hw { fill: #f6f8fa; stroke: #16b85a; stroke-width: 1.5; }
+    .title { fill: #1f2328; font-size: 14px; font-weight: 600; }
+    .sub { fill: #59636e; font-size: 12px; }
+    .edge { stroke: #8c959f; stroke-width: 1.5; fill: none; }
+    .data { stroke: #16b85a; stroke-width: 3; fill: none; }
+    .ctl { stroke: #8c959f; stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
+    .tip { fill: #8c959f; }
+    .tip-data { fill: #16b85a; }
+    .note { fill: #59636e; font-size: 12px; }
+    .note-data { fill: #16b85a; font-size: 12px; font-weight: 600; }
+    @media (prefers-color-scheme: dark) {
+      .lane { fill: none; stroke: #3d444d; stroke-dasharray: 4 4; }
+      .label { fill: #9198a1; font-size: 11px; font-weight: 600; letter-spacing: .08em; }
+      .sub { fill: #9198a1; font-size: 12px; }
+      .note { fill: #9198a1; font-size: 12px; }
+      .box { fill: #151b23; stroke: #3d444d; }
+      .hw { fill: #151b23; stroke: #16b85a; stroke-width: 1.5; }
+      .title { fill: #e6edf3; font-size: 14px; font-weight: 600; }
+      .edge { stroke: #656c76; stroke-width: 1.5; fill: none; }
+      .ctl { stroke: #656c76; stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
+      .tip { fill: #656c76; }
+    }
+  </style>
+
+  <!-- lanes -->
+  <line class="lane" x1="20" y1="165" x2="700" y2="165"/>
+  <line class="lane" x1="20" y1="315" x2="700" y2="315"/>
+  <text class="label" x="24" y="30">USERSPACE</text>
+  <text class="label" x="24" y="190">KERNEL</text>
+  <text class="label" x="24" y="340">HARDWARE</text>
+
+  <!-- userspace -->
+  <rect class="box" x="240" y="20" width="300" height="40" rx="8"/>
+  <text class="title" x="390" y="45" text-anchor="middle">LuCI · ubus · omcictl</text>
+
+  <rect class="box" x="150" y="85" width="230" height="56" rx="8"/>
+  <text class="title" x="265" y="108" text-anchor="middle">omcid</text>
+  <text class="sub" x="265" y="127" text-anchor="middle">OMCI protocol, MIB, OLT profiles</text>
+
+  <rect class="box" x="400" y="85" width="230" height="56" rx="8"/>
+  <text class="title" x="515" y="108" text-anchor="middle">epon-oamd</text>
+  <text class="sub" x="515" y="127" text-anchor="middle">EPON OAM, CTC</text>
+
+  <path class="edge" d="M340 60V72H265V78"/>
+  <path class="edge" d="M440 60V72H515V78"/>
+
+  <!-- kernel -->
+  <rect class="box" x="150" y="180" width="480" height="52" rx="8"/>
+  <text class="title" x="390" y="201" text-anchor="middle">xPON core</text>
+  <text class="sub" x="390" y="220" text-anchor="middle">OMCI transport, ownership, checked hardware requests</text>
+
+  <rect class="box" x="150" y="250" width="480" height="52" rx="8"/>
+  <text class="title" x="390" y="271" text-anchor="middle">GC1601 drivers</text>
+  <text class="sub" x="390" y="290" text-anchor="middle">GPON PLOAM and activation, EPON MPCP, optics, packet engine</text>
+
+  <path class="edge" d="M265 141V173"/>
+  <path class="edge" d="M515 141V173"/>
+  <path class="edge" d="M390 232V243"/>
+
+  <!-- hardware -->
+  <rect class="hw" x="150" y="355" width="150" height="50" rx="8"/>
+  <text class="title" x="225" y="385" text-anchor="middle">LAN port</text>
+
+  <rect class="hw" x="480" y="355" width="150" height="50" rx="8"/>
+  <text class="title" x="555" y="377" text-anchor="middle">PON</text>
+  <text class="sub" x="555" y="394" text-anchor="middle">GEM ports / LLIDs</text>
+
+  <path class="data" d="M312 380H468"/>
+  <text class="note-data" x="390" y="402" text-anchor="middle">switch forwarding</text>
+
+  <path class="ctl" d="M390 302V366"/>
+  <text class="note" x="398" y="334">programs flows</text>
+
+  <!-- arrow heads -->
+  <path class="tip" d="M260 77L270 77L265 85z"/>
+  <path class="tip" d="M510 77L520 77L515 85z"/>
+  <path class="tip" d="M260 172L270 172L265 180z"/>
+  <path class="tip" d="M510 172L520 172L515 180z"/>
+  <path class="tip" d="M385 242L395 242L390 250z"/>
+  <path class="tip" d="M385 366L395 366L390 374z"/>
+  <path class="tip-data" d="M306 380l9 -6v12z"/>
+  <path class="tip-data" d="M474 380l-9 -6v12z"/>
+</svg>
