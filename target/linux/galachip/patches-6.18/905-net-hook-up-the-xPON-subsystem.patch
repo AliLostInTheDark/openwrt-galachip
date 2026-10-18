@@ -1,0 +1,42 @@
+From 8cf31c0aea99cbb9190437c9047e712797bbb3ef Mon Sep 17 00:00:00 2001
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Date: Mon, 12 Oct 2026 23:38:45 +0530
+Subject: [PATCH] net: hook up the xPON subsystem
+
+net/xpon carries the PON link core, the OMCI agent (G-PON) and the
+802.3ah OAM transport (EPON) used by the GC1601 PON drivers.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+ net/Kconfig  | 1 +
+ net/Makefile | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/net/Kconfig b/net/Kconfig
+index eef9cf905..64751c4b9 100644
+--- a/net/Kconfig
++++ b/net/Kconfig
+@@ -87,6 +87,7 @@ config NET_CRC32C
+ 
+ menu "Networking options"
+ 
++source "net/xpon/Kconfig"
+ source "net/packet/Kconfig"
+ source "net/psp/Kconfig"
+ source "net/unix/Kconfig"
+diff --git a/net/Makefile b/net/Makefile
+index a6b206fcd..2bd714586 100644
+--- a/net/Makefile
++++ b/net/Makefile
+@@ -21,6 +21,7 @@ obj-$(CONFIG_UNIX)		+= unix/
+ obj-$(CONFIG_INET_PSP)		+= psp/
+ obj-y				+= ipv6/
+ obj-$(CONFIG_PACKET)		+= packet/
++obj-$(CONFIG_XPON)		+= xpon/
+ obj-$(CONFIG_NET_KEY)		+= key/
+ obj-$(CONFIG_BRIDGE)		+= bridge/
+ obj-$(CONFIG_NET_DEVLINK)	+= devlink/
+-- 
+2.43.0
+
