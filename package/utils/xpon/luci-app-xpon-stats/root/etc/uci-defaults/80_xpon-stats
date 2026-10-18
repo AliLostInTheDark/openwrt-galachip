@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# Keep the ONU address and timeout set for the older luci-app-omci-stats.
+for opt in host timeout; do
+	value=$(uci -q get omci-stats.main.$opt) || continue
+	uci set xpon-stats.main.$opt="$value"
+done
+uci commit xpon-stats
+exit 0
