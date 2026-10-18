@@ -1,0 +1,45 @@
+{
+	"luci-app-omci": {
+		"description": "Grant access to the GC1601 OMCI control plane",
+		"read": {
+			"ubus": {
+				"omci.agent": [
+					"family",
+					"status",
+					"config_list",
+					"config_details",
+					"config_get",
+					"config_inspect",
+					"mib_list",
+					"profile_list",
+					"status_live"
+				],
+				"omci.vlan": [
+					"status"
+				]
+			},
+			"uci": [
+				"omci",
+				"network"
+			]
+		},
+		"write": {
+			"ubus": {
+				"omci.agent": [
+					"agent_set",
+					"config_set",
+					"apply",
+					"profile_apply"
+				]
+			},
+			"file": {
+				"/usr/sbin/omci-vlanscan *": [
+					"exec"
+				]
+			},
+			"uci": [
+				"omci"
+			]
+		}
+	}
+}
