@@ -1,0 +1,34 @@
+config epon 'main'
+	option enabled '1'
+	# Start OAM discovery instead of waiting for the OLT (802.3ah active
+	# mode). Only for OLTs that never send the first Information PDU.
+	option active_discovery '0'
+	# ONU MAC the OLT registers (and often authorises); empty keeps the
+	# board's own. Takes effect on the next registration.
+	option onu_mac ''
+	# CTC LOID authentication, as provisioned on the OLT
+	option loid ''
+	option loid_password ''
+	# ONU SN reported to the OLT (CTC leaf 0x0001; vendor and model are
+	# 4 characters each, as the GPON serial's vendor TPLG)
+	option vendor_id 'TPLG'
+	option model 'XZG7'
+	option hardware_version 'V1.0'
+	# Identity of the ONU this one replaces, for OLTs that check more than
+	# the serial number; empty keeps our own. Hex, no separators:
+	# Information OUI (6 digits), its vendor specific bytes (8 digits) and
+	# the CTC chipset ID (16 digits, leaf 0x0003).
+	option oam_oui ''
+	option oam_vendor_info ''
+	option chipset_id ''
+	option software_version 'OpenWrt'
+	# CTC 3.0 extended model (ONU SN bytes 38-53)
+	option extended_model 'XZ000-G7'
+	# VSOL OLTs (OUI 80:14:a8, leaf 0xc7/0x2040) check a key derived from
+	# the PON MAC and this shared secret; empty leaves it unanswered
+	option interauth_secret ''
+	# LAN VLAN: 'olt' applies the OLT's CTC Port VLAN; 'transparent' or
+	# 'tag' (with vlan_id) override it
+	option vlan_mode 'olt'
+	option vlan_id ''
+	option debug '0'
