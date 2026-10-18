@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config NET_VENDOR_GALACHIP
+	bool "GalaChip devices"
+	default y
+	depends on ARCH_GALACHIP || COMPILE_TEST
+	help
+	  If you have a network (Ethernet) device belonging to this class, say Y.
+
+if NET_VENDOR_GALACHIP
+
+config GC1601_ETH
+	bool "GalaChip GC1601 experimental Ethernet support"
+	depends on ARCH_GALACHIP || COMPILE_TEST
+	depends on OF && HAS_IOMEM && HAS_DMA
+	select PHYLIB
+	select MDIO_GC1601
+	help
+	  This driver supports the GMAC and Packet Management Unit (PMU)
+	  Ethernet controller found in GalaChip GC1601 SoCs.
+	  Published DMA memory is retained until power-cycle because hardware
+	  drain/reset is not yet established. Interface reopening is unsupported.
+
+endif # NET_VENDOR_GALACHIP
