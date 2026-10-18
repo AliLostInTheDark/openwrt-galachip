@@ -1,0 +1,196 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Collect everything about the PON link into one file to send with a bug
+# report: GPON or EPON state, PLOAM/OMCI/OAM, T-CONTs, GEM ports, services,
+# switch flows, optics, packet engine, kernel log and settings.
+# Serial numbers, passwords and LOIDs are masked unless -u is given.
+
+usage() {
+	cat <<-EOT
+	usage: xpon-report [-o FILE|-] [-f] [-u]
+	  -o FILE  write here (default /tmp/xpon-report-DATE.txt; - for stdout)
+	  -f       also read the packet engine tables (queue and ingress snapshots)
+	  -u       do not mask serial numbers, passwords and LOIDs
+	For the most detail, load the diagnostics module for your mode first
+	and let the link come up (or fail) once:
+	  modprobe gc1601-gpon-diag   (GPON)
+	  modprobe gc1601-epon-diag   (EPON)
+	EOT
+	exit 1
+}
+
+out="/tmp/xpon-report-$(date +%Y%m%d-%H%M%S).txt"
+full=0
+unmasked=0
+while getopts "o:fuh" opt; do
+	case "$opt" in
+	o) out="$OPTARG" ;;
+	f) full=1 ;;
+	u) unmasked=1 ;;
+	*) usage ;;
+	esac
+done
+
+PON=/sys/class/net/pon0/device
+XPON=/sys/class/xpon/pon0
+ETH=
+for d in /sys/bus/platform/devices/*.packet-engine; do
+	[ -d "$d" ] && ETH=$d && break
+done
+
+section() {
+	printf '\n===== %s =====\n' "$1"
+}
+
+show() {	# show FILE...: print each readable file with its name
+	local f
+	for f in "$@"; do
+		[ -r "$f" ] || continue
+		printf -- '--- %s\n' "$f"
+		cat "$f" 2>&1
+	done
+}
+
+run() {		# run CMD...: print the command and its output
+	printf -- '--- %s\n' "$*"
+	"$@" 2>&1
+}
+
+hex() {		# hex STRING: lower-case hex of each byte, without external tools
+	local s=$1 c
+	while [ -n "$s" ]; do
+		c=${s%"${s#?}"}
+		printf '%02x' "'$c"
+		s=${s#?}
+	done
+}
+
+spaced() {
+	printf '%s' "$1" | sed 's/../& /g; s/ $//'
+}
+
+upper() {
+	printf '%s' "$1" | tr 'abcdef' 'ABCDEF'
+}
+
+lower() {
+	printf '%s' "$1" | tr 'ABCDEF' 'abcdef'
+}
+
+mask_line() {	# mask_line LITERAL: one sed command hiding it
+	[ -n "$1" ] && printf 's/%s/[masked]/g\n' "$(escape "$1")"
+}
+
+escape() {
+	printf '%s' "$1" | sed 's/[][\.*^$/]/\\&/g'
+}
+
+# sed program that hides every secret, in text and in hex (ploam_log etc.)
+build_mask() {
+	local s h v k vendorless
+	{
+		for s in $(uci -q get omci.main.password) $(uci -q get omci.main.loid) \
+			 $(uci -q get omci.main.loid_password) $(uci -q get epon.main.loid) \
+			 $(uci -q get epon.main.loid_password) \
+			 $(uci -q get omci.main.serial) $(cat "$PON/serial_number" 2>/dev/null); do
+			[ ${#s} -ge 4 ] || continue
+			mask_line "$s"
+			h=$(hex "$s")
+			for v in "$h" "$(upper "$h")"; do
+				mask_line "$v"
+				mask_line "$(spaced "$v")"
+			done
+			# GPON serial: vendor ID + 8 hex digits; the digits are the secret part
+			vendorless=${s#????}
+			if [ ${#s} -eq 12 ] && [ ${#vendorless} -eq 8 ]; then
+				for v in "$(lower "$vendorless")" "$(upper "$vendorless")"; do
+					mask_line "$v"
+					mask_line "$(spaced "$v")"
+				done
+			fi
+		done
+		printf '%s\n' 's/\(serial[ _]number[ :=]*[A-Za-z][A-Za-z][A-Za-z][A-Za-z]\)[0-9A-Fa-f]*/\1[masked]/g'
+		# key=value, key='value' and "key": "value"
+		for k in loid LOID password Password loid_password; do
+			printf '%s\n' "s/\($k['\"]\{0,1\}[=:] *['\"]\{0,1\}\)[^' ,}\"]\{1,\}/\1[masked]/g"
+		done
+	} > "$1"
+}
+
+collect() {
+	section "System"
+	run date
+	run uptime
+	show /etc/openwrt_release /proc/version
+	run cat /tmp/sysinfo/model
+
+	section "PON mode"
+	show "$XPON/mode_current" "$XPON/mode_available" "$XPON/state" "$XPON/carrier"
+	run uci -q get xpon.main.mode
+	run lsmod
+	show "$PON/status" "$PON/tx_hold" "$PON/bosa_ddm"
+	[ -f /etc/xpon-rogue ] && echo "/etc/xpon-rogue present: transmitter held off"
+
+	section "GPON"
+	show "$PON/gpon_state" "$PON/gpon_events" "$PON/allow_tx" "$PON/gpon_identity_wait" "$PON/gpon_ber" \
+	     "$PON/ploam_log" "$PON/ploam_trace" "$PON/pon_counters" "$PON/tcont_stats"
+
+	section "OMCI"
+	for f in "$XPON"/omci/*; do
+		case "${f##*/}" in
+		password|loid|loid_password) ;;	# write-only secrets
+		*) show "$f" ;;
+		esac
+	done
+	run ubus call omci.agent status
+	show "$ETH/omci_stats"
+
+	section "EPON"
+	show "$PON/epon_state" "$PON/epon_register" "$PON/epon_oam_link" "$PON/epon_holdover" /var/run/epon-oamd.json
+	[ -d /sys/kernel/debug/gc1601-epon ] && show /sys/kernel/debug/gc1601-epon/regs
+
+	section "LAN VLAN and switch offload"
+	show "$PON/sfu_untag_vlan" "$PON/sfu_vlan_map" "$PON/sfu_offload"
+	run ubus call omci.vlan status
+
+	section "Packet engine"
+	show "$ETH/diagnostics" "$ETH/rx_snapshot" "$ETH/tx_config"
+	if [ "$full" = 1 ]; then
+		show "$ETH/queue_snapshot" "$ETH/ingress_snapshot"
+	fi
+
+	section "Network"
+	run ip -d link show
+	run ip addr show
+	run bridge link show
+	show /proc/net/dev
+
+	section "Settings"
+	run uci show xpon
+	run uci show omci
+	run uci show epon
+	run uci show network
+
+	section "Kernel log (PON)"
+	dmesg | grep -iE 'pon|gpon|epon|omci|sfu|oam|xpon|gc1601|bosa|ploam|mpcp|llid' 2>&1
+
+	section "Kernel log"
+	dmesg
+}
+
+mask=/tmp/.xpon-report-mask.$$
+if [ "$unmasked" = 1 ]; then
+	echo 's/^\(.*\)$/\1/' > "$mask"
+else
+	build_mask "$mask"
+fi
+
+if [ "$out" = "-" ]; then
+	collect | sed -f "$mask"
+else
+	collect | sed -f "$mask" > "$out"
+	echo "Report written to $out"
+	[ "$unmasked" = 1 ] || echo "Serial numbers, passwords and LOIDs are masked; check the file before sharing it."
+	echo "Copy it off with WinSCP (SCP) or: scp -O root@192.168.1.1:$out ."
+fi
+rm -f "$mask"
