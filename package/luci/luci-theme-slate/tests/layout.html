@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slate layout regression fixtures</title>
+<link rel="stylesheet" href="../htdocs/luci-static/slate/cascade.css">
+<body>
+<script>
+const params = new URLSearchParams(location.search);
+document.documentElement.dataset.darkmode = params.get('dark') || 'false';
+const longName = 'xz000-g7-' + 'long-hostname-'.repeat(4);
+const longText = 'Detailed configuration information and a long translated option label. '.repeat(3);
+const token = '0123456789abcdef'.repeat(8);
+const E = window.E = function(tag, attrs, children) {
+	const el = Array.isArray(tag) ? document.createDocumentFragment() : document.createElement(tag);
+	if (attrs instanceof Node || typeof attrs === 'string' || Array.isArray(attrs)) {
+		children = attrs;
+		attrs = {};
+	}
+	for (const [key, value] of Object.entries(attrs || {})) {
+		if (typeof value === 'function') el.addEventListener(key, value);
+		else if (value != null) el.setAttribute(key, value);
+	}
+	for (const child of [].concat(children || []))
+		el.append(child instanceof Node ? child : String(child));
+	return el;
+};
+const input = () => E('input', { type: 'text', value: token });
+const button = text => E('button', { type: 'button', class: 'cbi-button' }, text);
+const group = () => E('div', { class: 'control-group', 'data-bounds': '' }, [input(), button('Reveal password')]);
+const row = (label, value) => E('div', { class: 'cbi-value', 'data-bounds': '' }, [
+	E('label', { class: 'cbi-value-title' }, label), E('div', { class: 'cbi-value-field', 'data-bounds': '' }, value)
+]);
+const dropdown = () => E('div', { class: 'cbi-dropdown', tabindex: '0', 'data-bounds': '' }, [
+	E('ul', {}, E('li', { display: '' }, longText)), E('span', { class: 'open' }, '▾')
+]);
+async function setupMenus() {
+	const source = await fetch('../htdocs/luci-static/resources/menu-slate.js').then(r => r.text());
+	const tree = { children: { admin: { title: 'Administration', children: {} } } };
+	for (const title of ['Status', 'System', 'Network', 'Services', 'Logout'])
+		tree.children.admin.children[title.toLowerCase()] = { title, children: {
+			details: { title: longText, children: {} }
+		} };
+	window.L = { env: { dispatchpath: ['admin', 'status', 'details'], requestpath: ['admin'] },
+		url: (...args) => '/cgi-bin/luci/' + args.join('/') };
+	window._ = text => text;
+	const ui = { menu: { getChildren: node => Object.entries(node.children || {}).map(([name, child]) => ({...child, name})) } };
+	const menu = new Function('baseclass', 'ui', 'L', 'E', '_', source)({extend: x => x}, ui, L, E, _);
+	document.querySelector('#topmenu').replaceChildren();
+	menu.render(tree);
+}
+async function openRichDropdown() {
+	const source = await fetch('/feeds/luci/modules/luci-base/htdocs/luci-static/resources/ui.js').then(r => r.text());
+	const method = name => {
+		const start = source.indexOf('\n\t' + name + '(');
+		return source.slice(start, source.indexOf('\n\t},', start) + 4);
+	};
+	const widget = new Function('findParent', 'L', 'return {options:{dropdown_items:-1,optional:true},setFocus(){},' +
+		method('getScrollParent') + method('openDropdown') + '};')(
+		(el, selector) => el.closest(selector), {bind: (fn, self, ...args) => (...rest) => fn.apply(self, args.concat(rest))});
+	const sb = document.querySelector('#rich-dropdown');
+	widget.openDropdown(sb);
+	await new Promise(resolve => setTimeout(resolve, 150));
+}
+async function stabilizeActions() {
+	const source = await fetch('/feeds/luci/modules/luci-base/htdocs/luci-static/resources/form.js').then(r => r.text());
+	const start = source.indexOf('\n\tstabilizeActionColumnWidth(');
+	const method = source.slice(start, source.indexOf('\n\t},', start) + 4);
+	const section = new Function('return {' + method + '};')();
+	section.stabilizeActionColumnWidth(document.querySelector('.cbi-section-table'));
+}
+const form = () => E('div', { class: 'cbi-section' }, [
+	E('h3', {}, 'Configuration'),
+	row('Password controls', group()),
+	row('Select a service', E('select', {}, E('option', {}, longText))),
+	row('Rich dropdown', dropdown()),
+	row('Dynamic list', E('div', { class: 'cbi-dynlist', 'data-bounds': '' }, [
+		E('div', { class: 'item' }, token), E('div', { class: 'add-item control-group' }, [input(), button('Add')])
+	])),
+	row('Long description', E('div', {}, [input(), E('div', { class: 'cbi-value-description' }, token)])),
+	row('File upload', E('div', { class: 'control-group', 'data-bounds': '' }, [
+		E('input', { type: 'file' }), button('Upload configuration')
+	])),
+	row('Enable option', E('label', { class: 'cbi-checkbox', 'data-bounds': '' }, [
+		E('input', { type: 'checkbox' }), E('span', {}, longText)
+	])),
+	E('div', { class: 'cbi-page-actions', 'data-bounds': '' }, [button('Reset'), button('Save'), button('Save and apply')])
+]);
+/* The shell from header.ut and footer.ut, around the page content. */
+const shell = content => E('div', { class: 'shell' }, [
+	E('aside', { class: 'sidebar', id: 'sidebar' }, [
+		E('a', { class: 'brand', href: '#' }, [
+			E('svg', { class: 'pon-logo', viewBox: '646 260 708 597' }),
+			E('span', { class: 'brand-text', 'data-bounds': '' }, [E('strong', {}, longName), E('small', {}, 'TP-Link XZ000-G7')])
+		]),
+		E('nav', { class: 'sidebar-nav' }, E('ul', { class: 'nav', id: 'topmenu' })),
+		E('div', { class: 'sidebar-foot' }, [
+			E('ul', { id: 'modemenu', style: 'display:none' }),
+			E('div', { class: 'scheme' }, ['auto', 'light', 'dark'].map(s => E('button', { type: 'button', 'data-scheme': s }, s)))
+		])
+	]),
+	E('div', { class: 'scrim', id: 'scrim' }),
+	E('div', { class: 'page' }, [
+		E('header', { class: 'topbar', 'data-bounds': '' }, [
+			E('button', { type: 'button', class: 'menu-toggle', id: 'menu-toggle' }, E('svg', { viewBox: '0 0 24 24' })),
+			E('div', { class: 'crumbs', id: 'crumbs' }),
+			E('div', { id: 'indicators' }, E('span', { 'data-indicator': 'uci', 'data-style': 'active' }, 'Unsaved changes: 125'))
+		]),
+		content,
+		E('footer', { class: 'page-foot', 'data-bounds': '' }, [E('span', {}, token)])
+	])
+]);
+const table = () => E('div', { class: 'cbi-section' }, E('table', { class: 'table cbi-section-table' }, [
+	E('tr', { class: 'tr table-titles' }, ['Name', 'Value', 'Actions'].map(t => E('th', { class: 'th' + (t === 'Actions' ? ' cbi-section-actions' : '') }, t))),
+	E('tr', { class: 'tr' }, [
+		E('td', { class: 'td', 'data-title': 'Name' }, token),
+		E('td', { class: 'td cbi-value-field', 'data-title': 'Value', 'data-bounds': '' }, dropdown()),
+		E('td', { class: 'td cbi-section-table-cell nowrap cbi-section-actions', 'data-bounds': '' }, E('div', {}, [button('Edit'), button('Delete')]))
+	])
+]));
+const interfaces = () => E('div', {class: 'cbi-section cbi-tblsection'}, [
+	E('h3', {}, 'Interfaces'),
+	E('table', {class: 'table cbi-section-table'}, E('tbody', {class: 'tbody cbi-section-tbody'},
+		E('tr', {class: 'tr cbi-section-table-row'}, [
+			E('td', {class: 'td cbi-value-field', 'data-name': '_ifacebox', 'data-widget': 'CBI.DummyValue'},
+				E('div', {class: 'ifacebox'}, [E('div', {class: 'ifacebox-head'}, 'lan'), E('div', {class: 'ifacebox-body'}, 'br-lan')])),
+			E('td', {class: 'td cbi-value-field', 'data-name': '_ifacestat', 'data-widget': 'CBI.DummyValue'},
+				E('div', {}, [E('span', {class: 'nowrap'}, 'Protocol: Static address'), E('br'),
+					E('span', {class: 'nowrap'}, 'IPv4: 192.168.1.1/24')])),
+			E('td', {class: 'td cbi-section-table-cell nowrap cbi-section-actions', 'data-bounds': ''},
+				E('div', {}, ['Restart', 'Stop', 'Edit', 'Delete'].map(text => {
+					const el = button(text);
+					el.dataset.noWordWrap = '';
+					return el;
+				})))
+		])))
+]);
+const portGrid = () => E('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit, minmax(70px, 1fr));margin-bottom:1em', id: 'ports' },
+	['LAN 1', 'PON'].map(name => E('div', { class: 'ifacebox', style: 'margin:.25em;min-width:70px;max-width:100px' }, [
+		E('div', { class: 'ifacebox-head' }, name), E('div', { class: 'ifacebox-body' }, '1000 Mbit/s')
+	])));
+/* LuCI's String.format, _ and L as far as the xpon views use them. */
+function luciShims() {
+	window._ = text => text;
+	window.L = { resolveDefault: (p, fallback) => Promise.resolve(p).catch(() => fallback) };
+	window.ui = { createHandlerFn: (self, fn) => fn, addNotification() {} };
+	window.rpc = { declare: () => () => Promise.resolve({}) };
+	/* The PON line indicator beside LuCI's own, as the top bar shows them. */
+	document.querySelector('#indicators')?.append(
+		E('span', { 'data-indicator': 'uci-changes', 'data-style': 'active', 'data-clickable': 'true' }, 'Unsaved changes: 3'),
+		E('span', { 'data-indicator': 'xpon', 'data-style': 'inactive', 'data-clickable': 'true' }, 'GPON O3 · no light'));
+	String.prototype.format = function(...args) {
+		let i = 0;
+		return this.replace(/%%|%(?:\.(\d+))?(?:0\d+)?([sxdf])/g, (m, precision, type) => {
+			if (m === '%%') return '%';
+			const v = args[i++];
+			return type === 'f' ? Number(v).toFixed(+(precision || 0)) : type === 'x' ? Number(v).toString(16) : String(v);
+		});
+	};
+}
+const xponModule = (url, ...names) => fetch(url).then(r => r.text()).then(source =>
+	new Function('baseclass', ...names, source)({ extend: x => x }));
+const xponModules = () => Promise.all([
+	xponModule('/package/utils/xpon/luci-app-xpon/htdocs/luci-static/resources/xpon/widgets.js'),
+	xponModule('/package/utils/xpon/luci-app-omci/htdocs/luci-static/resources/omci/mib.js')
+]);
+const domShim = { content: (node, content) => node.replaceChildren(...[].concat(content).filter(c => c != null && c !== '')) };
+const scenario = params.get('case') || 'form';
+const root = E('main', { class: 'container', id: 'maincontent' });
+if (scenario === 'login') {
+	document.body.append(E('main', { class: 'login' }, E('form', { class: 'login-card', 'data-bounds': '' }, [
+		E('div', { class: 'login-head', 'data-bounds': '' }, [E('h1', {}, longName), E('p', {}, token)]),
+		E('div', { class: 'login-field' }, [E('label', {}, 'Username'), input()]),
+		E('div', { class: 'login-field' }, [E('label', {}, 'Password'), input()]),
+		E('button', { type: 'submit' }, 'Log in')
+	])));
+}
+else if (scenario === 'modal') {
+	document.body.classList.add('modal-overlay-active');
+	document.body.append(E('div', { id: 'modal_overlay' }, E('div', { class: 'modal cbi-modal', 'data-bounds': '' }, [
+		E('h3', {}, 'Restore configuration'), E('p', {}, longText), form(),
+		E('label', { class: 'btn alert-message', 'data-bounds': '' }, [E('input', { type: 'checkbox' }), E('span', {}, longText)]),
+		E('div', { class: 'button-row', 'data-bounds': '' }, [button('Cancel'), button(longText)])
+	])));
+}
+else {
+	document.documentElement.dataset.scheme = 'auto';
+	document.body.append(shell(root));
+	if (scenario === 'table') {
+		root.append(table());
+		window.ready = stabilizeActions();
+	}
+	else if (scenario === 'interfaces') {
+		document.body.dataset.page = 'admin-network-network';
+		root.append(interfaces());
+		window.ready = stabilizeActions();
+	}
+	else if (scenario === 'overview') {
+		document.body.dataset.page = 'admin-status-overview';
+		root.append(E('div', { class: 'cbi-section' }, portGrid()),
+			E('div', { class: 'cbi-section' }, E('div', { id: 'custom-grid', style: 'display:grid;grid-template-columns:repeat(2,minmax(0,1fr))' }, [
+				E('div', {}, 'Other status card'), E('div', {}, 'Other status card')
+			])));
+	}
+	else if (scenario === 'narrow') {
+		root.append(E('div', { style: 'width:190px;max-width:100%', 'data-bounds': '' }, [
+			row('Configuration for a constrained panel', input()),
+			dropdown(),
+			E('div', { class: 'cbi-dynlist', 'data-bounds': '' }, E('div', { class: 'add-item control-group' }, [input(), button('Add')])),
+			E('div', { class: 'cbi-filebrowser open' }, E('div', {}, token)),
+			E('div', { class: 'cbi-progressbar', title: 'Progress' }, E('div')),
+			E('span', { class: 'ifacebadge large' }, token)
+		]));
+	}
+	else if (scenario === 'dropdown') {
+		const sb = dropdown();
+		sb.id = 'rich-dropdown';
+		for (let i = 0; i < 8; i++) sb.firstElementChild.append(E('li', {}, longText + token));
+		root.append(E('div', { class: 'cbi-section' }, row('Dropdown selection', sb)));
+		window.ready = openRichDropdown();
+	}
+	else if (scenario === 'epon') {
+		luciShims();
+		window.ready = Promise.all([xponModules(), fetch('/package/utils/xpon/luci-app-epon/htdocs/luci-static/resources/view/epon/status.js')
+			.then(r => r.text())]).then(([[widgets], source]) => {
+				widgets.style();
+				const page = new Function('view', 'poll', 'dom', 'fs', 'uci', 'ui', 'widgets', 'E', '_', source)(
+					{extend: x => x}, {}, {}, {}, {get: () => 'epon'}, {createHandlerFn: () => () => {}}, widgets, E, _);
+				root.append(E('div', {class: 'cbi-section'}, page.renderTable([null, JSON.stringify({
+					oam: 'send_any', auth: 'ok', vlan_mode: 1, vlan_default: 100, onu_mac: '00:11:22:33:44:55', olt_mac: token
+				}), 'registered=1 signal=1 sync=1', 'rx_nw=3000 tx_nw=1900000 temp_mc=55000 vcc_uv=3300000 bias_ua=15000', '1', '1', true])));
+			});
+	}
+	else if (scenario === 'status') {
+		root.id = 'view';
+		luciShims();
+		const objects = [
+			{ class_id: 262, entity_id: 32768, origin_name: 'olt', data: '0400' },
+			{ class_id: 268, entity_id: 1, origin_name: 'olt', data: '04d28000' },
+			{ class_id: 268, entity_id: 2, origin_name: 'olt', data: '04d38000' },
+			...[100, 200, 4000].map((vid, i) => ({ class_id: 84, entity_id: i + 1, origin_name: 'olt',
+				vlan_filter: { entries: [{ vid, pbit: 0 }] } }))
+		];
+		window.ready = Promise.all([xponModules(), fetch('/package/utils/xpon/luci-app-omci/htdocs/luci-static/resources/view/omci/status.js')
+			.then(r => r.text())]).then(([[widgets, mib], source]) => {
+				const view = { extend: x => x };
+				const page = new Function('view', 'poll', 'dom', 'omci', 'mib', 'widgets', 'E', '_', source)(
+					view, { add() {} }, domShim, { mibList: () => Promise.resolve(objects) }, mib, widgets, E, _);
+				root.append(page.render([{ state: 5, onu_id: 3, agent_operational: true, olt_profile_effective_name: token,
+					bosa_rx_power_nw: 15000, bosa_tx_power_nw: 1800000,
+					identity: { 'serial': 'TEST00000001', 'equipment-id': token, 'software-version-0': token },
+					omci_alarms: [] }, { mode: 'tag', port: 'pon0', vid: 100 }]));
+				return new Promise(r => setTimeout(r, 50));
+			});
+	}
+	else root.append(form());
+	window.ready = (window.ready || Promise.resolve()).then(setupMenus);
+}
+window.ready ||= Promise.resolve();
+</script>
+</body>
+</html>

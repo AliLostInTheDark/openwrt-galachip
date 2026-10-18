@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Slate dependency visibility regression test</title>
+<link rel="stylesheet" href="../htdocs/luci-static/slate/cascade.css">
+<main>
+	<div id="field" class="cbi-value hidden">Dependency-hidden form field</div>
+	<div id="dropdown" class="cbi-dropdown hidden">Hidden dropdown</div>
+	<div id="native" class="cbi-value" hidden>Native hidden attribute</div>
+	<div id="visible" class="cbi-value">Visible form field</div>
+	<pre id="result"></pre>
+</main>
+<script>
+window.addEventListener('load', function() {
+	try {
+		for (const id of ['field', 'dropdown', 'native']) {
+			if (getComputedStyle(document.getElementById(id)).display !== 'none')
+				throw new Error(id + ' is visible');
+		}
+
+		if (getComputedStyle(document.getElementById('visible')).display === 'none')
+			throw new Error('Active field is hidden');
+
+		const field = document.getElementById('field');
+		field.classList.remove('hidden');
+		if (getComputedStyle(field).display === 'none')
+			throw new Error('Dependency activation did not show the field');
+		field.classList.add('hidden');
+		if (getComputedStyle(field).display !== 'none')
+			throw new Error('Dependency deactivation did not hide the field');
+
+		document.body.dataset.result = 'pass';
+		document.getElementById('result').textContent = 'Slate visibility: passed';
+	}
+	catch (error) {
+		document.body.dataset.result = 'fail';
+		document.getElementById('result').textContent = error.message;
+	}
+});
+</script>
+</html>
