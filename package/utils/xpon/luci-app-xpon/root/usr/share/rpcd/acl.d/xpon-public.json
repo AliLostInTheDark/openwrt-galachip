@@ -1,0 +1,12 @@
+{
+	"unauthenticated": {
+		"description": "Read-only PON mode and status for the router behind the ONU (luci-app-xpon-stats)",
+		"read": {
+			"ubus": {
+				"xpon.public": [
+					"status"
+				]
+			}
+		}
+	}
+}
