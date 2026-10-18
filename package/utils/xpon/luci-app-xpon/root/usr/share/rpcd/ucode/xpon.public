@@ -1,0 +1,96 @@
+'use strict';
+
+/*
+ * Read-only PON status for the router behind the ONU (luci-app-xpon-stats)
+ * and the LuCI gauges, open to the unauthenticated session: the mode, the
+ * optics with the module's own power thresholds and, in EPON mode, the MAC
+ * and OAM state. GPON details come from omci.agent. Nothing here names a
+ * LOID, password or key.
+ */
+
+import { readfile } from 'fs';
+
+const PON = '/sys/class/net/pon0/device';
+
+/* Fields of /var/run/epon-oamd.json that are status, not credentials. */
+const oam_fields = [
+	'generation', 'registered', 'oam', 'ctc', 'ctc_version', 'auth',
+	'auth_fail_reason', 'olt_mac', 'onu_mac', 'vlan_mode', 'vlan_default',
+	'vlan_override', 'silent', 'tx_off', 'rx_pdus', 'tx_pdus',
+	'unknown_leaves', 'interauth'
+];
+
+function read(path) {
+	return trim(readfile(path) ?? '');
+}
+
+/* "key=value" words, as the PON driver's sysfs files print them. */
+function words(raw) {
+	let out = {};
+
+	for (let word in split(raw, /\s+/)) {
+		let i = index(word, '=');
+
+		if (i > 0)
+			out[substr(word, 0, i)] = substr(word, i + 1);
+	}
+	return out;
+}
+
+/*
+ * bosa_ddm's alarms= is the SFF-8472 flag word at A2h 0x70/0x71; return the
+ * OPTICAL_FRONTEND_ALARM_* bitmap that omcid reports for GPON, as
+ * gc1601-xpon.c converts it.
+ */
+const sff_alarm_bits = [
+	[ 8, 0 ], [ 9, 1 ], [ 10, 2 ], [ 11, 3 ], [ 6, 4 ],
+	[ 7, 5 ], [ 12, 6 ], [ 13, 7 ], [ 14, 8 ], [ 15, 9 ]
+];
+
+function frontend_alarms(raw) {
+	let flags = hex(raw), out = 0;
+
+	if (flags != flags)
+		return null;
+	for (let b in sff_alarm_bits)
+		if (flags & (1 << b[0]))
+			out |= 1 << b[1];
+	return out;
+}
+
+function epon() {
+	let oam = {};
+	let out = { mac: words(read(`${PON}/epon_state`)), oam: {} };
+
+	/* epon-oamd renames a finished file into place; absent until it runs. */
+	try { oam = json(readfile('/var/run/epon-oamd.json') ?? '{}') ?? {}; } catch (e) {}
+	for (let field in oam_fields)
+		if (exists(oam, field))
+			out.oam[field] = oam[field];
+	out.allow_tx = read(`${PON}/allow_tx`) == '1';
+	out.tx_hold = read(`${PON}/tx_hold`) == '1';
+	return out;
+}
+
+const methods = {
+	status: {
+		call: function() {
+			let mode = read('/sys/class/xpon/pon0/mode_current') || null;
+			let out = {
+				mode,
+				ddm: words(read(`${PON}/bosa_ddm`)),
+				/* The module's alarm and warning levels, in nW. */
+				thresholds: words(read(`${PON}/bosa_thresholds`))
+			};
+
+			delete out.ddm.raw;
+			if (exists(out.ddm, 'alarms'))
+				out.ddm.alarms = frontend_alarms(out.ddm.alarms);
+			if (mode == 'epon')
+				out.epon = epon();
+			return out;
+		}
+	}
+};
+
+return { 'xpon.public': methods };
