@@ -1,0 +1,21 @@
+{#
+ Slate theme for LuCI.
+ Licensed to the public under the Apache License 2.0.
+-#}
+		{% if (!blank_page): %}
+				</div>
+				<footer class="page-foot">
+					<a href="https://github.com/openwrt/luci" target="_blank" rel="noreferrer">{{ entityencode(version.luciname) }} {{ entityencode(version.luciversion) }}</a>
+					<span aria-hidden="true">·</span>
+					<a href="{{ entityencode(version.disturl ?? '#', true) }}" target="_blank" rel="noreferrer">{{ entityencode(version.distname) }} {{ entityencode(version.distversion) }} ({{ entityencode(version.distrevision) }})</a>
+					{% if (lua_active): %}
+					<span aria-hidden="true">·</span>
+					<span>{{ _('Lua compatibility mode active') }}</span>
+					{% endif %}
+				</footer>
+			</div>
+		</div>
+		<script>L.require('menu-slate')</script>
+		{% endif %}
+	</body>
+</html>

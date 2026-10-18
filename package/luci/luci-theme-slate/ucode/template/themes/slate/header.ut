@@ -1,0 +1,143 @@
+{#
+ Slate theme for LuCI.
+ The status messages and page variables follow luci-theme-bootstrap:
+ Copyright 2008 Steven Barth <steven@midlink.org>
+ Copyright 2012 David Menting <david@nut-bolt.nl>
+ Copyright 2008-2022 Jo-Philipp Wich <jo@mein.io>
+ Licensed to the public under the Apache License 2.0.
+-#}
+
+{%
+	import { getuid, getspnam } from 'luci.core';
+
+	const boardinfo = ubus.call('system', 'board') ?? {};
+	const hostname = striptags(boardinfo.hostname ?? '?');
+	const model = striptags(boardinfo.model ?? '');
+	const darkpref = (theme == 'slate-dark' ? 'true' : (theme == 'slate-light' ? 'false' : null));
+
+	http.prepare_content('text/html; charset=UTF-8');
+-%}
+
+<!DOCTYPE html>
+<html lang="{{ dispatcher.lang }}" {{ darkpref ? `data-darkmode="${darkpref}"` : '' }}>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="darkreader-lock">
+		{# The phone browser's bar takes the page background (--bg). #}
+		<meta name="theme-color" id="theme-color" content="{{ darkpref == 'true' ? '#0b0f14' : '#f4f6f8' }}">
+		<title>{{ entityencode(striptags(`${hostname}${dispatched?.title ? ` | ${_(dispatched.title)}` : ''}`)) }}</title>
+		{% if (!darkpref): %}
+		<script>
+			/* Auto follows the system; Light and Dark are kept per browser. */
+			(function() {
+				var root = document.documentElement,
+				    mq = window.matchMedia('(prefers-color-scheme: dark)'),
+				    pref = null;
+
+				try { pref = localStorage.getItem('slate-scheme'); } catch (e) {}
+
+				function apply() {
+					var dark = pref == 'dark' || (pref != 'light' && mq.matches);
+
+					root.setAttribute('data-scheme', pref || 'auto');
+					root.setAttribute('data-darkmode', dark);
+					document.getElementById('theme-color').content = dark ? '#0b0f14' : '#f4f6f8';
+				}
+
+				window.slateScheme = function(value) {
+					pref = (value == 'light' || value == 'dark') ? value : null;
+					try {
+						if (pref)
+							localStorage.setItem('slate-scheme', pref);
+						else
+							localStorage.removeItem('slate-scheme');
+					} catch (e) {}
+					apply();
+				};
+
+				mq.addEventListener('change', apply);
+				apply();
+			})();
+		</script>
+		{% endif %}
+		<link rel="stylesheet" href="{{ media }}/cascade.css">
+		<link rel="icon" href="{{ media }}/logo.svg" type="image/svg+xml">
+		{% if (dispatched?.css): %}
+		<link rel="stylesheet" href="{{ resource }}/{{ dispatched.css }}">
+		{% endif %}
+		{% if (css): %}
+		<style title="text/css">{{ css }}</style>
+		{% endif %}
+		<script src="{{ dispatcher.build_url('admin/translations', dispatcher.lang) }}"></script>
+		<script src="{{ resource }}/cbi.js"></script>
+	</head>
+
+	<body class="lang_{{ dispatcher.lang }}" data-page="{{ entityencode(join('-', length(ctx.request_path) ? ctx.request_path : ctx.path), true) }}">
+		{% if (!blank_page): %}
+		<div class="shell">
+			<aside class="sidebar" id="sidebar">
+				<a class="brand" href="{{ dispatcher.build_url() }}">
+					{% include('themes/slate/logo') %}
+					<span class="brand-text">
+						<strong>{{ entityencode(hostname) }}</strong>
+						{% if (model): %}<small>{{ entityencode(model) }}</small>{% endif %}
+					</span>
+				</a>
+
+				<nav class="sidebar-nav" aria-label="{{ _('Main menu') }}">
+					<ul class="nav" id="topmenu" style="display:none"></ul>
+				</nav>
+
+				<div class="sidebar-foot">
+					<ul id="modemenu" style="display:none"></ul>
+					{% if (!darkpref): %}
+					<div class="scheme" role="group" aria-label="{{ _('Colour scheme') }}">
+						<button type="button" data-scheme="auto">{{ _('Auto') }}</button>
+						<button type="button" data-scheme="light">{{ _('Light') }}</button>
+						<button type="button" data-scheme="dark">{{ _('Dark') }}</button>
+					</div>
+					{% endif %}
+				</div>
+			</aside>
+			<div class="scrim" id="scrim"></div>
+
+			<div class="page">
+				<header class="topbar">
+					<button type="button" class="menu-toggle" id="menu-toggle" aria-controls="sidebar" aria-expanded="false" aria-label="{{ _('Menu') }}">
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+					</button>
+					<div class="crumbs" id="crumbs"></div>
+					<div id="indicators"></div>
+				</header>
+
+				<div id="maincontent" class="container">
+					{% if (getuid() == 0 && getspnam('root')?.pwdp === ''): %}
+					<div class="alert-message warning">
+						<h4>{{ _('No password set!') }}</h4>
+						<p>{{ _('There is no password set on this router. Please configure a root password to protect the web interface.') }}</p>
+						{% if (dispatcher.lookup('admin/system/admin')): %}
+						<div class="right"><a class="btn" href="{{ dispatcher.build_url('admin/system/admin') }}">{{ _('Go to password configuration...') }}</a></div>
+						{% endif %}
+					</div>
+					{% endif %}
+
+					{% if (boardinfo.rootfs_type == 'initramfs'): %}
+					<div class="alert-message warning">
+						<h4>{{ _('System running in recovery (initramfs) mode.') }}</h4>
+						<p>{{ _('No changes to settings will be stored and are lost after rebooting. This mode should only be used to install a firmware upgrade') }}</p>
+						{% if (dispatcher.lookup('admin/system/flash')): %}
+						<div class="right"><a class="btn" href="{{ dispatcher.build_url('admin/system/flash') }}">{{ _('Go to firmware upgrade...') }}</a></div>
+						{% endif %}
+					</div>
+					{% endif %}
+
+					<noscript>
+						<div class="alert-message warning">
+							<h4>{{ _('JavaScript required!') }}</h4>
+							<p>{{ _('You must enable JavaScript in your browser or LuCI will not work properly.') }}</p>
+						</div>
+					</noscript>
+
+					<div id="tabmenu" style="display:none"></div>
+		{% endif %}

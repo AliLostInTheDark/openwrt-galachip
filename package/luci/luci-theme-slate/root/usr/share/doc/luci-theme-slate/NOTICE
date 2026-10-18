@@ -1,0 +1,18 @@
+Slate theme for LuCI
+
+Slate contributors are recorded in the project's Git history.
+Licensed under Apache-2.0.
+
+Navigation and ucode templates are adapted from OpenWrt luci-theme-bootstrap.
+Original template notices:
+Copyright 2008 Steven Barth <steven@midlink.org>
+Copyright 2012 David Menting <david@nut-bolt.nl>
+Copyright 2008-2022 Jo-Philipp Wich <jo@mein.io>
+
+Widget mechanics are adapted from luci-theme-bootstrap:
+Copyright 2012 Nut & Bolt, by David Menting <david@nut-bolt.nl>
+Based on Bootstrap v1.4.0, Copyright 2011 Twitter, Inc.
+Designed and built by @mdo and @fat.
+
+These upstream components are licensed under the Apache License, Version 2.0:
+https://www.apache.org/licenses/LICENSE-2.0
