@@ -1,0 +1,33 @@
+{
+	"luci-app-xpon": {
+		"description": "Grant access to the PON mode setting and the diagnostic report",
+		"read": {
+			"uci": [
+				"xpon"
+			],
+			"ubus": {
+				"xpon.public": [
+					"status"
+				]
+			}
+		},
+		"write": {
+			"ubus": {
+				"uci": [
+					"commit"
+				],
+				"system": [
+					"reboot"
+				]
+			},
+			"uci": [
+				"xpon"
+			],
+			"file": {
+				"/usr/sbin/xpon-report -o -": [
+					"exec"
+				]
+			}
+		}
+	}
+}

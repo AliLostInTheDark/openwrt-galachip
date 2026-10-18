@@ -1,0 +1,15 @@
+{
+	"admin/network/xpon": {
+		"title": "PON Mode",
+		"order": 64,
+		"action": {
+			"type": "view",
+			"path": "xpon/mode"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-xpon"
+			]
+		}
+	}
+}
