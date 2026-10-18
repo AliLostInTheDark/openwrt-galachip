@@ -1,0 +1,15 @@
+{
+	"luci-app-xpon-stats": {
+		"description": "Grant access to the status of the PON ONU in front of this router",
+		"read": {
+			"file": {
+				"/usr/bin/xpon-stats --json": [ "exec" ],
+				"/usr/bin/xpon-stats --json --live": [ "exec" ]
+			},
+			"uci": [ "xpon-stats" ]
+		},
+		"write": {
+			"uci": [ "xpon-stats" ]
+		}
+	}
+}
