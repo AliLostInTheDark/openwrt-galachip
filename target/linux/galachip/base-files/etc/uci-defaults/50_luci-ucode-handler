@@ -1,0 +1,13 @@
+#!/bin/sh
+# Serve LuCI from uhttpd's ucode plugin instead of a CGI process per
+# request: the dispatcher is compiled once instead of on every page,
+# menu and translation request. luci-base's postinst does this only on a
+# running system, not in an image.
+
+[ -f /usr/lib/uhttpd_ucode.so ] || exit 0
+uci -q get uhttpd.main.ucode_prefix | grep -sq /cgi-bin/luci && exit 0
+
+uci add_list uhttpd.main.ucode_prefix='/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc'
+uci commit uhttpd
+
+exit 0

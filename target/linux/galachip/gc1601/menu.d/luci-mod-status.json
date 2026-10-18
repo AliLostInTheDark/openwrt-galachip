@@ -1,0 +1,37 @@
+{
+	"admin/status/overview": {
+		"title": "Overview",
+		"order": 1,
+		"action": {
+			"type": "template",
+			"path": "admin_status/index"
+		},
+		"depends": {
+			"acl": [ "luci-mod-status-index" ]
+		}
+	},
+
+	"admin/status/logs": {
+		"title": "Kernel Log",
+		"order": 4,
+		"action": {
+			"type": "view",
+			"path": "status/dmesg"
+		},
+		"depends": {
+			"acl": [ "luci-mod-status-logs" ]
+		}
+	},
+
+	"admin/status/processes": {
+		"title": "Processes",
+		"order": 6,
+		"action": {
+			"type": "view",
+			"path": "status/processes"
+		},
+		"depends": {
+			"acl": [ "luci-mod-status-processes" ]
+		}
+	}
+}

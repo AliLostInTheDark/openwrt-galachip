@@ -1,0 +1,4 @@
+config xpon 'main'
+	# gpon or epon: which PON MAC runs. The ONU registers on the OLT only
+	# in the mode that matches the network.
+	option mode 'gpon'

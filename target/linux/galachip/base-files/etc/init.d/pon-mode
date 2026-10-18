@@ -1,0 +1,60 @@
+#!/bin/sh /etc/rc.common
+# Select the GPON or EPON MAC (xpon.main.mode) and start it, before the
+# network starts. The kernel starts no MAC by itself until then.
+
+START=15
+USE_PROCD=1
+
+pon_mode_apply() {
+	local want dev cur up
+
+	config_load xpon
+	config_get want main mode gpon
+	case "$want" in
+	gpon|epon) ;;
+	*) logger -t pon-mode "unknown mode '$want', using gpon"; want=gpon ;;
+	esac
+
+	for dev in /sys/class/xpon/*; do
+		[ -w "$dev/mode_current" ] || continue
+		read -r cur < "$dev/mode_current"
+		[ "$cur" = "$want" ] && continue
+		grep -qw "$want" "$dev/mode_available" || {
+			logger -t pon-mode "$want not available on $(basename "$dev")"
+			continue
+		}
+		# The xPON core changes mode only while the netdev is down.
+		up=0
+		ip link show "$(basename "$dev")" 2>/dev/null | grep -q '[<,]UP[,>]' && up=1
+		[ "$up" = 1 ] && ip link set "$(basename "$dev")" down
+		echo "$want" > "$dev/mode_current" &&
+			logger -t pon-mode "$(basename "$dev"): $cur -> $want"
+		[ "$up" = 1 ] && ip link set "$(basename "$dev")" up
+	done
+
+	# An OLT turned the transmitter off for good (CTC 0x00A1, or the
+	# stock rogue flag): keep it off in either mode until the file goes.
+	if [ -f /etc/xpon-rogue ]; then
+		for hold in /sys/class/xpon/*/device/tx_hold; do
+			[ -w "$hold" ] && echo 1 > "$hold"
+		done
+		logger -t pon-mode "transmitter held off: /etc/xpon-rogue exists"
+	fi
+
+	# The driver waits for this before starting a MAC (30 s fallback).
+	for start in /sys/class/xpon/*/device/pon_start; do
+		[ -w "$start" ] && echo 1 > "$start"
+	done
+}
+
+start_service() {
+	pon_mode_apply
+}
+
+reload_service() {
+	pon_mode_apply
+}
+
+service_triggers() {
+	procd_add_reload_trigger xpon
+}
