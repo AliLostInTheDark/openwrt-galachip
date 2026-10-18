@@ -1,0 +1,45 @@
+#!/bin/sh
+
+changed=0
+themes=${THEMES_DIR:-/usr/share/ucode/luci/template/themes}
+
+set_opt() {
+	if ! uci -q get "luci.$1" >/dev/null; then
+		uci set "luci.$1=$2" || return 1
+		changed=1
+	fi
+}
+
+installed() {
+	[ -e "$themes/${1##*/}/header.ut" ]
+}
+
+set_opt themes.Slate /luci-static/slate || exit 1
+
+# Take over as the default theme on first install, not on upgrade.
+if [ "$PKG_UPGRADE" != 1 ] && [ $changed = 1 ]; then
+	uci set luci.main.mediaurlbase=/luci-static/slate || exit 1
+fi
+
+set_opt themes.SlateDark /luci-static/slate-dark || exit 1
+set_opt themes.SlateLight /luci-static/slate-light || exit 1
+
+# A configuration kept across a sysupgrade can still list themes the new
+# image does not ship. LuCI then falls back and shows "Theme fallback".
+for name in $(uci -q show luci.themes | sed -n 's/^luci\.themes\.\([^=]*\)=.*/\1/p'); do
+	installed "$(uci -q get "luci.themes.$name")" && continue
+	uci delete "luci.themes.$name" || exit 1
+	changed=1
+done
+
+media=$(uci -q get luci.main.mediaurlbase)
+if [ -n "$media" ] && ! installed "$media"; then
+	uci set luci.main.mediaurlbase=/luci-static/slate || exit 1
+	changed=1
+fi
+
+if [ $changed = 1 ]; then
+	uci commit luci || exit 1
+fi
+
+exit 0
