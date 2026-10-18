@@ -1,0 +1,13 @@
+What:		/sys/class/net/pon0/device/bosa_thresholds
+Date:		October 2026
+Contact:	Linux PON developers <netdev@vger.kernel.org>
+Description:
+		The optical module's own alarm and warning thresholds for
+		transmit and receive power, read from SFF-8472 A2h bytes
+		0x18-0x27 as the calibration blob programmed them. Values are in
+		nW, like bosa_ddm:
+
+		tx_alarm_high_nw tx_alarm_low_nw tx_warn_high_nw tx_warn_low_nw
+		rx_alarm_high_nw rx_alarm_low_nw rx_warn_high_nw rx_warn_low_nw
+
+		Reads fail with EAGAIN until the module has been programmed.
