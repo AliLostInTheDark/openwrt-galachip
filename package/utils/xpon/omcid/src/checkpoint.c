@@ -6,7 +6,7 @@
 #include "daemon.h"
 
 #define CHECKPOINT_MAGIC 0x4f4d4331
-#define CHECKPOINT_VERSION 2
+#define CHECKPOINT_VERSION 3
 #define CHECKPOINT_MAX (2U * 1024 * 1024)
 #define CHECKPOINT_MAX_TABLE (256U * 1024)
 
@@ -16,7 +16,7 @@ struct checkpoint_header {
 	u32 upload_index, profile_quirks, flags;
 	u16 mib_sync;
 	u16 uni_entity;
-	u8 profile_effective, loid_status, voice_calls, pm_interval, alarm_sequence;
+	u8 profile_effective, loid_status, voice_calls, pm_interval, alarm_sequence, veip_learned;
 	u8 alarm_snapshot_count;
 	struct omci_alarm_entry alarm_snapshot[OMCI_ALARM_SNAPSHOT_LEN];
 	u64 pm_base[5], ber_base;
@@ -107,6 +107,7 @@ int omcid_checkpoint_save(struct omcid *ctx)
 	h->upload_index = a->upload_index;
 	h->profile_effective = a->profile_effective;
 	h->profile_quirks = a->profile_quirks;
+	h->veip_learned = a->veip_learned;
 	h->loid_status = a->loid_status;
 	h->voice_calls = a->voice_calls;
 	h->pm_interval = a->pm_interval;
@@ -335,6 +336,7 @@ int omcid_checkpoint_load(struct omcid *ctx)
 	a->upload_index = h->upload_index;
 	a->profile_effective = h->profile_effective;
 	a->profile_quirks = h->profile_quirks;
+	a->veip_learned = h->veip_learned;
 	a->loid_status = h->loid_status;
 	a->voice_calls = h->voice_calls;
 	a->alarm_sequence = h->alarm_sequence;

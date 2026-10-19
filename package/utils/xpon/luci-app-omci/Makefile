@@ -3,7 +3,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_VERSION:=0.9.2
-PKG_RELEASE:=27
+PKG_RELEASE:=29
 LUCI_TITLE:=LuCI support for GC1601 OMCI
 LUCI_PKGARCH:=all
 PKG_MAINTAINER:=Matheus Sampaio Queiroga <srherobrine20@gmail.com>

@@ -404,6 +404,14 @@ return view.extend({
 		}));
 		o.description = _('Number of Ethernet UNIs advertised to the OLT. Advertising extra UNIs does not add physical Ethernet ports; match the ONT whose identity is cloned.');
 
+		o = s.taboption('capabilities', form.ListValue, 'veip_slot', _('VEIP slot'));
+		o.value('', _('Learn from the OLT'));
+		o.value('3', _('Slot 3 (0x0301)'));
+		o.value('6', _('Slot 6 (0x0601)'));
+		o.value('10', _('Slot 10 (0x0A01)'));
+		o.default = '';
+		o.description = _('Slot of the Virtual Ethernet Interface Point (VEIP). The ONU starts on slot 6 under the Nokia/ALCL profile and slot 10 otherwise, then moves the VEIP to the slot the OLT provisions. Nokia ISAM OLTs mostly use slot 6; some, such as Airtel India, use slot 3. Fix the slot only when the OLT rejects the uploaded one before provisioning.');
+
 		s = m.section(form.NamedSection, 'vlan', 'vlan', _('LAN VLAN mode'),
 			_('How the bridge carries the service VLAN between the OLT and the LAN port.'));
 		s.addremove = false;

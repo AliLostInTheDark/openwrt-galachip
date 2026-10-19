@@ -64,6 +64,7 @@ omci_agent_report_operational(struct omci_device *odev, bool operational)
 #define OMCI_BRIDGE_TP_GEM_IWTP	5
 #define OMCI_BRIDGE_TP_MULTICAST_GEM_IWTP	6
 #define OMCI_BRIDGE_TP_VEIP		11
+#define OMCI_EXT_VLAN_ASSOC_VEIP	10
 
 static void omci_agent_reset_table_snapshot_locked(struct omci_agent *agent);
 static void omci_agent_alarm_work(struct work_struct *work);
@@ -168,8 +169,8 @@ enum {
 
 #define OMCI_ANI_G_ENTITY_ID		0x8001
 #define OMCI_ETHERNET_SLOT		0x01
-#define OMCI_VEIP_SLOT			0x0a
 #define OMCI_NOKIA_VEIP_SLOT		0x06
+#define OMCI_VEIP_SLOT			0x0a
 #define OMCI_GPON_SLOT			0x80
 #define OMCI_ETHERNET_UNIT_TYPE		47
 #define OMCI_VEIP_UNIT_TYPE		48
@@ -871,6 +872,8 @@ omci_agent_seed_huawei_locked(struct omci_device *odev, u8 profile)
 			data, sizeof(data));
 }
 
+static u8 omci_agent_veip_slot(const struct omci_agent *agent);
+
 static int
 omci_agent_seed_nokia_locked(struct omci_device *odev, u8 profile)
 {
@@ -919,6 +922,8 @@ omci_agent_seed_nokia_locked(struct omci_device *odev, u8 profile)
 	 * Seed the standard VEIP datapath bridge for both GEM 256 and GEM 257.
 	 */
 	if (agent->config.onu_type == 2) {
+		u8 veip_slot = omci_agent_veip_slot(agent);
+
 		/* T-CONT 0x8000 -> Alloc-ID 256 */
 		memset(data, 0, sizeof(data));
 		put_unaligned_be16(256, data);
@@ -950,7 +955,7 @@ omci_agent_seed_nokia_locked(struct omci_device *odev, u8 profile)
 		put_unaligned_be16(256, data);
 		data[2] = 5;
 		put_unaligned_be16(OMCI_NOKIA_MAPPER_MGMT, data + 3);
-		put_unaligned_be16(OMCI_UNI_ENTITY_ID(OMCI_NOKIA_VEIP_SLOT, 1),
+		put_unaligned_be16(OMCI_UNI_ENTITY_ID(veip_slot, 1),
 				   data + 5);
 		ret = omci_mib_add_default_profile_mask(agent, profile,
 				OMCI_CLASS_GEM_IWTP, 256,
@@ -984,7 +989,7 @@ omci_agent_seed_nokia_locked(struct omci_device *odev, u8 profile)
 		put_unaligned_be16(257, data);
 		data[2] = 5;
 		put_unaligned_be16(OMCI_NOKIA_MAPPER_HSI, data + 3);
-		put_unaligned_be16(OMCI_UNI_ENTITY_ID(OMCI_NOKIA_VEIP_SLOT, 1),
+		put_unaligned_be16(OMCI_UNI_ENTITY_ID(veip_slot, 1),
 				   data + 5);
 		ret = omci_mib_add_default_profile_mask(agent, profile,
 				OMCI_CLASS_GEM_IWTP, 257,
@@ -1030,12 +1035,12 @@ omci_agent_seed_nokia_locked(struct omci_device *odev, u8 profile)
 		if (ret)
 			return ret;
 
-		/* MAC Bridge Port Config 1 -> VEIP (TP type 11, slot 6) */
+		/* MAC Bridge Port Config 1 -> VEIP (TP type 11) */
 		memset(data, 0, sizeof(data));
 		put_unaligned_be16(1, data);
 		data[2] = 1;
 		data[3] = 11;
-		put_unaligned_be16(OMCI_UNI_ENTITY_ID(OMCI_NOKIA_VEIP_SLOT, 1),
+		put_unaligned_be16(OMCI_UNI_ENTITY_ID(veip_slot, 1),
 				   data + 4);
 		ret = omci_mib_add_default_profile_mask(agent, profile,
 				OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA, 1,
@@ -1113,11 +1118,11 @@ omci_agent_seed_nokia_locked(struct omci_device *odev, u8 profile)
 		put_unaligned_be16(ETH_P_8021Q, data + 3);
 		put_unaligned_be16(ETH_P_8021Q, data + 5);
 		data[7] = 0;
-		put_unaligned_be16(OMCI_UNI_ENTITY_ID(OMCI_NOKIA_VEIP_SLOT, 1),
+		put_unaligned_be16(OMCI_UNI_ENTITY_ID(veip_slot, 1),
 				   data + 24);
 		ret = omci_mib_add_default_profile_mask(agent, profile,
 				OMCI_CLASS_EXTENDED_VLAN,
-				OMCI_UNI_ENTITY_ID(OMCI_NOKIA_VEIP_SLOT, 1),
+				OMCI_UNI_ENTITY_ID(veip_slot, 1),
 				GENMASK(15, 10), data, sizeof(data));
 		if (ret)
 			return ret;
@@ -1149,7 +1154,7 @@ omci_agent_seed_profile_locked(struct omci_device *odev, u8 profile)
 	}
 }
 
-static u8 omci_profile_veip_slot(u8 profile);
+static u8 omci_agent_veip_slot_for_profile(const struct omci_agent *agent, u8 profile);
 static int omci_agent_move_veip_default(struct omci_device *odev, u8 slot);
 
 static int
@@ -1179,8 +1184,10 @@ omci_agent_profile_reconcile_locked(struct omci_device *odev,
 	 * The profile's own MEs name its VEIP slot; without an OLT MIB Reset
 	 * nothing else would move the ONU-created VEIP there.
 	 */
-	if (omci_profile_veip_slot(old_profile) != omci_profile_veip_slot(new_profile)) {
-		ret = omci_agent_move_veip_default(odev, omci_profile_veip_slot(new_profile));
+	if (omci_agent_veip_slot_for_profile(agent, old_profile) !=
+	    omci_agent_veip_slot_for_profile(agent, new_profile)) {
+		ret = omci_agent_move_veip_default(odev,
+				omci_agent_veip_slot_for_profile(agent, new_profile));
 		if (ret) {
 			agent->profile_effective = old_profile;
 			return ret;
@@ -1546,9 +1553,18 @@ omci_agent_add_equipment_default(struct omci_agent *agent,
 					 OMCI_MAX_ATTR_DATA);
 }
 
-/* Nokia/ALCL OLTs provision the VEIP of slot 6, as their own HGUs report. */
-static u8 omci_profile_veip_slot(u8 profile)
+/*
+ * The slot is the OLT's provisioning choice, not the ONU vendor's: Nokia/ALCL
+ * OLTs mostly plan the slot 6 VEIP of their own HGUs, some (Airtel India)
+ * plan slot 3, and generic OLTs take the uploaded slot 10. A configured slot
+ * wins, then the one the OLT was seen to provision.
+ */
+static u8 omci_agent_veip_slot_for_profile(const struct omci_agent *agent, u8 profile)
 {
+	if (agent->config.veip_slot)
+		return agent->config.veip_slot;
+	if (agent->veip_learned)
+		return agent->veip_learned;
 	if (profile == OMCI_OLT_PROFILE_NOKIA_ALCL)
 		return OMCI_NOKIA_VEIP_SLOT;
 
@@ -1557,7 +1573,7 @@ static u8 omci_profile_veip_slot(u8 profile)
 
 static u8 omci_agent_veip_slot(const struct omci_agent *agent)
 {
-	return omci_profile_veip_slot(agent->profile_effective);
+	return omci_agent_veip_slot_for_profile(agent, agent->profile_effective);
 }
 
 static void omci_mib_drop_default(struct omci_agent *agent, u16 class_id,
@@ -1596,27 +1612,46 @@ static void omci_uni_g_default_data(u8 data[OMCI_MAX_ATTR_DATA])
 	data[3] = 2;
 }
 
+/* Slot of the VEIP the MIB holds, or 0. */
+static u8 omci_agent_mib_veip_slot(struct omci_agent *agent)
+{
+	struct omci_mib_object *object;
+	unsigned long index;
+
+	xa_for_each(&agent->mib, index, object)
+		if (object->class_id == OMCI_CLASS_VEIP)
+			return object->entity_id >> 8;
+
+	return 0;
+}
+
 /* Move the ONU-created VEIP, its UNI-G and its equipment to @slot. */
 static int omci_agent_move_veip_default(struct omci_device *odev, u8 slot)
 {
 	struct omci_agent *agent = &odev->agent;
-	u8 old_slot = slot == OMCI_VEIP_SLOT ? OMCI_NOKIA_VEIP_SLOT : OMCI_VEIP_SLOT;
+	u8 old_slot = omci_agent_mib_veip_slot(agent);
 	struct omci_ani_topology topology;
 	u8 data[OMCI_MAX_ATTR_DATA] = {};
 	struct omci_mib_object *object;
 	unsigned long index;
 	int ret;
 
+	if (old_slot == slot)
+		return 0;
 	ret = omci_agent_get_ani_topology(odev, &topology);
 	if (ret)
 		return ret;
-	omci_agent_drop_veip_default(agent, old_slot);
-	/* Its downstream queues follow it. */
-	xa_for_each(&agent->mib, index, object)
-		if (object->class_id == OMCI_CLASS_PRIORITY_QUEUE &&
-		    !(object->entity_id & BIT(15)) &&
-		    get_unaligned_be16(object->data + 9) == OMCI_UNI_ENTITY_ID(old_slot, 1))
-			put_unaligned_be16(OMCI_UNI_ENTITY_ID(slot, 1), object->data + 9);
+	if (old_slot) {
+		omci_agent_drop_veip_default(agent, old_slot);
+		omci_mib_drop_default(agent, OMCI_CLASS_EXTENDED_VLAN,
+				      OMCI_UNI_ENTITY_ID(old_slot, 1));
+		/* Its downstream queues follow it. */
+		xa_for_each(&agent->mib, index, object)
+			if (object->class_id == OMCI_CLASS_PRIORITY_QUEUE &&
+			    !(object->entity_id & BIT(15)) &&
+			    get_unaligned_be16(object->data + 9) == OMCI_UNI_ENTITY_ID(old_slot, 1))
+				put_unaligned_be16(OMCI_UNI_ENTITY_ID(slot, 1), object->data + 9);
+	}
 	ret = omci_agent_add_equipment_default(agent, &topology, slot,
 					       OMCI_VEIP_UNIT_TYPE, 1, false,
 					       data);
@@ -1629,9 +1664,50 @@ static int omci_agent_move_veip_default(struct omci_device *odev, u8 slot)
 	if (ret)
 		return ret;
 	omci_uni_g_default_data(data);
-	return omci_mib_add_default_mask(agent, OMCI_CLASS_UNI_G,
-					 OMCI_UNI_ENTITY_ID(slot, 1),
-					 GENMASK(15, 12), data, sizeof(data));
+	ret = omci_mib_add_default_mask(agent, OMCI_CLASS_UNI_G,
+					OMCI_UNI_ENTITY_ID(slot, 1),
+					GENMASK(15, 12), data, sizeof(data));
+	if (ret)
+		return ret;
+	/* The Nokia seeds point at the VEIP. */
+	if (agent->profile_effective == OMCI_OLT_PROFILE_NOKIA_ALCL)
+		return omci_agent_seed_nokia_locked(odev, agent->profile_effective);
+
+	return 0;
+}
+
+/*
+ * A Create that ties a bridge port (TP type 11) or a class 171 rule
+ * (association type 10) to a VEIP the MIB lacks names the slot the OLT was
+ * provisioned for. Move the VEIP there before the Create is handled and keep
+ * the slot, so later MIB uploads already report it. Create carries only the
+ * set-by-create attributes: class 47 has the TP type and pointer at 3 and 4,
+ * class 171 the association type and pointer at 0 and 1.
+ */
+static void omci_agent_learn_veip_slot(struct omci_device *odev, u16 class_id,
+				       const u8 *content, size_t len)
+{
+	struct omci_agent *agent = &odev->agent;
+	u16 pointer;
+	u8 slot;
+
+	if (agent->config.veip_slot)
+		return;
+	if (class_id == OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA && len >= 6 &&
+	    content[3] == OMCI_BRIDGE_TP_VEIP)
+		pointer = get_unaligned_be16(content + 4);
+	else if (class_id == OMCI_CLASS_EXTENDED_VLAN && len >= 3 &&
+		 content[0] == OMCI_EXT_VLAN_ASSOC_VEIP)
+		pointer = get_unaligned_be16(content + 1);
+	else
+		return;
+
+	slot = pointer >> 8;
+	if ((pointer & 0xff) != 1 || !slot || slot == OMCI_ETHERNET_SLOT ||
+	    slot >= OMCI_GPON_SLOT || omci_mib_lookup(agent, OMCI_CLASS_VEIP, pointer))
+		return;
+	if (!omci_agent_move_veip_default(odev, slot))
+		agent->veip_learned = slot;
 }
 
 static int omci_agent_populate_defaults(struct omci_device *odev)
@@ -1679,8 +1755,9 @@ static int omci_agent_populate_defaults(struct omci_device *odev)
 	if (ret)
 		return ret;
 	veip_slot = omci_agent_veip_slot(agent);
-	omci_agent_drop_veip_default(agent, veip_slot == OMCI_VEIP_SLOT ?
-					    OMCI_NOKIA_VEIP_SLOT : OMCI_VEIP_SLOT);
+	i = omci_agent_mib_veip_slot(agent);
+	if (i && i != veip_slot)
+		omci_agent_drop_veip_default(agent, i);
 	ret = omci_agent_add_equipment_default(agent, &topology, veip_slot,
 					       OMCI_VEIP_UNIT_TYPE, 1, false,
 					       data);
@@ -3788,6 +3865,7 @@ static u8 omci_agent_create_locked(struct omci_device *odev,
 	 * A profile seed stands in for OLT provisioning, so the OLT's own
 	 * instance replaces it, e.g. Nokia's class 171 on the slot 6 VEIP.
 	 */
+	omci_agent_learn_veip_slot(odev, class_id, content, content_len);
 	omci_mib_drop_default(agent, class_id, entity_id);
 	if (omci_mib_lookup(agent, class_id, entity_id))
 		return OMCI_RESULT_INSTANCE_EXISTS;
@@ -5914,6 +5992,11 @@ int omci_agent_config_get(struct omci_device *odev, u16 key,
 		source = &scalar;
 		source_len = sizeof(scalar);
 		break;
+	case OMCI_CONFIG_VEIP_SLOT:
+		scalar = agent->config.veip_slot;
+		source = &scalar;
+		source_len = sizeof(scalar);
+		break;
 	case OMCI_CONFIG_ONU_TYPE:
 		scalar = agent->config.onu_type;
 		source = &scalar;
@@ -6187,6 +6270,23 @@ __omci_agent_config_set_source(struct omci_device *odev, u16 key,
 		changed = agent->config.dba_status_reporting != scalar;
 		agent->config.dba_status_reporting = scalar;
 		break;
+	case OMCI_CONFIG_VEIP_SLOT:
+		if (len != sizeof(scalar)) {
+			ret = -EINVAL;
+			break;
+		}
+		scalar = *(const u8 *)value;
+		if (scalar == OMCI_ETHERNET_SLOT || scalar >= OMCI_GPON_SLOT) {
+			ret = -EINVAL;
+			break;
+		}
+		changed = agent->config.veip_slot != scalar;
+		agent->config.veip_slot = scalar;
+		agent->config.veip_slot_source = source;
+		if (changed && omci_agent_mib_veip_slot(agent))
+			ret = omci_agent_move_veip_default(odev,
+					omci_agent_veip_slot(agent));
+		break;
 	case OMCI_CONFIG_TRAFFIC_MGMT_OPTION:
 	case OMCI_CONFIG_ONU_TYPE:
 	case OMCI_CONFIG_UNI_COUNT:
@@ -6344,6 +6444,9 @@ int omci_agent_config_source_get(struct omci_device *odev, u16 key, u8 *source)
 		break;
 	case OMCI_CONFIG_OMCC_VERSION:
 		*source = agent->config.omcc_version_source;
+		break;
+	case OMCI_CONFIG_VEIP_SLOT:
+		*source = agent->config.veip_slot_source;
 		break;
 	default:
 		*source = OMCI_CONFIG_SOURCE_UNSPEC;
