@@ -2,7 +2,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=omcid
-PKG_RELEASE:=8
+PKG_RELEASE:=9
 PKG_LICENSE:=GPL-2.0-only LGPL-2.1-or-later
 PKG_BUILD_DEPENDS:=libomci-protocol
 

@@ -49,6 +49,7 @@ const config_specs = [
 	{ key: 20, name: 'loid', option: 'loid', scalar: false },
 	{ key: 21, name: 'loid-password', option: 'loid_password', scalar: false, secret: true },
 	{ key: 22, name: 'dba-status-reporting', option: 'dba_status_reporting', scalar: true },
+	{ key: 23, name: 'veip-slot', option: 'veip_slot', scalar: true },
 ];
 
 const profile_values = {
@@ -277,6 +278,7 @@ function decorate_status(device, status, live) {
 		status.software_version_1 = config['software-version-1'];
 		status.equipment_id = config['equipment-id'];
 		status.omcc_version = config['omcc-version'];
+		status.veip_slot = config['veip-slot'];
 		status.identity = {
 			serial: status.serial,
 			'vendor-id': status.vendor_id,
@@ -374,6 +376,8 @@ function apply_uci_section(section, device) {
 			continue;
 		if (spec.name == 'olt-profile' || spec.name == 'olt-profile-force')
 			value = profile_value(value);
+		else if (spec.name == 'veip-slot' && (value == 'auto' || value == 'default' || value == 'unspecified'))
+			value = 0;
 		if (omci.config_set(device, spec.key, value) == null)
 			return native_failure(`apply ${spec.name}`);
 		push(applied, spec.name);

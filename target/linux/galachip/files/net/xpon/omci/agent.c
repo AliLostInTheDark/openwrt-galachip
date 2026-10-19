@@ -179,6 +179,11 @@ int omci_agent_config_get(struct omci_device *odev, u16 key,
 		source = &scalar;
 		source_len = sizeof(scalar);
 		break;
+	case OMCI_CONFIG_VEIP_SLOT:
+		scalar = agent->config.veip_slot;
+		source = &scalar;
+		source_len = sizeof(scalar);
+		break;
 	case OMCI_CONFIG_ONU_TYPE:
 		scalar = agent->config.onu_type;
 		source = &scalar;
@@ -437,6 +442,16 @@ __omci_agent_config_set_source(struct omci_device *odev, u16 key,
 		changed = agent->config.dba_status_reporting != scalar;
 		agent->config.dba_status_reporting = scalar;
 		break;
+	case OMCI_CONFIG_VEIP_SLOT:
+		if (len != sizeof(scalar)) {
+			ret = -EINVAL;
+			break;
+		}
+		scalar = *(const u8 *)value;
+		changed = agent->config.veip_slot != scalar;
+		agent->config.veip_slot = scalar;
+		agent->config.veip_slot_source = source;
+		break;
 	case OMCI_CONFIG_TRAFFIC_MGMT_OPTION:
 	case OMCI_CONFIG_ONU_TYPE:
 	case OMCI_CONFIG_UNI_COUNT:
@@ -562,6 +577,9 @@ int omci_agent_config_source_get(struct omci_device *odev, u16 key, u8 *source)
 		break;
 	case OMCI_CONFIG_OMCC_VERSION:
 		*source = agent->config.omcc_version_source;
+		break;
+	case OMCI_CONFIG_VEIP_SLOT:
+		*source = agent->config.veip_slot_source;
 		break;
 	default:
 		*source = OMCI_CONFIG_SOURCE_UNSPEC;

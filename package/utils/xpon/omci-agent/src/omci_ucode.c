@@ -441,7 +441,8 @@ static uc_value_t *config_value_decode(uint16_t key, const void *data, size_t le
 
 	if ((key >= OMCI_CONFIG_TRAFFIC_MGMT_OPTION &&
 	     key <= OMCI_CONFIG_OMCC_VERSION) || key == OMCI_CONFIG_AGENT_REBOOT ||
-	    key == OMCI_CONFIG_DBA_STATUS_REPORTING) {
+	    key == OMCI_CONFIG_DBA_STATUS_REPORTING ||
+	    key == OMCI_CONFIG_VEIP_SLOT) {
 		if (len != 1)
 			return hex_value(data, len);
 		return ucv_uint64_new(p[0]);
@@ -1118,7 +1119,8 @@ static uc_value_t *uc_config_set(uc_vm_t *vm, size_t nargs)
 
 	if ((key >= OMCI_CONFIG_TRAFFIC_MGMT_OPTION &&
 	     key <= OMCI_CONFIG_OMCC_VERSION) || key == OMCI_CONFIG_AGENT_REBOOT ||
-	    key == OMCI_CONFIG_DBA_STATUS_REPORTING) {
+	    key == OMCI_CONFIG_DBA_STATUS_REPORTING ||
+	    key == OMCI_CONFIG_VEIP_SLOT) {
 		if (!parse_u32_arg(value, &n32) || n32 > 255) { ret = -EINVAL; goto out; }
 		n8 = n32;
 		ret = add_attr(&req, OMCI_ATTR_CONFIG_VALUE, &n8, sizeof(n8));
