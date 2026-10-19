@@ -86,6 +86,8 @@ struct omci_agent_config {
 	u8 loid_password_source;
 	u8 traffic_mgmt_option;
 	u8 dba_status_reporting;
+	u8 veip_slot;
+	u8 veip_slot_source;
 	u8 onu_type;
 	u8 onu_type_source;
 	u8 uni_count;
@@ -135,6 +137,8 @@ struct omci_agent {
 	u8 loid_status;
 	u8 profile_effective;
 	u32 profile_quirks;
+	/* VEIP slot the OLT provisioned, kept across MIB resets. */
+	u8 veip_learned;
 
 	struct sk_buff *last_request;
 	struct sk_buff *last_response;

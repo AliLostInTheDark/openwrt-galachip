@@ -238,6 +238,66 @@ int main(void)
 		request(&odev, 12, 24, OMCI_CLASS_ONU_G, 0, NULL, 0);
 		CHECK(odev.agent.pm_work.due - jiffies > 899 * HZ);
 	}
+	{
+		u8 profile = OMCI_OLT_PROFILE_NOKIA_ALCL;
+		u8 create[8];
+		u8 slot;
+
+		/* Default generic profile reports only 0x0a01 */
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0a01, &object));
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0301, &object) == -ENOENT);
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object) == -ENOENT);
+
+		/* Under Nokia ALCL profile with default identity: VEIP is 0x0601 */
+		CHECK(!omci_agent_config_set(&odev, OMCI_CONFIG_OLT_PROFILE_FORCE, &profile, 1));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object));
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0301, &object) == -ENOENT);
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0a01, &object) == -ENOENT);
+
+		/* A cloned vendor does not pick the slot. */
+		CHECK(!omci_agent_config_set(&odev, OMCI_CONFIG_VENDOR_ID, "ZYOT", 4));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object));
+
+		/* Explicit override to slot 3, then back to auto */
+		slot = 3;
+		CHECK(!omci_agent_config_set(&odev, OMCI_CONFIG_VEIP_SLOT, &slot, 1));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0301, &object));
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object) == -ENOENT);
+		slot = 0;
+		CHECK(!omci_agent_config_set(&odev, OMCI_CONFIG_VEIP_SLOT, &slot, 1));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object));
+
+		/* Reading another slot's VEIP does not move it */
+		request(&odev, 13, 9, OMCI_CLASS_VEIP, 0x0301, NULL, 0);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object));
+
+		/* A bridge port created on the slot 3 VEIP moves it there */
+		memset(create, 0, sizeof(create));
+		create[3] = 11;
+		put_unaligned_be16(0x0301, create + 4);
+		request(&odev, 14, 4, OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA, 0x0301,
+			create, 6);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0301, &object));
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object) == -ENOENT);
+		CHECK(odev.agent.veip_learned == 3);
+
+		/* So does a class 171 rule on a VEIP (association type 10) */
+		memset(create, 0, sizeof(create));
+		create[0] = 10;
+		put_unaligned_be16(0x0601, create + 1);
+		request(&odev, 15, 4, OMCI_CLASS_EXTENDED_VLAN, 0x0601, create, 3);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object));
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0301, &object) == -ENOENT);
+		CHECK(odev.agent.veip_learned == 6);
+		odev.agent.veip_learned = 0;
+
+		/* Back to generic profile */
+		profile = OMCI_OLT_PROFILE_GENERIC;
+		CHECK(!omci_agent_config_set(&odev, OMCI_CONFIG_OLT_PROFILE_FORCE, &profile, 1));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0a01, &object));
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0301, &object) == -ENOENT);
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object) == -ENOENT);
+	}
 	omci_agent_channel_changed(&odev, false);
 	CHECK(!odev.agent.last_request && !odev.agent.table_snapshot);
 	CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_TCONT, 0x8000, &object));

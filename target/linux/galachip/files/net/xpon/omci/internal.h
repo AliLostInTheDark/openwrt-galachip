@@ -53,6 +53,8 @@ struct omci_agent_config {
 	u8 loid_password_source;
 	u8 traffic_mgmt_option;
 	u8 dba_status_reporting;
+	u8 veip_slot;
+	u8 veip_slot_source;
 	u8 onu_type;
 	u8 onu_type_source;
 	u8 uni_count;

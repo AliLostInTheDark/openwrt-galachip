@@ -304,6 +304,7 @@ enum omci_config_key {
 	OMCI_CONFIG_LOID,
 	OMCI_CONFIG_LOID_PASSWORD,
 	OMCI_CONFIG_DBA_STATUS_REPORTING,	/* ANI-G SR indication, 0 or 1 */
+	OMCI_CONFIG_VEIP_SLOT,			/* VEIP slot: 0=auto, 3, 6, 10 */
 
 	__OMCI_CONFIG_MAX,
 };
