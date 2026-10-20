@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/*
+ * Device Tree Source for V-SOL V2801SG GPON ONT
+ *
+ * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
+ */
+
+/dts-v1/;
+#include "zx279125.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+
+/ {
+	model = "V-SOL V2801SG GPON ONT";
+	compatible = "v-sol,v2801sg", "zte,zx279125";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		bootargs = "console=ttyS0,115200n8 earlycon";
+		stdout-path = "serial0:115200n8";
+	};
+
+	memory@40000000 {
+		device_type = "memory";
+		reg = <0x40000000 0x08000000>; /* 128 MB */
+	};
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&pon {
+	status = "okay";
+};
+
+&spifc {
+	status = "okay";
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <50000000>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "u-boot";
+				reg = <0x000000 0x040000>;
+				read-only;
+			};
+
+			partition@40000 {
+				label = "firmware";
+				reg = <0x040000 0x3a0000>;
+			};
+
+			partition@3e0000 {
+				label = "firmware2";
+				reg = <0x3e0000 0x3a0000>;
+			};
+
+			partition@780000 {
+				label = "others";
+				reg = <0x780000 0x010000>;
+			};
+
+			partition@790000 {
+				label = "tagparam";
+				reg = <0x790000 0x010000>;
+				read-only;
+			};
+
+			partition@7a0000 {
+				label = "usercfg";
+				reg = <0x7a0000 0x060000>;
+			};
+		};
+	};
+};

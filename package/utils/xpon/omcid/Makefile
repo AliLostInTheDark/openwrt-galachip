@@ -13,7 +13,7 @@ define Package/omcid
   CATEGORY:=Utilities
   SUBMENU:=xPON
   TITLE:=GC1601 userspace GPON OMCI responder
-  DEPENDS:=@TARGET_galachip_gc1601 +libomci-protocol
+  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125) +libomci-protocol
 endef
 
 define Package/omcid/description

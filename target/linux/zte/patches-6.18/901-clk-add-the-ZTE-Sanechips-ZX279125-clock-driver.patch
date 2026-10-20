@@ -1,0 +1,40 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH 901/903] clk: add the ZTE Sanechips ZX279125 clock driver
+
+Add CRM clock controller driver for ZTE Sanechips ZX279125 ARMv7 SoC
+providing core CPU, DDR, AXI, APB, timer, UART and GMAC clocks.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+ drivers/clk/Kconfig  | 9 +++++++++
+ drivers/clk/Makefile | 1 +
+ 2 files changed, 10 insertions(+)
+
+--- a/drivers/clk/Kconfig
++++ b/drivers/clk/Kconfig
+@@ -33,6 +33,15 @@ menuconfig COMMON_CLK
+ 
+ if COMMON_CLK
+ 
++config COMMON_CLK_ZX279125
++	bool "ZTE Sanechips ZX279125 clock support"
++	depends on ARCH_ZX || COMPILE_TEST
++	depends on OF && HAS_IOMEM
++	default ARCH_ZX
++	help
++	  Support for the Clock and Reset Management (CRM) controller on
++	  the ZTE Sanechips ZX279125 ARMv7 SoC.
++
+ config COMMON_CLK_WM831X
+ 	tristate "Clock driver for WM831x/2x PMICs"
+ 	depends on MFD_WM831X
+--- a/drivers/clk/Makefile
++++ b/drivers/clk/Makefile
+@@ -62,6 +62,7 @@ obj-$(CONFIG_COMMON_CLK_FIXED_MMIO)	+= c
+ obj-$(CONFIG_COMMON_CLK_FSL_FLEXSPI)	+= clk-fsl-flexspi.o
+ obj-$(CONFIG_COMMON_CLK_FSL_SAI)	+= clk-fsl-sai.o
+ obj-$(CONFIG_COMMON_CLK_GEMINI)		+= clk-gemini.o
++obj-$(CONFIG_COMMON_CLK_ZX279125)	+= clk-zx279125.o
+ obj-$(CONFIG_COMMON_CLK_ASPEED)		+= clk-aspeed.o
+ obj-$(CONFIG_MACH_ASPEED_G6)		+= clk-ast2600.o
+ obj-$(CONFIG_ARCH_HIGHBANK)		+= clk-highbank.o

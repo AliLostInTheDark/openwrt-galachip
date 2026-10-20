@@ -15,7 +15,7 @@ define Package/omci-agent
   CATEGORY:=Utilities
   SUBMENU:=xPON
   TITLE:=GC1601 OMCI userspace control plane
-  DEPENDS:=@TARGET_galachip_gc1601 +ucode +libucode +ucode-mod-ubus +ucode-mod-uci +ucode-mod-uloop +rpcd +rpcd-mod-ucode +libuci +libubus
+  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125) +ucode +libucode +ucode-mod-ubus +ucode-mod-uci +ucode-mod-uloop +rpcd +rpcd-mod-ucode +libuci +libubus
 endef
 
 define Package/omci-agent/description
