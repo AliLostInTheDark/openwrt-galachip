@@ -1,143 +1,217 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/*
- * ITU-T G.984 GPON MAC state machine for ZTE Sanechips ZX279125
- *
- * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
- */
-
-#include <linux/bitfield.h>
-#include <linux/delay.h>
-#include <linux/interrupt.h>
-#include <linux/io.h>
-#include <linux/module.h>
-#include <linux/spinlock.h>
-
+/* ZX279125 GPON register interface, reconstructed from the shipped SDK. */
+#include <linux/iopoll.h>
+#include <linux/netdevice.h>
+#include <linux/unaligned.h>
 #include "zx279125-pon.h"
 
-int zx279125_gpon_set_state(struct zx279125_pon *pon, enum zx_gpon_onu_state state)
+static void zx_update(void __iomem *reg, u32 mask, u32 value)
+{
+	writel((readl(reg) & ~mask) | (value & mask), reg);
+}
+
+void zx279125_gpon_hold_tx(struct zx279125_pon *pon, bool hold)
+{
+	unsigned long flags;
+
+	if (!pon->laser_allowed)
+		hold = true;
+
+	spin_lock_irqsave(&pon->lock, flags);
+	pon->tx_hold = hold;
+	zx_update(pon->base_tx, ZX_PON_TX_FORCE_CLOSE,
+		  hold ? ZX_PON_TX_FORCE_CLOSE : 0);
+	spin_unlock_irqrestore(&pon->lock, flags);
+}
+
+int zx279125_gpon_set_state(struct zx279125_pon *pon,
+			    enum zx_gpon_onu_state state)
+{
+	unsigned long flags;
+	enum xpon_registration_state registration = XPON_REGISTRATION_DOWN;
+
+	if (state < ZX_ONU_STATE_O1_INITIAL || state > ZX_ONU_STATE_O7_EMERGENCY_STOP)
+		return -EINVAL;
+	spin_lock_irqsave(&pon->lock, flags);
+	zx_update(pon->base_onu, ZX_ONU_STATE_MASK, state);
+	WRITE_ONCE(pon->state, state);
+	spin_unlock_irqrestore(&pon->lock, flags);
+	if (state == ZX_ONU_STATE_O2_STANDBY || state == ZX_ONU_STATE_O3_SERIAL_NUM)
+		registration = XPON_REGISTRATION_DISCOVERY;
+	else if (state == ZX_ONU_STATE_O4_RANGING)
+		registration = XPON_REGISTRATION_REGISTERING;
+	else if (state == ZX_ONU_STATE_O5_OPERATION)
+		registration = XPON_REGISTRATION_OPERATIONAL;
+	if (pon->xpon) {
+		xpon_device_report_registration(pon->xpon, registration);
+		xpon_device_report_carrier(pon->xpon,
+			state == ZX_ONU_STATE_O5_OPERATION && !pon->emergency_stop);
+	}
+	if (pon->netdev) {
+		if (state == ZX_ONU_STATE_O5_OPERATION && !pon->emergency_stop)
+			netif_carrier_on(pon->netdev);
+		else
+			netif_carrier_off(pon->netdev);
+	}
+	dev_dbg(pon->dev, "GPON O%d\n", state);
+	return 0;
+}
+
+int zx279125_gpon_set_alloc(struct zx279125_pon *pon, unsigned int index,
+			    u16 alloc, bool valid)
+{
+	unsigned long flags;
+	u32 offset, shift;
+
+	/* SDK RxBwMapSet: slot0 is separate, slots1..32 are packed pairs. */
+	if (index > 32 || alloc > 0xfff)
+		return -EINVAL;
+	offset = index ? 0x80 + ((index - 1) / 2) * 4 : 0x7c;
+	shift = index && !(index & 1) ? 16 : 0;
+	spin_lock_irqsave(&pon->lock, flags);
+	zx_update(pon->base_onu + offset, 0x1fff << shift,
+		  (alloc | (valid ? BIT(12) : 0)) << shift);
+	spin_unlock_irqrestore(&pon->lock, flags);
+	return 0;
+}
+
+int zx279125_gpon_set_omcc(struct zx279125_pon *pon, u16 gem, bool valid)
+{
+	unsigned long flags;
+	u16 previous;
+
+	if (gem > 0xfff)
+		return -EINVAL;
+	spin_lock_irqsave(&pon->lock, flags);
+	previous = pon->omci_port;
+	if (previous < 0x1000 && previous != gem)
+		zx_update(pon->base_ports + previous * 4, 3, 0);
+	zx_update(pon->base_ports + gem * 4, 3, valid ? 1 : 0);
+	zx_update(pon->base_gem, GENMASK(31, 20), (u32)gem << 20);
+	pon->omci_port = valid ? gem : 0xffff;
+	spin_unlock_irqrestore(&pon->lock, flags);
+	if (pon->odev)
+		omci_device_set_channel(pon->odev, gem, valid);
+	return 0;
+}
+
+int zx279125_gpon_send_ploam(struct zx279125_pon *pon, u8 msg,
+			     const u8 data[10], unsigned int repeat)
 {
 	unsigned long flags;
 	u32 val;
+	int ret;
 
+	if (!repeat || repeat > 0xffff || !READ_ONCE(pon->running))
+		return -EINVAL;
 	spin_lock_irqsave(&pon->lock, flags);
-	pon->state = state;
-
-	val = readl(pon->base_onu + ZX_ONU_STATE_CTRL);
-	val &= ~ZX_ONU_STATE_MASK;
-	val |= (state & ZX_ONU_STATE_MASK);
-	writel(val, pon->base_onu + ZX_ONU_STATE_CTRL);
-
+	ret = readl_poll_timeout_atomic(pon->base_tx + 0x48, val, !val, 1, 100);
+	if (!ret) {
+		writel((repeat << 16) | 3, pon->base_tx + 0x58);
+		writel(((u32)pon->onu_id << 24) | ((u32)msg << 16) |
+		       get_unaligned_be16(data), pon->base_tx + 0x4c);
+		writel(get_unaligned_be32(data + 2), pon->base_tx + 0x50);
+		writel(get_unaligned_be32(data + 6), pon->base_tx + 0x54);
+		writel(1, pon->base_tx + 0x48);
+	}
 	spin_unlock_irqrestore(&pon->lock, flags);
-
-	dev_info(pon->dev, "GPON state changed to O%d\n", state);
-	return 0;
+	return ret;
 }
 
 int zx279125_gpon_init(struct zx279125_pon *pon)
 {
+	pon->omci_port = 0xffff;
+	pon->onu_id = 0xff;
+	zx279125_ploam_init(pon);
+	zx279125_gpon_hold_tx(pon, true);
+	writel(ZX_PON_INT_VALID, pon->base_gpon + ZX_PON_INT_MASK);
+	zx279125_pp_update_bits(pon->base_gmac_int + ZX_GMAC_INT_MASK,
+				ZX_GMAC_INT_GPON, ZX_GMAC_INT_GPON);
+	return zx279125_gpon_set_state(pon, ZX_ONU_STATE_O1_INITIAL);
+}
+
+int zx279125_gpon_start(struct zx279125_pon *pon)
+{
 	unsigned long flags;
-	u32 val;
+	u32 status;
 
+	if (READ_ONCE(pon->running))
+		return 0;
+	if (!pon->serial_number[0] || pon->emergency_stop)
+		return -EPERM;
+	zx279125_gpon_hold_tx(pon, true);
 	spin_lock_irqsave(&pon->lock, flags);
-
-	/* 1. Put ONU into State O1 (Initial) */
-	pon->state = ZX_ONU_STATE_O1_INITIAL;
-	val = readl(pon->base_onu + ZX_ONU_STATE_CTRL);
-	val &= ~(ZX_ONU_STATE_MASK | ZX_ONU_ID_MASK);
-	val |= ZX_ONU_STATE_O1_INITIAL;
-	writel(val, pon->base_onu + ZX_ONU_STATE_CTRL);
-
-	/* 2. Configure Downstream Rx */
-	writel(ZX_PON_RX_CFG_EN, pon->base_gpon + ZX_PON_RX_CFG);
-
-	/* 3. Enable Rx FEC */
-	if (pon->fec_enabled)
-		writel(ZX_PON_RX_FEC_EN, pon->base_gpon + ZX_PON_RX_FEC_CFG);
-	else
-		writel(0, pon->base_gpon + ZX_PON_RX_FEC_CFG);
-
-	/* 4. Configure Frame lengths in GEM Engine */
-	writel(0x05ee, pon->base_gem + ZX_GEM_ETH_LEN_CFG);  /* 1518 MTU */
-	writel(0x0030, pon->base_gem + ZX_GEM_OMCI_LEN_CFG); /* 48 byte OMCI */
-	writel(ZX_GEM_OMCI_DROP_DIS, pon->base_gem + ZX_GEM_OMCI_CTRL);
-
-	/* 5. Set Serial Number */
-	if (pon->serial_number[0]) {
-		u32 sn_hi = (pon->serial_number[0] << 24) | (pon->serial_number[1] << 16) |
-			    (pon->serial_number[2] << 8)  | (pon->serial_number[3]);
-		u32 sn_lo = (pon->serial_number[4] << 24) | (pon->serial_number[5] << 16) |
-			    (pon->serial_number[6] << 8)  | (pon->serial_number[7]);
-		writel(sn_hi, pon->base_tx + ZX_PON_SERIAL_NUM);
-		writel(sn_lo, pon->base_tx + ZX_PON_SERIAL_NUM + 4);
-	}
-
-	/* 6. Unmask GPON interrupts */
-	val = ZX_PON_INT_PLOAM_RCV | ZX_PON_INT_STATE_CHANGE | ZX_PON_INT_RANGING;
-	writel(val, pon->base_gpon + ZX_PON_INT_MASK);
-
-	/* 7. Unmask top-level GMAC GPON interrupt */
-	val = readl(pon->base_gmac_int + ZX_GMAC_INT_MASK);
-	val &= ~ZX_GMAC_INT_GPON;
-	writel(val, pon->base_gmac_int + ZX_GMAC_INT_MASK);
-
+	/* SDK receive delineation: alpha2, delta5, K5, M4. */
+	zx_update(pon->base_rx, 0xffff, 0x2524);
+	zx_update(pon->base_rx + 0x24, 0xf, 8);
+	zx_update(pon->base_rx + ZX_PON_RX_FEC_CFG, 0x77,
+		  pon->fec_enabled ? 7 : 0);
+	/* DRS length registers contain maximum in low bits, minimum in high. */
+	writel((64 << 16) | 2048, pon->base_gem + 4);
+	writel((48 << 16) | 48, pon->base_gem + 8);
+	zx_update(pon->base_gem, 0xf, 1);
+	writel(get_unaligned_be32(pon->serial_number), pon->base_tx + 0x40);
+	writel(get_unaligned_be32(pon->serial_number + 4), pon->base_tx + 0x44);
+	zx_update(pon->base_onu, ZX_ONU_ID_MASK, 0xff << ZX_ONU_ID_SHIFT);
+	/* SDK TxConfigSet burst datapath; force-close remains held. */
+	zx_update(pon->base_tx + 0xe8, 0xffff, 0x603);
+	zx_update(pon->base_tx + 0xfc, 0x7f, 1);
+	zx_update(pon->base_tx + 4, 1, 1);
+	zx_update(pon->base_tx + 0xc, 1, 1);
+	zx_update(pon->base_tx + 0xf4, 1, 1);
+	pon->running = true;
+	zx_update(pon->base_rx, 3, 3);
+	writel(ZX_PON_INT_VALID, pon->base_gpon + ZX_PON_INT_STATUS);
+	writel(ZX_PON_INT_VALID & ~(ZX_PON_INT_LOS | ZX_PON_INT_LOF |
+					 ZX_PON_INT_PLOAM_RCV),
+	       pon->base_gpon + ZX_PON_INT_MASK);
+	status = readl(pon->base_rx + ZX_PON_RX_STAT);
 	spin_unlock_irqrestore(&pon->lock, flags);
-
-	dev_info(pon->dev, "ZX279125 GPON MAC core initialized in state O1\n");
+	zx279125_pp_update_bits(pon->base_gmac_int + ZX_GMAC_INT_MASK,
+				ZX_GMAC_INT_GPON, 0);
+	xpon_device_report_optical(pon->xpon, !(status & BIT(4)), status & BIT(4));
+	if (!(status & BIT(4)))
+		zx279125_gpon_set_state(pon, ZX_ONU_STATE_O2_STANDBY);
 	return 0;
 }
 
 void zx279125_gpon_exit(struct zx279125_pon *pon)
 {
 	unsigned long flags;
-	u32 val;
 
+	zx279125_gpon_hold_tx(pon, true);
+	zx279125_pp_update_bits(pon->base_gmac_int + ZX_GMAC_INT_MASK,
+				ZX_GMAC_INT_GPON, ZX_GMAC_INT_GPON);
 	spin_lock_irqsave(&pon->lock, flags);
-
-	/* Mask interrupts */
-	val = readl(pon->base_gmac_int + ZX_GMAC_INT_MASK);
-	val |= ZX_GMAC_INT_GPON;
-	writel(val, pon->base_gmac_int + ZX_GMAC_INT_MASK);
-	writel(0, pon->base_gpon + ZX_PON_INT_MASK);
-
-	/* Force optical Tx off */
-	writel(0, pon->base_tx + ZX_PON_TX_CFG);
-
-	/* Reset ONU state to O1 */
-	pon->state = ZX_ONU_STATE_O1_INITIAL;
-	val = readl(pon->base_onu + ZX_ONU_STATE_CTRL);
-	val &= ~ZX_ONU_STATE_MASK;
-	val |= ZX_ONU_STATE_O1_INITIAL;
-	writel(val, pon->base_onu + ZX_ONU_STATE_CTRL);
-
+	pon->running = false;
+	writel(ZX_PON_INT_VALID, pon->base_gpon + ZX_PON_INT_MASK);
+	zx_update(pon->base_tx + 4, 1, 0);
+	zx_update(pon->base_rx, 1, 0);
 	spin_unlock_irqrestore(&pon->lock, flags);
+	synchronize_irq(pon->irq);
+	zx279125_ploam_stop(pon);
+	zx279125_gpon_set_state(pon, ZX_ONU_STATE_O1_INITIAL);
 }
 
 irqreturn_t zx279125_pon_isr(int irq, void *dev_id)
 {
 	struct zx279125_pon *pon = dev_id;
-	u32 gmac_status, gpon_status;
+	unsigned long flags;
+	u32 pending;
 
-	gmac_status = readl(pon->base_gmac_int + ZX_GMAC_INT_STATUS);
-	if (!(gmac_status & ZX_GMAC_INT_GPON))
+	pending = readl(pon->base_gmac_int + ZX_GMAC_INT_STATUS) &
+		  ~readl(pon->base_gmac_int + ZX_GMAC_INT_MASK);
+	if (!(pending & ZX_GMAC_INT_GPON))
 		return IRQ_NONE;
-
-	spin_lock(&pon->lock);
-
-	gpon_status = readl(pon->base_gpon + ZX_PON_INT_STATUS);
-	/* Write-1-to-clear status bits */
-	writel(gpon_status, pon->base_gpon + ZX_PON_INT_STATUS);
-
-	if (gpon_status & ZX_PON_INT_STATE_CHANGE) {
-		u32 cur_state = readl(pon->base_onu + ZX_ONU_STATE_CTRL) & ZX_ONU_STATE_MASK;
-		pon->state = cur_state;
+	spin_lock_irqsave(&pon->lock, flags);
+	pending = readl(pon->base_gpon + ZX_PON_INT_STATUS) &
+		  ~readl(pon->base_gpon + ZX_PON_INT_MASK) & ZX_PON_INT_VALID;
+	if (pending) {
+		writel(readl(pon->base_gpon + ZX_PON_INT_MASK) | pending,
+		       pon->base_gpon + ZX_PON_INT_MASK);
+		pon->pending_irqs |= pending;
+		schedule_work(&pon->state_work);
 	}
-
-	if (gpon_status & ZX_PON_INT_RANGING) {
-		/* Equalization Delay received from OLT Ranging_Time message */
-		u32 eqd = readl(pon->base_onu + ZX_ONU_EQD_DELAY);
-		dev_dbg(pon->dev, "OLT Ranging EqD: 0x%08x\n", eqd);
-	}
-
-	spin_unlock(&pon->lock);
-	return IRQ_HANDLED;
+	spin_unlock_irqrestore(&pon->lock, flags);
+	return pending ? IRQ_HANDLED : IRQ_NONE;
 }

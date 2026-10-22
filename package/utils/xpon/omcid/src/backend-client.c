@@ -140,6 +140,16 @@ static int topology(struct omci_device *odev, struct omci_ani_topology *t)
 	struct omci_backend_topology result;
 	int ret = omcid_backend(odev->priv, OMCI_BACKEND_TOPOLOGY, NULL, 0, &result, sizeof(result));
 
+	if (ret == -EOPNOTSUPP) {
+		*t = (struct omci_ani_topology) {
+			.tcont_base = 0x8000, .scheduler_base = 0x8000,
+			.queue_base = 0x8000, .maximum_queue_size = 0xffff,
+			.allocated_queue_size = 4, .tcont_count = 32,
+			.queues_per_tcont = 8,
+			.queue_config_option = 1, .scheduler_policy = 1,
+		};
+		return 0;
+	}
 	if (ret)
 		return ret;
 	*t = (struct omci_ani_topology) {
@@ -171,16 +181,19 @@ static int qos(struct omci_device *odev, u16 entity, const struct omci_tcont_qos
 {
 	struct omci_backend_qos q = { .entity = entity, .enabled = value->enabled,
 		.policy = value->policy };
+	int ret;
 
 	memcpy(q.weight, value->weight, sizeof(q.weight));
-	return omcid_backend(odev->priv, OMCI_BACKEND_TCONT_QOS, &q, sizeof(q), NULL, 0);
+	ret = omcid_backend(odev->priv, OMCI_BACKEND_TCONT_QOS, &q, sizeof(q), NULL, 0);
+	return (ret == -EOPNOTSUPP) ? 0 : ret;
 }
 
 static int rate(struct omci_device *odev, u16 port, bool upstream, u32 rate, u32 burst)
 {
 	struct omci_backend_rate q = { port, upstream, rate, burst };
+	int ret = omcid_backend(odev->priv, OMCI_BACKEND_GEM_RATE, &q, sizeof(q), NULL, 0);
 
-	return omcid_backend(odev->priv, OMCI_BACKEND_GEM_RATE, &q, sizeof(q), NULL, 0);
+	return (ret == -EOPNOTSUPP) ? 0 : ret;
 }
 
 static int uni(struct omci_device *odev, u16 entity, bool enabled)
@@ -189,10 +202,11 @@ static int uni(struct omci_device *odev, u16 entity, bool enabled)
 	struct omcid *ctx = odev->priv;
 	int ret = omcid_backend(ctx, OMCI_BACKEND_UNI, &q, sizeof(q), NULL, 0);
 
-	if (!ret) {
+	if (!ret || ret == -EOPNOTSUPP) {
 		ctx->uni_known = true;
 		ctx->uni_enabled = enabled;
 		ctx->uni_entity = entity;
+		return 0;
 	}
 	return ret;
 }
@@ -201,8 +215,9 @@ static int attrs(struct omci_device *odev, u16 entity, const struct omci_uni_att
 {
 	struct omci_backend_uni_attrs q = { entity, a->pause_quanta, a->ageing_s,
 		a->learn_limit, a->down_kbps, a->up_kbps, a->auto_detection, a->max_frame_size };
+	int ret = omcid_backend(odev->priv, OMCI_BACKEND_UNI_ATTRS, &q, sizeof(q), NULL, 0);
 
-	return omcid_backend(odev->priv, OMCI_BACKEND_UNI_ATTRS, &q, sizeof(q), NULL, 0);
+	return (ret == -EOPNOTSUPP) ? 0 : ret;
 }
 
 static int service(struct omci_device *odev, const struct omci_service_config *s)
@@ -213,15 +228,23 @@ static int service(struct omci_device *odev, const struct omci_service_config *s
 		.pcp = s->pcp, .queue = s->queue, .direction = s->direction,
 		.uni_mode = s->uni_vlan_mode, .uni_vlan = s->uni_vlan_id,
 		.multicast_ani = s->multicast_ani_entity_id };
+	int ret;
 
-	if (s->vlan_valid) q.flags |= OMCI_BACKEND_SVC_VLAN;
-	if (s->pcp_valid) q.flags |= OMCI_BACKEND_SVC_PCP;
-	if (s->vlan_treatment_valid) q.flags |= OMCI_BACKEND_SVC_TREATMENT;
-	if (s->multicast_ani_valid) q.flags |= OMCI_BACKEND_SVC_MULTICAST_ANI;
-	if (s->multicast) q.flags |= OMCI_BACKEND_SVC_MULTICAST;
-	if (s->default_service) q.flags |= OMCI_BACKEND_SVC_DEFAULT;
+	if (s->vlan_valid)
+		q.flags |= OMCI_BACKEND_SVC_VLAN;
+	if (s->pcp_valid)
+		q.flags |= OMCI_BACKEND_SVC_PCP;
+	if (s->vlan_treatment_valid)
+		q.flags |= OMCI_BACKEND_SVC_TREATMENT;
+	if (s->multicast_ani_valid)
+		q.flags |= OMCI_BACKEND_SVC_MULTICAST_ANI;
+	if (s->multicast)
+		q.flags |= OMCI_BACKEND_SVC_MULTICAST;
+	if (s->default_service)
+		q.flags |= OMCI_BACKEND_SVC_DEFAULT;
 	memcpy(q.treatment, s->vlan_treatment, sizeof(q.treatment));
-	return omcid_backend(odev->priv, OMCI_BACKEND_SERVICE, &q, sizeof(q), NULL, 0);
+	ret = omcid_backend(odev->priv, OMCI_BACKEND_SERVICE, &q, sizeof(q), NULL, 0);
+	return (ret == -EOPNOTSUPP) ? 0 : ret;
 }
 
 static int service_delete(struct omci_device *odev, u32 cookie)

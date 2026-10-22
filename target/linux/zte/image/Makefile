@@ -8,8 +8,8 @@ define Device/Default
   DEVICE_DTS_DIR := ../dts
   KERNEL_NAME := zImage
   KERNEL := kernel-bin | append-dtb | uImage none
-  KERNEL_INITRAMFS := kernel-bin | append-dtb
-  KERNEL_INITRAMFS_SUFFIX := -zImage
+  KERNEL_INITRAMFS := kernel-bin | append-dtb | uImage none
+  KERNEL_INITRAMFS_SUFFIX := -uImage
   KERNEL_LOADADDR := 0x40008000
   KERNEL_ENTRY := 0x40008000
   IMAGES :=

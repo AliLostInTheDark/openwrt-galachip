@@ -4947,10 +4947,10 @@ static u8 omci_agent_reboot_locked(struct omci_device *odev, u16 class_id,
 	}
 
 	if (!agent->reboot) {
-		dev_warn(odev->parent,
-			 "OLT requested an ONU reboot (flags %u): refused, OLT reboots are disabled\n",
+		dev_info(odev->parent,
+			 "OLT requested an ONU reboot (flags %u): ignored, OLT reboots are disabled\n",
 			 flags);
-		return OMCI_RESULT_PROCESSING_ERROR;
+		return OMCI_RESULT_SUCCESS;
 	}
 	if (flags > OMCI_REBOOT_IF_NO_EMERGENCY) {
 		dev_warn(odev->parent,
@@ -5834,6 +5834,18 @@ static int omci_agent_resume_retained_locked(struct omci_device *odev)
 	return xa_empty(&agent->services) ? -ENODATA : 0;
 }
 
+static bool omci_mib_has_olt_objects_locked(struct omci_agent *agent)
+{
+	struct omci_mib_object *object;
+	unsigned long index;
+
+	xa_for_each(&agent->mib, index, object)
+		if (object->origin == OMCI_MIB_ORIGIN_OLT && !object->pending_delete)
+			return true;
+
+	return false;
+}
+
 void omci_agent_channel_changed(struct omci_device *odev, bool valid)
 {
 	struct omci_agent *agent = &odev->agent;
@@ -5851,6 +5863,15 @@ void omci_agent_channel_changed(struct omci_device *odev, bool valid)
 		agent->alarm_sequence = 0;
 		omci_agent_clear_services_locked(odev);
 	} else {
+		/*
+		 * A MIB without OLT-created objects, e.g. one re-seeded after a
+		 * profile or ONU type change, cannot be in sync with the OLT.
+		 * A stale non-zero MIB data sync would make the OLT skip the
+		 * MIB reset and upload and leave the ONU unprovisioned.
+		 */
+		if (!omci_mib_has_olt_objects_locked(agent))
+			omci_agent_set_mib_sync_locked(agent, 0);
+
 		/*
 		 * After an optical outage the OLT re-ranges the ONU but sends
 		 * no OMCI while its view of the MIB still matches, so resume

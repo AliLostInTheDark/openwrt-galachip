@@ -41,9 +41,10 @@ static int import_status(struct omcid *ctx, const struct nlmsghdr *n, bool initi
 		return ret ? ret : -EBADMSG;
 	gen_changed = ctx->transport.generation != generation;
 	ctx->transport.generation = generation;
-#define READ_STATUS(attr, field) \
+#define READ_STATUS(attr, field) do { \
 	if (tb[OMCI_ATTR_##attr] && omcid_scalar(tb[OMCI_ATTR_##attr], &d->field, sizeof(d->field))) \
-		return -EBADMSG
+		return -EBADMSG; \
+} while (0)
 	READ_STATUS(IFINDEX, ifindex);
 	READ_STATUS(ONU_ID, onu_id);
 	READ_STATUS(GEM_PORT_ID, gem_port_id);
@@ -148,9 +149,8 @@ static int listener_open(const char *path)
 		ret = connect(probe, (void *)&addr, sizeof(addr));
 		ret = ret ? -errno : -EADDRINUSE;
 		close(probe);
-		if (ret != -ECONNREFUSED) {
+		if (ret != -ECONNREFUSED)
 			goto fail;
-		}
 		if (unlink(path)) {
 			ret = -errno;
 			goto fail;
@@ -445,6 +445,20 @@ static int bootstrap_topology(struct omci_device *odev, struct omci_ani_topology
 	struct omci_backend_topology out;
 	int ret = omcid_backend(ctx, OMCI_BACKEND_TOPOLOGY, NULL, 0, &out, sizeof(out));
 
+	if (ret == -EOPNOTSUPP) {
+		*t = (struct omci_ani_topology) {
+			.tcont_base = 0x8000,
+			.scheduler_base = 0x8000,
+			.queue_base = 0x8000,
+			.maximum_queue_size = 0xffff,
+			.allocated_queue_size = 4,
+			.tcont_count = 32,
+			.queues_per_tcont = 8,
+			.queue_config_option = 1,
+			.scheduler_policy = 1,
+		};
+		return 0;
+	}
 	if (ret)
 		return ret;
 	*t = (struct omci_ani_topology) { out.tcont_base, out.scheduler_base, out.queue_base,
@@ -481,8 +495,12 @@ int main(int argc, char **argv)
 			device = id;
 			break;
 		}
-		case 's': ctx.checkpoint = optarg; break;
-		case 'p': path = optarg; break;
+		case 's':
+			ctx.checkpoint = optarg;
+			break;
+		case 'p':
+			path = optarg;
+			break;
 		default:
 			fprintf(stderr, "Usage: omcid [-d device] [-s /tmp/state] [-p control-socket]\n");
 			return opt == 'h' ? 0 : 2;

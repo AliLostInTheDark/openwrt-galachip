@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
 /*
- * Device Tree Source for V-SOL V2801SG GPON ONT
+ * Device Tree Source for VSOL V2801SG
  *
  * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
  */
@@ -11,21 +11,35 @@
 #include <dt-bindings/input/input.h>
 
 / {
-	model = "V-SOL V2801SG GPON ONT";
+	model = "VSOL V2801SG";
 	compatible = "v-sol,v2801sg", "zte,zx279125";
 
 	aliases {
 		serial0 = &uart0;
+		i2c0 = &i2c0;
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,115200n8 earlycon";
+		bootargs = "console=ttyS0,115200n8 earlycon initramfs_async=0";
 		stdout-path = "serial0:115200n8";
 	};
 
 	memory@40000000 {
 		device_type = "memory";
-		reg = <0x40000000 0x08000000>; /* 128 MB */
+		reg = <0x40000000 0x01000000>,
+		      <0x41a00000 0x00600000>; /* 22 MiB total for Linux */
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		/* Hardware PP DMA buffers and rings (10 MiB) */
+		packet_pool: packet-pool@41000000 {
+			reg = <0x41000000 0x00a00000>;
+			no-map;
+		};
 	};
 };
 
@@ -33,8 +47,34 @@
 	status = "okay";
 };
 
+&i2c0 {
+	status = "okay";
+
+	bosa: optical-transceiver@51 {
+		compatible = "semtech,gn25l95", "atmel,24c02";
+		reg = <0x51>;
+	};
+};
+
 &pon {
 	status = "okay";
+	zte,bosa-i2c = <&i2c0>;
+};
+
+&mdio {
+	status = "okay";
+
+	lan_phy: ethernet-phy@1 {
+		reg = <1>;
+	};
+};
+
+&ethernet {
+	status = "okay";
+	phy-handle = <&lan_phy>;
+	memory-region = <&packet_pool>;
+	/* CPU-only queue cursor table placed in reserved PP memory */
+	zte,bootloader-cursors = <0x41840000>;
 };
 
 &spifc {
@@ -43,7 +83,7 @@
 	flash@0 {
 		compatible = "jedec,spi-nor";
 		reg = <0>;
-		spi-max-frequency = <50000000>;
+		spi-max-frequency = <25000000>;
 
 		partitions {
 			compatible = "fixed-partitions";
@@ -57,13 +97,11 @@
 			};
 
 			partition@40000 {
+				compatible = "openwrt,uimage", "denx,uimage";
+				openwrt,offset = <320>;
+				openwrt,partition-magic = <0x99999999>;
 				label = "firmware";
-				reg = <0x040000 0x3a0000>;
-			};
-
-			partition@3e0000 {
-				label = "firmware2";
-				reg = <0x3e0000 0x3a0000>;
+				reg = <0x040000 0x740000>;
 			};
 
 			partition@780000 {
@@ -74,7 +112,6 @@
 			partition@790000 {
 				label = "tagparam";
 				reg = <0x790000 0x010000>;
-				read-only;
 			};
 
 			partition@7a0000 {

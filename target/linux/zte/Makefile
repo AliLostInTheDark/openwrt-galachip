@@ -19,6 +19,8 @@ KERNELNAME:=zImage
 
 include $(INCLUDE_DIR)/target.mk
 
+include $(PLATFORM_DIR)/ramroot.mk
+
 DEFAULT_PACKAGES += \
 	kmod-gpio-button-hotplug
 

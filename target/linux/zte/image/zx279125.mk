@@ -40,19 +40,25 @@ define Image/Prepare
 	find $(TARGET_DIR) ! -type l -perm /022 ! -perm -1000 -exec chmod go-w {} +
 endef
 
+define Build/zxic-header
+	$(TOPDIR)/scripts/mkzxicheader.py $@ $@.new
+	@mv $@.new $@
+endef
+
 define Device/vsol_v2801sg
-  DEVICE_VENDOR := V-SOL
+  DEVICE_VENDOR := VSOL
   DEVICE_MODEL := V2801SG
   DEVICE_DTS := zx279125-vsol-v2801sg
   SOC := zx279125
   BLOCKSIZE := 64k
-  IMAGE_SIZE := 3648k
+  IMAGE_SIZE := 7424k
   KERNEL := kernel-bin | append-dtb | uImage none
   IMAGES := sysupgrade.bin
   IMAGE/sysupgrade.bin := append-kernel | pad-to $$(BLOCKSIZE) | \
-    append-rootfs | pad-rootfs | check-size | append-metadata
-  DEVICE_PACKAGES := xpon-report \
-    omci-agent omcid luci-app-omci luci-theme-slate uhttpd-mod-ucode \
+    append-rootfs | pad-rootfs | zxic-header | check-size | append-metadata
+  DEVICE_PACKAGES := kmod-zx279125-ethernet xpon-report bosa-tools \
+    omci-agent omcid luci-app-omci luci-app-xpon luci-app-xpon-stats \
+    luci-theme-slate uhttpd uhttpd-mod-ubus uhttpd-mod-ucode rpcd \
     epon-oamd luci-app-epon \
     -uclient-fetch -urandom-seed -urngd -ca-bundle \
     -libustream-mbedtls -rpcd-mod-iwinfo -libiwinfo-data -libiwinfo \

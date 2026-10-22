@@ -14,8 +14,11 @@ Features included in this port:
 - Early debug UART support
 - Native SPI flash controller driver (SPIFC) with ZB25VQ64 NOR support
 - Persistent SPI flash environment located at 0x7a0000 (usercfg partition)
-- Native Gigabit Ethernet driver (zx279125_eth) with hardware DMA,
-  16 x 32-bit queue registers, BMU buffer management, and Mailbox release
+- Native Gigabit Ethernet driver (zx279125_eth):
+  - Hardware DMA with 16 dedicated 32-bit queue registers
+  - Standalone cold-start hardware initialization (BMU, BPT, Rings)
+  - Dynamic runtime cursor table validation and adoption
+  - Memory write/read barriers for cache and DMA coherency
 - Board reset controller support
 
 Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
@@ -434,10 +437,10 @@ index 4c1f4094..36f1cd75 100644
  obj-y += phy/
 diff --git a/drivers/net/zx279125_eth.c b/drivers/net/zx279125_eth.c
 new file mode 100644
-index 00000000..fc6244e5
+index 00000000..d3e51aea
 --- /dev/null
 +++ b/drivers/net/zx279125_eth.c
-@@ -0,0 +1,614 @@
+@@ -0,0 +1,630 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * ZTE Sanechips ZX279125 Ethernet Controller Driver
@@ -445,6 +448,7 @@ index 00000000..fc6244e5
 + * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
 + */
 +
++#include <cpu_func.h>
 +#include <dm.h>
 +#include <dm/device_compat.h>
 +#include <env.h>
@@ -632,8 +636,9 @@ index 00000000..fc6244e5
 +}
 +
 +/* Cold hardware initialization sequence (if not pre-initialized) */
-+static int zx279125_eth_cold_start(struct zx279125_eth_priv *priv)
++static int zx279125_eth_cold_start(struct udevice *dev)
 +{
++	struct zx279125_eth_priv *priv = dev_get_priv(dev);
 +	static const struct {
 +		u16 offset;
 +		u32 value;
@@ -683,13 +688,18 @@ index 00000000..fc6244e5
 +
 +	for (q = 0; q < ZX_BUFFERS; q++)
 +		writew(cpu_to_be16(q), priv->bpt + q * 2);
++	flush_dcache_range((ulong)priv->bpt, (ulong)priv->bpt + ZX_BUFFERS * 2);
 +
 +	memset(priv->rings, 0, 0x100000);
++	flush_dcache_range((ulong)priv->rings, (ulong)priv->rings + 0x100000);
++
 +	for (q = 0; q < 16; q++) {
 +		writel(ZX_RINGS_BASE + q * 0x10000, priv->cursors + q * 8);
 +		writel(0, priv->cursors + q * 8 + 4);
++		priv->consumer[q] = 0;
 +	}
 +
++	wmb();
 +	writel(ZX_BUFFER_POOL_BASE, priv->pp + 0x20);
 +	writel(ZX_BPT_BASE, priv->pp + 0x18);
 +	writel(0x10000000, priv->bmu + 0x48);
@@ -739,6 +749,12 @@ index 00000000..fc6244e5
 +	ret = readl_poll_timeout(priv->bmu + 0x80, val,
 +				 val + readl(priv->bmu + 0x84) == ZX_BUFFERS,
 +				 100000);
++	if (ret)
++		dev_err(dev, "BMU buffer load timeout: free=%u+%u\n",
++			readl(priv->bmu + 0x80), readl(priv->bmu + 0x84));
++	else
++		dev_info(dev, "cold start initialized: BMU buffers=%u+%u\n",
++			 readl(priv->bmu + 0x80), readl(priv->bmu + 0x84));
 +	return ret;
 +}
 +
@@ -770,7 +786,8 @@ index 00000000..fc6244e5
 +
 +	/* Advance consumer cursor after mailbox completion (matching Linux zx_release) */
 +	priv->consumer[queue] = (priv->consumer[queue] + 1) % ZX_RING_SIZE;
-+	writel(priv->consumer[queue], (void __iomem *)(ZX_VENDOR_CURSORS_BASE + queue * 8 + 4));
++	if (readl((void __iomem *)(ZX_VENDOR_CURSORS_BASE + queue * 8)) == (ulong)priv->rings + queue * 0x10000)
++		writel(priv->consumer[queue], (void __iomem *)(ZX_VENDOR_CURSORS_BASE + queue * 8 + 4));
 +	writel(priv->consumer[queue], priv->cursors + queue * 8 + 4);
 +
 +	/* Return buffer to BMU */
@@ -789,24 +806,21 @@ index 00000000..fc6244e5
 +	unsigned int q;
 +	int timeout = 3000;
 +	int ret = -ETIMEDOUT;
++	bool is_cold = false;
 +
-+	/* Cold initialization if not already done by vendor bootloader */
-+	if (readl(priv->pp + 0x18) == 0x50000000) {
-+		ret = zx279125_eth_cold_start(priv);
++	/* Cold initialization if forced or hardware is not yet running */
++	if (env_get_yesno("eth_force_cold_start") == 1 ||
++	    readl(priv->pp + 0x18) != ZX_BPT_BASE ||
++	    readl(priv->bmu) == 0 ||
++	    readl(priv->bmu + 0x80) + readl(priv->bmu + 0x84) == 0) {
++		ret = zx279125_eth_cold_start(dev);
 +		if (ret) {
 +			dev_err(dev, "cold start failed: %d\n", ret);
 +			return ret;
 +		}
++		is_cold = true;
 +	}
 +
-+	/*
-+	 * Read the live ring and buffer base addresses that hardware was
-+	 * programmed with.  When chained from vendor U-Boot these differ from
-+	 * our own ZX_RINGS_BASE / ZX_BUFFER_POOL_BASE constants.
-+	 *
-+	 *   PP+0x1c = ring descriptor base (vendor: 0x41f40000)
-+	 *   PP+0x20 = buffer pool base     (vendor: 0x41000000 — same as ours)
-+	 */
 +	live_rings_base = readl(priv->pp + 0x1c);
 +	live_buf_base   = readl(priv->pp + 0x20);
 +
@@ -816,15 +830,20 @@ index 00000000..fc6244e5
 +
 +	/* Synchronize consumer pointers with whoever last owned the rings */
 +	for (q = 0; q < 16; q++) {
-+		u32 vendor_cursor = readl((void __iomem *)(ZX_VENDOR_CURSORS_BASE + q * 8 + 4));
++		void __iomem *vc = (void __iomem *)(ZX_VENDOR_CURSORS_BASE + q * 8);
 +
-+		if (vendor_cursor < ZX_RING_SIZE) {
-+			/* Adopt valid cursor from previous bootloader */
-+			priv->consumer[q] = vendor_cursor;
-+		} else if (readl(priv->cursors + q * 8 + 4) < ZX_RING_SIZE) {
++		if (!is_cold &&
++		    readl(vc) == live_rings_base + q * 0x10000 &&
++		    readl(vc + 4) < ZX_RING_SIZE) {
++			/* Adopt valid cursor from relocated vendor bootloader */
++			priv->consumer[q] = readl(vc + 4);
++		} else if (!is_cold &&
++			   readl(priv->cursors + q * 8) == live_rings_base + q * 0x10000 &&
++			   readl(priv->cursors + q * 8 + 4) < ZX_RING_SIZE) {
++			/* Adopt valid cursor from retained hardware table */
 +			priv->consumer[q] = readl(priv->cursors + q * 8 + 4);
 +		} else {
-+			/* No valid cursor found — start from zero */
++			/* Cold start or clean reset — start from zero */
 +			priv->consumer[q] = 0;
 +		}
 +		/* Keep our shadow cursor table in sync */
