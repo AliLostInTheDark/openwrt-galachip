@@ -437,10 +437,10 @@ index 4c1f4094..36f1cd75 100644
  obj-y += phy/
 diff --git a/drivers/net/zx279125_eth.c b/drivers/net/zx279125_eth.c
 new file mode 100644
-index 00000000..d3e51aea
+index 00000000..b851f698
 --- /dev/null
 +++ b/drivers/net/zx279125_eth.c
-@@ -0,0 +1,630 @@
+@@ -0,0 +1,629 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * ZTE Sanechips ZX279125 Ethernet Controller Driver
@@ -808,9 +808,8 @@ index 00000000..d3e51aea
 +	int ret = -ETIMEDOUT;
 +	bool is_cold = false;
 +
-+	/* Cold initialization if forced or hardware is not yet running */
-+	if (env_get_yesno("eth_force_cold_start") == 1 ||
-+	    readl(priv->pp + 0x18) != ZX_BPT_BASE ||
++	/* Cold initialization if hardware tables are not yet running */
++	if (readl(priv->pp + 0x18) != ZX_BPT_BASE ||
 +	    readl(priv->bmu) == 0 ||
 +	    readl(priv->bmu + 0x80) + readl(priv->bmu + 0x84) == 0) {
 +		ret = zx279125_eth_cold_start(dev);
