@@ -50,3 +50,19 @@ the shipped bug at 1394/1440 pixels; the corrected CSS must pass the same test.
 The local browser and host tests do not validate live RPC permissions, device
 configuration changes, firmware upgrades or every third-party LuCI package.
 Rebuilt-package testing on the target is still required.
+
+## Python tests (data-driven)
+
+`test_slate_changes.py` (Save & Apply in edit dialogs, staged-changes bar) and the
+tests of `luci-app-onu-system` run the real module sources in Chromium against a
+small LuCI stand-in (`pyluci.py`). Host-only dependencies: `pip install ddt playwright`
+plus Playwright's Chromium, Chrome or Edge.
+
+```sh
+python -m unittest discover -s package/luci/luci-theme-slate/tests -p "test_*.py"
+python -m unittest discover -s package/luci/luci-app-onu-system/tests -p "test_*.py"
+ONU_HOST=192.0.2.1 python -m unittest package/luci/luci-app-onu-system/tests/test_device.py   # integration, on a device
+```
+
+The device tests open a LuCI session over SSH, stage one network change and revert
+it, apply LED settings and restore automatic mode; they never change passwords.
