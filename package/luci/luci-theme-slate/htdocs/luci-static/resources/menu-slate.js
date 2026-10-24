@@ -13,6 +13,10 @@ return baseclass.extend({
 	__init__() {
 		this.setupShell();
 		ui.menu.load().then((tree) => this.render(tree));
+
+		/* Save & Apply in edit dialogs and a bar for staged changes. */
+		if (L.env.sessionid)
+			L.require('slate-changes').catch(() => {});
 	},
 
 	render(tree) {

@@ -1,0 +1,25 @@
+#!/bin/sh /etc/rc.common
+# Keeps the PON and LOS LEDs in a fixed state chosen on System -> LEDs
+# (config led sections with option hold '1'); see /usr/libexec/led-hold.
+
+START=97
+USE_PROCD=1
+
+start_service() {
+	procd_open_instance
+	if [ -n "$(/usr/libexec/led-hold --list)" ]; then
+		procd_set_param command /usr/libexec/led-hold
+		procd_set_param respawn 3600 5 5
+	else
+		# nothing held: once the LED restart of the apply is done, show the
+		# line state again on LEDs whose hold was just released
+		procd_set_param command /usr/libexec/led-hold --resync-later
+	fi
+	# restart with the new choice whenever the LED config changes
+	procd_set_param file /etc/config/system
+	procd_close_instance
+}
+
+service_triggers() {
+	procd_add_reload_trigger system
+}

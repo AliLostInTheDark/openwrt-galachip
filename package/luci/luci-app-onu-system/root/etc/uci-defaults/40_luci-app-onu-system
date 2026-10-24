@@ -1,0 +1,6 @@
+#!/bin/sh
+# Enable and start led-hold: it exits at once while no LED is held, but starting
+# it registers its trigger, so applying LED settings in LuCI launches it.
+/etc/init.d/led-hold enable
+/etc/init.d/led-hold start
+exit 0

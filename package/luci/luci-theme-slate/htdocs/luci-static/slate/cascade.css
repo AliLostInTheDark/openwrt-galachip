@@ -2657,6 +2657,62 @@ body[data-page="admin-status-overview"] div[style*="grid-template-columns"]:has(
 	}
 }
 
+/* Staged changes: bar with Review / Revert / Save & Apply (slate-changes.js).
+ * Below the mobile drawer (1050) and dialogs (1200). */
+.slate-applybar {
+	position: fixed;
+	z-index: 1040;
+	left: calc(var(--side-w) + 24px);
+	right: 24px;
+	bottom: calc(16px + env(safe-area-inset-bottom));
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 12px 10px 16px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow-pop);
+}
+
+.slate-applybar-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	font-weight: 600;
+	color: var(--text);
+}
+
+.slate-applybar-text::before {
+	content: "";
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	margin-right: 8px;
+	border-radius: 50%;
+	background: var(--warn);
+	vertical-align: middle;
+}
+
+.slate-applybar-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+body.slate-has-applybar { padding-bottom: 88px; }
+
+@media screen and (max-width: 960px) {
+	.slate-applybar { left: 12px; right: 12px; }
+}
+
+@media screen and (max-width: 600px) {
+	.slate-applybar { flex-wrap: wrap; padding: 12px; }
+	.slate-applybar-text { flex-basis: 100%; }
+	.slate-applybar-actions { flex: 1 1 100%; }
+	.slate-applybar-actions > .btn { flex: 1 1 0; }
+	body.slate-has-applybar { padding-bottom: 132px; }
+}
+
 /* Keep dependency-hidden fields hidden despite widget display rules. */
 .hidden,
 [hidden] {

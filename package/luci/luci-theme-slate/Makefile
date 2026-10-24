@@ -3,7 +3,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=13
+PKG_RELEASE:=14
 LUCI_TITLE:=Slate Theme (sidebar layout, light and dark)
 LUCI_PKGARCH:=all
 LUCI_DEPENDS:=+luci-base
