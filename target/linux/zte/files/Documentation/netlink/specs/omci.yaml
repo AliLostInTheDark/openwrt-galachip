@@ -1,0 +1,540 @@
+# SPDX-License-Identifier: ((GPL-2.0 WITH Linux-syscall-note) OR BSD-3-Clause)
+---
+name: omci
+protocol: genetlink
+
+doc: |
+  OMCI channel between the GPON MAC driver and the userspace OMCI agent:
+  OMCI frame transmit and receive, agent state, ONU identity configuration
+  and the MIB view used by management tools. Received OMCI frames, events
+  and transmit traces are sent as unicast notifications to the socket that
+  bound the device; the family has no multicast groups. Commands numbered in
+  the UAPI header but not listed here are handled by the userspace agent.
+
+attribute-sets:
+  -
+    name: omci
+    attributes:
+      -
+        name: dev-id
+        type: u32
+        value: 1
+      -
+        name: ifindex
+        type: u32
+        value: 2
+      -
+        name: onu-id
+        type: u16
+        value: 3
+      -
+        name: gem-port-id
+        type: u16
+        value: 4
+      -
+        name: state
+        type: u8
+        value: 5
+      -
+        name: flags
+        type: u32
+        value: 6
+      -
+        name: capabilities
+        type: u32
+        value: 7
+      -
+        name: sequence
+        type: u64
+        value: 8
+      -
+        name: pdu
+        type: binary
+        value: 9
+      -
+        name: event
+        type: u8
+        value: 10
+      -
+        name: owner-portid
+        type: u32
+        value: 11
+      -
+        name: rx-packets
+        type: u64
+        value: 12
+      -
+        name: rx-bytes
+        type: u64
+        value: 13
+      -
+        name: rx-dropped
+        type: u64
+        value: 14
+      -
+        name: tx-packets
+        type: u64
+        value: 15
+      -
+        name: tx-bytes
+        type: u64
+        value: 16
+      -
+        name: tx-errors
+        type: u64
+        value: 17
+      -
+        name: agent-enabled
+        type: u8
+        value: 18
+      -
+        name: agent-permissive
+        type: u8
+        value: 19
+      -
+        name: mib-sync
+        type: u16
+        value: 20
+      -
+        name: mib-objects
+        type: u32
+        value: 21
+      -
+        name: agent-responses
+        type: u64
+        value: 22
+      -
+        name: agent-duplicates
+        type: u64
+        value: 23
+      -
+        name: agent-unsupported
+        type: u64
+        value: 24
+      -
+        name: class-id
+        type: u16
+        value: 25
+      -
+        name: entity-id
+        type: u16
+        value: 26
+      -
+        name: attr-mask
+        type: u16
+        value: 27
+      -
+        name: attr-data
+        type: binary
+        value: 28
+      -
+        name: origin
+        type: u8
+        value: 29
+      -
+        name: name
+        type: string
+        value: 30
+      -
+        name: index
+        type: u32
+        value: 31
+      -
+        name: config-key
+        type: u16
+        value: 32
+      -
+        name: config-value
+        type: binary
+        value: 33
+      -
+        name: result
+        type: unused
+        value: 34
+      -
+        name: pad
+        type: pad
+        value: 35
+      -
+        name: fec-downstream
+        type: u8
+        value: 36
+      -
+        name: fec-upstream
+        type: u8
+        value: 37
+      -
+        name: telemetry-valid
+        type: u32
+        value: 38
+      -
+        name: bosa-temperature-mc
+        type: binary
+        value: 39
+      -
+        name: bosa-voltage-uv
+        type: u32
+        value: 40
+      -
+        name: bosa-bias-ua
+        type: u32
+        value: 41
+      -
+        name: bosa-tx-power-nw
+        type: u32
+        value: 42
+      -
+        name: bosa-rx-power-nw
+        type: u32
+        value: 43
+      -
+        name: bosa-alarms
+        type: u32
+        value: 44
+      -
+        name: vlan-tagging-filter
+        type: nest
+        value: 45
+        nested-attributes: vlan-filter
+      -
+        name: extended-vlan
+        type: nest
+        value: 46
+        nested-attributes: extended-vlan
+      -
+        name: olt-g
+        type: nest
+        value: 47
+        nested-attributes: olt-g
+      -
+        name: agent-fake-omci
+        type: u8
+        value: 48
+      -
+        name: agent-fake-responses
+        type: u64
+        value: 49
+      -
+        name: class-category
+        type: u8
+        value: 50
+      -
+        name: class-support
+        type: u8
+        value: 51
+      -
+        name: class-flags
+        type: u32
+        value: 52
+      -
+        name: config-source
+        type: u8
+        value: 53
+      -
+        name: olt-profile-configured
+        type: u8
+        value: 54
+      -
+        name: olt-profile-effective
+        type: u8
+        value: 55
+      -
+        name: olt-profile-forced
+        type: u8
+        value: 56
+      -
+        name: olt-profile-quirks
+        type: u32
+        value: 57
+      -
+        name: agent-operational
+        type: u8
+        value: 58
+      -
+        name: agent-dying-gasp
+        type: unused
+        value: 59
+      -
+        name: onu-type
+        type: u8
+        value: 60
+      -
+        name: generation
+        type: u32
+        value: 61
+      -
+        name: bind-flags
+        type: u32
+        value: 62
+      -
+        name: trace-dropped
+        type: u64
+        value: 63
+      -
+        name: backend-op
+        type: u16
+        value: 64
+      -
+        name: backend-data
+        type: binary
+        value: 65
+      -
+        name: responder-mode
+        type: u8
+        value: 66
+      -
+        name: loid-status
+        type: u8
+        value: 67
+      -
+        name: diagnostics
+        type: u8
+        value: 68
+      -
+        name: alarm-text
+        type: string
+        value: 69
+  -
+    name: vlan-filter
+    attributes:
+      -
+        name: forward-operation
+        type: u8
+        value: 1
+      -
+        name: number-of-entries
+        type: u8
+        value: 2
+      -
+        name: entries
+        type: indexed-array
+        value: 3
+        nested-attributes: vlan-filter-entry
+  -
+    name: vlan-filter-entry
+    attributes:
+      -
+        name: index
+        type: u8
+        value: 1
+      -
+        name: tci
+        type: u16
+        value: 2
+      -
+        name: pbit
+        type: u8
+        value: 3
+      -
+        name: dei
+        type: u8
+        value: 4
+      -
+        name: vid
+        type: u16
+        value: 5
+  -
+    name: extended-vlan
+    attributes:
+      -
+        name: association-type
+        type: u8
+        value: 1
+      -
+        name: max-table-size
+        type: u16
+        value: 2
+      -
+        name: input-tpid
+        type: u16
+        value: 3
+      -
+        name: output-tpid
+        type: u16
+        value: 4
+      -
+        name: downstream-mode
+        type: u8
+        value: 5
+      -
+        name: associated-me
+        type: u16
+        value: 6
+      -
+        name: dscp-to-pbit
+        type: binary
+        value: 7
+      -
+        name: rules
+        type: indexed-array
+        value: 8
+        nested-attributes: extended-vlan-rule
+  -
+    name: extended-vlan-rule
+    attributes:
+      -
+        name: index
+        type: u8
+        value: 1
+      -
+        name: raw
+        type: binary
+        value: 2
+      -
+        name: delete
+        type: u8
+        value: 3
+      -
+        name: filter-outer-pbit
+        type: u8
+        value: 4
+      -
+        name: filter-outer-vid
+        type: u16
+        value: 5
+      -
+        name: filter-outer-tpid-dei
+        type: u8
+        value: 6
+      -
+        name: filter-inner-pbit
+        type: u8
+        value: 7
+      -
+        name: filter-inner-vid
+        type: u16
+        value: 8
+      -
+        name: filter-inner-tpid-dei
+        type: u8
+        value: 9
+      -
+        name: filter-ethertype
+        type: u8
+        value: 10
+      -
+        name: tags-to-remove
+        type: u8
+        value: 11
+      -
+        name: treat-outer-pbit
+        type: u8
+        value: 12
+      -
+        name: treat-outer-vid
+        type: u16
+        value: 13
+      -
+        name: treat-outer-tpid-dei
+        type: u8
+        value: 14
+      -
+        name: treat-inner-pbit
+        type: u8
+        value: 15
+      -
+        name: treat-inner-vid
+        type: u16
+        value: 16
+      -
+        name: treat-inner-tpid-dei
+        type: u8
+        value: 17
+  -
+    name: olt-g
+    attributes:
+      -
+        name: vendor-id
+        type: string
+        value: 1
+      -
+        name: equipment-id
+        type: string
+        value: 2
+      -
+        name: version
+        type: string
+        value: 3
+
+operations:
+  list:
+    -
+      name: backend
+      value: 18
+      attribute-set: omci
+      flags: [admin-perm]
+      do:
+        request:
+          attributes:
+            - backend-data
+            - backend-op
+            - generation
+    -
+      name: get
+      value: 1
+      attribute-set: omci
+      do:
+        request:
+          attributes:
+            []
+    -
+      name: bind
+      value: 2
+      attribute-set: omci
+      flags: [admin-perm]
+      do:
+        request:
+          attributes:
+            - bind-flags
+            - generation
+    -
+      name: unbind
+      value: 3
+      attribute-set: omci
+      flags: [admin-perm]
+      do:
+        request:
+          attributes:
+            []
+    -
+      name: tx
+      value: 4
+      attribute-set: omci
+      flags: [admin-perm]
+      do:
+        request:
+          attributes:
+            - generation
+            - pdu
+    -
+      name: agent-set
+      value: 7
+      attribute-set: omci
+      flags: [admin-perm]
+      do:
+        request:
+          attributes:
+            - agent-enabled
+            - agent-fake-omci
+            - agent-permissive
+            - olt-profile-configured
+            - olt-profile-forced
+    -
+      name: config-get
+      value: 8
+      attribute-set: omci
+      flags: [admin-perm]
+      do:
+        request:
+          attributes:
+            - config-key
+    -
+      name: config-set
+      value: 9
+      attribute-set: omci
+      flags: [admin-perm]
+      do:
+        request:
+          attributes:
+            - config-key
+            - config-value
