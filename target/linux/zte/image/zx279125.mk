@@ -45,6 +45,14 @@ define Build/zxic-header
 	@mv $@.new $@
 endef
 
+# Also save the unappended zImage and the DTB, so U-Boot can fix up a separate
+# DTB for the packet-engine cursor handoff (bootz <zImage> - <dtb>).
+define Build/export-zimage-dtb
+	mkdir -p $(BIN_DIR)
+	cp $@ $(BIN_DIR)/$(KERNEL_INITRAMFS_PREFIX)-zImage.bin
+	cp $(KDIR)/image-$(firstword $(DEVICE_DTS)).dtb $(BIN_DIR)/$(DEVICE_IMG_PREFIX).dtb
+endef
+
 define Device/vsol_v2801sg
   DEVICE_VENDOR := VSOL
   DEVICE_MODEL := V2801SG
@@ -56,6 +64,7 @@ define Device/vsol_v2801sg
   IMAGES := sysupgrade.bin
   IMAGE/sysupgrade.bin := append-kernel | pad-to $$(BLOCKSIZE) | \
     append-rootfs | pad-rootfs | zxic-header | check-size | append-metadata
+  KERNEL_INITRAMFS := kernel-bin | export-zimage-dtb | append-dtb | uImage none
   DEVICE_PACKAGES := kmod-zx279125-ethernet xpon-report bosa-tools \
     omci-agent omcid luci-app-omci luci-app-xpon \
     luci-mod-network luci-mod-status luci-mod-system luci-theme-slate \
