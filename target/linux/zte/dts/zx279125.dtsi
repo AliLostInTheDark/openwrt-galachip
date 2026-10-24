@@ -34,6 +34,16 @@
 		clock-output-names = "osc";
 	};
 
+	/* Cortex-A9 PERIPHCLK; the private watchdog counts 300 MHz on hardware. */
+	periphclk: periphclk {
+		compatible = "fixed-factor-clock";
+		#clock-cells = <0>;
+		clocks = <&crm ZX279125_CLK_CPU>;
+		clock-div = <2>;
+		clock-mult = <1>;
+		clock-output-names = "periphclk";
+	};
+
 	soc {
 		#address-cells = <1>;
 		#size-cells = <1>;
@@ -47,6 +57,13 @@
 			interrupt-controller;
 			reg = <0x00801000 0x1000>,
 			      <0x00800100 0x100>;
+		};
+
+		watchdog@800620 {
+			compatible = "arm,cortex-a9-twd-wdt";
+			reg = <0x00800620 0x20>;
+			interrupts = <GIC_PPI 14 (GIC_CPU_MASK_SIMPLE(1) | IRQ_TYPE_LEVEL_HIGH)>;
+			clocks = <&periphclk>;
 		};
 
 		timer@94401000 {
