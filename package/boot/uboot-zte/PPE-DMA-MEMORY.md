@@ -260,8 +260,7 @@ Linux module SHA256: `db145f474bdecfa64b82abb62d5230bfd24b78e84829fc8546acb3496d
    a TFTP read (CRC `bd4eab59`) passed, local consumer `0x148`.
 
 No flash, environment or engine register was written by hand. The Linux
-`.shutdown` path is built but not yet exercised on hardware; it needs the
-external-DTB kernel test.
+`.shutdown` path is exercised in the next section.
 
 Stock observation: on the first TFTP after the earlier failed session,
 stock left MAC1 at `020e0888` (TX on, RX off) and timed out until its
@@ -269,3 +268,36 @@ stock left MAC1 at `020e0888` (TX on, RX off) and timed out until its
 those retries.
 
 Log: `tmp/v2801sg-ppe-reset-fix/hw/uart.log`.
+
+## Hardware result: external-DTB Linux handoff and shutdown (24 October 2026)
+
+Built with the RAM bring-up seed: `zImage-initramfs` without an appended DTB
+(3312472 bytes, SHA256 `addce2fe…6978`) and the separate board DTB (4152
+bytes, `00418509…3237`); the root's stripped module (`f0092c15…3de8`)
+contains the `.shutdown` hook. From the fixed chainload monitor `bd4eab59`,
+after its own TFTP traffic (local consumer `0xa20`):
+
+```text
+tftp 40600000 v2801sg-zimage-addce2fe.bin
+tftp 40a00000 v2801sg-00418509.dtb
+setenv bootargs console=ttyS0,115200n8 earlycon initramfs_async=0 panic=0
+bootz 40600000 - 40a00000
+```
+
+- U-Boot's fixup applied without error. Linux saw
+  `zte,bootloader-cursors = <0x41840000>`, memory `40000000 + 0x2000000`,
+  the 16 MiB `packet-pool` reserved no-map, and MemTotal 11476 kB.
+- The driver adopted the local table: `LAN (adopted), consumer=2592`
+  (`0xa20`, the monitor's last value). `lan0` linked at 1000 Mbps full duplex.
+- PC → board ping: 20/20, average 0.50 ms. `devmem 0x41840004` then read
+  `0xa36`; `engine_fault` 0.
+- `reboot`: the driver logged `stopped: consumer=2614 … alloc=5232
+  release=5232`, the kernel restarted into stock U-Boot (autoboot stopped
+  with a space), and `41840000..4184007f` read all zero.
+- Chainloading the monitor again adopted stock's fresh cursor `0xa4` without
+  conflict, and ping passed.
+
+This completes the controlled-reset path in both directions: monitor
+`reset` and Linux `reboot` each leave no adoptable local table. Crash,
+watchdog and hardware resets remain covered only by the refusal. Logs and
+hashes: `tmp/v2801sg-linux-shutdown-test/`.
