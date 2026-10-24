@@ -30,6 +30,7 @@
 #define ZX_BUFFER_SIZE	2048
 #define ZX_RING_SIZE	4096
 #define ZX_QUEUES	16
+#define ZX_LOCAL_CURSORS	0x41840000
 #define ZX_CONTROL_MAX	(ZX_BUFFER_SIZE - 32)
 #define ZX_FRAME_MAX	(ETH_FRAME_LEN + 2 * VLAN_HLEN)
 
@@ -46,6 +47,7 @@ struct zx_lan {
 	u8 management_mac[ETH_ALEN];
 	struct mii_bus *bus;
 	u32 phy_addr;
+	bool local_cursors;
 	bool engine_active;
 	int link_status;
 	/* Serialize BMU commands, TX publication and MAC ingress changes. */
@@ -884,7 +886,7 @@ static int zx_probe(struct platform_device *pdev)
 	if (ret || res.start != 0x41000000 || res.end != 0x41ffffff)
 		return -EPERM;
 	/* Accept the source monitor's table or a verified relocated stock table. */
-	if (cursor_phys != 0x41840000 &&
+	if (cursor_phys != ZX_LOCAL_CURSORS &&
 	    (cursor_phys < 0x41a00000 || cursor_phys > res.end - 127))
 		return -EPERM;
 	ret = of_get_mac_address(parent->of_node, addr);
@@ -927,6 +929,7 @@ static int zx_probe(struct platform_device *pdev)
 	}
 	lan->intc = devm_ioremap(parent, shared->start, resource_size(shared));
 	lan->cursors = ioremap_wc(cursor_phys, 128);
+	lan->local_cursors = cursor_phys == ZX_LOCAL_CURSORS;
 	lan->rings = ioremap_wc(0x41900000, 0x100000);
 	lan->buffers = ioremap_wc(0x41000000, ZX_BUFFERS * ZX_BUFFER_SIZE);
 	if (!lan->pp || !lan->bmu || !lan->mailbox || !lan->mac ||
@@ -1051,6 +1054,22 @@ static void zx_remove(struct platform_device *pdev)
 	zx_unmap(lan);
 	free_netdev(dev);
 }
+/*
+ * DRAM survives a soft reset. Once no more releases can run, invalidate the
+ * source monitor's table so a later monitor never adopts it as live state;
+ * the stock loader recreates its own table on every boot.
+ */
+static void zx_shutdown(struct platform_device *pdev)
+{
+	struct zx_lan *lan = netdev_priv(platform_get_drvdata(pdev));
+
+	zx_engine_stop(lan);
+	if (lan->local_cursors) {
+		memset_io(lan->cursors, 0, 128);
+		wmb();
+	}
+}
+
 static const struct of_device_id zx_of_match[] = {
 	{ .compatible = "zte,zx279125-ethernet" },
 	{ }
@@ -1060,6 +1079,7 @@ MODULE_DEVICE_TABLE(of, zx_of_match);
 static struct platform_driver zx_driver = {
 	.probe = zx_probe,
 	.remove = zx_remove,
+	.shutdown = zx_shutdown,
 	.driver = {
 		.name = "zx279125-ethernet",
 		.of_match_table = zx_of_match,
