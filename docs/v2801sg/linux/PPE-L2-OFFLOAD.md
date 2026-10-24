@@ -69,10 +69,12 @@ The vendor's Linux runs with 2048 × 2 KiB = 4 MiB of buffers and keeps
 already run the engine for its multicast-upgrade check. This shows that the OS
 can re-initialize the buffer manager with half the buffers at another address.
 
-A smaller pool would free about 5 MiB beyond the current 17 MiB. Before trying:
+A smaller, relocated pool like the vendor's would give Linux up to about
+24 MiB. Note that the engine also writes at least one ring beyond the sixteen
+CPU rings (PPE-DMA-MEMORY.md, last section). Before trying:
 
-- Decode the rest of the vendor init (rings/descriptors, auxiliary `+0x34`, the
-  BMU `+0x48` meaning) so the new layout is complete, not partial.
+- Decode the rest of the vendor init (every ring the engine writes, auxiliary
+  `+0x34`, the BMU `+0x48` meaning) so the new layout is complete, not partial.
 - Quiesce the engine first, as the vendor does after U-Boot; the existing
   `zx_cold_start` path in the Ethernet driver is the starting point.
 - Test from RAM (R9 method) with buffer-manager balance checks, before any

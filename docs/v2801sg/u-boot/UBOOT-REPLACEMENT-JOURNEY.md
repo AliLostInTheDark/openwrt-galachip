@@ -39,7 +39,7 @@ The current first-stage manifest and [latest code audit](COLD-STAGE-CODE-AUDIT.m
 | Test MAC | `70:b6:4f:01:a6:7a`, explicitly assigned in RAM tests |
 | Optical state | Fiber disconnected during this work |
 
-The current monitor deliberately manages the low **16 MiB** RAM bank. Commit `2a526f7e24` advertised a second 6 MiB bank at `41a00000` and gave Linux that range; it exposed the live stock cursor table at `41fef75c`, and was reverted. Linux now describes 32 MiB and keeps two no-map regions: the packet engine's `41000000..41a00000` and the stock cursor page `41fef000..41ff0000`. Stock U-Boot programs no engine address above `41a00000`; the evidence and hardware test are in [PPE-DMA-MEMORY.md](PPE-DMA-MEMORY.md).
+The current monitor deliberately manages the low **16 MiB** RAM bank. Commit `2a526f7e24` advertised a second 6 MiB bank at `41a00000` and gave Linux that range; it exposed the live stock cursor table at `41fef75c`, and was reverted. Linux describes 32 MiB and keeps the whole `41000000..42000000` no-map. A narrower reservation (10 MiB pool plus the stock cursor page) was tried and withdrawn on 24 October: the engine writes a descriptor ring at `41a00000` that no bootloader programs, and it corrupted process memory. Details are in [PPE-DMA-MEMORY.md](PPE-DMA-MEMORY.md).
 
 The last recorded hardware state was the modern `ZX279125 #` prompt, UART released. This is a recorded checkpoint, not a fresh hardware query made while writing this document.
 

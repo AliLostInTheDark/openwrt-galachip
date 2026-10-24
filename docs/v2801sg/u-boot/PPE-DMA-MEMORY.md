@@ -111,22 +111,23 @@ All intervals below have exclusive ends.
 | `41820000` | Auxiliary base programmed into PP +34; access extent remains unestablished |
 | `41840000..41840080` | Local port's 128-byte software cursor table; existing local convention, still requires combined hardware validation |
 | `41900000..41a00000` | Sixteen rings × 4096 descriptors × 16 bytes = 1 MiB |
-| `41a00000..41aac000` | Stock U-Boot stack and global data; dead after the OS boots |
+| `41a00000..41a10000` | **A seventeenth descriptor ring written by the engine** (found 24 October; see below) |
+| `41a00000..41aac000` | Also stock U-Boot stack and global data |
 | `41aac000..41fbc000` | Stock U-Boot heap, `0x510000` bytes; the Ethernet driver allocates nothing from it |
 | `41fbc000..41fef7e8` | Stock U-Boot relocated code and BSS |
 | `41fef75c..41fef7dc` | Verified stock software cursor table, in that BSS; dependent on that loader's build/relocation |
 | `41ff0000..42000000` | Stock U-Boot page tables; dead after the OS boots |
 
-Linux now reserves `41000000..41a00000` and the page `41fef000..41ff0000`, both
-no-map, and gets the rest (24 October 2026, below).
+Linux again reserves all of `41000000..42000000` (below).
 
 Known buffer/ring/table bytes do not account for the complete reservation.
 The auxiliary extent and potential overlap with locally chosen software
 storage have not been fully established. The fact that a short LAN transfer
 worked does not prove every other queue/auxiliary mode leaves that storage alone.
 
-Consequently this pass reclaimed **zero bytes** from the DMA guard; the later
-stock-code audit below reclaimed the range above `41a00000`. It also does
+Consequently this pass reclaimed **zero bytes** from the DMA guard. A later
+stock-code audit reclaimed the range above `41a00000`; that was wrong and is
+withdrawn (last section). It also does
 not shrink the buffer count, ring sizes or optical control queues. Doing so
 requires a verified register contract and producer/consumer accounting, not
 just changing allocation constants. U-Boot's reported 16 MiB does not mean the
@@ -457,3 +458,30 @@ OOM kills.
 Still unproven: the auxiliary table's exact extent (bounded only by the rings
 at `0x41900000`), other queue and PON modes, OMCI traffic from an OLT, and
 long runs under load.
+
+## Narrowed reservation withdrawn: engine DMA at 0x41a00000 (24 October 2026)
+
+**The narrowed reservation corrupted Linux memory under load.** On the flashed
+bridge image (2f623828), SSH downloads of 8 MB failed: one closed early, the
+next stalled. The stalled `head` was blocked in `futex(FUTEX_WAIT_PRIVATE)` on
+its libc stdio lock, which held `0x40458002`; that is not a lock value but a
+packet-engine descriptor. The page around it was filled with 16-byte records
+`00 20 00 00 00 00 00 00 02 80 xx 40 ...`.
+
+Reading physical memory through `/dev/mem` showed the same records filling
+`0x41a00000..0x41a10000`: a complete 4096-entry ring (64 KiB) directly after
+the sixteen known rings. No bootloader programs that address; the engine
+appears to derive it as base + queue × 64 KiB for a queue beyond the sixteen
+CPU queues. The stock-code audit above missed it because it only looked for
+addresses the software writes. Further rings beyond it under other traffic
+(PON queues, for example) are not excluded.
+
+The DTS now reserves the full 16 MiB again: the 10 MiB pool, two
+`engine-guard` regions (`0x41a00000..0x41fef000`, `0x41ff0000..0x42000000`) and
+the stock cursor page. RAM test of image 9c03fbaa: `Memory: 11036K/16384K`,
+twenty 8 MB downloads and an 8 MB upload complete, no stuck processes, BMU
+`57820/57820`, MemAvailable about 2 MiB under the trimmed profile.
+
+Reclaiming memory needs the engine's complete ring map first, from the vendor
+init (PPE-L2-OFFLOAD.md) or a hardware queue-count register, then long load
+tests that check `/dev/mem` for writes outside the reservation.

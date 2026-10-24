@@ -55,11 +55,12 @@ outside that sandbox completed successfully. No hardware test has run yet.
 
 ## DMA memory
 
-Linux reserves only the packet engine's `41000000..41a00000` and the page
-holding the stock cursor table (`41fef000..41ff0000`), both no-map, and gets
-about 17 MiB. The stock-code evidence and hardware test are in
-`docs/v2801sg/u-boot/PPE-DMA-MEMORY.md`. Shrinking the pool further needs the
-engine re-initialized, as the vendor kernel does (PPE-L2-OFFLOAD.md).
+Linux reserves the whole top 16 MiB (`41000000..42000000`, no-map) and has
+about 11 MiB. A narrower reservation was tried and withdrawn: the engine writes
+a descriptor ring at `41a00000` that no bootloader programs, which corrupted
+process memory (docs/v2801sg/u-boot/PPE-DMA-MEMORY.md).
+Shrinking the pool needs the engine re-initialized with a complete ring map,
+as the vendor kernel does (PPE-L2-OFFLOAD.md).
 
 ## Selecting a profile
 

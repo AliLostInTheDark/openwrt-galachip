@@ -36,16 +36,31 @@
 
 		/*
 		 * Packet buffers, buffer-pointer and auxiliary tables, and the
-		 * sixteen descriptor rings. Stock U-Boot programs nothing above.
+		 * sixteen descriptor rings the CPU queues use.
 		 */
 		packet_pool: packet-pool@41000000 {
 			reg = <0x41000000 0x00a00000>;
 			no-map;
 		};
 
+		/*
+		 * The engine also writes a descriptor ring at 0x41a00000 that no
+		 * bootloader programs, and the full extent of its DMA is unknown.
+		 * Keep the rest of the top 16 MiB away from Linux.
+		 */
+		engine-guard@41a00000 {
+			reg = <0x41a00000 0x005ef000>;
+			no-map;
+		};
+
 		/* Page holding the stock U-Boot's relocated cursor table. */
 		stock_cursors: stock-cursors@41fef000 {
 			reg = <0x41fef000 0x1000>;
+			no-map;
+		};
+
+		engine-guard@41ff0000 {
+			reg = <0x41ff0000 0x00010000>;
 			no-map;
 		};
 	};
