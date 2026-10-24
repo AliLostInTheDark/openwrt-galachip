@@ -30,7 +30,15 @@
 #define ZX_BUFFER_SIZE	2048
 #define ZX_RING_SIZE	4096
 #define ZX_QUEUES	16
-#define ZX_LOCAL_CURSORS	0x41840000
+/* Layout inside the no-map packet pool described by memory-region 0. */
+#define ZX_POOL_SIZE	0xa00000
+#define ZX_POOL_BPT	0x800000
+#define ZX_POOL_AUX	0x820000
+#define ZX_POOL_CURSORS	0x840000
+#define ZX_POOL_RINGS	0x900000
+#define ZX_RINGS_SIZE	(ZX_QUEUES * 0x10000)
+static_assert(ZX_BUFFERS * ZX_BUFFER_SIZE <= ZX_POOL_BPT);
+static_assert(ZX_POOL_RINGS + ZX_RINGS_SIZE <= ZX_POOL_SIZE);
 #define ZX_CONTROL_MAX	(ZX_BUFFER_SIZE - 32)
 #define ZX_FRAME_MAX	(ETH_FRAME_LEN + 2 * VLAN_HLEN)
 
@@ -39,6 +47,7 @@ struct zx_lan {
 	void __iomem *pp, *bmu, *mailbox, *mac, *dma, *intc;
 	void __iomem *global, *spa;
 	void __iomem *cursors, *rings, *buffers;
+	phys_addr_t pool;
 	struct napi_struct napi;
 	int irq;
 	struct delayed_work link_poll;
@@ -656,18 +665,12 @@ static void zx_unmap(struct zx_lan *lan)
 }
 
 /* Only the reset fingerprint is accepted; this is never a live DMA takeover. */
-static int zx_cold_start(struct zx_lan *lan)
+static int zx_cold_start(struct zx_lan *lan, struct platform_device *pdev)
 {
-	enum { GLB, CLA, SPA, BRIDGE, SADM, SWGLB, SIP, MAC0, BPT, RESET, NUM_REGS };
-	static const struct {
-		phys_addr_t start;
-		size_t size;
-	} ranges[NUM_REGS] = {
-		{ 0x92140000, 0x100 }, { 0x9214c000, 0x100 },
-		{ 0x92308000, 0x200 }, { 0x92310000, 0x1000 },
-		{ 0x92314000, 0x100 }, { 0x9232c000, 0x100 },
-		{ 0x92304000, 4 }, { 0x921c0000, 4 },
-		{ 0x41800000, 8192 }, { 0x92000000, 4 },
+	enum { CLA, BRIDGE, SADM, SWGLB, SIP, MAC0, RESET, BPT, NUM_REGS };
+	/* Only needed from reset; some ranges are shared, so they are not claimed. */
+	static const char * const names[BPT] = {
+		"cla", "bridge", "sadm", "swglb", "sip", "mac0", "reset",
 	};
 	static const struct {
 		u16 offset;
@@ -683,13 +686,24 @@ static int zx_cold_start(struct zx_lan *lan)
 	unsigned int q;
 	int ret = -EINVAL;
 
-	for (q = 0; q < NUM_REGS; q++) {
-		reg[q] = q == BPT ? ioremap_wc(ranges[q].start, ranges[q].size) :
-			ioremap(ranges[q].start, ranges[q].size);
+	for (q = 0; q < BPT; q++) {
+		struct resource *res;
+
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, names[q]);
+		if (!res) {
+			ret = -ENODEV;
+			goto out;
+		}
+		reg[q] = ioremap(res->start, resource_size(res));
 		if (!reg[q]) {
 			ret = -ENOMEM;
 			goto out;
 		}
+	}
+	reg[BPT] = ioremap_wc(lan->pool + ZX_POOL_BPT, ZX_BUFFERS * 2);
+	if (!reg[BPT]) {
+		ret = -ENOMEM;
+		goto out;
 	}
 	if (readl(reg[RESET]) != 0xfeffffff || readl(reg[MAC0]) ||
 	    readl(lan->mac) || readl(lan->bmu) ||
@@ -734,31 +748,31 @@ static int zx_cold_start(struct zx_lan *lan)
 	writel(0x7f, lan->bmu + 0x54);
 	for (q = 0; q < ZX_BUFFERS; q++)
 		iowrite16be(q, reg[BPT] + q * 2);
-	memset_io(lan->rings, 0, 0x100000);
+	memset_io(lan->rings, 0, ZX_RINGS_SIZE);
 	for (q = 0; q < 16; q++) {
-		writel(0x41900000 + q * 0x10000, lan->cursors + q * 8);
+		writel(lan->pool + ZX_POOL_RINGS + q * 0x10000, lan->cursors + q * 8);
 		writel(0, lan->cursors + q * 8 + 4);
 	}
 	/* Initialize all pool/ring memory before exposing its physical bases. */
 	wmb();
-	writel(0x41000000, lan->pp + 0x20);
-	writel(0x41800000, lan->pp + 0x18);
+	writel(lan->pool, lan->pp + 0x20);
+	writel(lan->pool + ZX_POOL_BPT, lan->pp + 0x18);
 	writel(0x10000000, lan->bmu + 0x48);
 	writel(0, lan->bmu + 0x10);
-	writel(0x41900000, lan->pp + 0x1c);
-	writel(0x41820000, lan->pp + 0x34);
+	writel(lan->pool + ZX_POOL_RINGS, lan->pp + 0x1c);
+	writel(lan->pool + ZX_POOL_AUX, lan->pp + 0x34);
 	writel(~0U, reg[SWGLB] + 8);
 	usleep_range(1000, 2000);
 	ret = readl_poll_timeout(reg[SWGLB] + 0x0c, val, val == ~0U, 10, 100000);
 	if (ret)
 		goto out;
 	for (q = 0; q < 7; q++)
-		writel(1, reg[SPA] + 0x40 + q * 4);
+		writel(1, lan->spa + 0x40 + q * 4);
 	/*
 	 * Retain the tested base identification mask. zx_local_delivery adds
 	 * the management-DMAC and IPv6 control identification bits afterward.
 	 */
-	writel(0x1100200, reg[SPA] + 0x11c);
+	writel(0x1100200, lan->spa + 0x11c);
 	for (q = 0; q < ARRAY_SIZE(bridge); q++)
 		writel(bridge[q].value, reg[BRIDGE] + bridge[q].offset);
 	for (q = 0; q < 64; q++) {
@@ -776,7 +790,7 @@ static int zx_cold_start(struct zx_lan *lan)
 	writel(0x1000, reg[SADM] + 0x40);
 	writel(1, reg[SIP]);
 	writel(0, reg[SWGLB] + 0x50);
-	writel(0x11, reg[GLB] + 0x48);
+	writel(0x11, lan->global + 0x48);
 	writel(0x80000001, lan->mac + 0x10);
 	writel(0x300000, lan->mac + 0x60);
 	writel(0x21000c0, lan->mac + 0x4060);
@@ -883,6 +897,7 @@ static int zx_probe(struct platform_device *pdev)
 	struct net_device *dev;
 	struct zx_lan *lan;
 	u8 addr[ETH_ALEN];
+	phys_addr_t pool;
 	u32 cursor_phys;
 	bool cold_init;
 	unsigned int q;
@@ -892,10 +907,12 @@ static int zx_probe(struct platform_device *pdev)
 	if (ret || !IS_ALIGNED(cursor_phys, 4))
 		return -EPERM;
 	if (zx_reserved_region(parent->of_node, 0, &res) ||
-	    res.start != 0x41000000 || res.end != 0x419fffff)
+	    resource_size(&res) != ZX_POOL_SIZE || !IS_ALIGNED(res.start, SZ_64K) ||
+	    upper_32_bits(res.end))
 		return -EPERM;
+	pool = res.start;
 	/* Accept the source monitor's table or a reserved relocated stock table. */
-	if (cursor_phys != ZX_LOCAL_CURSORS &&
+	if (cursor_phys != pool + ZX_POOL_CURSORS &&
 	    (zx_reserved_region(parent->of_node, 1, &res) ||
 	     cursor_phys < res.start || cursor_phys > res.end - 127))
 		return -EPERM;
@@ -911,6 +928,7 @@ static int zx_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	lan = netdev_priv(dev);
 	lan->dev = dev;
+	lan->pool = pool;
 	lan->irq = -1;
 	SET_NETDEV_DEV(dev, parent);
 	spin_lock_init(&lan->lock);
@@ -939,9 +957,9 @@ static int zx_probe(struct platform_device *pdev)
 	}
 	lan->intc = devm_ioremap(parent, shared->start, resource_size(shared));
 	lan->cursors = ioremap_wc(cursor_phys, 128);
-	lan->local_cursors = cursor_phys == ZX_LOCAL_CURSORS;
-	lan->rings = ioremap_wc(0x41900000, 0x100000);
-	lan->buffers = ioremap_wc(0x41000000, ZX_BUFFERS * ZX_BUFFER_SIZE);
+	lan->local_cursors = cursor_phys == pool + ZX_POOL_CURSORS;
+	lan->rings = ioremap_wc(pool + ZX_POOL_RINGS, ZX_RINGS_SIZE);
+	lan->buffers = ioremap_wc(pool, ZX_BUFFERS * ZX_BUFFER_SIZE);
 	if (!lan->pp || !lan->bmu || !lan->mailbox || !lan->mac ||
 	    !lan->dma || !lan->intc || !lan->cursors || !lan->rings || !lan->buffers) {
 		ret = -ENOMEM;
@@ -949,21 +967,21 @@ static int zx_probe(struct platform_device *pdev)
 	}
 	cold_init = readl(lan->pp + 0x18) == 0x50000000;
 	if (cold_init) {
-		ret = zx_cold_start(lan);
+		ret = zx_cold_start(lan, pdev);
 		if (ret)
 			goto fail;
 	}
 	ret = -EINVAL;
-	if (readl(lan->pp + 0x18) != 0x41800000 ||
-	    readl(lan->pp + 0x20) != 0x41000000 ||
-	    readl(lan->pp + 0x1c) != 0x41900000 ||
+	if (readl(lan->pp + 0x18) != pool + ZX_POOL_BPT ||
+	    readl(lan->pp + 0x20) != pool ||
+	    readl(lan->pp + 0x1c) != pool + ZX_POOL_RINGS ||
 	    readl(lan->pp + 0x24) != ZX_PP_COUNT || readl(lan->bmu) != 1 ||
 	    !zx_ownership_idle(lan) ||
 	    (readl(lan->mac) & BIT(2)))
 		goto fail;
 	for (q = 0; q < 16; q++) {
 		/* Empty queues do not imply a zero hardware producer index. */
-		if (readl(lan->cursors + q * 8) != 0x41900000 + q * 0x10000 ||
+		if (readl(lan->cursors + q * 8) != pool + ZX_POOL_RINGS + q * 0x10000 ||
 		    readl(lan->cursors + q * 8 + 4) >= ZX_RING_SIZE ||
 		    zx_rx_count(lan, q)) {
 			dev_err(parent, "queue %u has no valid idle bootloader handoff\n", q);
@@ -1076,6 +1094,7 @@ static void zx_shutdown(struct platform_device *pdev)
 	zx_engine_stop(lan);
 	if (lan->local_cursors) {
 		memset_io(lan->cursors, 0, 128);
+		/* Complete the clear before the reset that follows shutdown. */
 		wmb();
 	}
 }

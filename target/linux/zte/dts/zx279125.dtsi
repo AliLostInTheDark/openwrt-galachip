@@ -163,9 +163,14 @@
 			reg = <0x92144000 0x100>, <0x92168000 0x100>,
 			      <0x92154000 0x100>, <0x92200000 0x5000>,
 			      <0x92164000 0x200>, <0x92040000 0x100>,
-			      <0x92140000 0x100>, <0x92308000 0x200>;
+			      <0x92140000 0x100>, <0x92308000 0x200>,
+			      <0x9214c000 0x100>, <0x92310000 0x1000>,
+			      <0x92314000 0x100>, <0x9232c000 0x100>,
+			      <0x92304000 0x4>, <0x921c0000 0x4>,
+			      <0x92000000 0x4>;
 			reg-names = "pp", "bmu", "mailbox", "mac", "dma", "intc",
-			            "global", "spa";
+			            "global", "spa", "cla", "bridge", "sadm",
+			            "swglb", "sip", "mac0", "reset";
 			interrupts = <GIC_SPI 30 IRQ_TYPE_LEVEL_HIGH>;
 			status = "disabled";
 		};
