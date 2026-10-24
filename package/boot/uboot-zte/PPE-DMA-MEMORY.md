@@ -186,3 +186,86 @@ These files are built and software-tested only; none was staged for TFTP or exec
 | `vsol_v2801sg-dump` | 236440 | `4aa93417` | `a7a9a2d2509ed29b0dcbaacec7c5b7b8a2757f05c0fbae2cd0aeb784803851c0` |
 
 Manifest and copied monitors: `tmp/v2801sg-ppe-handoff-review/manifest.json` and its per-variant directories.
+
+## Hardware result: chainload after reset (24 October 2026)
+
+Board path: old RAM-chainload monitor (22 October build) → `reset` → stock
+U-Boot, autoboot stopped with a space → `tftp 0x40400000` of
+`v2801sg-uboot-chainload-8daa8290.bin` (234736 bytes) → `go 0x40400000`.
+The new monitor's own `crc32 40400000 394f0` returned `d1ca0f53`. `bdinfo`
+showed one DRAM bank, `40000000..40ffffff`, relocation at `40fb3000`. No flash,
+environment or engine register was written.
+
+Three pings with ethaddr `70:b6:4f:01:a6:7a` failed before transmitting:
+
+```text
+zx279125_eth ethernet@92144000: conflicting retained cursors for RX queue 0
+```
+
+Read-only dumps explain it. The local table at `41840000` held queue 0
+consumer `0xb5`; the stock table at `41fef75c` held `0xa2`; all sixteen
+hardware queue counts were zero. `0xa2` (162) matches stock's TFTP just
+before: 160 data blocks of 1468 bytes plus ARP. `0xb5` is left in DRAM by
+the previous modern-monitor session; DRAM contents survive a soft reset.
+
+The first-adoption guard therefore behaved as designed, refusing rather
+than guessing, but the design cannot tell a stale local table from a live
+one. The ordinary sequence "modern monitor or Linux → reset → stock → new
+monitor" will always hit this. A fixed-address software table needs an
+explicit invalidation or freshness rule before this chainload path, and
+the Linux handoff built on it, can work. Log: `tmp/v2801sg-ppe-chainload-test/uart.log`.
+Resolved by the reset-time invalidation in the next section.
+
+## Fix: invalidate the local table on controlled resets (24 October 2026)
+
+U-Boot's `reset_cpu()` now zeroes the 128-byte local table at `41840000`
+before writing the soft-reset register (compiled order: 32 stores, `dmb`,
+reset write). The Linux driver gains a platform `.shutdown` hook that stops
+the engine (IRQ synchronized, NAPI disabled) and then zeroes the table only
+when it is the local one; it runs on every reboot, halt or power-off. A
+stale table after a crash, watchdog or hardware reset still produces the
+existing conflict refusal.
+
+Software checks, evidence in `tmp/v2801sg-ppe-reset-fix/`:
+
+- Driver harness, 11/11 pass: the seven earlier cases plus the actual
+  `reset_cpu()` zeroing the whole table before the reset write and leaving
+  the stock table untouched; adoption of stock cursors after that reset;
+  continued refusal of the hardware-observed stale `0xb5` / live `0xa2` pair;
+  refusal when neither table is valid on a running engine.
+- FDT handoff harness, 4/4 pass, unchanged.
+- All four monitor variants rebuilt through the package; Linux module
+  rebuilt with `W=1` and no warnings.
+
+| Variant | Bytes | CRC32 | SHA256 |
+| --- | ---: | --- | --- |
+| `vsol_v2801sg` | 234808 | `dca5928d` | `f392e1ac065ae95a9053c361b4c567da2cff2eab52297512facee5ebef490b3b` |
+| `vsol_v2801sg-chainload` | 234768 | `bd4eab59` | `0d955b10b6c2f3f273f49df927684d628bd67d5d20503c068d688dc5b5792078` |
+| `vsol_v2801sg-uart-test` | 234832 | `565792a0` | `a96d8d78bd0a5808963f2ab27ab8cd77f4d06568a25240540efa22e131ab4c6f` |
+| `vsol_v2801sg-dump` | 236472 | `1c27f18e` | `a391cf6af26b85d14037872e17bd5df3e44a45be3f5685f792cd75f7c980f8d7` |
+
+Linux module SHA256: `db145f474bdecfa64b82abb62d5230bfd24b78e84829fc8546acb3496dd67d39`.
+
+### Hardware result, chainload variant `bd4eab59`
+
+1. The stale table left by the earlier monitor was cleared once by hand
+   (`mw.l 41840000 0 20`), the same writes the fix performs.
+2. Stock → TFTP → `go`: the monitor's own CRC matched. It adopted stock's
+   queue-0 cursor `0xb9` without conflict; three pings and two TFTP reads
+   (CRC `bd4eab59` both times) passed, leaving the local consumer at `0x203`.
+3. `reset` from this monitor: in stock, `41840000..4184007f` read all zero.
+   Stock's own table also read zero before it used Ethernet, confirming that
+   stock recreates its table on every boot.
+4. Second chainload: adopted stock's `0xa2` without conflict; two pings and
+   a TFTP read (CRC `bd4eab59`) passed, local consumer `0x148`.
+
+No flash, environment or engine register was written by hand. The Linux
+`.shutdown` path is built but not yet exercised on hardware; it needs the
+external-DTB kernel test.
+
+Stock observation: on the first TFTP after the earlier failed session,
+stock left MAC1 at `020e0888` (TX on, RX off) and timed out until its
+`netretry` attempt, which then succeeded. Do not interrupt stock during
+those retries.
+
+Log: `tmp/v2801sg-ppe-reset-fix/hw/uart.log`.
