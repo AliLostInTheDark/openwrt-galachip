@@ -1,0 +1,40 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] clocksource: add ZX279125 timer support
+
+Add the custom ZX279125 event timer and downcounter clocksource.
+The driver is provided by the target overlay.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+
+diff --git a/drivers/clocksource/Kconfig b/drivers/clocksource/Kconfig
+--- a/drivers/clocksource/Kconfig
++++ b/drivers/clocksource/Kconfig
+@@ -32,6 +32,18 @@ config I8253_LOCK
+ config CLKSRC_MMIO
+ 	bool
+ 
++config ZX279125_TIMER
++	bool "ZTE Sanechips ZX279125 timer support" if COMPILE_TEST
++	depends on ARCH_ZX || COMPILE_TEST
++	depends on OF && HAS_IOMEM
++	select CLKSRC_MMIO
++	select TIMER_OF
++	help
++	  Support for the ZX279125 clock-event timer and free-running
++	  downcounter clocksource.
++	  The event timer supports periodic and one-shot interrupts.
++	  Both timer clocks are supplied by the device tree.
++
+ config BCM2835_TIMER
+ 	bool "BCM2835 timer driver" if COMPILE_TEST
+ 	select CLKSRC_MMIO
+diff --git a/drivers/clocksource/Makefile b/drivers/clocksource/Makefile
+--- a/drivers/clocksource/Makefile
++++ b/drivers/clocksource/Makefile
+@@ -1,4 +1,5 @@
+ # SPDX-License-Identifier: GPL-2.0
++obj-$(CONFIG_ZX279125_TIMER)	+= timer-zx279125.o
+ obj-$(CONFIG_TIMER_OF)		+= timer-of.o
+ obj-$(CONFIG_TIMER_PROBE)	+= timer-probe.o
+ obj-$(CONFIG_ATMEL_PIT)		+= timer-atmel-pit.o

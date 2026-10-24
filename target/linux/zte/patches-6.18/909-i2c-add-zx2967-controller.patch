@@ -1,0 +1,34 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] i2c: add ZTE Sanechips ZX279125/ZX2967 I2C controller driver
+
+Add Kconfig and Makefile entries for the ZTE Sanechips ZX279125 / ZX2967
+hardware I2C bus controller driver.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+--- a/drivers/i2c/busses/Kconfig
++++ b/drivers/i2c/busses/Kconfig
+@@ -1189,4 +1189,14 @@ config I2C_VIRTIO
+           This driver can also be built as a module. If so, the module
+           will be called i2c-virtio.
+ 
++config I2C_ZX2967
++	tristate "ZTE ZX2967 / ZX279125 I2C support"
++	depends on ARCH_ZX || COMPILE_TEST
++	help
++	  If you say yes to this option, support will be included for the
++	  ZTE ZX2967 / ZX279125 I2C interface.
++
++	  This driver can also be built as a module. If so, the module will
++	  be called i2c-zx2967.
++
+ endmenu
+--- a/drivers/i2c/busses/Makefile
++++ b/drivers/i2c/busses/Makefile
+@@ -124,5 +124,6 @@ obj-$(CONFIG_I2C_XGENE_SLIMPRO) += i2c-x
+ obj-$(CONFIG_SCx200_ACB)	+= scx200_acb.o
+ obj-$(CONFIG_I2C_FSI)		+= i2c-fsi.o
+ obj-$(CONFIG_I2C_VIRTIO)	+= i2c-virtio.o
++obj-$(CONFIG_I2C_ZX2967)	+= i2c-zx2967.o
+ 
+ ccflags-$(CONFIG_I2C_DEBUG_BUS) := -DDEBUG

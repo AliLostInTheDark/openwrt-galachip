@@ -1,0 +1,36 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] spi: add the ZTE Sanechips ZX279125 SPIFC driver
+
+Add Kconfig and Makefile entries for the ZTE Sanechips ZX279125 SPI
+Flash Controller (SPIFC).
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+--- a/drivers/spi/Kconfig
++++ b/drivers/spi/Kconfig
+@@ -62,6 +62,15 @@ config SPI_OFFLOAD
+ 
+ comment "SPI Master Controller Drivers"
+ 
++config SPI_ZX279125_SPIFC
++	tristate "ZTE Sanechips ZX279125 SPI Flash Controller"
++	depends on ARCH_ZX || COMPILE_TEST
++	depends on OF && HAS_IOMEM
++	select SPI_MEM
++	help
++	  Enable support for the SPI Flash Controller (SPIFC) on ZTE
++	  Sanechips ZX279125 SoCs.
++
+ config SPI_AIROHA_SNFI
+ 	tristate "Airoha SPI NAND Flash Interface"
+ 	depends on ARCH_AIROHA || COMPILE_TEST
+--- a/drivers/spi/Makefile
++++ b/drivers/spi/Makefile
+@@ -16,6 +16,7 @@ obj-$(CONFIG_SPI_LOOPBACK_TEST)		+= spi-
+ 
+ # SPI master controller drivers (bus)
+ obj-$(CONFIG_SPI_AIROHA_SNFI)		+= spi-airoha-snfi.o
++obj-$(CONFIG_SPI_ZX279125_SPIFC)	+= spi-zx279125-spifc.o
+ obj-$(CONFIG_SPI_ALTERA)		+= spi-altera-platform.o
+ obj-$(CONFIG_SPI_ALTERA_CORE)		+= spi-altera-core.o
+ obj-$(CONFIG_SPI_ALTERA_DFL)		+= spi-altera-dfl.o

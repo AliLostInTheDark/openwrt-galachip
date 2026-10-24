@@ -1,0 +1,34 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] net: add ZX279125 Ethernet packet engine
+
+Add the platform Ethernet driver and its shared packet transport.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+--- a/drivers/net/ethernet/Kconfig
++++ b/drivers/net/ethernet/Kconfig
+@@ -200,3 +200,17 @@
+ source "drivers/net/ethernet/xircom/Kconfig"
+ 
++config ZX279125_ETHERNET
++	tristate "ZTE Sanechips ZX279125 Ethernet"
++	depends on ARCH_ZX && OF_MDIO && MDIO_ZX279125 && MTD=y
++	select ZX279125_PP
++	select ZX279125_TAGPARAM
++	select MII
++	help
++	  Interrupt-driven Ethernet and shared CPU packet transport with
++	  checked factory identity and reserved packet memory. Adopts the
++	  verified bootloader layout or initializes reset-state hardware.
++	  No optical initialization or shared reset is performed.
++
++	  If unsure, say N.
++
+ endif # ETHERNET
+--- a/drivers/net/ethernet/Makefile
++++ b/drivers/net/ethernet/Makefile
+@@ -105,3 +105,4 @@
+ obj-$(CONFIG_NET_VENDOR_SYNOPSYS) += synopsys/
+ obj-$(CONFIG_NET_VENDOR_PENSANDO) += pensando/
+ obj-$(CONFIG_OA_TC6) += oa_tc6.o
++obj-$(CONFIG_ZX279125_ETHERNET) += zte/

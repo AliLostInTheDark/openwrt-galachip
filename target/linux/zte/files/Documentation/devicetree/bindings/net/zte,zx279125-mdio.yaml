@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/net/zte,zx279125-mdio.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: ZTE ZX279125 MDIO controller
+
+maintainers:
+  - Ifran Ali <khanu.i.i.k.2000@gmail.com>
+
+description:
+  Clause 22 MDIO controller for the ZX279125 Ethernet PHY management bus.
+  The controller does not initialize the packet engine or optical interface.
+
+allOf:
+  - $ref: mdio.yaml#
+
+properties:
+  compatible:
+    const: zte,zx279125-mdio
+
+  reg:
+    maxItems: 1
+
+  clocks:
+    maxItems: 1
+
+required:
+  - compatible
+  - reg
+  - clocks
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    mdio@9a101000 {
+        compatible = "zte,zx279125-mdio";
+        reg = <0x9a101000 0x1000>;
+        clocks = <&mdio_clk>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+    };
