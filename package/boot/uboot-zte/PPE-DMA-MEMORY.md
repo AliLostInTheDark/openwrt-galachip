@@ -361,3 +361,36 @@ state, which a power cycle does by definition; the button and any watchdog
 reset source remain to be confirmed on hardware.
 
 Log: `tmp/v2801sg-ppe-stale-table/hw/uart.log`.
+
+## Hardware result: power cycle and reset button (24 October 2026)
+
+Run by the user from their own terminal; transcript in
+`tmp/v2801sg-power-cycle-test/user-terminal.txt`.
+
+**Power cycle.** From the new monitor `7ef408d9` with a live local table,
+power was removed and restored without touching the button. Stock showed the
+local table as random DRAM contents (`ee55aecf 6277a6fe …`), its own table
+zero and the engine at its reset fingerprint (`50000000`, BMU 0). After
+stock's TFTP (stock `0xa2`), the new monitor's CRC matched, it adopted
+`0xa2`, two pings passed, the local table read `0xa6` and the stock table
+zero. Garbage in the local table is simply not a valid table; the stock
+table decides.
+
+**Reset button.** Holding the button while powering on selected stock's
+upgrade path, not a plain reset: it requested `upgrade.bin` into
+`40600000`, got "File not found" from the PC, printed `update version
+fail!` and reset into normal autoboot, which was stopped. Afterwards the
+monitor read back the whole boot partition with `sf read`: CRC `34d4cc5a`
+for `0x0..0x3ffff` and `eeae6842` for the environment at `0x30000..0x3ffff`,
+both identical to the 23 October capture, so nothing was written. Keep
+`upgrade.bin` absent from the TFTP root: if present, this path flashes it.
+The button is a startup GPIO for the stock loader (`94404014` bit 9); no
+reset line was observed and Linux has no `gpio-keys` node for it.
+
+**Watchdog.** Not testable yet: the kernel has the generic watchdog core
+but no ZX279125 watchdog driver or DT node, and the SoC's watchdog block has
+not been identified.
+
+With the direct reset-register write, the Linux panic restart and the power
+cycle, every reset reachable today returns the engine to its reset state
+and leads to correct adoption.
