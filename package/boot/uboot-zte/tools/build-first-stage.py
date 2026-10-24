@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0+
-"""Build the ZX279125 cold first stage around a pinned monitor payload.
+"""Build the ZX279125 cold first stage around a monitor payload.
 
-The monitor is an explicit input checked against its SHA256, so rebuilding the
-package monitor never silently changes the candidate. The U-Boot build tree is
-used only for compiler flags and headers.
+For a frozen candidate, pin the payload with --payload-sha256 so rebuilding the
+package monitor never silently changes it. The U-Boot build tree is used only
+for compiler flags and headers. The package build passes its own tree, payload
+and cross prefix.
 """
 import argparse
 import hashlib
@@ -64,16 +65,22 @@ def link(out, kind, objects):
 
 
 def main():
+    global PREFIX, UBOOT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--payload', type=Path, required=True)
-    parser.add_argument('--payload-sha256', required=True)
+    parser.add_argument('--payload-sha256')
+    parser.add_argument('--uboot-tree', type=Path, default=UBOOT)
+    parser.add_argument('--cross', default=PREFIX)
+    parser.add_argument('--stock', type=Path, default=STOCK,
+                        help='stock boot partition for the SPI audit; skipped if absent')
     parser.add_argument('--payload-map', type=Path,
                         help="the payload's System.map; records board_init_f for the emulator")
     parser.add_argument('--out', type=Path, required=True)
     opts = parser.parse_args()
 
+    PREFIX, UBOOT = opts.cross, opts.uboot_tree.resolve()
     monitor = opts.payload.read_bytes()
-    if sha256(monitor) != opts.payload_sha256:
+    if opts.payload_sha256 and sha256(monitor) != opts.payload_sha256:
         parser.error(f'payload SHA256 {sha256(monitor)} != {opts.payload_sha256}')
     if STAGE_SLOT + ((len(monitor) + 255) & ~255) > BOOT_PARTITION:
         parser.error('payload does not fit the boot partition')
@@ -85,27 +92,30 @@ def main():
         f'#define ZX_PAYLOAD_SIZE {len(monitor)}U\n#define ZX_PAYLOAD_CRC 0x{crc:08x}U\n')
     (out / 'monitor.bin').write_bytes(monitor)
 
-    stock = STOCK.read_bytes()
-    assert len(stock) == BOOT_PARTITION
-    spi_crc = zlib.crc32(stock[STAGE_SLOT:STAGE_SLOT + len(monitor)])
+    kinds = {'audit': ['-DZX_STAGE_RAM_AUDIT'], 'cold': []}
+    manifest = {'payload': identity(monitor)}
+    if opts.stock.exists():
+        stock = opts.stock.read_bytes()
+        assert len(stock) == BOOT_PARTITION
+        spi_crc = zlib.crc32(stock[STAGE_SLOT:STAGE_SLOT + len(monitor)])
+        manifest['spi_reference_crc32'] = f'{spi_crc:08x}'
+        kinds['spi-audit'] = ['-DZX_STAGE_SPI_AUDIT']
+        compile_c(out, 'spi-audit-body', TOOLS / 'first-stage.c',
+                  ['-DZX_STAGE_SPI_AUDIT', f'-DZX_STAGE_SPI_CRC=0x{spi_crc:08x}U'])
 
     compile_c(out, 'ddr', BOARD / 'ddr.c', ['-DZX_DDR_TRACE', '-DZX_DDR_TRACE_BASE=0x00202420'])
     compile_c(out, 'spi', BOARD / 'early_spi.c', [])
     compile_c(out, 'cold-body', TOOLS / 'first-stage.c', [])
     compile_c(out, 'audit-body', TOOLS / 'first-stage.c', ['-DZX_STAGE_RAM_AUDIT'])
-    compile_c(out, 'spi-audit-body', TOOLS / 'first-stage.c',
-              ['-DZX_STAGE_SPI_AUDIT', f'-DZX_STAGE_SPI_CRC=0x{spi_crc:08x}U'])
     run([PREFIX + 'gcc', '-march=armv7-a', '-marm', '-DZX_EARLY_TRACE=0x00202500',
          '-DZX_EARLY_FAULT_STACK=0x00203000', '-DZX_EARLY_FAULT_UART', '-c', str(TOOLS / 'early-cpu.S'),
          '-o', str(out / 'cpu.o')])
 
-    manifest = {'spi_reference_crc32': f'{spi_crc:08x}', 'payload': identity(monitor)}
     if opts.payload_map:
         symbols = dict(reversed(line.split()[::2]) for line in
                        opts.payload_map.read_text().splitlines())
         manifest['payload']['board_init_f'] = '0x' + symbols['board_init_f']
-    extra = {'audit': ['-DZX_STAGE_RAM_AUDIT'], 'cold': [], 'spi-audit': ['-DZX_STAGE_SPI_AUDIT']}
-    for kind, flags in extra.items():
+    for kind, flags in kinds.items():
         entry = out / f'{kind}-entry.o'
         run([PREFIX + 'gcc', *flags, '-march=armv7-a', '-marm', '-c',
              str(TOOLS / 'first-stage.S'), '-o', str(entry)])

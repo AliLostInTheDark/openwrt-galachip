@@ -81,19 +81,35 @@ define Build/Prepare
 	$(CP) ./files/. $(PKG_BUILD_DIR)/
 endef
 
+# Variants whose monitor can follow the cold first stage (UART initialization).
+ZX279125_COLD_VARIANTS := vsol_v2801sg vsol_v2801sg-uart-test
+
 define Build/Compile
 	$(call Build/Compile/U-Boot)
 	$(STAGING_DIR_HOST)/bin/mkimage -A arm -O u-boot -T firmware -C none \
 		-a 0x40400000 -e 0x40400000 \
 		-n 'U-Boot $(PKG_VERSION) for VSOL V2801SG' \
 		-d $(PKG_BUILD_DIR)/u-boot.bin $(PKG_BUILD_DIR)/u-boot.img
+	$(if $(filter $(ZX279125_COLD_VARIANTS),$(BUILD_VARIANT)), \
+		python3 $(CURDIR)/tools/build-first-stage.py \
+			--payload $(PKG_BUILD_DIR)/u-boot.bin \
+			--payload-map $(PKG_BUILD_DIR)/System.map \
+			--uboot-tree $(PKG_BUILD_DIR) --cross $(TARGET_CROSS) \
+			--out $(PKG_BUILD_DIR)/first-stage)
 endef
 
+# The combined cold image has not booted from physical reset; never flash it
+# without a tested external recovery path.
 define Package/u-boot/install
 	$(CP) \
 		$(PKG_BUILD_DIR)/u-boot.bin \
 		$(PKG_BUILD_DIR)/u-boot.img \
 		$(1)/
+	$(if $(filter $(ZX279125_COLD_VARIANTS),$(BUILD_VARIANT)), \
+		$(CP) $(PKG_BUILD_DIR)/first-stage/combined-OFFLINE-NOT-FOR-FLASH.bin \
+			$(1)/u-boot-cold-UNTESTED.bin; \
+		$(CP) $(PKG_BUILD_DIR)/first-stage/manifest.json \
+			$(1)/u-boot-cold-manifest.json)
 endef
 
 $(eval $(call BuildPackage/U-Boot))
