@@ -47,17 +47,24 @@ function applyScanResult(result) {
 	});
 }
 
-function priorityText(objects, vid, answers, route) {
-	var parts = [], olt = vid ? mib.oltPriority(objects, vid) || mib.mapperPriority(route) : '';
+/* One line per OLT rule and probe answer. */
+function priorityLines(objects, vid, answers, route) {
+	var parts = vid ? mib.oltPriorityLines(objects, vid) : [];
 
-	if (olt)
-		parts.push(olt);
+	if (vid && !parts.length && mib.mapperPriority(route))
+		parts.push(mib.mapperPriority(route));
 	answers.forEach(function(r) {
 		parts.push(_('%s probe PCP %d, reply PCP %d').format(
 			r.type == 'dhcp' ? 'DHCP' : 'BRAS', r.prio, r.reply_prio));
 	});
 
-	return parts.length ? parts.join('; ') : '-';
+	return parts.length ? parts : [ '-' ];
+}
+
+function lines(list) {
+	return list.reduce(function(out, line, i) {
+		return out.concat(i ? [ E('br'), line ] : [ line ]);
+	}, []);
 }
 
 function answerText(answers) {
@@ -83,27 +90,35 @@ function scanResults(results, count, vlans, objects, scanned) {
 			_('No DHCPv4 or PPPoE reply on %d candidates, and the OLT has not provisioned any VLAN.').format(count) :
 			_('The OLT has not provisioned any VLAN yet.'));
 
+	/* The action column only when some VLAN answered, so it does not take width for nothing. */
+	var action = results.length > 0, nowrap = 'white-space:nowrap';
+	var titles = [ _('VLAN'), _('OLT rule'), _('GEM route'), _('Priority'), _('Service evidence') ];
+
 	return E('table', { 'class': 'table' }, [
-		E('tr', { 'class': 'tr table-titles' }, [
-			_('VLAN'), _('OLT rule'), _('GEM route'), _('Priority'), _('Service evidence'), ''
-		].map(function(t) { return E('th', { 'class': 'th left' }, t); }))
+		E('tr', { 'class': 'tr table-titles' }, titles.concat(action ? [ '' ] : []).map(function(t, i) {
+			return E('th', { 'class': 'th left', 'style': i == 0 ? nowrap : null }, t);
+		}))
 	].concat(vids.map(function(vid) {
 		var answers = results.filter(function(r) { return r.vid == vid; });
 		var entry = vlans[vid], route = entry && entry.route;
+		var cells = [
+			[ vid ? String(vid) : _('untagged'), nowrap ],
+			[ lines(entry ? entry.sources : [ _('Not found in OMCI') ]) ],
+			[ lines(entry ? mib.routeLines(route) : [ '-' ]), nowrap ],
+			[ lines(priorityLines(objects, vid, answers, route)) ],
+			[ answers.length ? _('Internet candidate: %s').format(answerText(answers)) :
+				scanned ? answerText(answers) : _('Provisioned; not probed yet') ]
+		].map(function(c, i) {
+			return E('td', { 'class': 'td left', 'data-title': titles[i], 'style': c[1] || null }, c[0]);
+		});
 
-		return E('tr', { 'class': 'tr' }, [
-			E('td', { 'class': 'td left' }, vid ? String(vid) : _('untagged')),
-			E('td', { 'class': 'td left' }, entry ? entry.sources.join(', ') : _('Not found in OMCI')),
-			E('td', { 'class': 'td left' }, entry ? mib.routeText(route) : '-'),
-			E('td', { 'class': 'td left' }, priorityText(objects, vid, answers, route)),
-			E('td', { 'class': 'td left' }, answers.length ?
-				_('Internet candidate: %s').format(answerText(answers)) :
-				scanned ? answerText(answers) : _('Provisioned; not probed yet')),
-			E('td', { 'class': 'td right' }, answers.length ? E('button', {
+		if (action)
+			cells.push(E('td', { 'class': 'td right' }, answers.length ? E('button', {
 				'class': 'cbi-button cbi-button-apply',
 				'click': ui.createHandlerFn(this, applyScanResult, answers[0])
-			}, vid ? _('Use tagged') : _('Use transparent')) : '')
-		]);
+			}, vid ? _('Use tagged') : _('Use transparent')) : ''));
+
+		return E('tr', { 'class': 'tr' }, cells);
 	})));
 }
 
