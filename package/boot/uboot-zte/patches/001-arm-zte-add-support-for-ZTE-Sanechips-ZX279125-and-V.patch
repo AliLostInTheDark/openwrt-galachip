@@ -361,7 +361,7 @@ index 00000000..0998612e
 +# CONFIG_BOOTSTD is not set
 +CONFIG_BOOTDELAY=-1
 +CONFIG_USE_BOOTARGS=y
-+CONFIG_BOOTARGS="console=ttyS0,115200n8 earlycon initramfs_async=0 root=/dev/mtdblock3 rw"
++CONFIG_BOOTARGS="console=ttyS0,115200n8 earlycon"
 +CONFIG_USE_BOOTCOMMAND=y
 +CONFIG_BOOTCOMMAND=""
 +CONFIG_HUSH_PARSER=y
@@ -1893,7 +1893,7 @@ new file mode 100644
 index 00000000..dad51abe
 --- /dev/null
 +++ b/include/configs/zx279125.h
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,26 @@
 +/* SPDX-License-Identifier: GPL-2.0+ */
 +/*
 + * Configuration for ZTE Sanechips ZX279125 boards
@@ -1917,7 +1917,6 @@ index 00000000..dad51abe
 +	"netmask=255.255.255.0\0" \
 +	"gatewayip=192.168.1.1\0" \
 +	"loadaddr=0x40600000\0" \
-+	"fdt_addr_r=0x40700000\0" \
-+	"bootargs=console=ttyS0,115200n8 earlycon\0"
++	"fdt_addr_r=0x40700000\0"
 +
 +#endif /* __ZX279125_H */
