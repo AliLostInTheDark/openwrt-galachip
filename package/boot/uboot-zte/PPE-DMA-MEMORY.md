@@ -111,15 +111,22 @@ All intervals below have exclusive ends.
 | `41820000` | Auxiliary base programmed into PP +34; access extent remains unestablished |
 | `41840000..41840080` | Local port's 128-byte software cursor table; existing local convention, still requires combined hardware validation |
 | `41900000..41a00000` | Sixteen rings × 4096 descriptors × 16 bytes = 1 MiB |
-| `41fef75c..41fef7dc` | Verified stock software cursor table, dependent on that loader's build/relocation |
-| `41000000..42000000` | Entire 16 MiB region retained as no-map, including unresolved extents and stock state |
+| `41a00000..41aac000` | Stock U-Boot stack and global data; dead after the OS boots |
+| `41aac000..41fbc000` | Stock U-Boot heap, `0x510000` bytes; the Ethernet driver allocates nothing from it |
+| `41fbc000..41fef7e8` | Stock U-Boot relocated code and BSS |
+| `41fef75c..41fef7dc` | Verified stock software cursor table, in that BSS; dependent on that loader's build/relocation |
+| `41ff0000..42000000` | Stock U-Boot page tables; dead after the OS boots |
+
+Linux now reserves `41000000..41a00000` and the page `41fef000..41ff0000`, both
+no-map, and gets the rest (24 October 2026, below).
 
 Known buffer/ring/table bytes do not account for the complete reservation.
 The auxiliary extent and potential overlap with locally chosen software
 storage have not been fully established. The fact that a short LAN transfer
 worked does not prove every other queue/auxiliary mode leaves that storage alone.
 
-Consequently this pass reclaims **zero bytes** from the DMA guard. It also does
+Consequently this pass reclaimed **zero bytes** from the DMA guard; the later
+stock-code audit below reclaimed the range above `41a00000`. It also does
 not shrink the buffer count, ring sizes or optical control queues. Doing so
 requires a verified register contract and producer/consumer accounting, not
 just changing allocation constants. U-Boot's reported 16 MiB does not mean the
@@ -404,3 +411,49 @@ and the packet engine was at its reset fingerprint. With the local table
 left stale at `0x990`, the chainloaded monitor adopted stock's `0xa2`,
 passed ping and consumed the stock table. Every reset source now observed
 on this board, controlled or not, leads to correct adoption.
+
+## Narrowed reservation: stock audit and hardware result (24 October 2026)
+
+The 16 MiB guard left Linux 11392 kB of RAM and 1.5 MiB available at idle with
+the full package set. A read-only audit of the stock U-Boot dump (load address
+`0x41f00000`) established what the packet engine and stock state occupy.
+
+Engine programming, from instructions:
+
+- `0x41f1ea3c` writes the 4096-entry BE16 pointer table at `0x41800000`,
+  flushes `0x41800000..0x41810000`, and sets the buffer base `0x41000000` at
+  `0x92144020`.
+- `0x41f1ee14` sets the ring base `0x41900000` at PP `+0x1c` and the auxiliary
+  base `0x41900000 - 0xe0000 = 0x41820000` at PP `+0x34`.
+- `0x41f1ee78` records sixteen 64 KiB rings from `0x41900000` to `0x41a00000`.
+- The only packet-region constants in the image are `0x41800000`,
+  `0x41810000`, `0x41900000` and `0x41a00000`, plus the `0x41000000`
+  immediate. The Ethernet driver (`0x41f1e700..0x41f1fb00`) calls only printf,
+  MDIO, delays, memset/memcpy and cache maintenance, so no heap pointer reaches
+  an engine register.
+
+Stock state: `_TEXT_BASE` `0x41f00000` and BSS end `+0x337e8`, relocated by
+`0xbc000` to `0x41fbc000` (which puts the cursor table at `0x41fef75c`), and
+`board_init_f` subtracts `TOTAL_MALLOC_LEN` `0x510000` for the heap.
+
+Changes:
+
+- DTS: `packet-pool@41000000` is `0xa00000`; new no-map
+  `stock-cursors@41fef000` (4 KiB); the Ethernet node lists both regions.
+- Linux driver: `zx_reserved_region()` requires each listed region to be a whole
+  no-map reservation; the pool must be exactly `41000000..419fffff`, and a
+  non-local cursor table must lie inside the second region.
+- U-Boot: `ZX279125_PP_RESERVED_SIZE` is `0x00a00000`, and the external-FDT
+  fixup accepts a region list.
+
+Hardware (R9, RAM-loaded image; R10, flashed image after a power cycle):
+no "Ignoring RAM", `Memory: 16940K/32768K available`, MemTotal 17384 kB. The old
+module refused the new layout (`-EPERM`), as intended. The new driver adopted
+the stock handoff (`LAN (adopted)`) and stopped with balanced BMU counters
+(`alloc=4739 release=4739`). Ping 20/20, SSH, LuCI login and status page, and
+8 MB transfers in each direction passed with MemAvailable 5.2–6.6 MiB and no
+OOM kills.
+
+Still unproven: the auxiliary table's exact extent (bounded only by the rings
+at `0x41900000`), other queue and PON modes, OMCI traffic from an OLT, and
+long runs under load.

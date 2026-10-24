@@ -10,7 +10,7 @@ A modern U-Boot monitor works when RAM-chainloaded after stock U-Boot has initia
 
 A separate source-built first stage now implements the decoded ROM loading contract, CPU setup, reconstructed DDR initialization, SPI page loading, payload CRC verification and automatic monitor handoff. The captured ROM and exact replacement machine code passed sixteen offline emulation cases. **The replacement has not booted from physical cold reset.** DDR electrical behavior, reset-time clocks and complete cold monitor initialization remain unverified.
 
-The installed bootloader is still vendor U-Boot 2013.04. The user replaced the system firmware earlier; that did not replace this bootloader. No replacement bootloader installation was performed. An earlier RAM-kernel panic did trigger an unintended vendor environment write on automatic reboot, as recorded in the Ethernet bring-up log; that is distinct from an operator-issued flash command. No programmer or optical operation was performed.
+The installed first-stage bootloader is still vendor U-Boot 2013.04. Since 24 October the modern monitor is also in flash as a **second stage**: it sits in the firmware image's kernel slot, stock U-Boot boots it after its own image check, and it boots OpenWrt (section 14). Stock U-Boot and its countdown are untouched, so the stock prompt remains the recovery path. No cold first-stage installation was performed. An earlier RAM-kernel panic did trigger an unintended vendor environment write on automatic reboot, as recorded in the Ethernet bring-up log; that is distinct from an operator-issued flash command. No programmer or optical operation was performed.
 
 ### Evidence levels used here
 
@@ -39,7 +39,7 @@ The current first-stage manifest and [latest code audit](COLD-STAGE-CODE-AUDIT.m
 | Test MAC | `70:b6:4f:01:a6:7a`, explicitly assigned in RAM tests |
 | Optical state | Fiber disconnected during this work |
 
-The current monitor deliberately manages the low **16 MiB** RAM bank. Commit `2a526f7e24` advertised a second 6 MiB bank at `41a00000` and gave Linux that range; it exposed the live stock cursor table at `41fef75c` and unverified DMA extents, and is reverted. Linux now describes 32 MiB with the whole `41000000..42000000` region no-map. Neither configuration measures physical capacity or proves that the packet engine intrinsically needs a fixed 16 MiB reservation. Packet pools and software cursors must remain protected until their ownership and handoff are established.
+The current monitor deliberately manages the low **16 MiB** RAM bank. Commit `2a526f7e24` advertised a second 6 MiB bank at `41a00000` and gave Linux that range; it exposed the live stock cursor table at `41fef75c`, and was reverted. Linux now describes 32 MiB and keeps two no-map regions: the packet engine's `41000000..41a00000` and the stock cursor page `41fef000..41ff0000`. Stock U-Boot programs no engine address above `41a00000`; the evidence and hardware test are in [PPE-DMA-MEMORY.md](PPE-DMA-MEMORY.md).
 
 The last recorded hardware state was the modern `ZX279125 #` prompt, UART released. This is a recorded checkpoint, not a fresh hardware query made while writing this document.
 
@@ -442,6 +442,7 @@ These identify the sources consulted earlier; no new external review was perform
 | Environment and board identity | Preserve original data separately; selected monitor uses RAM defaults, test MAC currently set manually |
 | Linux handoff after new monitor | **Hardware tested** (24 Oct): external-DTB boot publishes the local cursor table, Linux adopts it; every reset path tested, including watchdog, leads to correct adoption (PPE-DMA-MEMORY.md). The image build now emits the unappended `initramfs-zImage.bin` and `.dtb` for `bootz <kernel> - <dtb>` |
 | Monitor timer | Fixed: 25 MHz rate; `sleep 10` measured 9.97 s on hardware |
+| Unattended boot through the new monitor | **Hardware tested** (24 Oct): stock U-Boot → kernel-slot monitor → OpenWrt from power-on, overlay on JFFS2, stock image CRC stable across boots (section 14) |
 | Upstream acceptance | No acceptance established; local drivers, bindings and common CLI changes still require review |
 
 Early progress visibility, a reproducible candidate, package integration and the Linux handoff are done (sections 8 and 13). What remains needs the board and the programmer: prove the SOIC8 clip recovery path, then the one-time cold boot. Without flashing, hardware can only confirm the new stage's warm refusal (the guard must reject initialized DDR before any output or peripheral write, as model case 11 shows); its UART lines first appear on a real cold boot. The next hardware milestone is a recoverable physical reset-to-monitor boot, then repeated power cycles, UART, SPI identity/readback, network and Linux handoff tests. Do not use the retired warm DDR images to stand in for that milestone.
@@ -451,3 +452,78 @@ A first-attempt cold success cannot be guaranteed from the present evidence. Thi
 ## Subsequent PPE/DMA source checkpoint
 
 [PPE-DMA-MEMORY.md](PPE-DMA-MEMORY.md) records the later source changes to cursor ownership, fault handling, external-FDT handoff and Linux diagnostics. Those changes, the reset-time and uncontrolled-reset cursor rules, the watchdog and the timer fix are now hardware tested and carried by the current candidate in section 8.
+
+## 14. Stock-chained monitor in flash (24 October 2026)
+
+**Hardware tested.** The modern monitor now runs on every boot, chainloaded by
+stock U-Boot from the firmware image. Stock U-Boot, its environment block and
+`usercfg` are not modified by this layout.
+
+### Why the kernel slot
+
+Stock autoboot (`0x41f05a40..0x41f05e60` in the stock dump) checks the vendor
+image header at `0x40000`, copies header + "kernel" to `0x40600000`, and then
+builds its own boot line, `setenv bootargs ...;bootm 0x40600140;`. It compares
+that line with `bootcmd` by `strncmp` over the new line's length and, if they
+differ, runs `setenv bootcmd` and `saveenv`. Every branch ends in
+`bootm 0x40600140`. A custom `bootcmd` is therefore rewritten on each unattended
+boot (observed in R6), and stock has no `preboot`/`altbootcmd` hook. The only
+untouched-stock hook is the uImage that the header's kernel fields describe.
+
+### Image layout
+
+`mkzxicheader.py --loader` builds it; the image recipe always passes the
+`u-boot-vsol_v2801sg-stockchain` uImage staged by the U-Boot package.
+
+| Firmware offset | Flash | Contents | Checked by |
+| --- | --- | --- | --- |
+| `+0x0` | `0x40000` | Vendor header, `0x140` bytes | header CRC |
+| `+0x140` | `0x40140` | Stockchain monitor, gzip `kernel` uImage, ~113 KiB | `k_len`/`k_crc`, then stock `bootm` |
+| `+0x30000` | `0x70000` | OpenWrt kernel uImage (appended DTB) | monitor `bootm` |
+| 64 KiB aligned | `0x220000` | SquashFS | `r_off`, `fs_size` = SquashFS `bytes_used`, `r_crc` |
+| next 4 KiB | | `rootfs_data` (JFFS2) | not covered |
+
+The monitor's `bootcmd` is `sf probe; sf read 0x40600000 0x70000 0x200000;
+bootm 0x40600000`, with `mem=32M` in its bootargs. The kernel's uImage splitter
+finds the rootfs by scanning, so the DTS partition map is unchanged; the
+`kernel` partition simply covers the monitor and the kernel.
+
+### Stock image CRC must cover only stable bytes
+
+Stock refuses to autoboot ("fs crc error ... pls downver") when the CRC over
+`fs_size` bytes at `r_off` does not match. Two header lengths failed:
+
+- `0x200004`, which included the `deadc0de` overlay marker. Once OpenWrt had
+  formatted its overlay, every unattended boot stopped at the stock prompt (R5).
+- `0x170000`, the SquashFS rounded up to 64 KiB. On this 4 KiB-sector NOR,
+  `rootfs_data` begins at the next 4 KiB boundary, and the first boot wrote
+  JFFS2 cleanmarkers inside the CRC range (seen in R8 before the next reboot).
+
+`fs_size` is now exactly the SquashFS `bytes_used`; stock accepts an unaligned
+length.
+
+### Flash writes and tests
+
+Every write was preceded by a read-only check against the 24 October backup and
+followed by a full `cmp.b` read-back.
+
+| Step | Change | Result |
+| --- | --- | --- |
+| W1 | Monitor copy at `0x7c0000` (empty `usercfg` blocks) | Verified; no longer used |
+| W2 | `stockboot` and a chaining `bootcmd` | `bootcmd` later rewritten by stock (R6) |
+| W3 | Header of the old image: `fs_size` without the overlay marker | Stock check passed (R6) |
+| W4 | `stockboot` for the new layout; `stockboot_v1` for the old | Verified after reset |
+| R7, R9 | New image TFTP-loaded to RAM, stock `bootm` of the monitor, then the kernel | Passed; R9 also measured the memory change |
+| W5 | New firmware image at `0x40000..0x39010c` | Byte-identical read-back |
+| W6 | Header `fs_size` `0x165280` | Byte-identical read-back |
+| R10 | Unattended power cycle | Stock → monitor → OpenWrt; overlay on JFFS2; stock CRC still `cdc51546` |
+
+### Recovery
+
+- Monitor fails: stop stock's countdown with a space, then `run stockboot` (kernel
+  at `0x70000`, stock bootargs).
+- Image bad: from the stock prompt, write back
+  `v2801sg-restore-fw-f0a04328.bin` (the backup's `0x40000..0x780000` with the W3
+  header) to `0x40000`, then `run stockboot_v1`.
+- Never press `1` at the stock countdown, and keep `upgrade.bin` out of the TFTP
+  root.
