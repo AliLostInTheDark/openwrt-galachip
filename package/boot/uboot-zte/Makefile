@@ -76,6 +76,24 @@ endef
 
 UBOOT_TARGETS += vsol_v2801sg-dump
 
+# Packed into the firmware's kernel slot by mkzxicheader --loader, so stock
+# U-Boot boots it after checking the image; it boots the kernel stored after
+# it. Stock has already set up the UART and DDR.
+define U-Boot/vsol_v2801sg-stockchain
+  NAME:=VSOL V2801SG monitor chainloaded by stock U-Boot
+  BUILD_DEVICES:=vsol_v2801sg
+  UBOOT_CONFIG:=zx279125_vsol_v2801sg
+  UBOOT_IMAGE:=u-boot.bin
+  UBOOT_CUSTOMIZE_CONFIG := $(ZX279125_SMALL_CONFIG) \
+    --disable ZX279125_SERIAL_INIT \
+    --set-val BOOTDELAY 2 \
+    --set-str BOOTCOMMAND "sf probe; sf read 0x40600000 0x70000 0x200000; bootm 0x40600000" \
+    --set-str BOOTARGS "console=ttyS0,115200n8 root=/dev/mtdblock7 ro rootfstype=squashfs mem=32M" \
+    --set-str IDENT_STRING " stock-chain"
+endef
+
+UBOOT_TARGETS += vsol_v2801sg-stockchain
+
 define Build/Prepare
 	$(call Build/Prepare/Default)
 	$(CP) ./files/. $(PKG_BUILD_DIR)/
@@ -96,6 +114,13 @@ define Build/Compile
 			--payload-map $(PKG_BUILD_DIR)/System.map \
 			--uboot-tree $(PKG_BUILD_DIR) --cross $(TARGET_CROSS) \
 			--out $(PKG_BUILD_DIR)/first-stage)
+	# Stock bootm checks the CRC and unpacks it, so a damaged copy is refused.
+	$(if $(filter vsol_v2801sg-stockchain,$(BUILD_VARIANT)), \
+		gzip -9nc $(PKG_BUILD_DIR)/u-boot.bin > $(PKG_BUILD_DIR)/u-boot.bin.gz && \
+		$(STAGING_DIR_HOST)/bin/mkimage -A arm -O linux -T kernel -C gzip \
+			-a 0x40400000 -e 0x40400000 \
+			-n 'U-Boot $(PKG_VERSION) stock-chain' \
+			-d $(PKG_BUILD_DIR)/u-boot.bin.gz $(PKG_BUILD_DIR)/u-boot-stockchain.uimg)
 endef
 
 # The combined cold image has not booted from physical reset; never flash it
@@ -110,6 +135,15 @@ define Package/u-boot/install
 			$(1)/u-boot-cold-UNTESTED.bin; \
 		$(CP) $(PKG_BUILD_DIR)/first-stage/manifest.json \
 			$(1)/u-boot-cold-manifest.json)
+	$(if $(filter vsol_v2801sg-stockchain,$(BUILD_VARIANT)), \
+		$(CP) $(PKG_BUILD_DIR)/u-boot-stockchain.uimg $(1)/)
+endef
+
+define Build/InstallDev
+	$(if $(filter vsol_v2801sg-stockchain,$(BUILD_VARIANT)), \
+		$(INSTALL_DIR) $(STAGING_DIR_IMAGE) && \
+		$(CP) $(PKG_BUILD_DIR)/u-boot-stockchain.uimg \
+			$(STAGING_DIR_IMAGE)/vsol_v2801sg-u-boot-stockchain.uimg)
 endef
 
 $(eval $(call BuildPackage/U-Boot))

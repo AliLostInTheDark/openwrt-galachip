@@ -40,8 +40,10 @@ define Image/Prepare
 	find $(TARGET_DIR) ! -type l -perm /022 ! -perm -1000 -exec chmod go-w {} +
 endef
 
+# The loader is the u-boot-vsol_v2801sg-stockchain package's uImage.
 define Build/zxic-header
-	$(TOPDIR)/scripts/mkzxicheader.py $@ $@.new
+	$(TOPDIR)/scripts/mkzxicheader.py \
+		--loader $(STAGING_DIR_IMAGE)/vsol_v2801sg-u-boot-stockchain.uimg $@ $@.new
 	@mv $@.new $@
 endef
 
