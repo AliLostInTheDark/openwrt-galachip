@@ -20,14 +20,66 @@ define U-Boot/Default
   BUILD_SUBTARGET:=zx279125
 endef
 
+ZX279125_SMALL_CONFIG := --disable ENV_IS_IN_SPI_FLASH \
+  --enable ENV_IS_NOWHERE --disable CMD_SAVEENV \
+  --disable SPI_FLASH_UNLOCK_ALL \
+  --disable CMD_MTD --disable CMD_MD5SUM --disable CMD_ELF \
+  --disable CMD_LOADB --disable CMD_LOADS --disable CMD_SPI \
+  --disable CMD_DHCP --disable CMD_BOOTP --disable CMD_XIMG
+
 define U-Boot/vsol_v2801sg
   NAME:=VSOL V2801SG
   BUILD_DEVICES:=vsol_v2801sg
   UBOOT_CONFIG:=zx279125_vsol_v2801sg
   UBOOT_IMAGE:=u-boot.bin
+  UBOOT_CUSTOMIZE_CONFIG := $(ZX279125_SMALL_CONFIG)
 endef
 
 UBOOT_TARGETS := vsol_v2801sg
+
+define U-Boot/vsol_v2801sg-chainload
+  NAME:=VSOL V2801SG RAM chainload test
+  BUILD_DEVICES:=vsol_v2801sg
+  UBOOT_CONFIG:=zx279125_vsol_v2801sg
+  UBOOT_IMAGE:=u-boot.bin
+  UBOOT_CUSTOMIZE_CONFIG := $(ZX279125_SMALL_CONFIG) \
+    --disable ZX279125_SERIAL_INIT \
+    --set-val BOOTDELAY -1 --set-str BOOTCOMMAND "" \
+    --set-str IDENT_STRING " RAM-chainload"
+endef
+
+UBOOT_TARGETS += vsol_v2801sg-chainload
+
+define U-Boot/vsol_v2801sg-uart-test
+  NAME:=VSOL V2801SG RAM UART initialization test
+  BUILD_DEVICES:=vsol_v2801sg
+  UBOOT_CONFIG:=zx279125_vsol_v2801sg
+  UBOOT_IMAGE:=u-boot.bin
+  UBOOT_CUSTOMIZE_CONFIG := $(ZX279125_SMALL_CONFIG) \
+    --enable ZX279125_SERIAL_INIT \
+    --set-val BOOTDELAY -1 --set-str BOOTCOMMAND "" \
+    --set-str IDENT_STRING " RAM-UART-init-test"
+endef
+
+UBOOT_TARGETS += vsol_v2801sg-uart-test
+
+define U-Boot/vsol_v2801sg-dump
+  NAME:=VSOL V2801SG RAM snapshot export
+  BUILD_DEVICES:=vsol_v2801sg
+  UBOOT_CONFIG:=zx279125_vsol_v2801sg
+  UBOOT_IMAGE:=u-boot.bin
+  UBOOT_CUSTOMIZE_CONFIG := $(ZX279125_SMALL_CONFIG) \
+    --disable ZX279125_SERIAL_INIT --enable CMD_TFTPPUT \
+    --set-val BOOTDELAY -1 --set-str BOOTCOMMAND "" \
+    --set-str IDENT_STRING " RAM-snapshot-export"
+endef
+
+UBOOT_TARGETS += vsol_v2801sg-dump
+
+define Build/Prepare
+	$(call Build/Prepare/Default)
+	$(CP) ./files/. $(PKG_BUILD_DIR)/
+endef
 
 define Build/Compile
 	$(call Build/Compile/U-Boot)

@@ -220,12 +220,15 @@ new file mode 100644
 index 00000000..f83520d4
 --- /dev/null
 +++ b/board/zte/zx279125/Makefile
-@@ -0,0 +1,5 @@
+@@ -0,0 +1,8 @@
 +# SPDX-License-Identifier: GPL-2.0+
 +#
 +# Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
 +
-+obj-y := zx279125.o
++obj-y := zx279125.o ddr.o early_spi.o early_boot.o pp_handoff.o
++CFLAGS_ddr.o += -fno-stack-protector
++CFLAGS_early_spi.o += -fno-stack-protector
++CFLAGS_early_boot.o += -fno-stack-protector
 diff --git a/board/zte/zx279125/zx279125.c b/board/zte/zx279125/zx279125.c
 new file mode 100644
 index 00000000..7244c2d0
@@ -326,10 +329,11 @@ new file mode 100644
 index 00000000..0998612e
 --- /dev/null
 +++ b/configs/zx279125_vsol_v2801sg_defconfig
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,61 @@
 +CONFIG_ARM=y
 +CONFIG_SYS_DCACHE_OFF=y
 +CONFIG_TARGET_ZX279125=y
++CONFIG_OF_BOARD_SETUP=y
 +CONFIG_SUPPORT_PASSING_ATAGS=y
 +CONFIG_CMDLINE_TAG=y
 +CONFIG_INITRD_TAG=y
@@ -348,11 +352,11 @@ index 00000000..0998612e
 +CONFIG_DEBUG_UART=y
 +# CONFIG_EFI_LOADER is not set
 +# CONFIG_BOOTSTD is not set
-+CONFIG_BOOTDELAY=3
++CONFIG_BOOTDELAY=-1
 +CONFIG_USE_BOOTARGS=y
 +CONFIG_BOOTARGS="console=ttyS0,115200n8 earlycon initramfs_async=0 root=/dev/mtdblock3 rw"
 +CONFIG_USE_BOOTCOMMAND=y
-+CONFIG_BOOTCOMMAND="sf probe; sf read 0x40600000 0x40140 0x200000; bootm 0x40600000"
++CONFIG_BOOTCOMMAND=""
 +CONFIG_HUSH_PARSER=y
 +CONFIG_SYS_PROMPT="ZX279125 # "
 +CONFIG_CMD_BOOTZ=y
@@ -383,6 +387,7 @@ index 00000000..0998612e
 +CONFIG_DEBUG_UART_ZX279125=y
 +CONFIG_DEBUG_UART_ANNOUNCE=y
 +CONFIG_DEBUG_UART_SKIP_INIT=y
++CONFIG_ZX279125_SERIAL_INIT=y
 +CONFIG_SPI=y
 +CONFIG_DM_SPI=y
 +CONFIG_ZX279125_SPIFC=y
@@ -434,7 +439,7 @@ new file mode 100644
 index 00000000..b851f698
 --- /dev/null
 +++ b/drivers/net/zx279125_eth.c
-@@ -0,0 +1,629 @@
+@@ -0,0 +1,763 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * ZTE Sanechips ZX279125 Ethernet Controller Driver
@@ -447,6 +452,7 @@ index 00000000..b851f698
 +#include <dm/device_compat.h>
 +#include <env.h>
 +#include <net.h>
++#include <zx279125-pp.h>
 +#include <asm/io.h>
 +#include <asm/unaligned.h>
 +#include <linux/delay.h>
@@ -462,6 +468,7 @@ index 00000000..b851f698
 +#define ZX_PP_BASE			0x92144000
 +#define ZX_BMU_BASE			0x92168000
 +#define ZX_MAILBOX_BASE			0x92154000
++#define ZX_MAC0_BASE			0x921c0000
 +#define ZX_MAC_BASE			0x92200000
 +#define ZX_DMA_BASE			0x92164000
 +#define ZX_GLOBAL_BASE			0x92140000
@@ -471,7 +478,7 @@ index 00000000..b851f698
 +/* Hardware DMA Buffer Pool and Ring Addresses in DDR RAM */
 +#define ZX_BUFFER_POOL_BASE		0x41000000
 +#define ZX_BPT_BASE			0x41800000
-+#define ZX_CURSORS_BASE			0x41840000
++#define ZX_CURSORS_BASE			ZX279125_PP_CURSORS
 +#define ZX_VENDOR_CURSORS_BASE		0x41fef75c
 +#define ZX_RINGS_BASE			0x41900000
 +
@@ -504,8 +511,20 @@ index 00000000..b851f698
 +	u32 consumer[ZX_QUEUES];
 +	u8 next_queue;
 +	u32 phy_addr;
++	bool cursors_valid;
++	bool fault;
 +	u8 rx_buf[ZX_BUFFER_SIZE];
 +};
++
++static struct zx279125_eth_priv *zx_owner;
++
++static int zx279125_eth_fault(struct zx279125_eth_priv *priv)
++{
++	priv->fault = true;
++	writel(readl(priv->mac) & ~BIT(2), priv->mac);
++	readl(priv->mac);
++	return -EIO;
++}
 +
 +/* MDIO Read */
 +static int zx279125_mdio_read(void __iomem *mdio, int phy, int reg)
@@ -592,13 +611,7 @@ index 00000000..b851f698
 +	return 0;
 +}
 +
-+/* Configure Switch DMAC and Classifier for Local Frame Delivery.
-+ * Verified against vendor U-Boot disassembly at 0x41f1e6c4:
-+ *   Vendor U-Boot sets MAC0 at GLOBAL + 0x04 (low 32-bit) and GLOBAL + 0x08 (high 16-bit).
-+ *   Linux driver sets MAC at GLOBAL + 0x00 (low 32-bit) and GLOBAL + 0x04 (high 16-bit).
-+ *   Management classifier is at GLOBAL + 0x40 (low 32-bit) and GLOBAL + 0x44 (high 16-bit).
-+ * We write all three locations to guarantee hardware matching.
-+ */
++/* Management-DMAC comparator verified by the Linux RAM-boot tests. */
 +static void zx279125_set_local_delivery(struct zx279125_eth_priv *priv, const u8 *addr)
 +{
 +	u32 low  = get_unaligned_be32(addr + 2);
@@ -610,11 +623,7 @@ index 00000000..b851f698
 +	identify = readl(priv->spa + 0x11c);
 +	writel(identify & ~BIT(8), priv->spa + 0x11c);
 +
-+	/* Test the working Linux management-MAC comparator layout.
-+	 * Do not overwrite GLOBAL+0x04 with two incompatible values.
-+	 * The stock vendor U-Boot's +0x04/+0x08 layout is a separate
-+	 * alternative, not something we can program simultaneously.
-+	 */
++	/* ONU MAC slot 0 and the dedicated management-DMAC comparator. */
 +	writel(low,  priv->global + 0x00);
 +	writel(high, priv->global + 0x04);
 +	writel(low,  priv->global + 0x40);
@@ -650,6 +659,25 @@ index 00000000..b851f698
 +	u32 val;
 +	unsigned int q;
 +	int ret;
++
++	/* Only initialize the recorded reset state, never an active/unknown pool. */
++	if (readl(priv->bmu) || readl(priv->mac) ||
++	    readl((void __iomem *)ZX_MAC0_BASE) ||
++	    readl(priv->pp + 0x18) != 0x50000000 ||
++	    readl(priv->pp + 0x1c) != 0x50020000 ||
++	    readl(priv->pp + 0x20) != 0x52020000 ||
++	    readl(priv->pp + 0x24) != 2048 ||
++	    readl(priv->dma) != 0x136564 ||
++	    readl(priv->bmu + 0x80) || readl(priv->bmu + 0x84) ||
++	    readl(priv->bmu + 0x88) || readl(priv->bmu + 0x8c))
++		return -EINVAL;
++	for (q = 0; q < ZX_QUEUES; q++)
++		if (readl(priv->dma + 0x100 + q * 4))
++			return -EINVAL;
++
++	/* probe() cannot adopt live bases before the reset-state tables exist. */
++	priv->buffers = (void __iomem *)ZX_BUFFER_POOL_BASE;
++	priv->rings = (void __iomem *)ZX_RINGS_BASE;
 +
 +	writel(0xfffff, priv->pp + 0x48);
 +	udelay(1500);
@@ -752,8 +780,9 @@ index 00000000..b851f698
 +	return ret;
 +}
 +
-+/* In vendor U-Boot (0x41f1f22c..0x41f1f248): each queue 0..15 has its own dedicated
-+ * 32-bit count register at DMA base + 0x100 + queue * 4 (from 0x92164100 to 0x9216413c).
++/* Preserve the vendor U-Boot poll view (0x41f1f228..0x41f1f448).
++ * The vendor Linux poller uses packed halfwords in eight words instead; this
++ * bootloader view still needs multi-queue validation before it is generalized.
 + */
 +static u32 zx279125_rx_count(struct zx279125_eth_priv *priv, unsigned int queue)
 +{
@@ -769,6 +798,10 @@ index 00000000..b851f698
 +	u32 val;
 +	int ret;
 +
++	/* Do not acknowledge a descriptor whose buffer ownership is invalid. */
++	if (bp >= ZX_BUFFERS)
++		return -EIO;
++
 +	ret = readl_poll_timeout(priv->mailbox + 0x64, val, !(val & 1), 10000);
 +	if (ret)
 +		return ret;
@@ -780,9 +813,8 @@ index 00000000..b851f698
 +
 +	/* Advance consumer cursor after mailbox completion (matching Linux zx_release) */
 +	priv->consumer[queue] = (priv->consumer[queue] + 1) % ZX_RING_SIZE;
-+	if (readl((void __iomem *)(ZX_VENDOR_CURSORS_BASE + queue * 8)) == (ulong)priv->rings + queue * 0x10000)
-+		writel(priv->consumer[queue], (void __iomem *)(ZX_VENDOR_CURSORS_BASE + queue * 8 + 4));
 +	writel(priv->consumer[queue], priv->cursors + queue * 8 + 4);
++	wmb();
 +
 +	/* Return buffer to BMU */
 +	ret = readl_poll_timeout(priv->bmu + 0xc0, val, !(val & 8), 10000);
@@ -802,10 +834,12 @@ index 00000000..b851f698
 +	int ret = -ETIMEDOUT;
 +	bool is_cold = false;
 +
++	if (priv->fault)
++		return -EIO;
++
++	zx_owner = priv;
 +	/* Cold initialization if hardware tables are not yet running */
-+	if (readl(priv->pp + 0x18) != ZX_BPT_BASE ||
-+	    readl(priv->bmu) == 0 ||
-+	    readl(priv->bmu + 0x80) + readl(priv->bmu + 0x84) == 0) {
++	if (!readl(priv->bmu)) {
 +		ret = zx279125_eth_cold_start(dev);
 +		if (ret) {
 +			dev_err(dev, "cold start failed: %d\n", ret);
@@ -817,6 +851,14 @@ index 00000000..b851f698
 +	live_rings_base = readl(priv->pp + 0x1c);
 +	live_buf_base   = readl(priv->pp + 0x20);
 +
++	if (readl(priv->pp + 0x18) != ZX_BPT_BASE ||
++	    live_rings_base != ZX_RINGS_BASE ||
++	    live_buf_base != ZX_BUFFER_POOL_BASE) {
++		dev_err(dev, "unsupported packet pool/ring layout: %08x/%08x\n",
++			live_buf_base, live_rings_base);
++		return -EINVAL;
++	}
++
 +	/* Use live addresses for all descriptor and buffer accesses */
 +	priv->rings   = (void __iomem *)live_rings_base;
 +	priv->buffers = (void __iomem *)live_buf_base;
@@ -825,6 +867,21 @@ index 00000000..b851f698
 +	for (q = 0; q < 16; q++) {
 +		void __iomem *vc = (void __iomem *)(ZX_VENDOR_CURSORS_BASE + q * 8);
 +
++		if (priv->cursors_valid) {
++			if (readl(priv->cursors + q * 8) != live_rings_base + q * 0x10000 ||
++			    readl(priv->cursors + q * 8 + 4) != priv->consumer[q])
++				return zx279125_eth_fault(priv);
++			continue;
++		}
++		if (!is_cold &&
++		    readl(vc) == live_rings_base + q * 0x10000 &&
++		    readl(vc + 4) < ZX_RING_SIZE &&
++		    readl(priv->cursors + q * 8) == live_rings_base + q * 0x10000 &&
++		    readl(priv->cursors + q * 8 + 4) < ZX_RING_SIZE &&
++		    readl(vc + 4) != readl(priv->cursors + q * 8 + 4)) {
++			dev_err(dev, "conflicting retained cursors for RX queue %u\n", q);
++			return -EINVAL;
++		}
 +		if (!is_cold &&
 +		    readl(vc) == live_rings_base + q * 0x10000 &&
 +		    readl(vc + 4) < ZX_RING_SIZE) {
@@ -835,14 +892,19 @@ index 00000000..b851f698
 +			   readl(priv->cursors + q * 8 + 4) < ZX_RING_SIZE) {
 +			/* Adopt valid cursor from retained hardware table */
 +			priv->consumer[q] = readl(priv->cursors + q * 8 + 4);
-+		} else {
-+			/* Cold start or clean reset — start from zero */
++		} else if (is_cold) {
 +			priv->consumer[q] = 0;
++		} else {
++			dev_err(dev, "no valid retained cursor for RX queue %u\n", q);
++			return -EINVAL;
 +		}
-+		/* Keep our shadow cursor table in sync */
++	}
++	for (q = 0; q < ZX_QUEUES; q++) {
 +		writel(live_rings_base + q * 0x10000, priv->cursors + q * 8);
 +		writel(priv->consumer[q], priv->cursors + q * 8 + 4);
 +	}
++	wmb();
++	priv->cursors_valid = true;
 +	priv->next_queue = 0;
 +
 +	/* Enable switch port ingress forwarding */
@@ -853,6 +915,7 @@ index 00000000..b851f698
 +	zx279125_set_local_delivery(priv, pdata->enetaddr);
 +
 +	/* Wait for link up up to 3 seconds */
++	ret = -ENETDOWN;
 +	while (timeout--) {
 +		if (zx279125_update_link(priv) == 0) {
 +			ret = 0;
@@ -864,14 +927,6 @@ index 00000000..b851f698
 +	return ret;
 +}
 +
-+static void zx279125_eth_stop(struct udevice *dev)
-+{
-+	struct zx279125_eth_priv *priv = dev_get_priv(dev);
-+
-+	/* Disable RX */
-+	writel(readl(priv->mac) & ~BIT(2), priv->mac);
-+}
-+
 +static int zx279125_eth_send(struct udevice *dev, void *packet, int length)
 +{
 +	struct zx279125_eth_priv *priv = dev_get_priv(dev);
@@ -879,6 +934,11 @@ index 00000000..b851f698
 +	u8 desc[16];
 +	u32 bp, val;
 +	int ret;
++
++	if (priv->fault || !priv->cursors_valid)
++		return -EIO;
++	if (length < 14 || length > ZX_BUFFER_SIZE - 16)
++		return -EMSGSIZE;
 +
 +	/* Pad short frames to minimum Ethernet length */
 +	if (length < ZX_ETH_MIN_LEN) {
@@ -897,12 +957,14 @@ index 00000000..b851f698
 +	writel(1, priv->bmu + 0x10);
 +	ret = readl_poll_timeout(priv->bmu + 0x10, val, !val, 10000);
 +	if (ret)
-+		return -ETIMEDOUT;
++		return zx279125_eth_fault(priv);
 +
 +	val = readl(priv->bmu + 8);
 +	bp = val & 0xffff;
-+	if (!(val & BIT(31)) || bp >= ZX_BUFFERS)
++	if (!(val & BIT(31)))
 +		return -ENOBUFS;
++	if (bp >= ZX_BUFFERS)
++		return zx279125_eth_fault(priv);
 +
 +	/* 3. Copy packet to buffer (offset 16 for standard Ethernet LAN frame) */
 +	memcpy_toio(priv->buffers + bp * ZX_BUFFER_SIZE + 16, packet, length);
@@ -921,7 +983,7 @@ index 00000000..b851f698
 +	/* 5. Submit descriptor to TX mailbox */
 +	ret = readl_poll_timeout(priv->mailbox + 0x50, val, !(val & 1), 10000);
 +	if (ret)
-+		return -ETIMEDOUT;
++		return zx279125_eth_fault(priv);
 +
 +	writel(get_unaligned_le32(desc + 12), priv->mailbox + 0x54);
 +	writel(get_unaligned_le32(desc + 8), priv->mailbox + 0x58);
@@ -940,6 +1002,8 @@ index 00000000..b851f698
 +	unsigned int q, scanned;
 +	int ret;
 +
++	if (priv->fault || !priv->cursors_valid)
++		return -EIO;
 +	for (scanned = 0; scanned < ZX_QUEUES; scanned++) {
 +		q = priv->next_queue;
 +		priv->next_queue = (q + 1) % ZX_QUEUES;
@@ -952,7 +1016,7 @@ index 00000000..b851f698
 +		return -EAGAIN;
 +
 +	if (count >= ZX_RING_SIZE)
-+		return -EIO;
++		return zx279125_eth_fault(priv);
 +
 +	/* Match the Linux reference: observe DMA publication before descriptor load. */
 +	rmb();
@@ -963,17 +1027,92 @@ index 00000000..b851f698
 +
 +	if (bp >= ZX_BUFFERS || len < 14 || len > 1536 ||
 +	    len + offset > ZX_BUFFER_SIZE) {
-+		zx279125_release_rx_buf(priv, desc, bp, q);
-+		return -EAGAIN;
++		ret = zx279125_release_rx_buf(priv, desc, bp, q);
++		return ret ? zx279125_eth_fault(priv) : -EAGAIN;
 +	}
 +
 +	memcpy_fromio(priv->rx_buf, priv->buffers + bp * ZX_BUFFER_SIZE + offset, len);
 +	ret = zx279125_release_rx_buf(priv, desc, bp, q);
 +	if (ret)
-+		return ret;
++		return zx279125_eth_fault(priv);
 +
 +	*packetp = priv->rx_buf;
 +	return len;
++}
++
++/* Ownership accounting is necessary for shutdown, not a global AXI-idle proof. */
++static bool zx279125_ownership_idle(struct zx279125_eth_priv *priv)
++{
++	unsigned int q;
++
++	if (readl(priv->mailbox + 0x50) & 1 ||
++	    readl(priv->mailbox + 0x64) & 1 || readl(priv->bmu + 0x10) ||
++	    readl(priv->bmu + 0xc0) & 8 ||
++	    readl(priv->bmu + 0x88) != readl(priv->bmu + 0x8c) ||
++	    readl(priv->bmu + 0x80) + readl(priv->bmu + 0x84) != ZX_BUFFERS)
++		return false;
++	/* Check full words: high-half queue counts must also be zero. */
++	for (q = 0; q < ZX_QUEUES; q++)
++		if (readl(priv->dma + 0x100 + q * 4))
++			return false;
++	return true;
++}
++
++static void zx279125_eth_stop(struct udevice *dev)
++{
++	struct zx279125_eth_priv *priv = dev_get_priv(dev);
++	ulong start;
++	uchar *packet;
++	int ret;
++
++	writel(readl(priv->mac) & ~BIT(2), priv->mac);
++	readl(priv->mac);
++	udelay(2000);
++	start = get_timer(0);
++	do {
++		ret = zx279125_eth_recv(dev, 0, &packet);
++		if (ret < 0 && ret != -EAGAIN)
++			break;
++		if (zx279125_ownership_idle(priv)) {
++			udelay(1000);
++			if (zx279125_ownership_idle(priv)) {
++				writel(readl(priv->mac) & ~BIT(3), priv->mac);
++				readl(priv->mac);
++				return;
++			}
++		}
++		udelay(100);
++	} while (get_timer(start) < 20);
++
++	dev_warn(dev, "ownership pending; retaining TX and reserved packet pool\n");
++}
++
++int zx279125_pp_handoff(u32 *cursor_phys)
++{
++	struct zx279125_eth_priv *priv = zx_owner;
++	unsigned int q;
++
++	if (!priv)
++		return -ENOENT;
++	if (priv->fault || !priv->cursors_valid)
++		return -EIO;
++	if (readl(priv->mac) & (BIT(2) | BIT(3)) ||
++	    readl((void __iomem *)ZX_MAC0_BASE) & (BIT(2) | BIT(3)) ||
++	    !zx279125_ownership_idle(priv))
++		return -EBUSY;
++	if (readl(priv->pp + 0x18) != ZX_BPT_BASE ||
++	    readl(priv->pp + 0x1c) != ZX_RINGS_BASE ||
++	    readl(priv->pp + 0x20) != ZX_BUFFER_POOL_BASE ||
++	    readl(priv->pp + 0x24) != 2048 || readl(priv->bmu) != 1)
++		return -EINVAL;
++	for (q = 0; q < ZX_QUEUES; q++)
++		if (readl(priv->cursors + q * 8) != ZX_RINGS_BASE + q * 0x10000 ||
++		    priv->consumer[q] >= ZX_RING_SIZE ||
++		    readl(priv->cursors + q * 8 + 4) != priv->consumer[q])
++			return -EINVAL;
++	wmb();
++	*cursor_phys = ZX_CURSORS_BASE;
++	return 0;
 +}
 +
 +static int zx279125_eth_free_pkt(struct udevice *dev, uchar *packet, int length)
@@ -1064,6 +1203,7 @@ index 00000000..b851f698
 +	.priv_auto	= sizeof(struct zx279125_eth_priv),
 +	.plat_auto	= sizeof(struct eth_pdata),
 +};
+
 diff --git a/drivers/serial/Kconfig b/drivers/serial/Kconfig
 index ffc58d66..9063d91d 100644
 --- a/drivers/serial/Kconfig
@@ -1081,7 +1221,7 @@ index ffc58d66..9063d91d 100644
  endchoice
  
  config DEBUG_UART_BASE
-@@ -1218,4 +1224,10 @@ config SERIAL_GOLDFISH
+@@ -1218,4 +1224,17 @@ config SERIAL_GOLDFISH
  	  This virtual device is commonly used by QEMU virtual machines
  	  (e.g. m68k virt) for console output.
  
@@ -1090,6 +1230,13 @@ index ffc58d66..9063d91d 100644
 +	depends on DM_SERIAL
 +	help
 +	  Select this to enable UART driver support for ZTE Sanechips ZX279125 SoCs.
++
++config ZX279125_SERIAL_INIT
++	bool "Initialize ZX279125 UART from the bootloader"
++	depends on ZX279125_SERIAL
++	help
++	  Program the stock 115200 baud UART register sequence on a cold boot.
++	  Leave this disabled for the RAM chainload, which inherits a live UART.
 +
  endif
 diff --git a/drivers/serial/Makefile b/drivers/serial/Makefile
@@ -1106,7 +1253,7 @@ new file mode 100644
 index 00000000..dca41e62
 --- /dev/null
 +++ b/drivers/serial/serial_zx279125.c
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,149 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * ZTE Sanechips ZX279125 UART Driver
@@ -1119,12 +1266,14 @@ index 00000000..dca41e62
 +#include <asm/io.h>
 +
 +#define ZX_UART_DATA		0x04
++#define ZX_UART_ERROR		0x08
 +#define ZX_UART_FLAGS		0x14
 +#define ZX_UART_IBRD		0x24
 +#define ZX_UART_FBRD		0x28
 +#define ZX_UART_LINE		0x30
 +#define ZX_UART_CONTROL		0x34
 +#define ZX_UART_FIFO		0x38
++#define ZX_UART_INT_MASK	0x40
 +
 +#define ZX_UART_RX_EMPTY	(1 << 4)
 +#define ZX_UART_TX_FULL		(1 << 5)
@@ -1135,11 +1284,24 @@ index 00000000..dca41e62
 +	unsigned int clock;
 +};
 +
++#ifdef CONFIG_ZX279125_SERIAL_INIT
++static void zx279125_serial_hw_init(void __iomem *base)
++{
++	writel_relaxed(0, base + ZX_UART_ERROR);
++	writel_relaxed(0, base + ZX_UART_CONTROL);
++	writel_relaxed(13, base + ZX_UART_IBRD);
++	writel_relaxed(36, base + ZX_UART_FBRD);
++	writel_relaxed(0x70, base + ZX_UART_LINE);
++	writel_relaxed(0, base + ZX_UART_INT_MASK);
++	writel_relaxed(0x301, base + ZX_UART_CONTROL);
++}
++#endif
++
 +static int zx279125_serial_setbrg(struct udevice *dev, int baudrate)
 +{
 +	/*
-+	 * Hardware baud rate (115200 8N1) is initialized by silicon BootROM
-+	 * and vendor U-Boot. Preserve the existing configuration.
++	 * The cold build programs the stock 115200 8N1 sequence at probe.
++	 * The RAM chainload preserves its already running UART.
 +	 */
 +	return 0;
 +}
@@ -1178,6 +1340,12 @@ index 00000000..dca41e62
 +
 +static int zx279125_serial_probe(struct udevice *dev)
 +{
++#ifdef CONFIG_ZX279125_SERIAL_INIT
++	struct zx279125_serial_plat *plat = dev_get_plat(dev);
++
++	zx279125_serial_hw_init(plat->base);
++#endif
++
 +	return 0;
 +}
 +
