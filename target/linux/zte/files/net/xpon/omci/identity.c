@@ -524,7 +524,7 @@ void gpon_random_serial_number(const u8 vendor[4], struct omci_identity *identit
 	 */
 	if (!(identity->valid & OMCI_IDENTITY_F_VENDOR_ID)) {
 		memcpy(identity->vendor_id,
-		       (vendor == (u8[4]){0,0,0,0}) ? default_vendor_id : vendor,
+		       memchr_inv(vendor, 0, 4) ? vendor : default_vendor_id,
 		       sizeof(identity->vendor_id));
 		identity->valid |= OMCI_IDENTITY_F_VENDOR_ID;
 		identity->vendor_source = OMCI_CONFIG_SOURCE_DEFAULT;
