@@ -301,3 +301,63 @@ This completes the controlled-reset path in both directions: monitor
 `reset` and Linux `reboot` each leave no adoptable local table. Crash,
 watchdog and hardware resets remain covered only by the refusal. Logs and
 hashes: `tmp/v2801sg-linux-shutdown-test/`.
+
+## Uncontrolled resets: stock table wins and is consumed (24 October 2026)
+
+Shutdown hooks cannot run on a crash or watchdog reset, so freshness now
+comes from the engine lifetime instead. Two facts are observed on this board:
+a chip reset returns the engine to its reset fingerprint (`PP+18 = 50000000`,
+BMU 0), and stock U-Boot zeroes its own table on every boot. A running engine
+with a valid stock table was therefore started by stock since the last reset.
+
+U-Boot's `zx279125_eth_start()` adoption rule:
+
+| Engine | Stock table | Local table | Result |
+| --- | --- | --- | --- |
+| Reset state | ignored | ignored | Cold start, consumers 0 |
+| Running | all 16 valid | anything | Adopt stock, publish local, then zero stock |
+| Running | none valid | all 16 valid | Adopt local (chained monitor) |
+| Running | otherwise | otherwise | Refuse, write nothing |
+
+Zeroing the stock table on adoption is a one-time ownership transfer, not
+the earlier mirroring of every consumer update; stock is no longer running
+by then. The reset-time and Linux shutdown invalidation remain as a second
+line. The Linux driver is unchanged: it uses the table its DT names, which
+under this rule is always the live one.
+
+Software checks, evidence in `tmp/v2801sg-ppe-stale-table/`: driver harness
+12/12 (the uncontrolled `0xb5`/`0xa2` case now adopts `0xa2` and clears
+stock; a partially valid stock table refuses with or without a local table;
+a consumed stock table lets a chained monitor adopt the local one), FDT
+harness 4/4.
+
+| Variant | Bytes | CRC32 | SHA256 |
+| --- | ---: | --- | --- |
+| `vsol_v2801sg` | 234728 | `300c5eb8` | `db0e8f17aad1684fb6aa326d425a0eb52d10bb27017bb874de190fe8fe56edc4` |
+| `vsol_v2801sg-chainload` | 234680 | `7ef408d9` | `d9eed6f4ad4b477782ebc6570eddbed640bd5ac0961b549da7cf401d68a971f3` |
+| `vsol_v2801sg-uart-test` | 234744 | `faec9b98` | `aed5faf1dddf8673132388f240e3962e5e743c56f9ad8ac2c8e9ea29d859c790` |
+| `vsol_v2801sg-dump` | 236384 | `37e93ddf` | `c83d549306008400d6cbbb23fd3c7b8a32fce14425554f354fcd230607c4a620` |
+
+### Hardware results, chainload variant `7ef408d9`
+
+**Reset bypassing `reset_cpu()`.** From the previous monitor, `mw.l 9400003c 1`
+wrote the reset register directly. Stock then showed local `0xa4` (stale),
+stock table zero and the engine at its reset fingerprint. After stock's TFTP
+(stock `0xa2`), the new monitor adopted `0xa2` with no conflict; two pings
+passed and the stock table read zero afterwards.
+
+**Linux crash.** Linux booted from the new monitor with the external DTB
+adopted the local table (`consumer=2430`), passed 20/20 PC pings and
+advanced the table to `0x993`. With `kernel.panic=1`,
+`echo c > /proc/sysrq-trigger` panicked and restarted without running
+shutdown hooks; stock autoboot was stopped with a space. Stock showed local
+`0x994` (stale), stock zero, engine at reset state. After stock's TFTP, the
+new monitor adopted stock's `0xa2`; two pings and a TFTP read (CRC
+`7ef408d9`) passed; local `0x148`, stock table zero.
+
+Not exercised: the physical reset button, a power cycle and a hardware
+watchdog. The rule covers them if they also return the engine to its reset
+state, which a power cycle does by definition; the button and any watchdog
+reset source remain to be confirmed on hardware.
+
+Log: `tmp/v2801sg-ppe-stale-table/hw/uart.log`.
