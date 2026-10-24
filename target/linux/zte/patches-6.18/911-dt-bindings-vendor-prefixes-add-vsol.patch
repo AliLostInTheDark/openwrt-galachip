@@ -1,7 +1,7 @@
 From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
-Subject: [PATCH] dt-bindings: vendor-prefixes: add V-SOL
+Subject: [PATCH] dt-bindings: vendor-prefixes: add V.SOL
 
-Add the vendor prefix for V-SOL, a maker of GPON/EPON ONUs such as the
+Add the vendor prefix for V.SOL, a maker of GPON/EPON ONUs such as the
 V2801SG.
 
 Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
@@ -13,7 +13,7 @@ Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
    "^vot,.*":
      description: Vision Optical Technology Co., Ltd.
 +  "^vsol,.*":
-+    description: V-SOL
++    description: V.SOL
    "^vscom,.*":
      description: VS Visions Systems GmbH
    "^vxt,.*":
