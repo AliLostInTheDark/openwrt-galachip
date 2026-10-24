@@ -234,7 +234,7 @@ new file mode 100644
 index 00000000..7244c2d0
 --- /dev/null
 +++ b/board/zte/zx279125/zx279125.c
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,55 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * ZTE Sanechips ZX279125 Board Support
@@ -247,6 +247,7 @@ index 00000000..7244c2d0
 +#include <fdtdec.h>
 +#include <init.h>
 +#include <log.h>
++#include <zx279125-pp.h>
 +#include <asm/io.h>
 +
 +#define ZX279125_RST_BASE	0x94000000
@@ -279,6 +280,12 @@ index 00000000..7244c2d0
 +
 +void reset_cpu(void)
 +{
++	unsigned int i;
++
++	/* DRAM survives this reset; a later monitor must not adopt a stale table. */
++	for (i = 0; i < ZX279125_PP_CURSORS_SIZE; i += 4)
++		writel(0, (void __iomem *)(ZX279125_PP_CURSORS + i));
++
 +	writel(1, (void __iomem *)(ZX279125_RST_BASE + ZX279125_RST_SOFT));
 +	while (1)
 +		;
