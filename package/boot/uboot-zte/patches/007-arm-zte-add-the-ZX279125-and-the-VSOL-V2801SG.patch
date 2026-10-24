@@ -1,0 +1,384 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] arm: zte: add the ZX279125 and the VSOL V2801SG
+
+Add the ZX279125 platform and the VSOL V2801SG board: device tree,
+board code, defconfig and configuration header. U-Boot manages the low
+16 MiB of RAM and leaves the packet pool to the OS.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+diff --git a/arch/arm/Kconfig b/arch/arm/Kconfig
+index 1b474a34..9d0d82e2 100644
+--- a/arch/arm/Kconfig
++++ b/arch/arm/Kconfig
+@@ -737,6 +737,20 @@ config TARGET_BCMNS
+ 	  ARMv7 Cortex-A9 SoC family including BCM4708, BCM47094,
+ 	  BCM5301x etc.
+ 
++config TARGET_ZX279125
++	bool "Support ZTE Sanechips ZX279125"
++	select CPU_V7A
++	select DM
++	select DM_SERIAL
++	select OF_CONTROL
++	select TIMER
++	select ZX279125_SERIAL
++	select ZX279125_TIMER
++	help
++	  Support for ZTE Sanechips ZX279125 ARMv7 Cortex-A9 SoC
++	  found on devices like the VSOL V2801SG GPON ONT.
++
++
+ config TARGET_BCMNS3
+ 	bool "Support Broadcom NS3"
+ 	select ARM64
+@@ -2434,6 +2448,7 @@ source "board/armltd/vexpress64/Kconfig"
+ source "board/cortina/presidio-asic/Kconfig"
+ source "board/broadcom/bcmns/Kconfig"
+ source "board/broadcom/bcmns3/Kconfig"
++source "board/zte/zx279125/Kconfig"
+ source "board/cavium/thunderx/Kconfig"
+ source "board/eets/pdu001/Kconfig"
+ source "board/emulation/qemu-arm/Kconfig"
+diff --git a/arch/arm/dts/Makefile b/arch/arm/dts/Makefile
+index 37d3b6fd..e69cb5d7 100644
+--- a/arch/arm/dts/Makefile
++++ b/arch/arm/dts/Makefile
+@@ -983,6 +983,8 @@ dtb-$(CONFIG_TARGET_BCMNS) += ns-board.dtb
+ 
+ dtb-$(CONFIG_TARGET_BCMNS3) += ns3-board.dtb
+ 
++dtb-$(CONFIG_TARGET_ZX279125) += zx279125-vsol-v2801sg.dtb
++
+ dtb-$(CONFIG_ARCH_BCMSTB) += bcm7xxx.dtb
+ 
+ dtb-$(CONFIG_BCM47622) += \
+diff --git a/arch/arm/dts/zx279125-vsol-v2801sg.dts b/arch/arm/dts/zx279125-vsol-v2801sg.dts
+new file mode 100644
+index 00000000..23b4974d
+--- /dev/null
++++ b/arch/arm/dts/zx279125-vsol-v2801sg.dts
+@@ -0,0 +1,117 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Device Tree for VSOL V2801SG (ZTE Sanechips ZX279125)
++ *
++ * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
++ */
++
++/dts-v1/;
++
++/ {
++	model = "VSOL V2801SG";
++	compatible = "vsol,v2801sg", "zte,zx279125";
++	#address-cells = <1>;
++	#size-cells = <1>;
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &spifc;
++		ethernet0 = &ethernet;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++
++	cpus {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		cpu@0 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a9";
++			reg = <0>;
++		};
++	};
++
++	memory@40000000 {
++		device_type = "memory";
++		reg = <0x40000000 0x01000000>;
++	};
++
++	soc {
++		compatible = "simple-bus";
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges;
++
++		timer0: timer@94401000 {
++			compatible = "zte,zx279125-timer";
++			reg = <0x94401000 0x100>;
++			clock-frequency = <25000000>;
++			bootph-all;
++			u-boot,dm-pre-reloc;
++		};
++
++		uart0: serial@94405000 {
++			compatible = "zte,zx279125-uart";
++			reg = <0x94405000 0x100>;
++			clock-frequency = <25000000>;
++			current-speed = <115200>;
++			bootph-all;
++			u-boot,dm-pre-reloc;
++		};
++
++		spifc: spi@94407000 {
++			compatible = "zte,zx279125-spifc";
++			reg = <0x94407000 0x1000>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "okay";
++
++			flash@0 {
++				compatible = "jedec,spi-nor";
++				reg = <0>;
++				spi-max-frequency = <25000000>;
++
++				partitions {
++					compatible = "fixed-partitions";
++					#address-cells = <1>;
++					#size-cells = <1>;
++
++					partition@0 {
++						label = "u-boot";
++						reg = <0x000000 0x040000>;
++						read-only;
++					};
++
++					partition@40000 {
++						label = "firmware";
++						reg = <0x040000 0x740000>;
++					};
++
++					partition@780000 {
++						label = "others";
++						reg = <0x780000 0x010000>;
++					};
++
++					partition@790000 {
++						label = "tagparam";
++						reg = <0x790000 0x010000>;
++					};
++
++					partition@7a0000 {
++						label = "usercfg";
++						reg = <0x7a0000 0x060000>;
++					};
++				};
++			};
++		};
++
++		ethernet: ethernet@92144000 {
++			compatible = "zte,zx279125-eth";
++			reg = <0x92144000 0x1000>;
++			status = "okay";
++		};
++	};
++};
+diff --git a/board/zte/zx279125/Kconfig b/board/zte/zx279125/Kconfig
+new file mode 100644
+index 00000000..d8bbf931
+--- /dev/null
++++ b/board/zte/zx279125/Kconfig
+@@ -0,0 +1,12 @@
++if TARGET_ZX279125
++
++config SYS_BOARD
++	default "zx279125"
++
++config SYS_VENDOR
++	default "zte"
++
++config SYS_CONFIG_NAME
++	default "zx279125"
++
++endif
+diff --git a/board/zte/zx279125/MAINTAINERS b/board/zte/zx279125/MAINTAINERS
+new file mode 100644
+index 00000000..7d27d6ec
+--- /dev/null
++++ b/board/zte/zx279125/MAINTAINERS
+@@ -0,0 +1,8 @@
++ZX279125 BOARD
++M:	Ifran Ali <khanu.i.i.k.2000@gmail.com>
++S:	Maintained
++F:	board/zte/zx279125/
++F:	include/configs/zx279125.h
++F:	configs/zx279125_vsol_v2801sg_defconfig
++F:	arch/arm/dts/zx279125*
++F:	drivers/timer/zx279125_timer.c
+diff --git a/board/zte/zx279125/Makefile b/board/zte/zx279125/Makefile
+new file mode 100644
+index 00000000..f83520d4
+--- /dev/null
++++ b/board/zte/zx279125/Makefile
+@@ -0,0 +1,8 @@
++# SPDX-License-Identifier: GPL-2.0+
++#
++# Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
++
++obj-y := zx279125.o ddr.o early_spi.o early_boot.o pp_handoff.o
++CFLAGS_ddr.o += -fno-stack-protector
++CFLAGS_early_spi.o += -fno-stack-protector
++CFLAGS_early_boot.o += -fno-stack-protector
+diff --git a/board/zte/zx279125/zx279125.c b/board/zte/zx279125/zx279125.c
+new file mode 100644
+index 00000000..7244c2d0
+--- /dev/null
++++ b/board/zte/zx279125/zx279125.c
+@@ -0,0 +1,55 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * ZTE Sanechips ZX279125 Board Support
++ *
++ * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
++ */
++
++#include <config.h>
++#include <dm.h>
++#include <fdtdec.h>
++#include <init.h>
++#include <log.h>
++#include <zx279125-pp.h>
++#include <asm/io.h>
++
++#define ZX279125_RST_BASE	0x94000000
++#define ZX279125_RST_SOFT	0x3c
++
++int dram_init(void)
++{
++	gd->ram_size = 0x01000000; /* 16 MiB managed by U-Boot */
++	return 0;
++}
++
++int dram_init_banksize(void)
++{
++	gd->dram[0].start = 0x40000000;
++	gd->dram[0].size  = 0x01000000; /* 16 MiB bank 0 */
++	return 0;
++}
++
++int board_init(void)
++{
++	gd->bd->bi_boot_params = 0x40000100;
++	return 0;
++}
++
++int print_cpuinfo(void)
++{
++	printf("SoC:   ZTE Sanechips ZX279125 (ARMv7 Cortex-A9 @ 600 MHz)\n");
++	return 0;
++}
++
++void reset_cpu(void)
++{
++	unsigned int i;
++
++	/* DRAM survives this reset; a later monitor must not adopt a stale table. */
++	for (i = 0; i < ZX279125_PP_CURSORS_SIZE; i += 4)
++		writel(0, (void __iomem *)(ZX279125_PP_CURSORS + i));
++
++	writel(1, (void __iomem *)(ZX279125_RST_BASE + ZX279125_RST_SOFT));
++	while (1)
++		;
++}
+diff --git a/configs/zx279125_vsol_v2801sg_defconfig b/configs/zx279125_vsol_v2801sg_defconfig
+new file mode 100644
+index 00000000..0998612e
+--- /dev/null
++++ b/configs/zx279125_vsol_v2801sg_defconfig
+@@ -0,0 +1,61 @@
++CONFIG_ARM=y
++CONFIG_SYS_DCACHE_OFF=y
++CONFIG_TARGET_ZX279125=y
++CONFIG_OF_BOARD_SETUP=y
++CONFIG_SUPPORT_PASSING_ATAGS=y
++CONFIG_CMDLINE_TAG=y
++CONFIG_INITRD_TAG=y
++CONFIG_TEXT_BASE=0x40400000
++CONFIG_SYS_MALLOC_F_LEN=0x4000
++CONFIG_NR_DRAM_BANKS=1
++CONFIG_HAS_CUSTOM_SYS_INIT_SP_ADDR=y
++CONFIG_CUSTOM_SYS_INIT_SP_ADDR=0x40700000
++CONFIG_ENV_SIZE=0x10000
++CONFIG_ENV_OFFSET=0x7a0000
++CONFIG_ENV_SECT_SIZE=0x10000
++CONFIG_DEFAULT_DEVICE_TREE="zx279125-vsol-v2801sg"
++CONFIG_SYS_LOAD_ADDR=0x40600000
++CONFIG_DEBUG_UART_BASE=0x94405000
++CONFIG_DEBUG_UART_CLOCK=25000000
++CONFIG_DEBUG_UART=y
++# CONFIG_EFI_LOADER is not set
++# CONFIG_BOOTSTD is not set
++CONFIG_BOOTDELAY=-1
++CONFIG_USE_BOOTARGS=y
++CONFIG_BOOTARGS="console=ttyS0,115200n8 earlycon"
++CONFIG_USE_BOOTCOMMAND=y
++CONFIG_BOOTCOMMAND=""
++CONFIG_HUSH_PARSER=y
++CONFIG_SYS_PROMPT="ZX279125 # "
++CONFIG_CMD_BOOTZ=y
++CONFIG_CMD_MD5SUM=y
++CONFIG_CMD_MTD=y
++CONFIG_CMD_SPI=y
++CONFIG_CMD_DHCP=y
++CONFIG_CMD_PING=y
++CONFIG_CMD_CACHE=y
++CONFIG_CMD_TIME=y
++CONFIG_ENV_OVERWRITE=y
++CONFIG_ENV_IS_IN_SPI_FLASH=y
++CONFIG_ENV_SECT_SIZE_AUTO=y
++CONFIG_ENV_SPI_MAX_HZ=25000000
++# CONFIG_NET_RANDOM_ETHADDR is not set
++CONFIG_MTD=y
++CONFIG_DM_MTD=y
++CONFIG_DM_SPI_FLASH=y
++CONFIG_SPI_FLASH_BAR=y
++CONFIG_SPI_FLASH_GIGADEVICE=y
++CONFIG_SPI_FLASH_MACRONIX=y
++CONFIG_SPI_FLASH_SPANSION=y
++CONFIG_SPI_FLASH_STMICRO=y
++CONFIG_SPI_FLASH_WINBOND=y
++CONFIG_SPI_FLASH_ZBIT=y
++CONFIG_SPI_FLASH_MTD=y
++CONFIG_DRIVER_ZX279125_ETH=y
++CONFIG_DEBUG_UART_ZX279125=y
++CONFIG_DEBUG_UART_ANNOUNCE=y
++CONFIG_DEBUG_UART_SKIP_INIT=y
++CONFIG_ZX279125_SERIAL_INIT=y
++CONFIG_SPI=y
++CONFIG_DM_SPI=y
++CONFIG_ZX279125_SPIFC=y
+diff --git a/include/configs/zx279125.h b/include/configs/zx279125.h
+new file mode 100644
+index 00000000..dad51abe
+--- /dev/null
++++ b/include/configs/zx279125.h
+@@ -0,0 +1,26 @@
++/* SPDX-License-Identifier: GPL-2.0+ */
++/*
++ * Configuration for ZTE Sanechips ZX279125 boards
++ *
++ * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
++ */
++
++#ifndef __ZX279125_H
++#define __ZX279125_H
++
++#include <linux/sizes.h>
++
++#define CFG_SYS_SDRAM_BASE		0x40000000
++
++#define CFG_SYS_NS16550_CLK		25000000
++
++#define CFG_EXTRA_ENV_SETTINGS \
++	"console=ttyS0,115200n8\0" \
++	"ipaddr=192.168.1.1\0" \
++	"serverip=192.168.1.100\0" \
++	"netmask=255.255.255.0\0" \
++	"gatewayip=192.168.1.1\0" \
++	"loadaddr=0x40600000\0" \
++	"fdt_addr_r=0x40700000\0"
++
++#endif /* __ZX279125_H */

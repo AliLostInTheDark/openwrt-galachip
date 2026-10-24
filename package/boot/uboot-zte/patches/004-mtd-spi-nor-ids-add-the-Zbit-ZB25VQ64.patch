@@ -1,0 +1,20 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] mtd: spi-nor-ids: add the Zbit ZB25VQ64
+
+Add the 8 MiB Zbit ZB25VQ64 (JEDEC 5e 40 17) used on the VSOL V2801SG.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+diff --git a/drivers/mtd/spi/spi-nor-ids.c b/drivers/mtd/spi/spi-nor-ids.c
+index 31a2ba49..78752277 100644
+--- a/drivers/mtd/spi/spi-nor-ids.c
++++ b/drivers/mtd/spi/spi-nor-ids.c
+@@ -722,6 +722,8 @@ const struct flash_info spi_nor_ids[] = {
+ #endif
+ #ifdef CONFIG_SPI_FLASH_ZBIT
+ 	/* Zbit Semiconductor Inc. */
++	{ INFO("zb25vq64", 0x5e4017, 0, 64 * 1024, 128,
++	       SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
+ 	{ INFO("zb25vq128", 0x5e4018, 0, 64 * 1024, 256,
+ 	       SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
+ #endif

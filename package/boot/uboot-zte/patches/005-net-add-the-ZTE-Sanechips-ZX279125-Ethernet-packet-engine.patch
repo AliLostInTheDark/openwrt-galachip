@@ -1,0 +1,822 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] net: add the ZTE Sanechips ZX279125 Ethernet packet engine
+
+Add a driver for the ZX279125 LAN MAC and the packet processor queues it
+uses. The packet pool and rings stay in the region the OS keeps reserved.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+diff --git a/drivers/net/Kconfig b/drivers/net/Kconfig
+index faa08e9e..4930ce24 100644
+--- a/drivers/net/Kconfig
++++ b/drivers/net/Kconfig
+@@ -1120,6 +1120,13 @@ config MDIO_MUX_MESON_GXL
+ 	  This driver is used for the MDIO mux found on the Amlogic GXL & compatible
+ 	  SoCs.
+ 
++config DRIVER_ZX279125_ETH
++	bool "ZTE Sanechips ZX279125 Ethernet Support"
++	depends on DM_ETH
++	help
++	  This driver supports the Gigabit Ethernet interface on ZTE Sanechips
++	  ZX279125 SoCs.
++
+ source "drivers/net/phy/Kconfig"
+ source "drivers/net/pfe_eth/Kconfig"
+ source "drivers/net/fsl-mc/Kconfig"
+diff --git a/drivers/net/Makefile b/drivers/net/Makefile
+index 4c1f4094..36f1cd75 100644
+--- a/drivers/net/Makefile
++++ b/drivers/net/Makefile
+@@ -110,6 +110,7 @@ obj-$(CONFIG_XILINX_AXIEMAC) += xilinx_axi_emac.o
+ obj-$(CONFIG_XILINX_AXIMRMAC) += xilinx_axi_mrmac.o
+ obj-$(CONFIG_XILINX_EMACLITE) += xilinx_emaclite.o
+ obj-$(CONFIG_ZYNQ_GEM) += zynq_gem.o
++obj-$(CONFIG_DRIVER_ZX279125_ETH) += zx279125_eth.o
+ obj-y += airoha/
+ obj-y += mscc_eswitch/
+ obj-y += phy/
+diff --git a/drivers/net/zx279125_eth.c b/drivers/net/zx279125_eth.c
+new file mode 100644
+index 00000000..b851f698
+--- /dev/null
++++ b/drivers/net/zx279125_eth.c
+@@ -0,0 +1,777 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * ZTE Sanechips ZX279125 Ethernet Controller Driver
++ *
++ * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
++ */
++
++#include <cpu_func.h>
++#include <dm.h>
++#include <dm/device_compat.h>
++#include <env.h>
++#include <net.h>
++#include <zx279125-pp.h>
++#include <asm/io.h>
++#include <asm/unaligned.h>
++#include <linux/delay.h>
++#include <linux/iopoll.h>
++
++#define ZX_BUFFERS			4096
++#define ZX_BUFFER_SIZE			2048
++#define ZX_RING_SIZE			4096
++#define ZX_QUEUES			16
++#define ZX_ETH_MIN_LEN			60
++
++/* SoC Register Bases */
++#define ZX_PP_BASE			0x92144000
++#define ZX_BMU_BASE			0x92168000
++#define ZX_MAILBOX_BASE			0x92154000
++#define ZX_MAC0_BASE			0x921c0000
++#define ZX_MAC_BASE			0x92200000
++#define ZX_DMA_BASE			0x92164000
++#define ZX_GLOBAL_BASE			0x92140000
++#define ZX_SPA_BASE			0x92308000
++#define ZX_MDIO_BASE			0x9a101000
++
++/* Hardware DMA Buffer Pool and Ring Addresses in DDR RAM */
++#define ZX_BUFFER_POOL_BASE		0x41000000
++#define ZX_BPT_BASE			0x41800000
++#define ZX_CURSORS_BASE			ZX279125_PP_CURSORS
++#define ZX_VENDOR_CURSORS_BASE		0x41fef75c
++#define ZX_RINGS_BASE			0x41900000
++
++/* MDIO Controller Registers */
++#define ZX_MDIO_WRITE_DATA		0x04
++#define ZX_MDIO_READ_DATA		0x08
++#define ZX_MDIO_DIVIDER			0x0c
++#define ZX_MDIO_STATUS			0x10
++#define ZX_MDIO_DONE			BIT(0)
++#define ZX_MDIO_CTRL			0x14
++#define ZX_MDIO_OP_WRITE		(1 << 10)
++#define ZX_MDIO_OP_READ			(2 << 10)
++#define ZX_MDIO_START			BIT(14)
++
++struct zx279125_eth_priv {
++	void __iomem *pp;
++	void __iomem *bmu;
++	void __iomem *mailbox;
++	void __iomem *mac;
++	void __iomem *dma;
++	void __iomem *global;
++	void __iomem *spa;
++	void __iomem *mdio;
++
++	void __iomem *buffers;
++	void __iomem *bpt;
++	void __iomem *cursors;
++	void __iomem *rings;
++
++	u32 consumer[ZX_QUEUES];
++	u8 next_queue;
++	u32 phy_addr;
++	bool cursors_valid;
++	bool fault;
++	u8 rx_buf[ZX_BUFFER_SIZE];
++};
++
++static struct zx279125_eth_priv *zx_owner;
++
++static int zx279125_eth_fault(struct zx279125_eth_priv *priv)
++{
++	priv->fault = true;
++	writel(readl(priv->mac) & ~BIT(2), priv->mac);
++	readl(priv->mac);
++	return -EIO;
++}
++
++/* MDIO Read */
++static int zx279125_mdio_read(void __iomem *mdio, int phy, int reg)
++{
++	u32 ctrl, status;
++	int ret;
++
++	ctrl = readl(mdio + ZX_MDIO_CTRL) & ~ZX_MDIO_START;
++	ctrl &= ~(0x1f | (0x1f << 5) | (3 << 10));
++	ctrl |= (phy << 5) | (reg & 0x1f) | ZX_MDIO_OP_READ;
++	writel(ctrl, mdio + ZX_MDIO_CTRL);
++	writel(ctrl | ZX_MDIO_START, mdio + ZX_MDIO_CTRL);
++
++	ret = readl_poll_timeout(mdio + ZX_MDIO_STATUS, status,
++				 (status & ZX_MDIO_DONE), 10000);
++	writel(0, mdio + ZX_MDIO_STATUS);
++	ctrl = readl(mdio + ZX_MDIO_CTRL) & ~ZX_MDIO_START;
++	writel(ctrl, mdio + ZX_MDIO_CTRL);
++
++	if (ret)
++		return ret;
++
++	return readl(mdio + ZX_MDIO_READ_DATA) & 0xffff;
++}
++
++/* MDIO Write */
++static int zx279125_mdio_write(void __iomem *mdio, int phy, int reg, u16 val)
++{
++	u32 ctrl, status;
++	int ret;
++
++	ctrl = readl(mdio + ZX_MDIO_CTRL) & ~ZX_MDIO_START;
++	ctrl &= ~(0x1f | (0x1f << 5) | (3 << 10));
++	ctrl |= (phy << 5) | (reg & 0x1f) | ZX_MDIO_OP_WRITE;
++	writel(val, mdio + ZX_MDIO_WRITE_DATA);
++	writel(ctrl, mdio + ZX_MDIO_CTRL);
++	writel(ctrl | ZX_MDIO_START, mdio + ZX_MDIO_CTRL);
++
++	ret = readl_poll_timeout(mdio + ZX_MDIO_STATUS, status,
++				 (status & ZX_MDIO_DONE), 10000);
++	writel(0, mdio + ZX_MDIO_STATUS);
++	ctrl = readl(mdio + ZX_MDIO_CTRL) & ~ZX_MDIO_START;
++	writel(ctrl, mdio + ZX_MDIO_CTRL);
++
++	return ret;
++}
++
++/* Check PHY link and update GMAC mode */
++static int zx279125_update_link(struct zx279125_eth_priv *priv)
++{
++	int page, status, mode;
++	u32 config;
++
++	page = zx279125_mdio_read(priv->mdio, priv->phy_addr, 0x1e);
++	if (page > 0)
++		zx279125_mdio_write(priv->mdio, priv->phy_addr, 0x1e, 0);
++
++	status = zx279125_mdio_read(priv->mdio, priv->phy_addr, 0x1a);
++	if (page > 0)
++		zx279125_mdio_write(priv->mdio, priv->phy_addr, 0x1e, page);
++
++	if (status < 0 || !(status & BIT(6))) {
++		/* Link down */
++		config = readl(priv->mac);
++		writel(config & ~BIT(2), priv->mac);
++		return -ENETDOWN;
++	}
++
++	mode = (status >> 7) & 7;
++	config = readl(priv->mac);
++	if (mode >= 4) {
++		/* 1000M Full Duplex */
++		config &= ~BIT(15);
++		config |= BIT(11);
++	} else {
++		/* 10/100M */
++		config |= BIT(15);
++		config = (config & ~BIT(11)) | ((mode & 1) ? BIT(11) : 0);
++		config = (config & ~BIT(14)) | ((mode >= 2) ? BIT(14) : 0);
++	}
++
++	/* BIT(2) = RX Enable, BIT(3) = TX Enable */
++	writel(config | BIT(2) | BIT(3), priv->mac);
++	return 0;
++}
++
++/* Management-DMAC comparator verified by the Linux RAM-boot tests. */
++static void zx279125_set_local_delivery(struct zx279125_eth_priv *priv, const u8 *addr)
++{
++	u32 low  = get_unaligned_be32(addr + 2);
++	u32 high = get_unaligned_be16(addr);
++	u32 identify;
++	unsigned int q;
++
++	/* 1. Disable dedicated match while updating address words */
++	identify = readl(priv->spa + 0x11c);
++	writel(identify & ~BIT(8), priv->spa + 0x11c);
++
++	/* ONU MAC slot 0 and the dedicated management-DMAC comparator. */
++	writel(low,  priv->global + 0x00);
++	writel(high, priv->global + 0x04);
++	writel(low,  priv->global + 0x40);
++	writel(high, priv->global + 0x44);
++
++	/* 3. Bit 8 = management DMAC match, Bit 16 = IPv6 control */
++	identify |= BIT(8) | BIT(16);
++	writel(identify, priv->spa + 0x11c);
++
++	/* 4. Match vendor U-Boot SPA configuration (0x41f1f564) */
++	for (q = 0xd0; q < 0xf8; q += 8)
++		writel(readl(priv->spa + q) | 0x10000, priv->spa + q);
++}
++
++/* Cold hardware initialization sequence (if not pre-initialized) */
++static int zx279125_eth_cold_start(struct udevice *dev)
++{
++	struct zx279125_eth_priv *priv = dev_get_priv(dev);
++	static const struct {
++		u16 offset;
++		u32 value;
++	} bridge[] = {
++		{ 0x004, 0x040200ff }, { 0x340, 0xff5555ff },
++		{ 0x344, 0x3e }, { 0x380, 0x3f }, { 0x63c, 0xaaaaaaaa },
++		{ 0x1c0, 0xff }, { 0x1c4, 0x5555 }, { 0x188, 0xbf874 },
++		{ 0x2c0, 0xff }, { 0x300, 0xffff }, { 0x304, 0x3e },
++	};
++	void __iomem *cla = (void __iomem *)0x9214c000;
++	void __iomem *bridge_base = (void __iomem *)0x92310000;
++	void __iomem *sadm = (void __iomem *)0x92314000;
++	void __iomem *swglb = (void __iomem *)0x9232c000;
++	void __iomem *sip = (void __iomem *)0x92304000;
++	u32 val;
++	unsigned int q;
++	int ret;
++
++	/* Only initialize the recorded reset state, never an active/unknown pool. */
++	if (readl(priv->bmu) || readl(priv->mac) ||
++	    readl((void __iomem *)ZX_MAC0_BASE) ||
++	    readl(priv->pp + 0x18) != 0x50000000 ||
++	    readl(priv->pp + 0x1c) != 0x50020000 ||
++	    readl(priv->pp + 0x20) != 0x52020000 ||
++	    readl(priv->pp + 0x24) != 2048 ||
++	    readl(priv->dma) != 0x136564 ||
++	    readl(priv->bmu + 0x80) || readl(priv->bmu + 0x84) ||
++	    readl(priv->bmu + 0x88) || readl(priv->bmu + 0x8c))
++		return -EINVAL;
++	for (q = 0; q < ZX_QUEUES; q++)
++		if (readl(priv->dma + 0x100 + q * 4))
++			return -EINVAL;
++
++	/* probe() cannot adopt live bases before the reset-state tables exist. */
++	priv->buffers = (void __iomem *)ZX_BUFFER_POOL_BASE;
++	priv->rings = (void __iomem *)ZX_RINGS_BASE;
++
++	writel(0xfffff, priv->pp + 0x48);
++	udelay(1500);
++	ret = readl_poll_timeout(priv->pp + 0x4c, val,
++				 (val & 0xfffff) == 0xfffff, 100000);
++	if (ret)
++		return ret;
++
++	for (q = 0; q < 0x111; q++) {
++		ret = readl_poll_timeout(priv->mailbox + 0x18, val, val & 1, 10000);
++		if (ret)
++			return ret;
++		writel(q, priv->mailbox + 0x14);
++		writel(0, priv->mailbox + 0x28);
++		writel(0, priv->mailbox + 0x24);
++		writel(0, priv->mailbox + 0x20);
++		writel(0x800400, priv->mailbox + 0x1c);
++	}
++	ret = readl_poll_timeout(priv->mailbox + 0x18, val, val & 1, 10000);
++	if (ret)
++		return ret;
++
++	writel(0, priv->mailbox + 0x4c);
++	writel((readl(priv->dma) & ~0xf0000) | 0xf0000, priv->dma);
++	writel(0x309a, cla + 0x40);
++	writel(0, cla + 0x48);
++	writel(0, priv->bmu + 0x50);
++	writel(0x100c040, priv->bmu + 4);
++	writel(0x7f, priv->bmu + 0x54);
++
++	for (q = 0; q < ZX_BUFFERS; q++)
++		writew(cpu_to_be16(q), priv->bpt + q * 2);
++	flush_dcache_range((ulong)priv->bpt, (ulong)priv->bpt + ZX_BUFFERS * 2);
++
++	memset(priv->rings, 0, 0x100000);
++	flush_dcache_range((ulong)priv->rings, (ulong)priv->rings + 0x100000);
++
++	for (q = 0; q < 16; q++) {
++		writel(ZX_RINGS_BASE + q * 0x10000, priv->cursors + q * 8);
++		writel(0, priv->cursors + q * 8 + 4);
++		priv->consumer[q] = 0;
++	}
++
++	wmb();
++	writel(ZX_BUFFER_POOL_BASE, priv->pp + 0x20);
++	writel(ZX_BPT_BASE, priv->pp + 0x18);
++	writel(0x10000000, priv->bmu + 0x48);
++	writel(0, priv->bmu + 0x10);
++	writel(ZX_RINGS_BASE, priv->pp + 0x1c);
++	writel(0x41820000, priv->pp + 0x34);
++
++	writel(~0U, swglb + 8);
++	udelay(1500);
++	ret = readl_poll_timeout(swglb + 0x0c, val, val == ~0U, 100000);
++	if (ret)
++		return ret;
++
++	for (q = 0; q < 7; q++)
++		writel(1, priv->spa + 0x40 + q * 4);
++	writel(0x1100200, priv->spa + 0x11c);
++	for (q = 0xd0; q < 0xf8; q += 8)
++		writel(readl(priv->spa + q) | 0x10000, priv->spa + q);
++
++	for (q = 0; q < ARRAY_SIZE(bridge); q++)
++		writel(bridge[q].value, bridge_base + bridge[q].offset);
++
++	for (q = 0; q < 64; q++) {
++		ret = readl_poll_timeout(sadm + 0x18, val, val & 1, 10000);
++		if (ret)
++			return ret;
++		writel(0x800000 | q, sadm + 0x14);
++		writel(0, sadm + 0x20);
++		writel(0x80, sadm + 0x1c);
++	}
++	ret = readl_poll_timeout(sadm + 0x18, val, val & 1, 10000);
++	if (ret)
++		return ret;
++
++	writel(0x1000, sadm + 0x44);
++	writel(0x1000, sadm + 0x40);
++	writel(1, sip);
++	writel(0, swglb + 0x50);
++	writel(0x11, priv->global + 0x48);
++	writel(0x80000001, priv->mac + 0x10);
++	writel(0x300000, priv->mac + 0x60);
++	writel(0x21000c0, priv->mac + 0x4060);
++	writel(0x1000, priv->mac + 0x300);
++	writel(0x20e0880, priv->mac);
++	writel(1, priv->bmu);
++
++	ret = readl_poll_timeout(priv->bmu + 0x80, val,
++				 val + readl(priv->bmu + 0x84) == ZX_BUFFERS,
++				 100000);
++	if (ret)
++		dev_err(dev, "BMU buffer load timeout: free=%u+%u\n",
++			readl(priv->bmu + 0x80), readl(priv->bmu + 0x84));
++	else
++		dev_info(dev, "cold start initialized: BMU buffers=%u+%u\n",
++			 readl(priv->bmu + 0x80), readl(priv->bmu + 0x84));
++	return ret;
++}
++
++/* Preserve the vendor U-Boot poll view (0x41f1f228..0x41f1f448).
++ * The vendor Linux poller uses packed halfwords in eight words instead; this
++ * bootloader view still needs multi-queue validation before it is generalized.
++ */
++static u32 zx279125_rx_count(struct zx279125_eth_priv *priv, unsigned int queue)
++{
++	return readl(priv->dma + 0x100 + queue * 4) & 0xffff;
++}
++
++static int zx279125_release_rx_buf(struct zx279125_eth_priv *priv,
++				   const u8 *desc, u32 bp, unsigned int queue)
++{
++	u32 command = 0x10 | (desc[6] & 7) |
++		      ((desc[15] & BIT(5)) ? BIT(14) : 0) |
++		      ((desc[9] & BIT(7)) ? BIT(3) : 0);
++	u32 val;
++	int ret;
++
++	/* Do not acknowledge a descriptor whose buffer ownership is invalid. */
++	if (bp >= ZX_BUFFERS)
++		return -EIO;
++
++	ret = readl_poll_timeout(priv->mailbox + 0x64, val, !(val & 1), 10000);
++	if (ret)
++		return ret;
++	writel(command, priv->mailbox + 0x68);
++	writel(1, priv->mailbox + 0x64);
++	ret = readl_poll_timeout(priv->mailbox + 0x64, val, !(val & 1), 10000);
++	if (ret)
++		return ret;
++
++	/* Advance consumer cursor after mailbox completion (matching Linux zx_release) */
++	priv->consumer[queue] = (priv->consumer[queue] + 1) % ZX_RING_SIZE;
++	writel(priv->consumer[queue], priv->cursors + queue * 8 + 4);
++	wmb();
++
++	/* Return buffer to BMU */
++	ret = readl_poll_timeout(priv->bmu + 0xc0, val, !(val & 8), 10000);
++	if (ret)
++		return ret;
++	writel(bp, priv->bmu + 0x0c);
++	return readl_poll_timeout(priv->bmu + 0xc0, val, !(val & 8), 10000);
++}
++
++/* Number of queues whose entry describes the live rings. */
++static unsigned int zx279125_valid_cursors(void __iomem *table, u32 rings)
++{
++	unsigned int q, valid = 0;
++
++	for (q = 0; q < ZX_QUEUES; q++)
++		if (readl(table + q * 8) == rings + q * 0x10000 &&
++		    readl(table + q * 8 + 4) < ZX_RING_SIZE)
++			valid++;
++	return valid;
++}
++
++static int zx279125_eth_start(struct udevice *dev)
++{
++	struct zx279125_eth_priv *priv = dev_get_priv(dev);
++	struct eth_pdata *pdata = dev_get_plat(dev);
++	u32 live_rings_base, live_buf_base;
++	unsigned int q;
++	int timeout = 3000;
++	void __iomem *vendor_table = (void __iomem *)ZX_VENDOR_CURSORS_BASE;
++	void __iomem *source = NULL;
++	unsigned int vendor;
++	int ret = -ETIMEDOUT;
++	bool is_cold = false;
++
++	if (priv->fault)
++		return -EIO;
++
++	zx_owner = priv;
++	/* Cold initialization if hardware tables are not yet running */
++	if (!readl(priv->bmu)) {
++		ret = zx279125_eth_cold_start(dev);
++		if (ret) {
++			dev_err(dev, "cold start failed: %d\n", ret);
++			return ret;
++		}
++		is_cold = true;
++	}
++
++	live_rings_base = readl(priv->pp + 0x1c);
++	live_buf_base   = readl(priv->pp + 0x20);
++
++	if (readl(priv->pp + 0x18) != ZX_BPT_BASE ||
++	    live_rings_base != ZX_RINGS_BASE ||
++	    live_buf_base != ZX_BUFFER_POOL_BASE) {
++		dev_err(dev, "unsupported packet pool/ring layout: %08x/%08x\n",
++			live_buf_base, live_rings_base);
++		return -EINVAL;
++	}
++
++	/* Use live addresses for all descriptor and buffer accesses */
++	priv->rings   = (void __iomem *)live_rings_base;
++	priv->buffers = (void __iomem *)live_buf_base;
++
++	/* Synchronize consumer pointers with whoever last owned the rings */
++	if (priv->cursors_valid) {
++		for (q = 0; q < ZX_QUEUES; q++)
++			if (readl(priv->cursors + q * 8) != live_rings_base + q * 0x10000 ||
++			    readl(priv->cursors + q * 8 + 4) != priv->consumer[q])
++				return zx279125_eth_fault(priv);
++	} else if (is_cold) {
++		memset(priv->consumer, 0, sizeof(priv->consumer));
++	} else {
++		/*
++		 * Every chip reset returns the engine to its reset state and the
++		 * stock loader zeroes its table on each boot, so a running engine
++		 * with a valid stock table was started by stock since the last
++		 * reset; any local table then predates that reset. The local table
++		 * is live only once a monitor has taken over and cleared stock's.
++		 */
++		vendor = zx279125_valid_cursors(vendor_table, live_rings_base);
++		if (vendor == ZX_QUEUES) {
++			source = vendor_table;
++		} else if (!vendor &&
++			   zx279125_valid_cursors(priv->cursors, live_rings_base) == ZX_QUEUES) {
++			source = priv->cursors;
++		} else {
++			dev_err(dev, "no consistent retained cursor table\n");
++			return -EINVAL;
++		}
++		for (q = 0; q < ZX_QUEUES; q++)
++			priv->consumer[q] = readl(source + q * 8 + 4);
++	}
++	for (q = 0; q < ZX_QUEUES; q++) {
++		writel(live_rings_base + q * 0x10000, priv->cursors + q * 8);
++		writel(priv->consumer[q], priv->cursors + q * 8 + 4);
++	}
++	wmb();
++	/* Take ownership: the stock table must never look live again. */
++	if (source == vendor_table) {
++		for (q = 0; q < ZX_QUEUES * 2; q++)
++			writel(0, vendor_table + q * 4);
++		wmb();
++	}
++	priv->cursors_valid = true;
++	priv->next_queue = 0;
++
++	/* Enable switch port ingress forwarding */
++	for (q = 0; q < 7; q++)
++		writel(1, priv->spa + 0x40 + q * 4);
++
++	/* Set local MAC delivery in hardware switch comparator */
++	zx279125_set_local_delivery(priv, pdata->enetaddr);
++
++	/* Wait for link up up to 3 seconds */
++	ret = -ENETDOWN;
++	while (timeout--) {
++		if (zx279125_update_link(priv) == 0) {
++			ret = 0;
++			break;
++		}
++		mdelay(1);
++	}
++
++	return ret;
++}
++
++static int zx279125_eth_send(struct udevice *dev, void *packet, int length)
++{
++	struct zx279125_eth_priv *priv = dev_get_priv(dev);
++	u8 pad_buf[ZX_ETH_MIN_LEN];
++	u8 desc[16];
++	u32 bp, val;
++	int ret;
++
++	if (priv->fault || !priv->cursors_valid)
++		return -EIO;
++	if (length < 14 || length > ZX_BUFFER_SIZE - 16)
++		return -EMSGSIZE;
++
++	/* Pad short frames to minimum Ethernet length */
++	if (length < ZX_ETH_MIN_LEN) {
++		memcpy(pad_buf, packet, length);
++		memset(pad_buf + length, 0, ZX_ETH_MIN_LEN - length);
++		packet = pad_buf;
++		length = ZX_ETH_MIN_LEN;
++	}
++
++	/* 1. Wait for mailbox ready */
++	ret = readl_poll_timeout(priv->mailbox + 0x50, val, !(val & 1), 10000);
++	if (ret)
++		return -ETIMEDOUT;
++
++	/* 2. Request buffer from BMU */
++	writel(1, priv->bmu + 0x10);
++	ret = readl_poll_timeout(priv->bmu + 0x10, val, !val, 10000);
++	if (ret)
++		return zx279125_eth_fault(priv);
++
++	val = readl(priv->bmu + 8);
++	bp = val & 0xffff;
++	if (!(val & BIT(31)))
++		return -ENOBUFS;
++	if (bp >= ZX_BUFFERS)
++		return zx279125_eth_fault(priv);
++
++	/* 3. Copy packet to buffer (offset 16 for standard Ethernet LAN frame) */
++	memcpy_toio(priv->buffers + bp * ZX_BUFFER_SIZE + 16, packet, length);
++	/* Publish DMA payload before the mailbox descriptor. */
++	wmb();
++
++	/* 4. Prepare descriptor */
++	put_unaligned_le32(0x2000, desc);
++	put_unaligned_le32(0, desc + 4);
++	put_unaligned_le32(0x8002, desc + 8);
++	put_unaligned_le16(bp, desc + 10);
++	put_unaligned_le32(0x30000000 | (length << 6) | 16, desc + 12);
++	val = get_unaligned_le16(desc + 14);
++	put_unaligned_le16((val & ~0xffe) | (length << 1), desc + 14);
++
++	/* 5. Submit descriptor to TX mailbox */
++	ret = readl_poll_timeout(priv->mailbox + 0x50, val, !(val & 1), 10000);
++	if (ret)
++		return zx279125_eth_fault(priv);
++
++	writel(get_unaligned_le32(desc + 12), priv->mailbox + 0x54);
++	writel(get_unaligned_le32(desc + 8), priv->mailbox + 0x58);
++	writel(get_unaligned_le32(desc + 4), priv->mailbox + 0x5c);
++	writel(get_unaligned_le32(desc), priv->mailbox + 0x60);
++	writel(1, priv->mailbox + 0x50);
++
++	return 0;
++}
++
++static int zx279125_eth_recv(struct udevice *dev, int flags, uchar **packetp)
++{
++	struct zx279125_eth_priv *priv = dev_get_priv(dev);
++	u8 desc[16];
++	u32 count = 0, bp, len, offset;
++	unsigned int q, scanned;
++	int ret;
++
++	if (priv->fault || !priv->cursors_valid)
++		return -EIO;
++	for (scanned = 0; scanned < ZX_QUEUES; scanned++) {
++		q = priv->next_queue;
++		priv->next_queue = (q + 1) % ZX_QUEUES;
++		count = zx279125_rx_count(priv, q);
++		if (count)
++			break;
++	}
++
++	if (!count)
++		return -EAGAIN;
++
++	if (count >= ZX_RING_SIZE)
++		return zx279125_eth_fault(priv);
++
++	/* Match the Linux reference: observe DMA publication before descriptor load. */
++	rmb();
++	memcpy_fromio(desc, priv->rings + q * 0x10000 + priv->consumer[q] * 16, 16);
++	bp = get_unaligned_le16(desc + 10) & 0x3fff;
++	len = (get_unaligned_le32(desc + 12) >> 6) & 0x7ff;
++	offset = desc[12] & 63;
++
++	if (bp >= ZX_BUFFERS || len < 14 || len > 1536 ||
++	    len + offset > ZX_BUFFER_SIZE) {
++		ret = zx279125_release_rx_buf(priv, desc, bp, q);
++		return ret ? zx279125_eth_fault(priv) : -EAGAIN;
++	}
++
++	memcpy_fromio(priv->rx_buf, priv->buffers + bp * ZX_BUFFER_SIZE + offset, len);
++	ret = zx279125_release_rx_buf(priv, desc, bp, q);
++	if (ret)
++		return zx279125_eth_fault(priv);
++
++	*packetp = priv->rx_buf;
++	return len;
++}
++
++/* Ownership accounting is necessary for shutdown, not a global AXI-idle proof. */
++static bool zx279125_ownership_idle(struct zx279125_eth_priv *priv)
++{
++	unsigned int q;
++
++	if (readl(priv->mailbox + 0x50) & 1 ||
++	    readl(priv->mailbox + 0x64) & 1 || readl(priv->bmu + 0x10) ||
++	    readl(priv->bmu + 0xc0) & 8 ||
++	    readl(priv->bmu + 0x88) != readl(priv->bmu + 0x8c) ||
++	    readl(priv->bmu + 0x80) + readl(priv->bmu + 0x84) != ZX_BUFFERS)
++		return false;
++	/* Check full words: high-half queue counts must also be zero. */
++	for (q = 0; q < ZX_QUEUES; q++)
++		if (readl(priv->dma + 0x100 + q * 4))
++			return false;
++	return true;
++}
++
++static void zx279125_eth_stop(struct udevice *dev)
++{
++	struct zx279125_eth_priv *priv = dev_get_priv(dev);
++	ulong start;
++	uchar *packet;
++	int ret;
++
++	writel(readl(priv->mac) & ~BIT(2), priv->mac);
++	readl(priv->mac);
++	udelay(2000);
++	start = get_timer(0);
++	do {
++		ret = zx279125_eth_recv(dev, 0, &packet);
++		if (ret < 0 && ret != -EAGAIN)
++			break;
++		if (zx279125_ownership_idle(priv)) {
++			udelay(1000);
++			if (zx279125_ownership_idle(priv)) {
++				writel(readl(priv->mac) & ~BIT(3), priv->mac);
++				readl(priv->mac);
++				return;
++			}
++		}
++		udelay(100);
++	} while (get_timer(start) < 20);
++
++	dev_warn(dev, "ownership pending; retaining TX and reserved packet pool\n");
++}
++
++int zx279125_pp_handoff(u32 *cursor_phys)
++{
++	struct zx279125_eth_priv *priv = zx_owner;
++	unsigned int q;
++
++	if (!priv)
++		return -ENOENT;
++	if (priv->fault || !priv->cursors_valid)
++		return -EIO;
++	if (readl(priv->mac) & (BIT(2) | BIT(3)) ||
++	    readl((void __iomem *)ZX_MAC0_BASE) & (BIT(2) | BIT(3)) ||
++	    !zx279125_ownership_idle(priv))
++		return -EBUSY;
++	if (readl(priv->pp + 0x18) != ZX_BPT_BASE ||
++	    readl(priv->pp + 0x1c) != ZX_RINGS_BASE ||
++	    readl(priv->pp + 0x20) != ZX_BUFFER_POOL_BASE ||
++	    readl(priv->pp + 0x24) != 2048 || readl(priv->bmu) != 1)
++		return -EINVAL;
++	for (q = 0; q < ZX_QUEUES; q++)
++		if (readl(priv->cursors + q * 8) != ZX_RINGS_BASE + q * 0x10000 ||
++		    priv->consumer[q] >= ZX_RING_SIZE ||
++		    readl(priv->cursors + q * 8 + 4) != priv->consumer[q])
++			return -EINVAL;
++	wmb();
++	*cursor_phys = ZX_CURSORS_BASE;
++	return 0;
++}
++
++static int zx279125_eth_free_pkt(struct udevice *dev, uchar *packet, int length)
++{
++	return 0;
++}
++
++static int zx279125_eth_write_hwaddr(struct udevice *dev)
++{
++	struct zx279125_eth_priv *priv = dev_get_priv(dev);
++	struct eth_pdata *pdata = dev_get_plat(dev);
++
++	zx279125_set_local_delivery(priv, pdata->enetaddr);
++	return 0;
++}
++
++static int zx279125_eth_probe(struct udevice *dev)
++{
++	struct zx279125_eth_priv *priv = dev_get_priv(dev);
++	struct eth_pdata *pdata = dev_get_plat(dev);
++	u8 mac[6];
++	u32 val_low, val_high;
++	u32 ctrl;
++
++	priv->pp = (void __iomem *)ZX_PP_BASE;
++	priv->bmu = (void __iomem *)ZX_BMU_BASE;
++	priv->mailbox = (void __iomem *)ZX_MAILBOX_BASE;
++	priv->mac = (void __iomem *)ZX_MAC_BASE;
++	priv->dma = (void __iomem *)ZX_DMA_BASE;
++	priv->global = (void __iomem *)ZX_GLOBAL_BASE;
++	priv->spa = (void __iomem *)ZX_SPA_BASE;
++	priv->mdio = (void __iomem *)ZX_MDIO_BASE;
++
++	/* rings and buffers are read from live hardware registers in start() */
++	priv->bpt     = (void __iomem *)ZX_BPT_BASE;
++	priv->cursors = (void __iomem *)ZX_CURSORS_BASE;
++
++	priv->phy_addr = 1;
++
++	/* If ethaddr is not set in environment, adopt factory MAC from hardware */
++	if (!eth_env_get_enetaddr("ethaddr", pdata->enetaddr)) {
++		val_low = readl(priv->global);
++		val_high = readl(priv->global + 0x04);
++		mac[0] = (val_high >> 8) & 0xff;
++		mac[1] = val_high & 0xff;
++		mac[2] = (val_low >> 24) & 0xff;
++		mac[3] = (val_low >> 16) & 0xff;
++		mac[4] = (val_low >> 8) & 0xff;
++		mac[5] = val_low & 0xff;
++
++		if (is_valid_ethaddr(mac)) {
++			memcpy(pdata->enetaddr, mac, 6);
++			eth_env_set_enetaddr("ethaddr", mac);
++		}
++	}
++
++	/* Initialize MDIO controller */
++	ctrl = readl(priv->mdio + ZX_MDIO_CTRL);
++	ctrl &= ~(ZX_MDIO_START | BIT(15) | BIT(13));
++	ctrl |= BIT(12);
++	writel(ctrl, priv->mdio + ZX_MDIO_CTRL);
++	writel(0, priv->mdio + ZX_MDIO_STATUS);
++	writel(0, priv->mdio + ZX_MDIO_DIVIDER);
++
++	return 0;
++}
++
++static const struct eth_ops zx279125_eth_ops = {
++	.start		= zx279125_eth_start,
++	.send		= zx279125_eth_send,
++	.recv		= zx279125_eth_recv,
++	.free_pkt	= zx279125_eth_free_pkt,
++	.stop		= zx279125_eth_stop,
++	.write_hwaddr	= zx279125_eth_write_hwaddr,
++};
++
++static const struct udevice_id zx279125_eth_ids[] = {
++	{ .compatible = "zte,zx279125-eth" },
++	{ }
++};
++
++U_BOOT_DRIVER(zx279125_eth) = {
++	.name		= "zx279125_eth",
++	.id		= UCLASS_ETH,
++	.of_match	= zx279125_eth_ids,
++	.probe		= zx279125_eth_probe,
++	.ops		= &zx279125_eth_ops,
++	.priv_auto	= sizeof(struct zx279125_eth_priv),
++	.plat_auto	= sizeof(struct eth_pdata),
++};
+

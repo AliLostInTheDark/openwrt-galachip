@@ -37,9 +37,9 @@ endef
 
 UBOOT_TARGETS := vsol_v2801sg
 
+# Development and recovery tools below are not selected by default.
 define U-Boot/vsol_v2801sg-chainload
   NAME:=VSOL V2801SG RAM chainload test
-  BUILD_DEVICES:=vsol_v2801sg
   UBOOT_CONFIG:=zx279125_vsol_v2801sg
   UBOOT_IMAGE:=u-boot.bin
   UBOOT_CUSTOMIZE_CONFIG := $(ZX279125_SMALL_CONFIG) \
@@ -52,7 +52,6 @@ UBOOT_TARGETS += vsol_v2801sg-chainload
 
 define U-Boot/vsol_v2801sg-uart-test
   NAME:=VSOL V2801SG RAM UART initialization test
-  BUILD_DEVICES:=vsol_v2801sg
   UBOOT_CONFIG:=zx279125_vsol_v2801sg
   UBOOT_IMAGE:=u-boot.bin
   UBOOT_CUSTOMIZE_CONFIG := $(ZX279125_SMALL_CONFIG) \
@@ -65,7 +64,6 @@ UBOOT_TARGETS += vsol_v2801sg-uart-test
 
 define U-Boot/vsol_v2801sg-dump
   NAME:=VSOL V2801SG RAM snapshot export
-  BUILD_DEVICES:=vsol_v2801sg
   UBOOT_CONFIG:=zx279125_vsol_v2801sg
   UBOOT_IMAGE:=u-boot.bin
   UBOOT_CUSTOMIZE_CONFIG := $(ZX279125_SMALL_CONFIG) \
