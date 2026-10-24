@@ -31,6 +31,11 @@ Laser permission remains off by default. Keep fiber disconnected for LAN tests.
 - Production keeps OMCI, PON administration and the in-process ucode LuCI
   handler. HTTP concurrency is bounded to one request/eight connections,
   keep-alive to five seconds, and the system log ring to 32 KiB.
+- BusyBox drops the same 24 applets as the G7, among them the DHCP client,
+  `route`, `ifconfig`, `nslookup`, `traceroute6`, `brctl` and interactive tools;
+  the management address is static. The
+  `u-boot-vsol_v2801sg-stockchain` monitor the sysupgrade image carries is
+  selected by default with the device.
 - The TCP source-port perturbation table changes from order 16 to order 8:
   256 KiB becomes 1 KiB. Kernel crash/kexec/debugfs and swap are disabled.
   Kallsyms/devmem and packet diagnostics remain for this development stage.
@@ -48,14 +53,13 @@ logs are in `/tmp/v2801sg-onu-profile/`. The first sandboxed packaging attempt
 failed because fakeroot could not create an IPC socket; the normal build
 outside that sandbox completed successfully. No hardware test has run yet.
 
-## DMA memory is deliberately retained
+## DMA memory
 
-Do not reclaim 41a00000..41ffffff while using the stock bootloader. Its retained
-queue cursor table at 41fef75c must survive Linux startup, and auxiliary DMA
-extents have not been excluded. The full 41000000..41ffffff no-map guard remains.
-Reclaiming this region needs an early validated cursor transfer and a complete
-DMA map, followed by controlled hardware testing; changing only the DT size
-caused an unsafe handoff.
+Linux reserves only the packet engine's `41000000..41a00000` and the page
+holding the stock cursor table (`41fef000..41ff0000`), both no-map, and gets
+about 17 MiB. The stock-code evidence and hardware test are in
+`docs/v2801sg/u-boot/PPE-DMA-MEMORY.md`. Shrinking the pool further needs the
+engine re-initialized, as the vendor kernel does (PPE-L2-OFFLOAD.md).
 
 ## Selecting a profile
 

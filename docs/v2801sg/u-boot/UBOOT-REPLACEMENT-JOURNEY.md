@@ -60,11 +60,11 @@ The last recorded hardware state was the modern `ZX279125 #` prompt, UART releas
 
 ### Package and upstream-facing implementation
 
-- [Makefile](Makefile): pins U-Boot `2026.10`; source archive SHA256 `3f856da3cbbc93af51ff95fde18588a348b4a26723b01d9841e999d988481015`.
-- [Platform patch](patches/001-arm-zte-add-support-for-ZTE-Sanechips-ZX279125-and-V.patch): board/DT/Kconfig, UART, timer, Ethernet, SPI controller and NOR-ID changes. It also changes common CLI files; this is broader than adding isolated board drivers and needs separate upstream review.
-- [DDR source](files/board/zte/zx279125/ddr.c), [header](files/board/zte/zx279125/ddr.h).
-- [Early SPI source](files/board/zte/zx279125/early_spi.c), [header](files/board/zte/zx279125/early_spi.h).
-- [Earlier early-boot integration](files/board/zte/zx279125/early_boot.c), [header](files/board/zte/zx279125/early_boot.h): retained development primitive; distinguish it from the current standalone first-stage caller.
+- [Makefile](../../../package/boot/uboot-zte/Makefile): pins U-Boot `2026.10`; source archive SHA256 `3f856da3cbbc93af51ff95fde18588a348b4a26723b01d9841e999d988481015`.
+- [Platform patch series](../../../package/boot/uboot-zte/patches/): UART, timer, SPI, flash ID, Ethernet, CLI, then board/DT/Kconfig controller and NOR-ID changes. It also changes common CLI files; this is broader than adding isolated board drivers and needs separate upstream review.
+- [DDR source](../../../package/boot/uboot-zte/files/board/zte/zx279125/ddr.c), [header](../../../package/boot/uboot-zte/files/board/zte/zx279125/ddr.h).
+- [Early SPI source](../../../package/boot/uboot-zte/files/board/zte/zx279125/early_spi.c), [header](../../../package/boot/uboot-zte/files/board/zte/zx279125/early_spi.h).
+- [Earlier early-boot integration](../../../package/boot/uboot-zte/files/board/zte/zx279125/early_boot.c), [header](../../../package/boot/uboot-zte/files/board/zte/zx279125/early_boot.h): retained development primitive; distinguish it from the current standalone first-stage caller.
 
 The patch contains paths for `board/zte/zx279125/zx279125.c`, `configs/zx279125_vsol_v2801sg_defconfig`, `include/configs/zx279125.h`, `drivers/net/zx279125_eth.c`, `drivers/serial/serial_zx279125.c`, `drivers/spi/zx279125_spifc.c` and `drivers/timer/zx279125_timer.c`. Generated build-tree copies are not the package's canonical editable source.
 
@@ -189,7 +189,7 @@ The fresh complete NOR contains the current system firmware, not an untouched or
 
 The donor contains U-Boot 2013.04 from March 2020. Its CPU setup `17c..1b4`, DDR `4a8..614`, early SPI/helpers `614..774`, and bootstrap `774..880` are byte-identical to VSOL. Its reset routine likewise writes 1 to `9400003c`. This corroborates the early sequence, but neither proves electrical compatibility nor supplies a missing ROM boot selector.
 
-Sources: [live capture](LIVE-STOCK-CAPTURE.md), [snapshot](STOCK-SNAPSHOT.txt), [donor comparison](DFP34X-DUMP-COMPARISON.md).
+Sources: [live capture](LIVE-STOCK-CAPTURE.md), [snapshot](../../../package/boot/uboot-zte/STOCK-SNAPSHOT.txt), [donor comparison](DFP34X-DUMP-COMPARISON.md).
 
 ## 8. Current first-stage layout and artifact identity
 
@@ -231,7 +231,7 @@ superseded.
 | RAM audit | 444 | `a83bae78` | `5c110518e2c7861385534a4f0e739844d3d26b3c78f06b5f6d3a33343423c3c2` |
 | Rebuilt SPI audit, software-tested revision | 1084 | `e0667790` | `97aa5e6fb7643637cc6e101cbdae8bcc5707153ca0496ed992a2fab57b5cdf5c` |
 
-**Reproducible build (24 October):** the original `build.py` took the monitor from the `uart-test` build directory, which has since been rebuilt (234792 bytes, CRC `e1a6d58b`). [build-first-stage.py](tools/build-first-stage.py) replaces it: it takes an explicit payload, refuses a SHA256 mismatch, and uses the U-Boot tree only for compiler flags. The frozen payload is retained as `tmp/v2801sg-cold-candidate/inputs/monitor-85dbdf9f.bin`. Rebuilding the unchanged stage sources from it reproduced `cold.bin`, the combined image, `audit.bin` and `spi-audit.bin` byte-for-byte.
+**Reproducible build (24 October):** the original `build.py` took the monitor from the `uart-test` build directory, which has since been rebuilt (234792 bytes, CRC `e1a6d58b`). [build-first-stage.py](../../../package/boot/uboot-zte/tools/build-first-stage.py) replaces it: it takes an explicit payload, refuses a SHA256 mismatch, and uses the U-Boot tree only for compiler flags. The frozen payload is retained as `tmp/v2801sg-cold-candidate/inputs/monitor-85dbdf9f.bin`. Rebuilding the unchanged stage sources from it reproduced `cold.bin`, the combined image, `audit.bin` and `spi-audit.bin` byte-for-byte.
 
 ### UART-progress candidate
 
@@ -267,7 +267,7 @@ The monitor ELF's allocated file-backed sections match the payload. `u-boot-nodt
 
 ## 9. DDR source equivalence and its limits
 
-Current [ddr.c](files/board/zte/zx279125/ddr.c) reconstructs stock `41f004a8..41f00610`. Its 35 ordered writes and three 2000-iteration delays match the retained instruction-derived trace. It uses relaxed MMIO and bounded polling, rather than adding an ordering barrier around every access.
+Current [ddr.c](../../../package/boot/uboot-zte/files/board/zte/zx279125/ddr.c) reconstructs stock `41f004a8..41f00610`. Its 35 ordered writes and three 2000-iteration delays match the retained instruction-derived trace. It uses relaxed MMIO and bounded polling, rather than adding an ordering barrier around every access.
 
 Ordered sequence, with values in hexadecimal:
 
@@ -321,7 +321,7 @@ Sixteen passing cases:
 
 On a physical cold boot, "caller state restored" (cases 11–13) or a CPU-setup refusal means returning to the ROM, which prints `FAIL` and hangs. In the frozen `6ad95389` stage, CRC, timeout and fault cases spin silently. The UART-progress candidate passed the same sixteen cases with its output asserted: the exact success line, a `FAIL` line matching the SRAM trace for every halt case, and `FAULT 00000004 94300080 <LR>` for the synthetic abort. Its lowest stack write is unchanged at `00203f94`. Every cold failure still ends in a hang requiring external recovery; the output only identifies where.
 
-Rerun: `tools/emulate-first-stage.py <stage-dir> <out-dir> success alternate-sctlr crc pll ddr104 ddr100 spi_setup spi_fifo spi_done spi_fifo_late warm icache irq fault mode0 modef`. Unicorn 2.1.2 is retained in `tmp/v2801sg-emulation-deps` (override with `ZX_EMULATION_DEPS`); the DDR reference trace is now tracked as [ddr-vendor.trace](tools/ddr-vendor.trace).
+Rerun: `tools/emulate-first-stage.py <stage-dir> <out-dir> success alternate-sctlr crc pll ddr104 ddr100 spi_setup spi_fifo spi_done spi_fifo_late warm icache irq fault mode0 modef`. Unicorn 2.1.2 is retained in `tmp/v2801sg-emulation-deps` (override with `ZX_EMULATION_DEPS`); the DDR reference trace is now tracked as [ddr-vendor.trace](../../../package/boot/uboot-zte/tools/ddr-vendor.trace).
 
 The synthetic abort supplies DFSR 8 / DFAR `94300080` at the DDR store. It verifies the handler, not physical bus fault delivery. Native tests of actual C additionally cover full copy, CRC, rejection before writes, all page arguments, partial progress and readiness guards.
 
@@ -337,7 +337,7 @@ This installer can write flash; it is not merely a convenient download command. 
 
 ### B. ROM console and XMODEM: warm access verified
 
-The [wrapper](tools/rom-console-audit.S) enters only ROM routine `0x918`, skipping ROM reset, boot dispatch and DDR initialization. It fingerprints ROM instructions and checks CPU state. `g 200100` returns through a fixed SRAM trampoline.
+The [wrapper](../../../package/boot/uboot-zte/tools/rom-console-audit.S) enters only ROM routine `0x918`, skipping ROM reset, boot dispatch and DDR initialization. It fingerprints ROM instructions and checks CPU state. `g 200100` returns through a fixed SRAM trampoline.
 
 Hardware verified:
 
@@ -412,7 +412,7 @@ Useful retained REA evidence identifiers:
 - ROM: [SRAM-READ-PROBE.md](SRAM-READ-PROBE.md), [BOOTROM-ANALYSIS.md](BOOTROM-ANALYSIS.md), [ROM-CONSOLE-TEST.md](ROM-CONSOLE-TEST.md).
 - Layout/history: [ROM-LOAD-CONTRACT.md](ROM-LOAD-CONTRACT.md), [FIRST-STAGE.md](FIRST-STAGE.md), [CHAINLOAD.md](CHAINLOAD.md).
 - Current audit: [COLD-STAGE-CODE-AUDIT.md](COLD-STAGE-CODE-AUDIT.md).
-- Wider port context: [Ethernet bring-up](../../../target/linux/zte/ETHERNET-BRINGUP.md), [xPON integration](../../../target/linux/zte/XPON-INTEGRATION.md). Linux bridge/optical readiness is separate from loader readiness.
+- Wider port context: [Ethernet bring-up](../linux/ETHERNET-BRINGUP.md), [xPON integration](../linux/XPON-INTEGRATION.md). Linux bridge/optical readiness is separate from loader readiness.
 
 ### External reference trail
 

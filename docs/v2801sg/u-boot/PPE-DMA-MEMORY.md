@@ -404,7 +404,7 @@ and leads to correct adoption.
 
 ## Hardware result: watchdog reset (24 October 2026)
 
-With the new Cortex-A9 watchdog driver (see `target/linux/zte/WATCHDOG.md`),
+With the new Cortex-A9 watchdog driver (see `docs/v2801sg/linux/WATCHDOG.md`),
 Linux booted from the monitor was allowed to time out. The watchdog reset
 is a full chip reset: watchdog registers, including reset status, read zero
 and the packet engine was at its reset fingerprint. With the local table

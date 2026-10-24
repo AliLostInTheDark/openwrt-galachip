@@ -77,7 +77,7 @@ The source snapshot and focused disassembly are in
 
 The separate replacement U-Boot package also had a NULL ring pointer in cold
 initialization, unsafe adoption/reset fallbacks and buffer error paths. See
-`package/boot/uboot-zte/README.md` for its repairs and build evidence. It remains
+`docs/v2801sg/u-boot/README.md` for its repairs and build evidence. It remains
 experimental: its private cursor table is not the installed vendor table,
 and explicit Linux handoff compatibility still needs implementation/testing.
 
@@ -1048,5 +1048,5 @@ this revision has not been loaded onto hardware.
 
 An appended-DTB zImage overrides a separately supplied DTB, so the new handoff
 requires a kernel packaged without an appended tree plus an external Linux FDT.
-See [PPE-DMA-MEMORY.md](../../../package/boot/uboot-zte/PPE-DMA-MEMORY.md) for
+See [PPE-DMA-MEMORY.md](../u-boot/PPE-DMA-MEMORY.md) for
 exact changes, evidence and remaining RAM tests.

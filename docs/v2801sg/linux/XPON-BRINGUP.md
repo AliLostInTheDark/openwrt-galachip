@@ -176,9 +176,9 @@ echo 0 > /sys/devices/platform/soc/92040000.pon/laser_enable
 
 | File | Changes |
 |---|---|
-| [`zx279125-pon.h`](target/linux/zte/files/drivers/soc/zte/zx279125-pon.h) | Added `laser_allowed` field to `struct zx279125_pon`. |
-| [`zx279125-gpon.c`](target/linux/zte/files/drivers/soc/zte/zx279125-gpon.c) | Hardware laser gate: `if (!pon->laser_allowed) hold = true;`. |
-| [`zx279125-pon.c`](target/linux/zte/files/drivers/soc/zte/zx279125-pon.c) | Added module parameter `laser_enable`, sysfs node `laser_enable`, and probe-time hold. |
-| [`zx279125-vsol-v2801sg.dts`](target/linux/zte/dts/zx279125-vsol-v2801sg.dts) | Enabled `&pon` node (`status = "okay";`). |
-| [`02_network`](target/linux/zte/base-files/etc/board.d/02_network) | Configured dedicated static IPv4 management (`192.168.1.1/24`). |
+| [`zx279125-pon.h`](../../../target/linux/zte/files/drivers/soc/zte/zx279125-pon.h) | Added `laser_allowed` field to `struct zx279125_pon`. |
+| [`zx279125-gpon.c`](../../../target/linux/zte/files/drivers/soc/zte/zx279125-gpon.c) | Hardware laser gate: `if (!pon->laser_allowed) hold = true;`. |
+| [`zx279125-pon.c`](../../../target/linux/zte/files/drivers/soc/zte/zx279125-pon.c) | Added module parameter `laser_enable`, sysfs node `laser_enable`, and probe-time hold. |
+| [`zx279125-vsol-v2801sg.dts`](../../../target/linux/zte/dts/zx279125-vsol-v2801sg.dts) | Enabled `&pon` node (`status = "okay";`). |
+| [`02_network`](../../../target/linux/zte/base-files/etc/board.d/02_network) | Configured dedicated static IPv4 management (`192.168.1.1/24`). |
 | [`/srv/tftp/v2801sg-pon-nolaser.uImage`](/srv/tftp/v2801sg-pon-nolaser.uImage) | Deployed live image booted on board (3,889,761 bytes). |
