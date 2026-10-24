@@ -212,6 +212,22 @@ Stage code is 3008 bytes; unused bytes in its slot are `ff`. The total combined 
 | Combined offline prototype | 240896 | `bc2f9d2c` (not in manifest) | `f082ce289e70124332f6973a1fbcdc40f31fe88edb711cc008720d46c50146c5` |
 | UART-progress cold stage | 3472 | `cab400c9` | `8b0ad3ff914f0f3981e91fdaea8a595bbb6d5462d0f10d4a038601d72d756d02` |
 | UART-progress combined, same payload | 240896 | `9e016337` | `7bf73793a5a1edd8e67445d9f4499c2ee21b19865ae398bb47ce73d6e7b5daaa` |
+| **Current** monitor payload `uart-test`, commit `24978ff72f` | 234744 | `0fd4fea4` | `b3229b7ff27322440bdefa6faad62a23578c66d5f6bdb1250bd5445a73eb1428` |
+| **Current** cold stage for that payload | 3472 | `57fb9374` | `98377770cf5368a8fc7e80eff150d68e46ff3a819b84e9be532ece41b1eb2f35` |
+| **Current** combined offline candidate | 242944 | `836f2375` | `8145e87082a094716fb5ebded5ffdc30883bafb90c6092a7d6158872a501e6bf` |
+
+The current candidate (24 October) carries the monitor with the cursor
+adoption rule, reset-time table invalidation and 25 MHz timer fix. Its
+payload rebuilt from the committed tree is byte-identical to the build it
+replaced. Layout: 917 pages, monitor bytes `0x2000..0x3b4f7`, image end
+`0x3b500`, leaving `0x4b00` bytes of the 256 KiB partition; it still
+overwrites the old environment at `0x30000`. All sixteen emulation cases
+passed (`tmp/v2801sg-cold-candidate/b3229b7f/emulation.log`): handoff
+reaches this monitor's `board_init_f` at `4040c48c` after 918 checked
+transfers, and every failure case prints its trace line. The harness now
+reads `board_init_f` from the manifest (`--payload-map`) and derives the
+transfer count from the payload size. The `cab400c9` candidate above is
+superseded.
 | RAM audit | 444 | `a83bae78` | `5c110518e2c7861385534a4f0e739844d3d26b3c78f06b5f6d3a33343423c3c2` |
 | Rebuilt SPI audit, software-tested revision | 1084 | `e0667790` | `97aa5e6fb7643637cc6e101cbdae8bcc5707153ca0496ed992a2fab57b5cdf5c` |
 
@@ -418,8 +434,8 @@ These identify the sources consulted earlier; no new external review was perform
 | CPU/DDR source fidelity | Raw stock and donor comparison, ordered trace and model checks passed |
 | SPI transport and copied monitor | Separately hardware tested on initialized board |
 | Complete cold DDR + monitor | **Not hardware tested** |
-| Early failure visibility | UART progress/FAIL/FAULT lines implemented and model-checked (`cab400c9`); not yet seen on hardware |
-| Reproducible candidate | Pinned-payload build reproduces the frozen stage byte-for-byte; scripts not yet committed |
+| Early failure visibility | UART progress/FAIL/FAULT lines implemented and model-checked (current stage `57fb9374`); not yet seen on hardware |
+| Reproducible candidate | Pinned-payload build committed; current candidate `836f2375` built from monitor `b3229b7f` (commit `24978ff72f`) |
 | Reset-state ROM UART selection | **Unresolved**; warm console success does not supply it |
 | Independent recovery | Programmer/backup available in principle; repeatable connection/restore capability not demonstrated |
 | Package/install integration | Combined image still a separate offline prototype, no validated installer |
