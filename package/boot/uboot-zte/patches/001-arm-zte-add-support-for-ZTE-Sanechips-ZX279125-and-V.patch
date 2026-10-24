@@ -116,7 +116,7 @@ index 00000000..23b4974d
 +		timer0: timer@94401000 {
 +			compatible = "zte,zx279125-timer";
 +			reg = <0x94401000 0x100>;
-+			clock-frequency = <12500000>;
++			clock-frequency = <25000000>;
 +			bootph-all;
 +			u-boot,dm-pre-reloc;
 +		};
@@ -1855,7 +1855,7 @@ index 00000000..54a9743d
 +		return -EINVAL;
 +
 +	if (!uc_priv->clock_rate)
-+		uc_priv->clock_rate = 12500000;
++		uc_priv->clock_rate = 25000000;
 +
 +	/* Stop timer */
 +	writel(0, priv->base + ZX_TIMER_ENABLE);
