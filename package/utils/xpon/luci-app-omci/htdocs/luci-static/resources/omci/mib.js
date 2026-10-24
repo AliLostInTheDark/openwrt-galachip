@@ -110,16 +110,34 @@ function provisionedVlans(objects) {
 	return vlans;
 }
 
-function routeText(route) {
+/* 0,4,5,6,7 -> '0, 4-7' */
+function ranges(numbers) {
+	var out = [];
+
+	numbers.map(Number).sort(function(a, b) { return a - b; }).forEach(function(n) {
+		var last = out[out.length - 1];
+
+		if (last && n == last[1] + 1)
+			last[1] = n;
+		else if (!last || n != last[1])
+			out.push([ n, n ]);
+	});
+
+	return out.map(function(r) { return r[0] == r[1] ? String(r[0]) : r[0] + '-' + r[1]; }).join(', ');
+}
+
+/* One line per GEM port, then the T-CONT Alloc-IDs. */
+function routeLines(route) {
 	if (!route)
-		return _('no GEM port found');
+		return [ _('no GEM port found') ];
 
 	return Object.keys(route.gems).map(function(gem) {
-		var prios = route.gems[gem];
+		return _('GEM %s: priority %s').format(gem, ranges(route.gems[gem]));
+	}).concat(route.allocs.length ? [ _('Alloc-ID %s').format(ranges(route.allocs)) ] : []);
+}
 
-		return 'GEM %s (%s)'.format(gem, prios.length == 8 ? _('priority 0-7') :
-			_('priority %s').format(prios.join(',')));
-	}).join(', ') + (route.allocs.length ? ', Alloc-ID ' + route.allocs.join(',') : '');
+function routeText(route) {
+	return routeLines(route).join(', ');
 }
 
 /*
@@ -130,7 +148,12 @@ function routeText(route) {
  * 10 from DSCP, 15 add no tag (the received tag is kept unless removed).
  */
 function oltPriority(objects, vid) {
-	var texts = [];
+	return oltPriorityLines(objects, vid).join('; ');
+}
+
+/* As oltPriority, one line each; rules that accept one priority and keep it are merged. */
+function oltPriorityLines(objects, vid) {
+	var texts = [], kept = [];
 
 	(objects || []).forEach(function(o) {
 		if (o.origin_name != 'olt' || o.class_id != 171)
@@ -144,6 +167,12 @@ function oltPriority(objects, vid) {
 			    r.treat_inner_vid != vid)
 				return;
 
+			if (tagged && r.filter_inner_pbit <= 7 && r.treat_inner_pbit == r.filter_inner_pbit) {
+				if (kept.indexOf(r.filter_inner_pbit) < 0)
+					kept.push(r.filter_inner_pbit);
+				return;
+			}
+
 			accept = !tagged ? _('untagged') :
 				r.filter_inner_pbit <= 7 ? _('accepts priority %d only').format(r.filter_inner_pbit) : _('accepts priority 0-7');
 			send = r.treat_inner_pbit <= 7 ? _('sets it to %d').format(r.treat_inner_pbit) :
@@ -155,7 +184,11 @@ function oltPriority(objects, vid) {
 		});
 	});
 
-	return texts.filter(function(t, i) { return texts.indexOf(t) == i; }).join('; ');
+	if (kept.length)
+		texts.unshift(kept.length == 1 ? _('OLT: accepts priority %s only, keeps it').format(kept[0]) :
+			_('OLT: accepts priority %s, keeps it').format(ranges(kept)));
+
+	return texts.filter(function(t, i) { return texts.indexOf(t) == i; });
 }
 
 /* Without a VLAN rule for it, the 802.1p mapper still tells which priorities the OLT carries. */
@@ -195,8 +228,11 @@ return baseclass.extend({
 	hexBytes: hexBytes,
 	be16: be16,
 	provisionedVlans: provisionedVlans,
+	ranges: ranges,
+	routeLines: routeLines,
 	routeText: routeText,
 	oltPriority: oltPriority,
+	oltPriorityLines: oltPriorityLines,
 	mapperPriority: mapperPriority,
 	allocIds: allocIds,
 	gemPorts: gemPorts
