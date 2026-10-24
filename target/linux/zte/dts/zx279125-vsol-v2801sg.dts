@@ -12,7 +12,7 @@
 
 / {
 	model = "VSOL V2801SG";
-	compatible = "v-sol,v2801sg", "zte,zx279125";
+	compatible = "vsol,v2801sg", "zte,zx279125";
 
 	aliases {
 		serial0 = &uart0;
@@ -59,7 +59,7 @@
 	status = "okay";
 
 	bosa: optical-transceiver@51 {
-		compatible = "semtech,gn25l95", "atmel,24c02";
+		compatible = "atmel,24c02";
 		reg = <0x51>;
 	};
 };

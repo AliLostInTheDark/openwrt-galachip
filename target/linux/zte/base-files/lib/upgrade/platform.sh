@@ -8,8 +8,7 @@ platform_check_image() {
 	local board=$(board_name)
 
 	case "$board" in
-	vsol,v2801sg|\
-	v-sol,v2801sg)
+	vsol,v2801sg)
 		return 0
 		;;
 	*)

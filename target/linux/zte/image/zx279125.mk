@@ -59,6 +59,8 @@ define Device/vsol_v2801sg
   DEVICE_VENDOR := VSOL
   DEVICE_MODEL := V2801SG
   DEVICE_DTS := zx279125-vsol-v2801sg
+  # Earlier images used the unregistered v-sol vendor prefix.
+  SUPPORTED_DEVICES += v-sol,v2801sg
   SOC := zx279125
   BLOCKSIZE := 64k
   IMAGE_SIZE := 7424k

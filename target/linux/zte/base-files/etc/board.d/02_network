@@ -3,8 +3,7 @@
 board_config_update
 
 case "$(board_name)" in
-vsol,v2801sg|\
-v-sol,v2801sg)
+vsol,v2801sg)
 	ucidef_set_interface_lan "lan0 pon0"
 	;;
 esac

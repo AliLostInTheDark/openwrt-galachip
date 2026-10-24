@@ -1,0 +1,19 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] dt-bindings: vendor-prefixes: add V-SOL
+
+Add the vendor prefix for V-SOL, a maker of GPON/EPON ONUs such as the
+V2801SG.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+--- a/Documentation/devicetree/bindings/vendor-prefixes.yaml
++++ b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+@@ -1755,6 +1755,8 @@ patternProperties:
+     description: Voltafield Technology Corp.
+   "^vot,.*":
+     description: Vision Optical Technology Co., Ltd.
++  "^vsol,.*":
++    description: V-SOL
+   "^vscom,.*":
+     description: VS Visions Systems GmbH
+   "^vxt,.*":
