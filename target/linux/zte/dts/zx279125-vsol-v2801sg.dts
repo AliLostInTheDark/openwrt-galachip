@@ -26,8 +26,7 @@
 
 	memory@40000000 {
 		device_type = "memory";
-		reg = <0x40000000 0x01000000>,
-		      <0x41a00000 0x00600000>; /* 22 MiB total for Linux */
+		reg = <0x40000000 0x02000000>;
 	};
 
 	reserved-memory {
@@ -35,9 +34,9 @@
 		#size-cells = <1>;
 		ranges;
 
-		/* Hardware PP DMA buffers and rings (10 MiB) */
+		/* Retain the stock U-Boot handoff and all unverified DMA extents. */
 		packet_pool: packet-pool@41000000 {
-			reg = <0x41000000 0x00a00000>;
+			reg = <0x41000000 0x01000000>;
 			no-map;
 		};
 	};
@@ -73,8 +72,8 @@
 	status = "okay";
 	phy-handle = <&lan_phy>;
 	memory-region = <&packet_pool>;
-	/* CPU-only queue cursor table placed in reserved PP memory */
-	zte,bootloader-cursors = <0x41840000>;
+	/* Relocated cursor table in the March 2025 stock U-Boot. */
+	zte,bootloader-cursors = <0x41fef75c>;
 };
 
 &spifc {
