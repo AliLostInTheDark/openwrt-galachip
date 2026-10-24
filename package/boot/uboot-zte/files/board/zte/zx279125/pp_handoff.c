@@ -15,7 +15,7 @@ int ft_board_setup(void *blob, struct bd_info *bd)
 	if (eth < 0)
 		return eth;
 	prop = fdt_getprop(blob, eth, "memory-region", &len);
-	if (!prop || len != sizeof(*prop))
+	if (!prop || len < sizeof(*prop))
 		return -EINVAL;
 	pool = fdt_node_offset_by_phandle(blob, fdt32_to_cpu(*prop));
 	if (pool < 0)

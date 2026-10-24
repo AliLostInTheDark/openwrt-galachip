@@ -42,7 +42,10 @@ properties:
   phy-handle: true
 
   memory-region:
-    maxItems: 1
+    minItems: 1
+    items:
+      - description: The 10 MiB no-map packet pool at 0x41000000
+      - description: A no-map region holding a cursor table outside the pool
 
   zte,bootloader-cursors:
     $ref: /schemas/types.yaml#/definitions/uint32

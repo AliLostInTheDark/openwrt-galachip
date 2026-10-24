@@ -856,11 +856,29 @@ static int zx_netdev_event(struct notifier_block *nb, unsigned long event,
 	return NOTIFY_DONE;
 }
 
+/* Resolve memory-region @index, which must be a whole no-map reservation. */
+static int zx_reserved_region(struct device_node *np, int index, struct resource *res)
+{
+	struct device_node *node = of_parse_phandle(np, "memory-region", index);
+	struct reserved_mem *rmem;
+	int ret;
+
+	if (!node)
+		return -EPERM;
+	ret = of_address_to_resource(node, 0, res);
+	rmem = of_reserved_mem_lookup(node);
+	if (!ret && (!rmem || rmem->base != res->start ||
+		     rmem->size != resource_size(res) ||
+		     !of_property_read_bool(node, "no-map")))
+		ret = -EPERM;
+	of_node_put(node);
+	return ret;
+}
+
 static int zx_probe(struct platform_device *pdev)
 {
 	struct device_node *node;
 	struct resource res, *shared;
-	struct reserved_mem *pool;
 	struct device *parent = &pdev->dev;
 	struct net_device *dev;
 	struct zx_lan *lan;
@@ -873,21 +891,13 @@ static int zx_probe(struct platform_device *pdev)
 	ret = of_property_read_u32(parent->of_node, "zte,bootloader-cursors", &cursor_phys);
 	if (ret || !IS_ALIGNED(cursor_phys, 4))
 		return -EPERM;
-	node = of_parse_phandle(parent->of_node, "memory-region", 0);
-	if (!node)
+	if (zx_reserved_region(parent->of_node, 0, &res) ||
+	    res.start != 0x41000000 || res.end != 0x419fffff)
 		return -EPERM;
-	ret = of_address_to_resource(node, 0, &res);
-	pool = of_reserved_mem_lookup(node);
-	if (!ret && (!pool || pool->base != res.start ||
-		     pool->size != resource_size(&res) ||
-		     !of_property_read_bool(node, "no-map")))
-		ret = -EPERM;
-	of_node_put(node);
-	if (ret || res.start != 0x41000000 || res.end != 0x41ffffff)
-		return -EPERM;
-	/* Accept the source monitor's table or a verified relocated stock table. */
+	/* Accept the source monitor's table or a reserved relocated stock table. */
 	if (cursor_phys != ZX_LOCAL_CURSORS &&
-	    (cursor_phys < 0x41a00000 || cursor_phys > res.end - 127))
+	    (zx_reserved_region(parent->of_node, 1, &res) ||
+	     cursor_phys < res.start || cursor_phys > res.end - 127))
 		return -EPERM;
 	ret = of_get_mac_address(parent->of_node, addr);
 	if (ret == -EPROBE_DEFER)

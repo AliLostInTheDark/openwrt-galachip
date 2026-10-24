@@ -34,9 +34,18 @@
 		#size-cells = <1>;
 		ranges;
 
-		/* Retain the stock U-Boot handoff and all unverified DMA extents. */
+		/*
+		 * Packet buffers, buffer-pointer and auxiliary tables, and the
+		 * sixteen descriptor rings. Stock U-Boot programs nothing above.
+		 */
 		packet_pool: packet-pool@41000000 {
-			reg = <0x41000000 0x01000000>;
+			reg = <0x41000000 0x00a00000>;
+			no-map;
+		};
+
+		/* Page holding the stock U-Boot's relocated cursor table. */
+		stock_cursors: stock-cursors@41fef000 {
+			reg = <0x41fef000 0x1000>;
 			no-map;
 		};
 	};
@@ -71,7 +80,7 @@
 &ethernet {
 	status = "okay";
 	phy-handle = <&lan_phy>;
-	memory-region = <&packet_pool>;
+	memory-region = <&packet_pool>, <&stock_cursors>;
 	/* Relocated cursor table in the March 2025 stock U-Boot. */
 	zte,bootloader-cursors = <0x41fef75c>;
 };
