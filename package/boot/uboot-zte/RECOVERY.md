@@ -95,3 +95,30 @@ ownership state, apply only individually traced disable operations, read back,
 then restore and verify network operation before considering a reset test.
 Do not combine an unvalidated engine reset with DDR initialization. No new
 hardware commands or DDR retry are authorized by this evidence alone.
+
+## Full-flash TFTP backups (2026-10-24)
+
+Three complete 8 MiB reads, taken from the RAM-chainloaded `dump` monitor
+(`v2801sg-uboot-dump-0797b5d5.bin`) with `sf read` in 1 MiB chunks and
+`tftpput`. Every chunk was accepted only when the received file's size and
+CRC matched the board's `crc32`; no chunk needed a retry.
+
+- All three runs are identical: SHA256
+  `d0a11fce785041f8c34029de02decaa3b173b3dc2b5f8d0a2028d8459752cd47`,
+  CRC32 `f90c92e4`.
+- Against the 23 October capture: boot code and environment
+  (`0x00000..0x3ffff`, CRC `34d4cc5a`, env `eeae6842`), `others`, `tagparam`
+  and `usercfg` are identical. 1701 bytes differ, all inside `rootfs_data`
+  (`0x410000..0x77ffff`), the installed OpenWrt's overlay.
+- Against the original backup: boot code and `others` identical; the
+  environment differs by the known seven bytes; firmware, `tagparam` and
+  `usercfg` reflect the installed system.
+
+Copies: `/home/ali/Desktop/MISC-3/V2801SG_Backups/v2801sg-full-flash-8M-20261024.bin`
+with `SHA256SUMS-20261024.txt`; all runs and chunks in
+`tmp/v2801sg-nor-backup-20261024/`.
+
+These are faithful backups, but not a recovery path: restoring through TFTP
+needs a bootloader that still runs. If the boot partition is damaged, only an
+external programmer (the SOIC8 clip) can write it back, so the cold test still
+waits for a demonstrated clip readback and restore.
