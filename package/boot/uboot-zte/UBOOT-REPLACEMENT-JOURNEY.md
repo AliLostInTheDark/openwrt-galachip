@@ -429,24 +429,25 @@ These identify the sources consulted earlier; no new external review was perform
 | Requirement | Current status / next action |
 | --- | --- |
 | Exact ROM transfer contract | Decoded from captured instructions; model exercised |
-| First stage fits ROM window | Linker checked; 3008 / 8192 bytes |
-| Combined image fits partition | Checked; 240896 / 262144 bytes; old environment overlap explicit |
+| First stage fits ROM window | Linker checked; 3472 / 8192 bytes |
+| Combined image fits partition | Checked; 242944 / 262144 bytes; old environment overlap explicit |
 | CPU/DDR source fidelity | Raw stock and donor comparison, ordered trace and model checks passed |
 | SPI transport and copied monitor | Separately hardware tested on initialized board |
 | Complete cold DDR + monitor | **Not hardware tested** |
 | Early failure visibility | UART progress/FAIL/FAULT lines implemented and model-checked (current stage `57fb9374`); not yet seen on hardware |
 | Reproducible candidate | Pinned-payload build committed; current candidate `836f2375` built from monitor `b3229b7f` (commit `24978ff72f`) |
-| Reset-state ROM UART selection | **Unresolved**; warm console success does not supply it |
-| Independent recovery | Programmer/backup available in principle; repeatable connection/restore capability not demonstrated |
-| Package/install integration | Combined image still a separate offline prototype, no validated installer |
+| Reset-state ROM UART selection | **Unresolved**. Bounded search (24 Oct): neither the stock loader nor the vendor kernel reads or writes CRM `0x38`; their CRM accesses are DDR/PLL setup, soft reset `0x3c` and network clocks. Consistent with a reset-latched strap; no software override exists in these images, and the strap pins are unidentified |
+| Independent recovery | Backups verified by SHA256; new SOIC8 clip on order. Repeatable ID, readback and stock-sector write-back still to be demonstrated |
+| Package/install integration | The package now builds `u-boot-cold-UNTESTED.bin` plus manifest for the base and `uart-test` variants; all sixteen emulation cases pass on the packaged image. No installer by design until a cold boot is proven |
 | Environment and board identity | Preserve original data separately; selected monitor uses RAM defaults, test MAC currently set manually |
-| Linux handoff after new monitor | Validate retained queue consumers, reserved pools and cursor compatibility explicitly |
+| Linux handoff after new monitor | **Hardware tested** (24 Oct): external-DTB boot publishes the local cursor table, Linux adopts it; every reset path tested, including watchdog, leads to correct adoption (PPE-DMA-MEMORY.md). The image build now emits the unappended `initramfs-zImage.bin` and `.dtb` for `bootz <kernel> - <dtb>` |
+| Monitor timer | Fixed: 25 MHz rate; `sleep 10` measured 9.97 s on hardware |
 | Upstream acceptance | No acceptance established; local drivers, bindings and common CLI changes still require review |
 
-Early progress visibility and a reproducible candidate build are done in source and model (section 8). Without flashing, hardware can only confirm the new stage's warm refusal (the guard must reject initialized DDR before any output or peripheral write, as model case 11 shows); its UART lines first appear on a real cold boot. The next hardware milestone is a recoverable physical reset-to-monitor boot, then repeated power cycles, UART, SPI identity/readback, network and Linux handoff tests. Do not use the retired warm DDR images to stand in for that milestone.
+Early progress visibility, a reproducible candidate, package integration and the Linux handoff are done (sections 8 and 13). What remains needs the board and the programmer: prove the SOIC8 clip recovery path, then the one-time cold boot. Without flashing, hardware can only confirm the new stage's warm refusal (the guard must reject initialized DDR before any output or peripheral write, as model case 11 shows); its UART lines first appear on a real cold boot. The next hardware milestone is a recoverable physical reset-to-monitor boot, then repeated power cycles, UART, SPI identity/readback, network and Linux handoff tests. Do not use the retired warm DDR images to stand in for that milestone.
 
 A first-attempt cold success cannot be guaranteed from the present evidence. This handoff records the work needed to make the decision concrete; it does not authorize installation or supply flash-write commands.
 
 ## Subsequent PPE/DMA source checkpoint
 
-[PPE-DMA-MEMORY.md](PPE-DMA-MEMORY.md) records the later source changes to cursor ownership, fault handling, external-FDT handoff and Linux diagnostics. The image identities in this journey remain the frozen earlier cold prototype; the newly rebuilt monitors are separate artifacts, not silently substituted payloads. Hardware verification of the later changes remains pending.
+[PPE-DMA-MEMORY.md](PPE-DMA-MEMORY.md) records the later source changes to cursor ownership, fault handling, external-FDT handoff and Linux diagnostics. Those changes, the reset-time and uncontrolled-reset cursor rules, the watchdog and the timer fix are now hardware tested and carried by the current candidate in section 8.
