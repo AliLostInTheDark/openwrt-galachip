@@ -5,17 +5,9 @@ board_config_update
 case "$(board_name)" in
 vsol,v2801sg|\
 v-sol,v2801sg)
-	ucidef_set_interface_lan "lan0"
-	ucidef_set_interface_wan "pon0"
+	ucidef_set_interface_lan "lan0 pon0"
 	;;
 esac
 
 board_config_flush
-
-uci -q batch <<-EOF
-	delete network.lan.ip6assign
-	set network.lan.delegate='0'
-	commit network
-EOF
-
 exit 0

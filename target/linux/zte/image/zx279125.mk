@@ -57,12 +57,17 @@ define Device/vsol_v2801sg
   IMAGE/sysupgrade.bin := append-kernel | pad-to $$(BLOCKSIZE) | \
     append-rootfs | pad-rootfs | zxic-header | check-size | append-metadata
   DEVICE_PACKAGES := kmod-zx279125-ethernet xpon-report bosa-tools \
-    omci-agent omcid luci-app-omci luci-app-xpon luci-app-xpon-stats \
-    luci-theme-slate uhttpd uhttpd-mod-ubus uhttpd-mod-ucode rpcd \
-    epon-oamd luci-app-epon \
+    omci-agent omcid luci-app-omci luci-app-xpon \
+    luci-mod-network luci-mod-status luci-mod-system luci-theme-slate \
+    uhttpd uhttpd-mod-ubus uhttpd-mod-ucode rpcd \
+    -luci -luci-light -luci-mod-admin-full -luci-app-package-manager \
+    -luci-app-firewall -luci-proto-ppp -luci-proto-ipv6 -rpcd-mod-rrdns \
+    -epon-oamd -luci-app-epon -luci-app-xpon-stats \
+    -apk-mbedtls -apk-openssl -opkg \
     -uclient-fetch -urandom-seed -urngd -ca-bundle \
     -libustream-mbedtls -rpcd-mod-iwinfo -libiwinfo-data -libiwinfo \
     -luci-lib-uqr -odhcpd -odhcpd-ipv6only -odhcp6c -dnsmasq \
-    -firewall4 -nftables -ppp -ppp-mod-pppoe
+    -firewall -firewall4 -uci-firewall -iptables -nftables -ppp -ppp-mod-pppoe \
+    -kmod-zram -zram-swap
 endef
 TARGET_DEVICES += vsol_v2801sg

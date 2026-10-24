@@ -1,0 +1,15 @@
+#!/bin/sh
+
+# Bound concurrent LuCI requests on the 32 MiB bridge ONU.
+[ ! -f /etc/config/uhttpd ] || uci -q batch <<'EOF'
+set uhttpd.main.max_requests='1'
+set uhttpd.main.max_connections='8'
+set uhttpd.main.http_keepalive='5'
+set uhttpd.main.script_timeout='30'
+commit uhttpd
+EOF
+
+uci -q set system.@system[0].log_size='32'
+uci -q commit system
+
+exit 0
