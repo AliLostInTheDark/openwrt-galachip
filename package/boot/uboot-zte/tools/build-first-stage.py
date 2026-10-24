@@ -67,6 +67,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--payload', type=Path, required=True)
     parser.add_argument('--payload-sha256', required=True)
+    parser.add_argument('--payload-map', type=Path,
+                        help="the payload's System.map; records board_init_f for the emulator")
     parser.add_argument('--out', type=Path, required=True)
     opts = parser.parse_args()
 
@@ -98,6 +100,10 @@ def main():
          '-o', str(out / 'cpu.o')])
 
     manifest = {'spi_reference_crc32': f'{spi_crc:08x}', 'payload': identity(monitor)}
+    if opts.payload_map:
+        symbols = dict(reversed(line.split()[::2]) for line in
+                       opts.payload_map.read_text().splitlines())
+        manifest['payload']['board_init_f'] = '0x' + symbols['board_init_f']
     extra = {'audit': ['-DZX_STAGE_RAM_AUDIT'], 'cold': [], 'spi-audit': ['-DZX_STAGE_SPI_AUDIT']}
     for kind, flags in extra.items():
         entry = out / f'{kind}-entry.o'

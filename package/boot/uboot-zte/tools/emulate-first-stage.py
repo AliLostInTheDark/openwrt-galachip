@@ -12,6 +12,8 @@ from capstone.arm import ARM_OP_MEM
 from unicorn import arm_const as uc_arm
 stage=Path(sys.argv[1]);out=Path(sys.argv[2]);out.mkdir(parents=True,exist_ok=True)
 rom=(root/'tmp/v2801sg-stock-live-20261023/bootrom-low-4K.bin').read_bytes();combined=(stage/'combined-OFFLINE-NOT-FOR-FLASH.bin').read_bytes();monitor=(stage/'monitor.bin').read_bytes()
+# Candidates built before the address was recorded used the 23 October monitor.
+board_init_f=int(json.loads((stage/'manifest.json').read_text())['payload'].get('board_init_f','0x4040c22c'),16)
 prefix=str(root/'staging_dir/toolchain-arm_cortex-a9_gcc-14.4.0_musl_eabi/bin/arm-openwrt-linux-muslgnueabi-')
 syms={x.split()[2]:int(x.split()[0],16) for x in subprocess.check_output([prefix+'nm','-n',str(stage/'cold.elf')],text=True).splitlines() if len(x.split())==3}
 expected=(Path(__file__).with_name('ddr-vendor.trace').read_text().splitlines())
@@ -51,7 +53,7 @@ def run(case='success',mode=2,initial_sctlr=0xc50078):
    assert word(0x202404)==5 and word(0x202408)==0
    assert uc.cpr_read(15,0,1,0,0,0,False)==(initial_sctlr&~0x2007)|0x1802
    assert uc.cpr_read(15,0,12,0,0,0,False)==syms['zx279125_early_vectors']
-  elif addr==0x4040c22c:
+  elif addr==board_init_f:
    assert 0x406f0000<=uc.reg_read(UC_ARM_REG_SP)<0x40700000
    assert 0x406f0000<=uc.reg_read(UC_ARM_REG_R9)<0x40700000
    stop['reason']='board_init_f';uc.emu_stop()
@@ -59,7 +61,7 @@ def run(case='success',mode=2,initial_sctlr=0xc50078):
    stop['reason']='warm refused';uc.emu_stop()
   elif addr==syms['halted']:
    stop['reason']='halted';uc.emu_stop()
- for addr in [syms['zx279125_fault_halt'],0x158,0x200000,syms['zx_ddr_delay'],0x40400000,0x4040c22c,syms['halted']]:u.hook_add(UC_HOOK_CODE,code,begin=addr,end=addr)
+ for addr in [syms['zx279125_fault_halt'],0x158,0x200000,syms['zx_ddr_delay'],0x40400000,board_init_f,syms['halted']]:u.hook_add(UC_HOOK_CODE,code,begin=addr,end=addr)
  if case=='fault':u.hook_add(UC_HOOK_CODE,code,begin=syms['zx279125_ddr_init'],end=syms['zx_spi_wait']-1)
  def mmio_read(uc,access,addr,size,value,user):
   nonlocal ddr_ready
@@ -138,7 +140,7 @@ def run(case='success',mode=2,initial_sctlr=0xc50078):
   assert result['uart'].startswith('SPI NOR\r\n\r\nZXS ddr spi ok\r\n'),result['uart']
   assert ddr_events==expected,(ddr_events,expected)
   assert transfers[0]=={'offset':0,'size':8192,'read':8192}
-  assert len(transfers)==910
+  assert len(transfers)==1+(len(monitor)+255)//256
   for i,t in enumerate(transfers[1:]):assert t=={'offset':8192+i*256,'size':256,'read':256}
  elif case=='crc':assert result['stop']=='halted' and not handoff and trace[1]==4 and trace[2]==0xffffffb6
  else:
