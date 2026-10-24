@@ -1,0 +1,170 @@
+#!/bin/sh
+# Keep LEDs that the xPON driver drives itself (PON, LOS) in the state chosen
+# in /etc/config/system: "config led" sections with "option hold '1'" and
+# "option default '0|1'".
+#
+# The driver sets those LEDs whenever the line state changes, so the chosen
+# state is re-applied after every change. Writing 0 first also stops a blink
+# the driver started.
+#
+#   led-hold          run until killed (procd service)
+#   led-hold --once   apply once and exit
+#   led-hold --list   print "<led> <0|1>" for every held LED
+#   led-hold --resync set the driver's LEDs that are not held as the driver
+#                     would (it only updates them on a line-state change, so a
+#                     released hold would otherwise keep its last state)
+#   led-hold --resync-later
+#                     the same after SETTLE seconds (the apply also restarts
+#                     /etc/init.d/led, which restores older LED states)
+#
+# Environment (for tests): LEDS_DIR, XPON_DIR, INTERVAL, SETTLE, SEP (LED name separator)
+
+LEDS_DIR="${LEDS_DIR:-/sys/class/leds}"
+XPON_DIR="${XPON_DIR:-/sys/class/xpon/pon0}"
+SEP="${SEP:-:}"
+INTERVAL="${INTERVAL:-2}"
+SETTLE="${SETTLE:-3}"
+
+# "<sysfs> <0|1>" for every led section with hold=1
+holds() {
+	uci -q show system | awk '
+		{
+			eq = index($0, "=")
+			if (!eq) next
+			key = substr($0, 1, eq - 1); val = substr($0, eq + 1)
+			gsub(/^'\''|'\''$/, "", val)
+			n = split(key, k, ".")
+			if (n == 2) { type[k[2]] = val; order[++cnt] = k[2] }
+			else if (n == 3) opt[k[2], k[3]] = val
+		}
+		END {
+			for (i = 1; i <= cnt; i++) {
+				s = order[i]
+				if (type[s] == "led" && opt[s, "hold"] == "1" && opt[s, "sysfs"] != "")
+					print opt[s, "sysfs"], (opt[s, "default"] == "1" ? 1 : 0)
+			}
+		}'
+}
+
+# Line state that makes the driver touch its LEDs
+line_state() {
+	cat "$XPON_DIR/state" "$XPON_DIR/los" "$XPON_DIR/carrier" 2>/dev/null | tr '\n' ' '
+}
+
+# apply <force: 0|1>
+apply() {
+	echo "$HOLDS" | while read -r led on; do
+		[ -n "$led" ] || continue
+		d="$LEDS_DIR/$led"
+		[ -e "$d/brightness" ] || continue
+		want=0
+		[ "$on" = 1 ] && want="$(cat "$d/max_brightness" 2>/dev/null || echo 1)"
+		cur="$(cat "$d/brightness" 2>/dev/null)"
+		[ "$1" = 1 ] || [ "$cur" != "$want" ] || continue
+		echo 0 > "$d/brightness"
+		[ "$want" = 0 ] || echo "$want" > "$d/brightness"
+	done
+}
+
+# What the xPON driver shows on one of its LEDs (pon, los, fiber) for the
+# current line state, as in net/xpon/leds.c: on, off, blink500, blink1000.
+driver_rule() {
+	los="$(cat "$XPON_DIR/los" 2>/dev/null)"
+	sig="$(cat "$XPON_DIR/signal_detect" 2>/dev/null)"
+	reg="$(cat "$XPON_DIR/state" 2>/dev/null)"
+	dark=0
+	[ "$los" = 1 ] && dark=1
+	[ "$sig" = 0 ] && dark=1
+	case "$1" in
+	los)
+		[ "$dark" = 1 ] && echo blink1000 || echo off
+		;;
+	fiber)
+		if [ "$dark" = 1 ]; then echo off; elif [ "$sig" = 1 ]; then echo on; fi
+		;;
+	pon)
+		if [ "$dark" = 1 ]; then
+			echo off
+		else
+			case "$reg" in
+			operational) echo on ;;
+			discovery|registering) echo blink500 ;;
+			*) echo off ;;
+			esac
+		fi
+		;;
+	esac
+}
+
+# set_led <led dir> <on|off|blinkN>
+set_led() {
+	case "$2" in
+	blink*)
+		half=$(( ${2#blink} / 2 ))
+		echo timer > "$1/trigger"
+		echo "$half" > "$1/delay_on"
+		echo "$half" > "$1/delay_off"
+		;;
+	on)
+		echo none > "$1/trigger"
+		echo 0 > "$1/brightness"
+		cat "$1/max_brightness" > "$1/brightness" 2>/dev/null || echo 1 > "$1/brightness"
+		;;
+	off)
+		echo none > "$1/trigger"
+		echo 0 > "$1/brightness"
+		;;
+	esac
+}
+
+resync() {
+	held="$(holds | cut -d' ' -f1)"
+	for d in "$LEDS_DIR"/*; do
+		[ -e "$d/brightness" ] || continue
+		led="${d##*/}"
+		fn="${led##*$SEP}"
+		case "$fn" in pon|los|fiber) ;; *) continue ;; esac
+		echo "$held" | grep -qxF "$led" && continue
+		want="$(driver_rule "$fn")"
+		[ -n "$want" ] && set_led "$d" "$want"
+	done
+}
+
+case "$1" in
+--resync)
+	resync
+	exit 0
+	;;
+--resync-later)
+	sleep "$SETTLE"
+	resync
+	exit 0
+	;;
+--list)
+	holds
+	exit 0
+	;;
+--once)
+	HOLDS="$(holds)"
+	apply 1
+	exit 0
+	;;
+esac
+
+HOLDS="$(holds)"
+[ -n "$HOLDS" ] || exit 0
+# let a concurrent /etc/init.d/led restart finish, then show unheld driver LEDs
+sleep "$SETTLE"
+resync
+last="$(line_state)"
+apply 1
+# procd restarts this when /etc/config/system changes (init script: param file)
+while sleep "$INTERVAL"; do
+	now="$(line_state)"
+	if [ "$now" != "$last" ]; then
+		last="$now"
+		apply 1
+	else
+		apply 0
+	fi
+done

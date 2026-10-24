@@ -1,0 +1,21 @@
+{
+	"admin/system/leds": {
+		"title": "LEDs",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "onusys/leds"
+		},
+		"depends": {
+			"acl": [ "luci-mod-system-config" ],
+			"fs": { "/sys/class/leds": "directory" }
+		}
+	},
+
+	"admin/system/admin/password": {
+		"action": {
+			"type": "view",
+			"path": "onusys/password"
+		}
+	}
+}
