@@ -1,0 +1,27 @@
+#!/bin/sh
+
+export INITRAMFS=1
+BB=/bin/busybox
+
+ramroot() {
+	$BB mknod /dev/loop0 b 7 0 &&
+	$BB mount -t squashfs -o loop,ro /root.squashfs /rom &&
+	$BB mount -t tmpfs -o mode=0755 tmpfs /overlay &&
+	$BB mkdir /overlay/upper /overlay/work &&
+	$BB mount -t overlay -o lowerdir=/rom,upperdir=/overlay/upper,workdir=/overlay/work \
+		overlay /new_root &&
+	$BB mount --move /rom /new_root/rom &&
+	$BB mount --move /overlay /new_root/overlay
+}
+
+if ramroot; then
+	# The RAM test root shares 16 MiB with the kernel. Avoid starting services
+	# unused by static management LAN tests, including steering on this one CPU.
+	for service in packet_steering cron gpio_switch led sysntpd; do
+		$BB rm -f /new_root/etc/rc.d/S*"$service"
+	done
+	exec $BB switch_root /new_root /sbin/init
+fi
+
+echo "Compressed RAM root failed; staying in the RAM rescue shell."
+exec $BB ash
