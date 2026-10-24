@@ -389,8 +389,18 @@ reset line was observed and Linux has no `gpio-keys` node for it.
 
 **Watchdog.** Not testable yet: the kernel has the generic watchdog core
 but no ZX279125 watchdog driver or DT node, and the SoC's watchdog block has
-not been identified.
+not been identified. (Since resolved; see the watchdog section below.)
 
 With the direct reset-register write, the Linux panic restart and the power
 cycle, every reset reachable today returns the engine to its reset state
 and leads to correct adoption.
+
+## Hardware result: watchdog reset (24 October 2026)
+
+With the new Cortex-A9 watchdog driver (see `target/linux/zte/WATCHDOG.md`),
+Linux booted from the monitor was allowed to time out. The watchdog reset
+is a full chip reset: watchdog registers, including reset status, read zero
+and the packet engine was at its reset fingerprint. With the local table
+left stale at `0x990`, the chainloaded monitor adopted stock's `0xa2`,
+passed ping and consumed the stock table. Every reset source now observed
+on this board, controlled or not, leads to correct adoption.
