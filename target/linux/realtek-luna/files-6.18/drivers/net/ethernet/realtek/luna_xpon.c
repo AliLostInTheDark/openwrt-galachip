@@ -165,11 +165,10 @@ static void luna_xpon_backend_end(struct omci_device *odev)
 static int luna_xpon_backend_identity(struct omci_device *odev,
 				      const struct omci_identity *id)
 {
-	luna_xpon_hw_set_identity(id->valid & OMCI_IDENTITY_F_SERIAL_NUMBER ?
-				  id->serial_number : NULL,
-				  id->valid & OMCI_IDENTITY_F_PASSWORD ?
-				  id->password : NULL);
-	return 0;
+	return luna_xpon_hw_set_identity(id->valid & OMCI_IDENTITY_F_SERIAL_NUMBER ?
+					 id->serial_number : NULL,
+					 id->valid & OMCI_IDENTITY_F_PASSWORD ?
+					 id->password : NULL);
 }
 
 static int luna_xpon_backend_reset(struct omci_device *odev)
@@ -507,6 +506,7 @@ static void luna_xpon_reconcile_fn(struct work_struct *work)
 #define LUNA_XPON_EV_STATE	BIT(0)
 #define LUNA_XPON_EV_ONU_ID	BIT(1)
 #define LUNA_XPON_EV_CHANNEL	BIT(2)
+#define LUNA_XPON_EV_IDENTITY	BIT(3)
 
 static void luna_xpon_post(unsigned int ev, u8 state, u8 onu_id, u16 gem)
 {
@@ -539,6 +539,27 @@ void luna_xpon_report_onu_id(u8 onu_id)
 void luna_xpon_report_channel(u16 gem)
 {
 	luna_xpon_post(LUNA_XPON_EV_CHANNEL, 0, 0, gem);
+}
+
+/* gpon_provision set the serial or password after omcid bound */
+void luna_xpon_report_identity(void)
+{
+	luna_xpon_post(LUNA_XPON_EV_IDENTITY, 0, 0, 0);
+}
+
+/* The registration identity this driver ranges with, as omcid's default. */
+static void luna_xpon_push_identity(struct omci_device *odev)
+{
+	struct omci_identity id = { 0 };
+
+	luna_xpon_hw_get_identity(id.serial_number, id.password);
+	if (!memchr_inv(id.serial_number, 0, sizeof(id.serial_number)))
+		return;
+	memcpy(id.vendor_id, id.serial_number, sizeof(id.vendor_id));
+	id.valid = OMCI_IDENTITY_F_SERIAL_NUMBER | OMCI_IDENTITY_F_VENDOR_ID |
+		   OMCI_IDENTITY_F_PASSWORD;
+	omci_device_set_identity_info(odev, &id);
+	omci_device_set_identity(odev, id.serial_number, id.password);
 }
 
 static void luna_xpon_deliver_state(struct omci_device *odev, u8 state)
@@ -587,6 +608,8 @@ static void luna_xpon_event_fn(struct work_struct *work)
 	if (!odev)
 		return;
 
+	if (ev & LUNA_XPON_EV_IDENTITY)
+		luna_xpon_push_identity(odev);
 	if (ev & LUNA_XPON_EV_ONU_ID)
 		omci_device_set_onu_id(odev, onu_id);
 	if (ev & LUNA_XPON_EV_CHANNEL) {
@@ -919,7 +942,6 @@ int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 		.ops = &luna_xpon_device_ops,
 		.netdev = wan,
 	};
-	struct omci_identity id = { 0 };
 	struct omci_device *odev;
 	struct xpon_device *xpon;
 	int gem, rc;
@@ -956,19 +978,15 @@ int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 	}
 	luna_xpon.xpon = xpon;
 
-	/* The registration identity this driver already ranges with. */
-	luna_xpon_hw_get_identity(id.serial_number, id.password);
-	memcpy(id.vendor_id, id.serial_number, sizeof(id.vendor_id));
-	id.valid = OMCI_IDENTITY_F_SERIAL_NUMBER | OMCI_IDENTITY_F_VENDOR_ID |
-		   OMCI_IDENTITY_F_PASSWORD;
-	omci_device_set_identity_info(odev, &id);
-	omci_device_set_identity(odev, id.serial_number, id.password);
+	luna_xpon_push_identity(odev);
 	WRITE_ONCE(luna_xpon.odev, odev);
 
+	/* Whatever the activation machine reached before omcid's device existed;
+	 * an OMCC counts only once ranged. */
 	if (luna_xpon_hw_onu_id() != 0xff)
 		luna_xpon_report_onu_id(luna_xpon_hw_onu_id());
 	gem = luna_xpon_hw_omcc_gem();
-	if (gem >= 0)
+	if (gem >= 0 && luna_xpon_hw_state() == GPON_O5)
 		luna_xpon_report_channel(gem);
 	luna_xpon_report_state(luna_xpon_hw_state());
 

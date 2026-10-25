@@ -303,7 +303,9 @@ static void luna_ploam_capture(enum gpon_olt_dir dir, const u8 *m, unsigned int 
 	luna_mon_frame(GPON_MON_PLOAM, dir == GPON_OLT_US, m, len);
 }
 
-static int onu_sn_set(const char *val, const struct kernel_param *kp)
+/* A new serial re-ranges: quiesce, retire the old data path, re-activate.
+ * @kp is the module parameter when the write came through it. */
+static int luna_sn_apply(const char *val, const struct kernel_param *kp)
 {
 	u8 parsed[8];
 	bool changed;
@@ -329,11 +331,12 @@ static int onu_sn_set(const char *val, const struct kernel_param *kp)
 		if (ret)
 			goto out;
 	}
-	ret = param_set_charp(val, kp);
+	ret = kp ? param_set_charp(val, kp) : 0;
 	if (ret)
 		goto out;
 	if (changed) {
 		memcpy(gpon_sn_bytes, parsed, sizeof(parsed));
+		luna_xpon_report_identity();
 		gpon_sn_changed = true;
 		gpon_ploam_set_sn(&luna_ploam, gpon_sn_bytes);
 		luna_omci_identity_reset(gpon_sn_bytes);
@@ -346,6 +349,11 @@ out:
 	luna_resume_poll();
 	mutex_unlock(&bosa_lock);
 	return ret;
+}
+
+static int onu_sn_set(const char *val, const struct kernel_param *kp)
+{
+	return luna_sn_apply(val, kp);
 }
 static const struct kernel_param_ops onu_sn_ops = {
 	.set = onu_sn_set,
@@ -363,6 +371,16 @@ static bool luna_pwd_dirty;
 static u32 luna_us_ploam_full_drops;	/* urgent PLOAMs refused on a full queue */
 static DEFINE_SPINLOCK(luna_pwd_lock);
 
+/* The FSM timer picks a new password up; it is the core copy's only writer. */
+static void luna_pwd_apply(const u8 pwd[GPON_PLOAM_PASSWORD_LEN])
+{
+	spin_lock_bh(&luna_pwd_lock);
+	memcpy(luna_pwd, pwd, GPON_PLOAM_PASSWORD_LEN);
+	luna_pwd_dirty = true;
+	spin_unlock_bh(&luna_pwd_lock);
+	luna_xpon_report_identity();
+}
+
 static int onu_password_set(const char *val, const struct kernel_param *kp)
 {
 	u8 pwd[GPON_PLOAM_PASSWORD_LEN];
@@ -373,10 +391,7 @@ static int onu_password_set(const char *val, const struct kernel_param *kp)
 	ret = param_set_charp(val, kp);
 	if (ret)
 		return ret;
-	spin_lock_bh(&luna_pwd_lock);
-	memcpy(luna_pwd, pwd, sizeof(pwd));
-	luna_pwd_dirty = true;
-	spin_unlock_bh(&luna_pwd_lock);
+	luna_pwd_apply(pwd);
 	return 0;
 }
 static const struct kernel_param_ops onu_password_ops = {
@@ -9535,19 +9550,33 @@ int luna_xpon_hw_optics(struct luna_xpon_optics *o)
 void luna_xpon_hw_get_identity(u8 sn[8], u8 password[10])
 {
 	memcpy(sn, gpon_sn_bytes, 8);
+	spin_lock_bh(&luna_pwd_lock);
 	memcpy(password, luna_pwd, 10);
+	spin_unlock_bh(&luna_pwd_lock);
 }
 
-void luna_xpon_hw_set_identity(const u8 *sn, const u8 *password)
+/* An identity from omci-agent, through the same paths as the parameters.
+ * An all-zero field is no identity at all and leaves ours in place. */
+int luna_xpon_hw_set_identity(const u8 *sn, const u8 *password)
 {
-	if (password) {
-		memcpy(luna_pwd, password, sizeof(luna_pwd));
-		gpon_ploam_set_password(&luna_ploam, luna_pwd);
+	char buf[13];
+	int ret = 0;
+
+	if (password && memchr_inv(password, 0, GPON_PLOAM_PASSWORD_LEN)) {
+		bool same;
+
+		spin_lock_bh(&luna_pwd_lock);
+		same = !memcmp(luna_pwd, password, GPON_PLOAM_PASSWORD_LEN);
+		spin_unlock_bh(&luna_pwd_lock);
+		if (!same)
+			luna_pwd_apply(password);
 	}
-	if (sn && memcmp(gpon_sn_bytes, sn, sizeof(gpon_sn_bytes))) {
-		memcpy(gpon_sn_bytes, sn, sizeof(gpon_sn_bytes));
-		gpon_ploam_set_sn(&luna_ploam, gpon_sn_bytes);
+	if (sn && memchr_inv(sn, 0, 8) && memcmp(sn, gpon_sn_bytes, 8)) {
+		snprintf(buf, sizeof(buf), "%c%c%c%c%02X%02X%02X%02X",
+			 sn[0], sn[1], sn[2], sn[3], sn[4], sn[5], sn[6], sn[7]);
+		ret = luna_sn_apply(buf, NULL);
 	}
+	return ret;
 }
 
 /* The broadcast GEM floods to the NIC whatever OMCI provisions, as the

@@ -36,18 +36,20 @@ void luna_xpon_hw_gem_remove(unsigned int slot);
 bool luna_xpon_hw_mic_valid(const u8 *msg, unsigned int len);
 int luna_xpon_hw_optics(struct luna_xpon_optics *o);
 void luna_xpon_hw_get_identity(u8 sn[8], u8 password[10]);
-void luna_xpon_hw_set_identity(const u8 *sn, const u8 *password);
+int luna_xpon_hw_set_identity(const u8 *sn, const u8 *password);
 
 #if IS_ENABLED(CONFIG_XPON_OMCI)
 void luna_xpon_report_state(u8 state);
 void luna_xpon_report_onu_id(u8 onu_id);
 void luna_xpon_report_channel(u16 gem);
 void luna_xpon_report_alloc(void);
+void luna_xpon_report_identity(void);
 #else
 static inline void luna_xpon_report_state(u8 state) { }
 static inline void luna_xpon_report_onu_id(u8 onu_id) { }
 static inline void luna_xpon_report_channel(u16 gem) { }
 static inline void luna_xpon_report_alloc(void) { }
+static inline void luna_xpon_report_identity(void) { }
 #endif
 
 #endif /* _LUNA_XPON_HW_H */
