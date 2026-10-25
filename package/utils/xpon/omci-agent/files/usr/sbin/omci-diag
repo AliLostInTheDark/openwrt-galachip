@@ -1,0 +1,30 @@
+#!/bin/sh
+# Collect what is needed to debug OMCI provisioning against an OLT.
+#   omci-diag          print status, the recorded exchange and the OMCI log
+#   omci-diag trace    start or stop recording every OMCI exchange
+trace=/tmp/omcid-trace.txt
+
+if [ "$1" = trace ]; then
+	pid=$(pidof omcid) || { echo "omcid is not running" >&2; exit 1; }
+	kill -USR1 "$pid"
+	echo "OMCI trace toggled: a recording goes to $trace and stops at 1 MiB"
+	exit 0
+fi
+
+echo "== omcictl status"
+omcictl status
+if [ -s "$trace" ]; then
+	echo "== exchanges ($trace)"
+	if command -v omci-monitor >/dev/null; then
+		omci-monitor -r "$trace" | tail -n 200
+	else
+		echo "install omci-monitor to decode it"
+	fi
+fi
+for dev in /sys/class/xpon/*; do
+	[ -r "$dev/device/gpon_state" ] || continue
+	echo "== $(basename "$dev")"
+	cat "$dev/device/gpon_state"
+done
+echo "== log"
+logread | grep -i "omci\|gpon\|xpon\|Alloc-ID" | tail -n 200

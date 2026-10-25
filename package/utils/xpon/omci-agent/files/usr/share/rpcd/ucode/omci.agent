@@ -110,6 +110,19 @@ const class_flag_bits = [
 /* Profiles are data, not executable scripts. */
 const profiles = [
 	{
+		id: 'jio-sercomm',
+		name: 'Jio - Sercomm',
+		description: 'Reliance Jio: the Sercomm vendor ID with your GPON SN.',
+		inputs: [
+			{ name: 'serial', label: 'GPON SN', required: true }
+		],
+		values: {
+			enabled: '1', permissive: '1', fake_omci: '0', reboot: '0',
+			vendor_id: 'SCOM',
+			olt_profile: 'generic', olt_profile_force: 'generic'
+		}
+	},
+	{
 		id: 'vivo-sp1-mitrastar-gpt2741gnac-n1',
 		name: 'Vivo SP1 - Mitrastar GPT-2741GNAC-N1',
 		description: 'Vivo São Paulo capital profile using the MitraStar identity.',
