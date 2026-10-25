@@ -72,7 +72,11 @@ These change how the board behaves as an L2 bridge today.
 `rtl9602c_sw_stock_config()`) applies:
 - stock's storm control, including meters 8–15 read from stock at 0x25004
   (rate 0x100, packet mode on meter 10);
-- a 1600-byte frame limit;
+- frame limits as stock runs them once ranged (online dump,
+  `~/Desktop/register-stock-online.log`): MAX_LENGTH_CFG0 = 2031 and
+  CFG1 = 1600, LAN and CPU ports on profile 3 (1600), PON on profile 0
+  (2031). Stock's offline values point the PON at a 0-length profile;
+- the LED blink period stays at ours (0x4249), which online stock also runs;
 - LUT_CFG bits 28/26/23;
 - IGR_BWCTRL bit 1;
 - FIB_REG0 power-down.

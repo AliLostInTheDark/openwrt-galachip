@@ -661,8 +661,8 @@ static int rtl9602c_vlan_write(struct rtl9602c_eth *ep, u16 vid, u32 mbr, u32 un
 }
 
 /* The values the V2802RH's stock RTOS runs with (docs/v2802rh/
- * STOCK-REGISTER-CHECKLIST.md): storm control on meters 8-15, 1600-byte
- * frames, its LUT_CFG bits and the unused fibre PHY powered down. */
+ * STOCK-REGISTER-CHECKLIST.md): storm control on meters 8-15, its frame
+ * length limits, LUT_CFG bits and the unused fibre PHY powered down. */
 static void rtl9602c_sw_stock_config(struct rtl9602c_eth *ep)
 {
 	void __iomem *sw = ep->sw;
@@ -682,11 +682,14 @@ static void rtl9602c_sw_stock_config(struct rtl9602c_eth *ep)
 	iowrite32(0x7, sw + SW_STORM_CTRL_BC_CTRL);
 	iowrite32(0x7, sw + SW_STORM_CTRL_DHCP_CTRL);
 
-	iowrite32(1600, sw + SW_MAX_LENGTH_CFG0);
-	iowrite32(0, sw + SW_MAX_LENGTH_CFG1);
-	iowrite32(0, sw + SW_ACCEPT_MAX_LEN_CTRL(0));
-	iowrite32(0, sw + SW_ACCEPT_MAX_LEN_CTRL(1));
-	iowrite32(0, sw + SW_ACCEPT_MAX_LEN_CTRL(ep->swm->cpu_port));
+	/* As stock once ranged: 1600 bytes on the LAN and CPU ports, 2031 on
+	 * the PON. Its offline values point the PON at a 0-length profile. */
+	iowrite32(2031, sw + SW_MAX_LENGTH_CFG0);
+	iowrite32(1600, sw + SW_MAX_LENGTH_CFG1);
+	iowrite32(3, sw + SW_ACCEPT_MAX_LEN_CTRL(0));
+	iowrite32(3, sw + SW_ACCEPT_MAX_LEN_CTRL(1));
+	iowrite32(3, sw + SW_ACCEPT_MAX_LEN_CTRL(ep->swm->cpu_port));
+	iowrite32(0, sw + SW_ACCEPT_MAX_LEN_CTRL(ep->swm->pon_port));
 
 	iowrite32(ioread32(sw + SW_LUT_CFG) | BIT(28) | BIT(26) | BIT(23),
 		  sw + SW_LUT_CFG);
