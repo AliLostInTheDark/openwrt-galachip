@@ -1,0 +1,4 @@
+config xpon 'main'
+	# The Luna PON MAC runs GPON only. LuCI shows the GPON pages and omcid
+	# starts in this mode.
+	option mode 'gpon'
