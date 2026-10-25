@@ -238,6 +238,9 @@ static bool rtl9602c_uni_port_locked(unsigned int port)
 #define SW_DLF_ACT_TRAP2CPU	2
 /* Forced ability value: 1000M (speed[1:0]=2) + full duplex (b2) + link-up (b4) */
 #define SW_ABLTY_1G_FD_UP	(0x2 | BIT(2) | BIT(4))
+/* A SerDes port as the V2802RH's stock forces it: the 1G code (HSGMII runs
+ * the 2.5G link on it), full duplex, link up, TX+RX pause (b5/b6). */
+#define SW_ABLTY_SERDES_UP	(SW_ABLTY_1G_FD_UP | BIT(5) | BIT(6))
 /* MAC_CPU_TAG_CTRL: TAG_AWARE[9] makes the switch parse the ...
  * dev/MEASURED-rtl9602c_eth.c.md sec 18. */
 #define SW_FC_P_LO_TH		0x230F0
@@ -418,6 +421,10 @@ struct rtl9602c_eth {
 	 * physical switch port the host is on — we then steer CPU->LAN TX there
 	 * regardless of the (ambiguous) static port numbering. 0xff = not yet seen. */
 	unsigned int	host_port;
+
+	/* Port 0 runs over the SerDes to an external PHY (DT realtek,port0-serdes):
+	 * its internal GPHY stays powered down and the MAC link is forced. */
+	bool		port0_serdes;
 
 	/* Bootloader GMAC0 control snapshot (inherited). */
 	u32		ub_tcr, ub_rcr, ub_config, ub_cputagcr, ub_cputag1cr;
@@ -1967,7 +1974,8 @@ static int rtl9602c_uboot_swcore_bringup(struct rtl9602c_eth *ep)
 
 		mutex_lock(&rtl9602c_gphy_lock);
 		for (phy = 0; phy < ARRAY_SIZE(bringup_bmcr); phy++) {
-			bool want_down = rtl9602c_uni_port_locked(phy);
+			bool want_down = rtl9602c_uni_port_locked(phy) ||
+					 (phy == 0 && ep->port0_serdes);
 			u16 v = bringup_bmcr[phy], back = 0;
 
 			if (want_down)
@@ -2016,6 +2024,14 @@ static int rtl9602c_uboot_swcore_bringup(struct rtl9602c_eth *ep)
 	 * dev/MEASURED-rtl9602c_eth.c.md sec 91. */
 	iowrite32(0x00000196, ep->sw + SW_FORCE_P_ABLTY(ep, ep->swm->cpu_port));
 	iowrite32(0x00000fff, ep->sw + SW_ABLTY_FORCE_MODE(ep, ep->swm->cpu_port));
+	if (ep->port0_serdes) {
+		u32 v = SW_ABLTY_SERDES_UP;
+
+		if (rtl9602c_uni_port_locked(0))
+			v &= ~ABLTY_LINK;
+		iowrite32(v, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
+		iowrite32(0xfff, ep->sw + SW_ABLTY_FORCE_MODE(ep, 0));
+	}
 	iowrite32(0x00012bbd, ep->sw + SW_METER_TB_CTRL);	/* meter tick-token */
 	iowrite32(0,          ep->sw + SW_VLAN_CTRL);	/* VLAN function disable */
 	iowrite32(1, ep->sw + SW_VLAN_EGRESS_TAG);			/* VLAN keep-format p0-3 */
@@ -2601,6 +2617,27 @@ static int rtl9602c_uni_admin_set(void *cookie, unsigned int port, bool locked)
 	WRITE_ONCE(rtl9602c_uni_locked_ports,
 		   locked ? (rtl9602c_uni_locked_ports | BIT(port))
 			  : (rtl9602c_uni_locked_ports & ~BIT(port)));
+
+	/* A SerDes port has no GPHY in its path: the forced link IS the gate. */
+	if (port == 0 && ep->port0_serdes) {
+		force = SW_ABLTY_SERDES_UP;
+		if (locked)
+			force &= ~ABLTY_LINK;
+		iowrite32(force, ep->sw + SW_FORCE_P_ABLTY(ep, port));
+		iowrite32(0xfff, ep->sw + SW_ABLTY_FORCE_MODE(ep, port));
+		force = ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, port));
+		mutex_unlock(&rtl9602c_gphy_lock);
+		if (!(force & ABLTY_LINK) != locked) {
+			dev_err(ep->dev,
+				"UNI port %u: the SerDes link gate did not take -- FORCE_P_ABLTY %08x\n",
+				port, force);
+			return -EIO;
+		}
+		dev_info(ep->dev, "UNI port %u %s (SerDes, FORCE_P_ABLTY %08x)\n",
+			 port, locked ? "LOCKED" : "UNLOCKED", force);
+		return 0;
+	}
+
 	force = ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, port));
 	mode = ioread32(ep->sw + SW_ABLTY_FORCE_MODE(ep, port));
 	if (locked) {
@@ -2722,6 +2759,7 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	}
 	/* The board's own WAN MAC offset from its stock (X100DG: LAN+1). */
 	of_property_read_u32(dev->of_node, "realtek,wan-mac-offset", &wan_mac_offset);
+	ep->port0_serdes = of_property_read_bool(dev->of_node, "realtek,port0-serdes");
 
 	/* Switch core (best-effort; minimal L2 flood enabled at open). */
 	ep->swm = &rtl9602c_sw_map;

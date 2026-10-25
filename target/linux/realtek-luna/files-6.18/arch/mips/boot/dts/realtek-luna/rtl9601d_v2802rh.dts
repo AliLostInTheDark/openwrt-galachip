@@ -3,6 +3,9 @@
 
 #include "rtl9602c.dtsi"
 
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/leds/common.h>
+
 /* The RTL9601D runs the RTL9602C platform map (see rtl9601d_x100dg.dts). Stock
  * on this board is Realtek's RTOS SDK ("8671x", SDK V1.3.1), not Linux, so what
  * follows comes from its U-Boot env, its boot console and a full flash dump. */
@@ -12,6 +15,10 @@
 
 	aliases {
 		serial0 = &uart0;
+		led-boot = &led_power;
+		led-failsafe = &led_power;
+		led-running = &led_power;
+		led-upgrade = &led_power;
 	};
 
 	chosen {
@@ -37,6 +44,33 @@
 		pbo_us: pon-pool@1eff000 {
 			no-map;
 			reg = <0x01eff000 0x00101000>;
+		};
+	};
+
+	/* Pins found by blinking each GPIO on a RAM-booted unit. LAN1 is on GPIO
+	 * 40 too, but stock lights it from the LED controller (see &gpon), which
+	 * follows LAN1's own link. LAN2 is the 2.5G PHY's own LED and WAN did not
+	 * respond. Polarity is unconfirmed.
+	 * PON and LOS stay plain lamps until the GPON driver's LED engine
+	 * indices for this board are known. */
+	leds {
+		compatible = "gpio-leds";
+
+		led_power: led-power {
+			function = LED_FUNCTION_POWER;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&gpio 41 GPIO_ACTIVE_LOW>;
+			default-state = "on";
+		};
+
+		led-pon {
+			label = "green:pon";
+			gpios = <&gpio 35 GPIO_ACTIVE_LOW>;
+		};
+
+		led-los {
+			label = "red:los";
+			gpios = <&gpio 26 GPIO_ACTIVE_LOW>;
 		};
 	};
 
@@ -70,8 +104,12 @@
 	};
 };
 
+/* LAN2 is port 0 over the SerDes to the 2.5G PHY. Stock powers the internal
+ * GPHY 0 down and forces the port 0 MAC up (FORCE_P_ABLTY 0x76, mode 0xfff);
+ * doing the same on a RAM boot carried traffic at 2.5G. */
 &nic {
 	realtek,rx-ring-entries = <256>;
+	realtek,port0-serdes;
 };
 
 /* Zbit ZB25VQ32, 4 MiB. U-Boot boots the uImage at 0x27000 (bootcmd bootm
@@ -126,7 +164,14 @@
 	};
 };
 
-/* LED pins are not yet mapped (stock PON_LED_SPEC 0). */
+&gpio {
+	status = "okay";
+};
+
+/* LAN1: LED index 1, hardware link/activity of its own port, as stock
+ * programs it (DATA_CFG 0x20f78). Its pad (GPIO 40) must stay out of GPIO
+ * mode, so no gpio-leds node claims it. */
 &gpon {
 	memory-region = <&pbo_us>, <&pbo_ds>;
+	realtek,port-leds = <1 2>;
 };

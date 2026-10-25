@@ -1804,11 +1804,13 @@ static void gpon_led_sysfs_exit(void)
 
 /* Put the controller in parallel mode and claim the board's indices. Only the
  * indices the board declares are touched, so any other panel LED keeps its
- * power-on configuration. Every board has at least PON and LOS: a die with no
- * table or a board with no map is an error, never a quiet panel. */
+ * power-on configuration. A die with no table, or a board that declares
+ * neither PON/LOS lamps nor port LEDs, is an error, never a quiet panel. A
+ * board whose PON/LOS lamps sit on GPIOs (V2802RH) declares port LEDs only. */
 static void gpon_led_init(void)
 {
 	const struct luna_led_regs *r = swc->led;
+	bool pon_los;
 	int i;
 
 	if (!gpon_leds)
@@ -1818,8 +1820,9 @@ static void gpon_led_init(void)
 		       swc->chip);
 		return;
 	}
-	if (!gpon_led_valid(led_pon_idx) || !gpon_led_valid(led_los_idx)) {
-		pr_err("luna-gpon: panel LEDs not driven (%s: the DT gpon node declares no valid PON/LOS lamp)\n",
+	pon_los = gpon_led_valid(led_pon_idx) && gpon_led_valid(led_los_idx);
+	if (!pon_los && !led_nports) {
+		pr_err("luna-gpon: panel LEDs not driven (%s: the DT gpon node declares no valid PON/LOS lamp and no port LED)\n",
 		       swc->chip);
 		return;
 	}
@@ -1827,12 +1830,14 @@ static void gpon_led_init(void)
 	sw_wr(r->pad_en, sw_rd(r->pad_en) & ~r->seri_pad);
 	sw_field(LED_MODE_SEL, 0, 0, 0);			/* parallel output   */
 	sw_field(r->blink_rate, r->blink_lsb + 2, r->blink_lsb, LED_BLINK_512MS);
-	gpon_led_claim(led_pon_idx);
-	gpon_led_claim(led_los_idx);
-	gpon_led_force(led_pon_idx, LED_FORCE_BLINK);	/* not yet O5 */
-	gpon_led_force(led_los_idx, LED_FORCE_OFF);
-	gpon_led_pon_val = LED_FORCE_BLINK;
-	gpon_led_los_val = LED_FORCE_OFF;
+	if (pon_los) {
+		gpon_led_claim(led_pon_idx);
+		gpon_led_claim(led_los_idx);
+		gpon_led_force(led_pon_idx, LED_FORCE_BLINK);	/* not yet O5 */
+		gpon_led_force(led_los_idx, LED_FORCE_OFF);
+		gpon_led_pon_val = LED_FORCE_BLINK;
+		gpon_led_los_val = LED_FORCE_OFF;
+	}
 
 	/* Ethernet port-link LEDs, hardware-auto: the switch lights each from its
 	 * OWN port's link + activity, no CPU. */
