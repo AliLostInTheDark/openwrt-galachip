@@ -11,6 +11,8 @@
 
 #include <linux/init.h>
 #include <linux/io.h>
+#include <linux/kernel.h>
+#include <linux/of.h>
 #include <linux/string.h>
 
 #include <asm/addrspace.h>
@@ -27,6 +29,20 @@
 
 const char *get_system_type(void)
 {
+	static const struct {
+		const char *compatible;
+		const char *name;
+	} socs[] = {
+		{ "realtek,rtl9601d", "Realtek RTL9601D (Luna/Taroko)" },
+		{ "realtek,rtl9602c", "Realtek RTL9602C (Luna/Taroko)" },
+		{ "realtek,rtl9603cvd", "Realtek RTL9603CVD (Luna/Taroko)" },
+		{ "realtek,rtl9607c", "Realtek RTL9607C (Luna/Taroko)" },
+	};
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(socs); i++)
+		if (of_machine_is_compatible(socs[i].compatible))
+			return socs[i].name;
 	return "Realtek RTL960xC (Luna/Taroko)";
 }
 
