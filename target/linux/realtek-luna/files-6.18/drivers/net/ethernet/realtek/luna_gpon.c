@@ -51,6 +51,8 @@
 #include "gpon_lat.h"		/* gpon_lat_add(): the OMCI turnaround record */
 #include <linux/etherdevice.h>
 #include "luna_gpon_nic.h"
+#include "gpon_omci_mic.h"	/* the DS OMCI MIC check omcid is handed */
+#include "luna_xpon_hw.h"	/* the omcid backend's view of this MAC */
 #include "luna_eth_regs.h"	/* SOC_SW_ENABLE + the family register map */
 #include "luna_ponmac.h"		/* clean-room family PON-MAC/SerDes bring-up lib */
 
@@ -189,6 +191,7 @@ static void luna_omci_identity_reset(const u8 sn[8]);
 static void luna_data_suspend(void);
 static void luna_omci_seq_show(struct seq_file *s);
 static int luna_data_retire(void);
+static void luna_xpon_hw_arm_broadcast(void);
 static bool ctrl_queue = true;
 module_param(ctrl_queue, bool, 0444);
 static bool luna_ctrl_flow_wanted(void);
@@ -6412,6 +6415,10 @@ static int gpon_install_omcc(u16 gem)
 
 	luna_log("OMCC installed gem=%u flow=%u (compl %d)\n",
 		gem, GPON_OMCC_FLOW, rc);
+	if (luna_xpon_active()) {
+		luna_xpon_hw_arm_broadcast();
+		luna_xpon_report_channel(gpon_omcc_gem_port);
+	}
 	return 0;
 }
 
@@ -6478,6 +6485,8 @@ static struct {
 
 bool luna_gpon_data_ready(void)
 {
+	if (luna_xpon_active())
+		return luna_xpon_data_ready() && READ_ONCE(luna_activation_ready);
 	return READ_ONCE(luna_data_admitted) && READ_ONCE(luna_activation_ready);
 }
 EXPORT_SYMBOL(luna_gpon_data_ready);
@@ -7083,6 +7092,10 @@ static void luna_data_alloc_changed(void *sh, u16 alloc, bool assigned)
 {
 	(void)sh;
 	gpon_ploam_data_alloc_note(&luna_ploam, alloc, assigned);
+	if (luna_xpon_active()) {
+		luna_xpon_report_alloc();
+		return;
+	}
 	luna_data_tcont_from_assign(alloc, assigned);
 }
 
@@ -8073,6 +8086,8 @@ static void gpon_fsm_set_state(u8 st)
 	if (prev != st)
 		gpon_los_run = 0;	/* fresh LOS debounce window on every transition */
 	gpon_fsm_state = st;
+	if (prev != st)
+		luna_xpon_report_state(st);
 
 	/* Hybrid LAN/VLAN bookkeeping: mark O5 entry; on any drop below O5, re-arm VLAN
 	 * filtering for the next config and reset the LAN-open timer. */
@@ -8198,6 +8213,7 @@ static void luna_op_set_hw_onu_id(void *sh, u8 onu_id)
 	 * dev/MEASURED-luna_gpon.c.md sec 235. */
 	gpon_field(GPON_GTC_DS_ONU_ID_STATUS, 15, 8, onu_id);
 	gpon_field(GPON_GTC_US_ONU_ID, 15, 8, onu_id);
+	luna_xpon_report_onu_id(onu_id);
 }
 
 static void luna_op_on_below_o5(void *sh)
@@ -9344,6 +9360,198 @@ fail:
 	if (luna_quiesce_locked())
 		pr_err("luna-gpon: optical activation failed and TX inhibit readback failed\n");
 	return ret;
+}
+
+/* ---- the omcid backend's hardware (luna_xpon.c) ----
+ * Data T-CONTs 8..15 share PON queue group 1, one queue each. Their GEM flows
+ * start at 4: flows 1-3 belong to the in-kernel data path, and
+ * gpon_install_omcc() cleans flows 1 and 2 on every OMCC install. */
+#define LUNA_XPON_FLOW_BASE	4
+
+u8 luna_xpon_hw_state(void)
+{
+	return READ_ONCE(gpon_fsm_state);
+}
+
+u8 luna_xpon_hw_onu_id(void)
+{
+	return READ_ONCE(luna_ploam.onu_id);
+}
+
+int luna_xpon_hw_omcc_gem(void)
+{
+	return luna_ploam.omcc_installed ? READ_ONCE(gpon_omcc_gem_port) : -1;
+}
+
+bool luna_xpon_hw_alloc_known(u16 alloc)
+{
+	return gpon_ploam_data_alloc_known(&luna_ploam, alloc);
+}
+
+u8 luna_xpon_hw_omcc_qid(void)
+{
+	return GPON_OMCC_PHYS_QID;
+}
+
+u8 luna_xpon_hw_tcont_qid(unsigned int slot)
+{
+	return luna_tcont_phys_qid(GPON_DATA_TCONT) + slot;
+}
+
+int luna_xpon_hw_tcont_install(unsigned int slot, u16 alloc)
+{
+	u8 tcont = GPON_DATA_TCONT + slot, qid = luna_xpon_hw_tcont_qid(slot);
+	int rc;
+
+	spin_lock_bh(&luna_fsm_lock);
+	rc = luna_alloc_cam_write(tcont, alloc);
+	if (rc >= 0) {
+		pi_packed_set(PI_PON_TCONT_EN, tcont, 1, 1);
+		rc = luna_queue_drain(qid);
+	}
+	if (!rc) {
+		pi_packed_set(PI_PON_SCH_QMAP, tcont, swc->sch_qmap_bits,
+			      BIT(qid % swc->tcont_queue_max));
+		pi_field(PI_PON_QID_PIR_RATE + qid * PI_QID_RATE_STRIDE, 17, 0, 0x3ffff);
+		pi_field(PI_PON_QID_CIR_RATE + qid * PI_QID_RATE_STRIDE, 17, 0, 0);
+		pi_packed_set(PI_PON_WFQ_TYPE, qid, 1, 0);
+		pi_packed_set(PI_PON_WFQ_WEIGHT, qid, 10, 1);
+	}
+	spin_unlock_bh(&luna_fsm_lock);
+	if (rc < 0)
+		return rc;
+	luna_log("xpon: T-CONT %u <- Alloc-ID %u, queue %u\n", tcont, alloc, qid);
+	return 0;
+}
+
+void luna_xpon_hw_tcont_remove(unsigned int slot)
+{
+	u8 tcont = GPON_DATA_TCONT + slot;
+
+	spin_lock_bh(&luna_fsm_lock);
+	luna_queue_drain(luna_xpon_hw_tcont_qid(slot));
+	pi_packed_set(PI_PON_SCH_QMAP, tcont, swc->sch_qmap_bits, 0);
+	pi_packed_set(PI_PON_TCONT_EN, tcont, 1, 0);
+	luna_cam_xact(true, GPON_GTC_CAM_OP_CLEAN, tcont, NULL, NULL);
+	spin_unlock_bh(&luna_fsm_lock);
+}
+
+u8 luna_xpon_hw_gem_flow(unsigned int slot)
+{
+	return LUNA_XPON_FLOW_BASE + slot;
+}
+
+/* The US-NIC latches the SID classify table on a GMII RX enable edge, the
+ * commit gpon_install_data_gem() makes for its flow. */
+static int luna_xpon_sid_commit(u8 flow, u8 qid)
+{
+	int tries;
+
+	for (tries = 0; tries < 4; tries++) {
+		pi_packed_set(PI_PON_SID2QID, flow, 7, qid & 0x7f);
+		pi_packed_set(PI_PON_SIDVALID, flow, 1, 1);
+		if (relatch_us) {
+			pi_wr(PI_MEDIA_STS_US, 0x106e8400u);
+			pi_wr(PI_IO_CMD_0_US, 0x90101050u);
+			udelay(50);
+			pi_wr(PI_IO_CMD_0_US, 0x90101070u);
+		}
+		if (pi_packed_get(PI_PON_SIDVALID, flow, 1) == 1 &&
+		    pi_packed_get(PI_PON_SID2QID, flow, 7) == (qid & 0x7f))
+			return 0;
+		udelay(100);
+	}
+	return -ETIMEDOUT;
+}
+
+void luna_xpon_hw_gem_remove(unsigned int slot)
+{
+	u8 flow = luna_xpon_hw_gem_flow(slot);
+
+	spin_lock_bh(&luna_fsm_lock);
+	pi_packed_set(PI_PON_SIDVALID, flow, 1, 0);
+	gpon_gtc_us_gem_stamp(&gpon_io, &luna_gpon_chip.gtc, flow, 0);
+	luna_cam_xact(false, GPON_GTC_CAM_OP_CLEAN, flow, NULL, NULL);
+	gpon_field(GPON_GTC_DS_TRAFFIC_CFG + flow * DS_TRAFFIC_CFG_STRIDE, 4, 0, 0);
+	spin_unlock_bh(&luna_fsm_lock);
+}
+
+/* A downstream-only GEM passes qid < 0. */
+int luna_xpon_hw_gem_install(unsigned int slot, u16 gem, int qid)
+{
+	u8 flow = luna_xpon_hw_gem_flow(slot);
+	int rc;
+
+	spin_lock_bh(&luna_fsm_lock);
+	rc = luna_port_cam_write(flow, gem);
+	if (rc < 0)
+		goto out;
+	/* DS routing 0x2: drain the flow to the NIC, as the data flow does. */
+	gpon_wr(GPON_GTC_DS_TRAFFIC_CFG + flow * DS_TRAFFIC_CFG_STRIDE, 0x2);
+	if (qid < 0)
+		goto out;
+	if (!gpon_gtc_us_gem_stamp(&gpon_io, &luna_gpon_chip.gtc, flow,
+				   gpon_gem_us_port_id(gem))) {
+		rc = -ENODEV;
+		goto out;
+	}
+	pi_packed_set(PI_PON_SID_Q_MAP_DS, flow, 2, 0);
+	rc = luna_xpon_sid_commit(flow, qid);
+	if (!rc)
+		rtl9602c_ponmac_modeset_gpon(true);
+out:
+	spin_unlock_bh(&luna_fsm_lock);
+	if (rc < 0) {
+		luna_xpon_hw_gem_remove(slot);
+		return rc;
+	}
+	luna_log("xpon: GEM %u on flow %u, queue %d\n", gem, flow, qid);
+	return 0;
+}
+
+bool luna_xpon_hw_mic_valid(const u8 *msg, unsigned int len)
+{
+	return gpon_omci_mic_conv(msg, len) == GPON_MIC_CONV_AAL5_BE;
+}
+
+int luna_xpon_hw_optics(struct luna_xpon_optics *o)
+{
+	struct gpon_ddm_a2h d;
+
+	if (bosa_a2h_read(&d) != GPON_DDM_OK)
+		return -EIO;
+	o->temp_mc = gpon_ddm_temp_dc(d.temp) * 100;
+	o->vcc_uv = gpon_ddm_vcc_mv(d.vcc) * 1000;
+	o->bias_ua = gpon_ddm_bias_ua(d.bias);
+	o->tx_nw = (u32)d.tx_pwr * 100;
+	o->rx_nw = (u32)d.rx_pwr * 100;
+	return 0;
+}
+
+void luna_xpon_hw_get_identity(u8 sn[8], u8 password[10])
+{
+	memcpy(sn, gpon_sn_bytes, 8);
+	memcpy(password, luna_pwd, 10);
+}
+
+void luna_xpon_hw_set_identity(const u8 *sn, const u8 *password)
+{
+	if (password) {
+		memcpy(luna_pwd, password, sizeof(luna_pwd));
+		gpon_ploam_set_password(&luna_ploam, luna_pwd);
+	}
+	if (sn && memcmp(gpon_sn_bytes, sn, sizeof(gpon_sn_bytes))) {
+		memcpy(gpon_sn_bytes, sn, sizeof(gpon_sn_bytes));
+		gpon_ploam_set_sn(&luna_ploam, gpon_sn_bytes);
+	}
+}
+
+/* The broadcast GEM floods to the NIC whatever OMCI provisions, as the
+ * in-kernel data path arms it beside its data GEM. Called on the FSM path. */
+static void luna_xpon_hw_arm_broadcast(void)
+{
+	if (luna_port_cam_write(GPON_MCAST_FLOW, GPON_MCAST_GEM) >= 0)
+		gpon_wr(GPON_GTC_DS_TRAFFIC_CFG + GPON_MCAST_FLOW * DS_TRAFFIC_CFG_STRIDE, 0x3);
 }
 
 static int __init rtl9602c_gpon_init(void)

@@ -482,7 +482,7 @@ struct luna_sw_map {
 
 static const struct luna_sw_map rtl9602c_sw_map = {
 	.force_ablty	= 0x00180,
-	.p_ablty	= 0,		/* this driver never reads it */
+	.p_ablty	= 0x00198,	/* P_ABLTY in Realtek's RTL9602C register list */
 	.ablty_force	= 0x001B4,
 	.gphy_misc	= 0x00110,
 	.cfg_unhiol	= 0x23040,	/* CFG_UNHIOL on THIS chip -- see the field */

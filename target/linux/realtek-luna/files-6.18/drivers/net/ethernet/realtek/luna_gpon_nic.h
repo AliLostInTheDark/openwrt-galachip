@@ -24,6 +24,39 @@ void luna_omci_set_wan_mac(const u8 *mac);
 void luna_omci_rx_errors(u32 *bad_mic, u32 *runt);
 void luna_omci_report_oper_up(void);
 bool luna_gpon_data_ready(void);
+/* omcid in place of the in-kernel responder (luna_xpon.c). */
+struct device;
+struct net_device;
+struct sk_buff;
+#if IS_ENABLED(CONFIG_XPON_OMCI)
+bool luna_xpon_wanted(void);
+bool luna_xpon_active(void);
+bool luna_xpon_data_ready(void);
+int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
+		     int (*tx)(void *, const u8 *, unsigned int),
+		     int (*uni_admin_set)(void *, unsigned int, bool),
+		     bool (*uni_link)(void *, unsigned int));
+void luna_xpon_detach(void *cookie);
+void luna_xpon_omci_rx(const u8 *msg, unsigned int len);
+int luna_xpon_tx_flow(struct sk_buff **pskb);
+void luna_xpon_rx_fixup(struct sk_buff *skb);
+#else
+static inline bool luna_xpon_wanted(void) { return false; }
+static inline bool luna_xpon_active(void) { return false; }
+static inline bool luna_xpon_data_ready(void) { return false; }
+static inline int luna_xpon_attach(struct device *dev, struct net_device *wan,
+				   void *cookie,
+				   int (*tx)(void *, const u8 *, unsigned int),
+				   int (*uni_admin_set)(void *, unsigned int, bool),
+				   bool (*uni_link)(void *, unsigned int))
+{
+	return -EOPNOTSUPP;
+}
+static inline void luna_xpon_detach(void *cookie) { }
+static inline void luna_xpon_omci_rx(const u8 *msg, unsigned int len) { }
+static inline int luna_xpon_tx_flow(struct sk_buff **pskb) { return -ENOENT; }
+static inline void luna_xpon_rx_fixup(struct sk_buff *skb) { }
+#endif
 void luna_gpon_vlan_filter_ok(bool ok);
 /* The CPU's WAN control frames ride their own flow on the data T-CONT's next queue
  * (luna_gpon.c ctrl_queue): an offloaded flood fills the data queue, and the PPP LCP

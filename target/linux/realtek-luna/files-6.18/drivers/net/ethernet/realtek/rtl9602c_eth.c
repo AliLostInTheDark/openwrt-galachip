@@ -1114,7 +1114,18 @@ static netdev_tx_t rtl9602c_eth_wan_xmit(struct sk_buff *skb, struct net_device 
 	unsigned int i, len;
 	dma_addr_t da;
 	u32 word0;
+	int flow = -1;
 
+	/* omcid's services: the frame's GEM flow, with the network-side tag */
+	if (luna_xpon_active()) {
+		flow = luna_xpon_tx_flow(&skb);
+		if (flow < 0) {
+			if (skb)
+				dev_kfree_skb_any(skb);
+			ndev->stats.tx_dropped++;
+			return NETDEV_TX_OK;
+		}
+	}
 	if (skb_put_padto(skb, ETH_ZLEN))	/* pad runts to the min Ethernet frame; frees skb on error */
 		return NETDEV_TX_OK;
 	len = skb->len;
@@ -1150,9 +1161,10 @@ static netdev_tx_t rtl9602c_eth_wan_xmit(struct sk_buff *skb, struct net_device 
 	if (i == tx_eor_slot(ep))
 		word0 |= D_EOR;
 	ep->tx_ring[i].opts2 = rtl9602c_omci_txd_word2(0);	/* stock cputag|efid */
-	ep->tx_ring[i].opts3 = rtl9602c_omci_txd_word3(0,
-		luna_wan_control_frame(skb->data, len) && luna_gpon_ctrl_flow_ready() ?
-		GPON_CTRL_FLOW : GPON_DATA_FLOW);
+	if (flow < 0)
+		flow = luna_wan_control_frame(skb->data, len) && luna_gpon_ctrl_flow_ready() ?
+		       GPON_CTRL_FLOW : GPON_DATA_FLOW;
+	ep->tx_ring[i].opts3 = rtl9602c_omci_txd_word3(0, flow);
 	ep->tx_ring[i].opts4 = 0;
 	txd_publish(ep, i, word0, true);   /* WAN: the throughput A/B may skip it */
 	spin_unlock_irqrestore(&ep->tx_lock, flags);
@@ -1381,8 +1393,13 @@ static struct omci_onu luna_onu;
 static void rtl9602c_eth_omci_input(struct rtl9602c_eth *ep, const u8 *msg,
 				unsigned int len)
 {
-	int rc = luna_omci_enqueue(ep, msg, len);
+	int rc;
 
+	if (luna_xpon_active()) {
+		luna_xpon_omci_rx(msg, len);
+		return;
+	}
+	rc = luna_omci_enqueue(ep, msg, len);
 	if (rc)
 		ep->dbg_omci_unhandled++;
 }
@@ -1509,6 +1526,8 @@ static int rtl9602c_eth_rx(struct rtl9602c_eth *ep, int budget, bool napi_ctx)
 				dev_kfree_skb_any(skb);
 				goto rx_rearm;
 			}
+			if (rdev == ep->wan_ndev && luna_xpon_active())
+				luna_xpon_rx_fixup(skb);
 			skb->protocol = eth_type_trans(skb, rdev);
 			rdev->stats.rx_packets++;
 			rdev->stats.rx_bytes += len;
@@ -2976,9 +2995,17 @@ static void rtl9602c_port0_link_work(struct work_struct *work)
 	schedule_delayed_work(&ep->port0_link_work, HZ);
 }
 
+static bool rtl9602c_uni_link(void *cookie, unsigned int port)
+{
+	struct rtl9602c_eth *ep = cookie;
+
+	return ioread32(ep->sw + ep->swm->p_ablty + 4 * port) & ABLTY_LINK;
+}
+
 static void rtl9602c_eth_omci_release(void *cookie)
 {
 	WRITE_ONCE(g_ep, NULL);
+	luna_xpon_detach(cookie);
 	luna_omci_detach(cookie);
 }
 
@@ -3131,11 +3158,13 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 		ep->irq = -1;
 	netif_napi_add(ndev, &ep->napi, rtl9602c_eth_napi_poll);
 
-	ret = luna_omci_attach(&luna_onu, ep, (u8)omci_mds_seed,
-			       rtl9602c_eth_omci_send, rtl9602c_eth_tx_fence,
-			       rtl9602c_uni_admin_set);
-	if (ret)
-		return ret;
+	if (!luna_xpon_wanted()) {
+		ret = luna_omci_attach(&luna_onu, ep, (u8)omci_mds_seed,
+				       rtl9602c_eth_omci_send, rtl9602c_eth_tx_fence,
+				       rtl9602c_uni_admin_set);
+		if (ret)
+			return ret;
+	}
 	ret = devm_add_action_or_reset(dev, rtl9602c_eth_omci_release, ep);
 	if (ret)
 		return ret;
@@ -3159,7 +3188,8 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 		if (wan) {
 			*(struct rtl9602c_eth **)netdev_priv(wan) = ep;
 			SET_NETDEV_DEV(wan, dev);
-			strscpy(wan->name, "gpon0", IFNAMSIZ);
+			/* omci-agent and LuCI find omcid's PON netdev as pon0. */
+			strscpy(wan->name, luna_xpon_wanted() ? "pon0" : "gpon0", IFNAMSIZ);
 			wan->netdev_ops = &rtl9602c_eth_wan_ops;
 			/* Keep the LAN and WAN feature declarations consistent. */
 			wan->hw_features |= NETIF_F_HW_TC;
@@ -3175,6 +3205,13 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 			else
 				dev_warn(dev, "gpon0 (WAN) register failed; WAN datapath disabled\n");
 		}
+	}
+
+	if (ep->wan_ndev && luna_xpon_wanted()) {
+		ret = luna_xpon_attach(dev, ep->wan_ndev, ep, rtl9602c_eth_omci_send,
+				       rtl9602c_uni_admin_set, rtl9602c_uni_link);
+		if (ret)
+			dev_err(dev, "omcid backend not registered: %d\n", ret);
 	}
 
 	if (ep->port0_serdes && ep->ext_phy_ok) {
