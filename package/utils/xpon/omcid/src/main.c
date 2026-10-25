@@ -439,33 +439,6 @@ static int checkpoint_lock(const char *path)
 	return fd;
 }
 
-static int bootstrap_topology(struct omci_device *odev, struct omci_ani_topology *t)
-{
-	struct omcid *ctx = odev->priv;
-	struct omci_backend_topology out;
-	int ret = omcid_backend(ctx, OMCI_BACKEND_TOPOLOGY, NULL, 0, &out, sizeof(out));
-
-	if (ret == -EOPNOTSUPP) {
-		*t = (struct omci_ani_topology) {
-			.tcont_base = 0x8000,
-			.scheduler_base = 0x8000,
-			.queue_base = 0x8000,
-			.maximum_queue_size = 0xffff,
-			.allocated_queue_size = 4,
-			.tcont_count = 32,
-			.queues_per_tcont = 8,
-			.queue_config_option = 1,
-			.scheduler_policy = 1,
-		};
-		return 0;
-	}
-	if (ret)
-		return ret;
-	*t = (struct omci_ani_topology) { out.tcont_base, out.scheduler_base, out.queue_base,
-		out.maximum_queue_size, out.allocated_queue_size, out.tcont_count,
-		out.queues_per_tcont, out.queue_config_option, out.scheduler_policy };
-	return 0;
-}
 
 int main(int argc, char **argv)
 {
@@ -473,7 +446,7 @@ int main(int argc, char **argv)
 	struct initial_config config;
 	struct omcid_message status;
 	const struct nlattr *tb[OMCI_ATTR_MAX + 1];
-	const struct omci_device_ops bootstrap_ops = { .get_ani_topology = bootstrap_topology };
+	const struct omci_device_ops bootstrap_ops = { .get_ani_topology = omcid_get_topology };
 	const char *path = "/var/run/omcid.sock";
 	char state[128];
 	u32 device = 0, flags = OMCI_BIND_F_AGENT;

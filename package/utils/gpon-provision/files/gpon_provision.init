@@ -10,6 +10,7 @@ USE_PROCD=1
 RTK=/usr/sbin/rtk_factory
 ENVFILE=/var/run/gpon.env
 BOSA_CAL_DST=/lib/firmware/rtkbosa_k.bin
+BOSA_CAL_TYPE_DST=
 LASER_PARAM_DIR=/sys/module/luna_gpon/parameters
 GPON_SN_PATHS="/sys/module/luna_gpon/parameters/onu_sn
 /sys/module/gpon_luna/parameters/onu_sn
@@ -249,17 +250,33 @@ laser_from_unit() {
 	log "laser from this unit: $(echo $out)"
 }
 
+# The RTOS temperature correction selects one of two tables using LAN_TYPE.
+stage_v2802rh_lan_type() {
+	local tmp="$1" lan_type
+	[ -n "${RTK_lan_type:-}" ] || return 1
+	lan_type=$(printf '%d' "$RTK_lan_type") || return 1
+	[ "$lan_type" -ge 0 ] && [ "$lan_type" -le 255 ] || return 1
+	printf '%u\n' "$lan_type" > "$tmp/lan-type" || return 1
+	gpon_cal_stage "$tmp/lan-type" "" "$BOSA_CAL_TYPE_DST" \
+		"$(wc -c < "$tmp/lan-type")"
+}
+
 # GN25L95: the host calibrates the part from this unit's rtkbosa file. A failed
 # stage must not leave older bytes available to request_firmware.
 stage_gn_cal() {
 	local part="$1" tmp why=
 	tmp=$(mktemp -d /tmp/gpon-cal.XXXXXX) || return 1
-	if ! "$RTK" -p "$part" bosa_cal "$tmp/cal" 2>"$tmp/err" ||
-	   ! gpon_cal_stage "$tmp/cal" "$tmp/cal.md5" "$BOSA_CAL_DST" 1024 2>>"$tmp/err"; then
+	if [ -n "$BOSA_CAL_TYPE_DST" ] &&
+	   ! stage_v2802rh_lan_type "$tmp" 2>"$tmp/err"; then
+		why="missing or invalid factory LAN_TYPE, or staging failed"
+	fi
+	if [ -z "$why" ] && {
+	   ! "$RTK" -p "$part" bosa_cal "$tmp/cal" 2>"$tmp/err" ||
+	   ! gpon_cal_stage "$tmp/cal" "$tmp/cal.md5" "$BOSA_CAL_DST" 1024 2>>"$tmp/err"; }; then
 		why=$(cat "$tmp/err")
 		why=${why:-no reason given}
 	fi
-	rm -f "$tmp/cal" "$tmp/cal.new" "$tmp/cal.md5" "$tmp/cal.md5.new" "$tmp/err" ||
+	rm -f "$tmp/cal" "$tmp/cal.new" "$tmp/cal.md5" "$tmp/cal.md5.new" "$tmp/err" "$tmp/lan-type" ||
 		log "could not remove calibration candidate files in $tmp"
 	rmdir "$tmp" || log "could not remove calibration candidate directory $tmp"
 	[ -n "$why" ] || return 0
@@ -267,7 +284,9 @@ stage_gn_cal() {
 		log "cannot withdraw stale GN25L95 calibration; not activating GPON"
 		return 1
 	}
+	[ -z "$BOSA_CAL_TYPE_DST" ] || rm -f "$BOSA_CAL_TYPE_DST" || return 1
 	log "GN25L95 calibration unavailable ($why); GPON activation waits for it"
+	return 1
 }
 
 # The PLOAM password stock sends: LuCI/UCI first, else this unit's factory MIB, where an
@@ -334,6 +353,12 @@ try_identity() {
 	grep -qs '"osk"$' /proc/mtd && calpart=osk || calpart=$part
 	config_get calpart storage cal_part "$calpart"
 	rtk_load "$part"
+	case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in
+	vsol,v2802rh)
+		BOSA_CAL_DST=/lib/firmware/vsol/v2802rh-gn25l95.bin
+		BOSA_CAL_TYPE_DST=/lib/firmware/vsol/v2802rh-gn25l95-lan-type
+		;;
+	esac
 	sn=$(gpon_serial "${RTK_sn:-}")
 	[ -n "$sn" ] || { log "no GPON serial available; will retry"; return 1; }
 

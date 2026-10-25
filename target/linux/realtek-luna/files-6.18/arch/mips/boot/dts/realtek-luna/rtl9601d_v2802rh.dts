@@ -84,7 +84,7 @@
 	 * write), so it is taken to be on bus 1, as on the X100DG. */
 	pon-optics {
 		realtek,i2c-bus = <1>;
-		realtek,tx-disable-gpio = <13>;
+		realtek,tx-disable-pin = <13>;
 	};
 
 	/* As stock's MIB on the OLT reports them: PPTP 0x0101 is LAN1, the
@@ -183,6 +183,6 @@
 &gpon {
 	memory-region = <&pbo_us>, <&pbo_ds>;
 	realtek,port-leds = <1 2>;
-	/* OMCI in omcid (G7 stack) through net/xpon, not the in-kernel responder. */
+	/* Userspace OMCI through the RTL9601D net/xpon backend. */
 	realtek,omci-userspace;
 };

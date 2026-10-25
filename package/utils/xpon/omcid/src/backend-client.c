@@ -135,29 +135,31 @@ int omcid_backend(struct omcid *ctx, u16 op, const void *data, size_t len,
 	return ret;
 }
 
-static int topology(struct omci_device *odev, struct omci_ani_topology *t)
+int omcid_get_topology(struct omci_device *odev, struct omci_ani_topology *t)
 {
 	struct omci_backend_topology result;
 	int ret = omcid_backend(odev->priv, OMCI_BACKEND_TOPOLOGY, NULL, 0, &result, sizeof(result));
 
-	if (ret == -EOPNOTSUPP) {
-		*t = (struct omci_ani_topology) {
-			.tcont_base = 0x8000, .scheduler_base = 0x8000,
-			.queue_base = 0x8000, .maximum_queue_size = 0xffff,
-			.allocated_queue_size = 4, .tcont_count = 32,
-			.queues_per_tcont = 8,
-			.queue_config_option = 1, .scheduler_policy = 1,
-		};
-		return 0;
-	}
 	if (ret)
 		return ret;
+	if (result.tcont_base > 0xffff || result.scheduler_base > 0xffff ||
+	    result.queue_base > 0xffff || result.maximum_queue_size > 0xffff ||
+	    result.allocated_queue_size > 0xffff || result.tcont_count > 0xff ||
+	    result.queues_per_tcont > 0xff || result.queue_config_option > 0xff ||
+	    result.scheduler_policy > 0xff || result.gem_port_count > 0xffff ||
+	    result.qos_configuration > 0xffff || result.downstream_queues_per_uni > 0xff ||
+	    (result.flags & ~OMCI_TOPOLOGY_F_PROFILE_SERVICES))
+		return -ERANGE;
 	*t = (struct omci_ani_topology) {
 		.tcont_base = result.tcont_base, .scheduler_base = result.scheduler_base,
 		.queue_base = result.queue_base, .maximum_queue_size = result.maximum_queue_size,
 		.allocated_queue_size = result.allocated_queue_size, .tcont_count = result.tcont_count,
 		.queues_per_tcont = result.queues_per_tcont,
 		.queue_config_option = result.queue_config_option, .scheduler_policy = result.scheduler_policy,
+		.gem_port_count = result.gem_port_count,
+		.qos_configuration = result.qos_configuration,
+		.downstream_queues_per_uni = result.downstream_queues_per_uni,
+		.flags = result.flags,
 	};
 	return 0;
 }
@@ -185,7 +187,7 @@ static int qos(struct omci_device *odev, u16 entity, const struct omci_tcont_qos
 
 	memcpy(q.weight, value->weight, sizeof(q.weight));
 	ret = omcid_backend(odev->priv, OMCI_BACKEND_TCONT_QOS, &q, sizeof(q), NULL, 0);
-	return (ret == -EOPNOTSUPP) ? 0 : ret;
+	return ret == -EOPNOTSUPP && !value->enabled ? 0 : ret;
 }
 
 static int rate(struct omci_device *odev, u16 port, bool upstream, u32 rate, u32 burst)
@@ -193,7 +195,7 @@ static int rate(struct omci_device *odev, u16 port, bool upstream, u32 rate, u32
 	struct omci_backend_rate q = { port, upstream, rate, burst };
 	int ret = omcid_backend(odev->priv, OMCI_BACKEND_GEM_RATE, &q, sizeof(q), NULL, 0);
 
-	return (ret == -EOPNOTSUPP) ? 0 : ret;
+	return ret == -EOPNOTSUPP && !rate && !burst ? 0 : ret;
 }
 
 static int uni(struct omci_device *odev, u16 entity, bool enabled)
@@ -386,7 +388,7 @@ static int tx(struct omci_device *odev, struct sk_buff *skb, u16 gem_port)
 }
 
 const struct omci_device_ops omcid_backend_ops = {
-	.xmit = tx, .get_ani_topology = topology, .set_tcont = tcont, .set_gem_port = gem,
+	.xmit = tx, .get_ani_topology = omcid_get_topology, .set_tcont = tcont, .set_gem_port = gem,
 	.set_tcont_qos = qos, .set_gem_rate = rate, .set_uni = uni, .set_uni_attrs = attrs,
 	.replace_service = service, .delete_service = service_delete, .get_telemetry = telemetry,
 	.get_uni_link = uni_link, .set_operational = operational,

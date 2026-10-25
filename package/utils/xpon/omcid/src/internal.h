@@ -104,6 +104,7 @@ struct omci_agent {
 	struct xarray mib;
 	struct xarray services;
 	struct omci_agent_config config;
+	struct omci_ani_topology topology;
 	u32 upload_index;
 	u16 mib_sync;
 	bool enabled;

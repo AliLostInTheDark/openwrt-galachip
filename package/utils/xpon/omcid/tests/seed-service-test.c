@@ -7,6 +7,7 @@
 #include "native.h"
 
 static unsigned int checks, services;
+static bool realtek_resources;
 #define CHECK(v) do { assert(v); checks++; } while (0)
 
 static int tx(struct omci_device *odev, struct sk_buff *skb, u16 gem)
@@ -17,10 +18,23 @@ static int tx(struct omci_device *odev, struct sk_buff *skb, u16 gem)
 
 static int topology(struct omci_device *odev, struct omci_ani_topology *t)
 {
+	if (realtek_resources) {
+		*t = (struct omci_ani_topology) {
+			.tcont_base = 0x8000, .scheduler_base = 0x8000,
+			.queue_base = 0x8000, .tcont_count = 8, .queues_per_tcont = 1,
+			.maximum_queue_size = 3276, .allocated_queue_size = 3276,
+			.queue_config_option = 1, .scheduler_policy = 1,
+			.gem_port_count = 16, .downstream_queues_per_uni = 1,
+		};
+		return 0;
+	}
 	*t = (struct omci_ani_topology) { .tcont_base = 0x8000, .scheduler_base = 0x8000,
 		.queue_base = 0x8000, .tcont_count = 15, .queues_per_tcont = 8,
 		.maximum_queue_size = 65535, .allocated_queue_size = 4,
-		.queue_config_option = 1, .scheduler_policy = 1 };
+		.queue_config_option = 1, .scheduler_policy = 1,
+		.gem_port_count = 256, .qos_configuration = BIT(3) | BIT(4),
+		.downstream_queues_per_uni = 8,
+		.flags = OMCI_TOPOLOGY_F_PROFILE_SERVICES };
 	return 0;
 }
 
@@ -65,6 +79,35 @@ int main(void)
 	}
 	CHECK(services > 0);
 	CHECK(odev.agent.operational);
+	omci_agent_cleanup(&odev);
+
+	/* The same OLT profile must not invent services on another provider. */
+	realtek_resources = true;
+	services = 0;
+	memset(&odev.agent, 0, sizeof(odev.agent));
+	odev.channel_up = false;
+	CHECK(!omci_agent_init(&odev));
+	CHECK(!omci_agent_config_set_source(&odev, OMCI_CONFIG_OLT_PROFILE_FORCE, &profile,
+					    1, OMCI_CONFIG_SOURCE_NETLINK));
+	odev.channel_up = true;
+	omci_agent_channel_changed(&odev, true);
+	{
+		struct omci_mib_object object;
+
+		CHECK(!services && !odev.agent.services.count);
+		CHECK(odev.agent.config.uni_count == 4);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_PPTP_ETHERNET_UNI, 0x0104, &object));
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_GEM_PORT_CTP, 256, &object) == -ENOENT);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_TCONT, 0x8000, &object));
+		CHECK(get_unaligned_be16(object.data) == 0xffff);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_PRIORITY_QUEUE, 0x8007, &object));
+		CHECK(get_unaligned_be16(object.data + 9) == 0x8007);
+		CHECK(get_unaligned_be16(object.data + 11) == 0);
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_PRIORITY_QUEUE, 0x8008, &object) == -ENOENT);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_ONU2_G, 0, &object));
+		CHECK(get_unaligned_be16(object.data + 29) == 16);
+		CHECK(!get_unaligned_be16(object.data + 32));
+	}
 	omci_agent_cleanup(&odev);
 	printf("%u seeded-service checks passed\n", checks);
 	return 0;

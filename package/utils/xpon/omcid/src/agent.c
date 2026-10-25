@@ -917,11 +917,12 @@ omci_agent_seed_nokia_locked(struct omci_device *odev, u8 profile)
 	}
 
 	/*
-	 * In Nokia GPON HGU / VEIP mode, the OLT assigns Alloc-ID 256 and 257
-	 * along with GEM ports 256 and 257 via PLOAM without OMCI Create messages.
-	 * Seed the standard VEIP datapath bridge for both GEM 256 and GEM 257.
+	 * Some deployments use a reference service graph without OMCI Create.
+	 * A provider must opt in; selecting an OLT profile alone does not grant
+	 * Alloc-IDs, GEM ports or VLANs on other hardware.
 	 */
-	if (agent->config.onu_type == 2) {
+	if (agent->config.onu_type == OMCI_ONU_TYPE_HGU &&
+	    (agent->topology.flags & OMCI_TOPOLOGY_F_PROFILE_SERVICES)) {
 		u8 veip_slot = omci_agent_veip_slot(agent);
 
 		/* T-CONT 0x8000 -> Alloc-ID 256 */
@@ -1278,8 +1279,7 @@ static void omci_agent_refresh_identity_locked(struct omci_agent *agent)
 
 	/*
 	 * G.988 9.2.1: SR indication says the ONU reports queue status for
-	 * DBA. The GC1601 sends valid DBRu reports, so it is on by default;
-	 * turning it off moves the OLT to traffic-monitoring DBA.
+	 * DBA. Turning it off moves the OLT to traffic-monitoring DBA.
 	 */
 	object = omci_mib_lookup(agent, OMCI_CLASS_ANI_G, OMCI_ANI_G_ENTITY_ID);
 	if (object)
@@ -1297,9 +1297,8 @@ static void omci_agent_refresh_identity_locked(struct omci_agent *agent)
 		schedulers = omci_mib_count_class(agent,
 						  OMCI_CLASS_TRAFFIC_SCHEDULER);
 		object->data[27] = min_t(u16, schedulers, U8_MAX);
-		/* GEM port-IDs the GC1601 classifier holds, as the stock ONU2-G says. */
-		put_unaligned_be16(256, object->data + 29);
-		put_unaligned_be16(BIT(3) | BIT(4), object->data + 32);
+		put_unaligned_be16(agent->topology.gem_port_count, object->data + 29);
+		put_unaligned_be16(agent->topology.qos_configuration, object->data + 32);
 		/*
 		 * G.988 9.1.3. The OLT reads these to decide what it may
 		 * provision. Left at zero they say the ONU supports no
@@ -1409,6 +1408,8 @@ static int omci_agent_get_ani_topology(struct omci_device *odev,
 		.queues_per_tcont = OMCI_DEFAULT_QUEUES_PER_TCONT,
 		.queue_config_option = 1,
 		.scheduler_policy = 1,
+		.gem_port_count = 16,
+		.downstream_queues_per_uni = 1,
 	};
 
 	if (odev->ops && odev->ops->get_ani_topology) {
@@ -1420,7 +1421,13 @@ static int omci_agent_get_ani_topology(struct omci_device *odev,
 	if (!topology->tcont_count ||
 	    topology->tcont_count > OMCI_MAX_TCONT_RESOURCES ||
 	    !topology->queues_per_tcont ||
-	    topology->queues_per_tcont > OMCI_MAX_QUEUES_PER_TCONT)
+	    topology->queues_per_tcont > OMCI_MAX_QUEUES_PER_TCONT ||
+	    !topology->downstream_queues_per_uni ||
+	    topology->downstream_queues_per_uni > OMCI_MAX_QUEUES_PER_TCONT ||
+	    !topology->gem_port_count || topology->gem_port_count > 4096 ||
+	    topology->allocated_queue_size > topology->maximum_queue_size ||
+	    (topology->scheduler_policy != 1 && topology->scheduler_policy != 2) ||
+	    (topology->flags & ~OMCI_TOPOLOGY_F_PROFILE_SERVICES))
 		return -EINVAL;
 
 	last_tcont = topology->tcont_base + topology->tcont_count - 1;
@@ -1431,6 +1438,7 @@ static int omci_agent_get_ani_topology(struct omci_device *odev,
 	    last_queue > U16_MAX)
 		return -ERANGE;
 
+	odev->agent.topology = *topology;
 	return 0;
 }
 
@@ -1864,7 +1872,7 @@ static int omci_agent_populate_defaults(struct omci_device *odev)
 			  OMCI_UNI_ENTITY_ID(OMCI_ETHERNET_SLOT, i + 1) :
 			  OMCI_UNI_ENTITY_ID(veip_slot, 1);
 
-		for (queue = 0; queue < topology.queues_per_tcont; queue++) {
+		for (queue = 0; queue < topology.downstream_queues_per_uni; queue++) {
 			omci_downstream_queue_default_data(&topology, uni, queue, data);
 			ret = omci_mib_add_priority_queue_default(agent, queue_id++, data);
 			if (ret)
@@ -2049,7 +2057,7 @@ int omci_agent_init(struct omci_device *odev)
 	agent->config.onu_type = OMCI_ONU_TYPE_HGU;
 	agent->config.onu_type_source = OMCI_CONFIG_SOURCE_DEFAULT;
 	agent->config.traffic_mgmt_option = 0;
-	agent->config.dba_status_reporting = 1;	/* the GC1601 sends real DBRu */
+	agent->config.dba_status_reporting = 1;
 	agent->config.olt_profile = OMCI_OLT_PROFILE_AUTO;
 	agent->config.olt_profile_force = OMCI_OLT_PROFILE_UNSPEC;
 	agent->config.olt_profile_source = OMCI_CONFIG_SOURCE_DEFAULT;
@@ -3378,6 +3386,9 @@ omci_agent_stage_service_rule_locked(struct omci_device *odev,
 
 		if (ret && ret != -ENOENT)
 			return ret;
+	} else if (agent->topology.queues_per_tcont == 1) {
+		/* PCP still selects the service; this provider has one TX queue. */
+		service.queue = 0;
 	}
 	if (!service.vlan_valid && !service.pcp_valid && !*default_installed) {
 		service.default_service = true;

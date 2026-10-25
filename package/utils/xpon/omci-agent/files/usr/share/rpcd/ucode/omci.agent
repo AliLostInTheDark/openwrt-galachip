@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * GC1601 rpcd backend for Linux xPON OMCI.
+ * rpcd backend for Linux xPON OMCI.
  *
  * There is intentionally no process execution in this file. Every kernel
  * operation goes through the native ucode module installed as omci.so.

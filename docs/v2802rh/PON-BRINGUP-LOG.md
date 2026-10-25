@@ -14,8 +14,9 @@ Open:
   EOPNOTSUPP on MIPS: luna_xpon.c lacks these ops. omcid retries on every
   reconcile, flooding the log.
 - tx-errors 21 against 42 OMCI tx: some OMCI replies are not sent.
-- onu-id 0 and gem-port 0 in status. Stock had ONU-ID 5, OMCC GEM 5, so the
-  ONU-ID/channel report to the framework is wrong or stale.
+- onu-id 0 and gem-port 0 in status. Stock previously had ONU-ID 5 and
+  OMCC GEM 5; assignments can change, so this comparison alone does not
+  establish a reporting fault.
 - Alarm lan-los on UNI 0x0102 (LAN2): check the uni_link mapping for the
   SerDes port.
 - No luna-xpon "service" lines in dmesg: GEM 256/257 services never
@@ -32,3 +33,20 @@ BOSA (GN25L95 "ONU_B+_G", not an RTL8290B):
   between reads (bias 14.6 -> 14.5, TX 1.74 -> 1.83 mW). Port GN25L95
   calibration from the stock rtl-25l95-backup.bin (osk partition) so APC/MOD
   and the RX DDM are set as on stock.
+
+## 2026-10-26, local implementation
+
+The four-UNI identity in the supplied omci-diag output is intentional
+emulation of the user's original ONT. Keep the configured identity and
+capabilities; physical port count is not grounds to replace them.
+
+The V2802RH GN25L95 sequence was recovered from the exact full backup and
+implemented separately from other board profiles. See
+[GN25L95-IMPLEMENTATION.md](GN25L95-IMPLEMENTATION.md) for the evidence and
+checks. OMCI TX now appends the missing CRC to userspace PDUs, and extended
+RX messages retain their complete content. Rebuilding and hardware testing
+remain with the user; the earlier live results do not validate these changes.
+
+The follow-up [omcid provider audit](OMCID-RTL9601D.md) removes fixed
+reference-service creation from RTL9601D and reports implemented backend
+resources. The kernel and OMCI packages now require matching ABI 17 builds.

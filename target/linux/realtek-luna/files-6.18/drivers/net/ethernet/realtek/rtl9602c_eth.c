@@ -1187,9 +1187,11 @@ static int rtl9602c_eth_wan_open(struct net_device *ndev)
 		eth_hw_addr_set(ndev, wmac);
 		luna_omci_set_wan_mac(wmac);
 	}
-	/* RX/TX rings + NAPI are owned by eth0 (shared HW); open just enables the queue and
-	 * holds carrier up so netifd runs the DHCP client. */
-	netif_carrier_on(ndev);
+	/* omcid owns pon0 readiness; opening it must not create a false link. */
+	if (!luna_xpon_active() || luna_xpon_data_ready())
+		netif_carrier_on(ndev);
+	else
+		netif_carrier_off(ndev);
 	netif_start_queue(ndev);
 	return 0;
 }

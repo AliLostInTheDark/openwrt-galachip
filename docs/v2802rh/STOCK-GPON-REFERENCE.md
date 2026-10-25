@@ -2,7 +2,7 @@
 
 This is the stock RTOS (`JCO4032_R2.57`), ranged at O5 on the user's OLT
 with the internet service on VLAN 100, captured on 2026-10-25. It is the
-reference for the PON stage: G7's `omcid` must reproduce this MIB, and the
+reference for the PON stage: the RTL9601D `omcid` backend must support this MIB, and the
 LAN↔PON hardware offload must reproduce the switch rules in section 4.
 
 Source logs (kept off the repo, they hold session keys):
@@ -107,7 +107,7 @@ provisioned in OMCI but has no switch rule in stock.
 
 ## 5. What OpenWrt needs from this
 
-- **`omcid` (G7):**
+- **`omcid` (RTL9601D):**
   - answer the ME classes above with the identity in section 1;
   - build the VEIP bridge with mappers 1/2, GEMs 256/257 and T-CONTs
     256/257;

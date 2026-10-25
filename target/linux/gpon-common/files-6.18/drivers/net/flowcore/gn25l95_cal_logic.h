@@ -39,6 +39,10 @@ extern const struct gn_variant gn_variant_x400axf;
 int gn25l95_cal_ops(const u8 *cal, u32 cal_len, const struct gn_variant *v,
 		    struct gn_op *out, u32 out_max);
 
+/* V2802RH RTOS sequence; LAN_TYPE comes from this unit's hardware MIB. */
+int gn25l95_v2802rh_cal_ops(const u8 *cal, u32 cal_len, u8 lan_type,
+			  struct gn_op *out, u32 out_max);
+
 #define GN_OPS_MAX	1200u
 
 /* Byte I/O, supplied by the family shell. The core builds and ...

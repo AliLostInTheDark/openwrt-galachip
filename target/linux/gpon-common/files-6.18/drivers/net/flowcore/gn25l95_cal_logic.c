@@ -111,6 +111,59 @@ int gn25l95_cal_ops(const u8 *cal, u32 cal_len, const struct gn_variant *v,
 	return (int)n;
 }
 
+/* V2802RH RTOS 0x80470404, with temperature correction at 0x80470354.
+ * File offsets are relative to the 1024-byte rtl-25l95-backup.bin.
+ */
+int gn25l95_v2802rh_cal_ops(const u8 *cal, u32 cal_len, u8 lan_type,
+			  struct gn_op *out, u32 out_max)
+{
+	static const struct { u8 page; u16 off; } bulk[] = {
+		{ 4, 0x280 }, { 5, 0x300 }, { 6, 0x380 }, { 2, 0x200 },
+	};
+	static const u8 sparse[] = { 0x6f, 0x72, 0x78, 0x79 };
+	u32 n = 0;
+	unsigned int i, k;
+
+	if (!cal || cal_len != GN_CAL_LEN || !out)
+		return -EINVAL;
+
+	for (i = 0; i < 0x100; i++)
+		EMIT(GN_WRITE, SLAVE_SFF, i, cal[i], 0);
+	for (k = 0; k < ARRAY_SIZE(bulk); k++) {
+		EMIT(GN_SELECT, SLAVE_CAL, REG_PAGE, bulk[k].page, 0);
+		for (i = 0; i < 0x80; i++)
+			EMIT(GN_WRITE, SLAVE_CAL, 0x80 + i, cal[bulk[k].off + i], 0);
+	}
+	EMIT(GN_SELECT, SLAVE_CAL, REG_PAGE, 2, 0);
+	for (i = 0xd2; i <= 0xe7; i++)
+		EMIT(GN_WRITE, SLAVE_CAL, i, cal[CAL_P2(i)], 0);
+	for (i = 0; i < 0x50; i++)
+		EMIT(GN_WRITE, SLAVE_CAL, i, cal[0x100 + i], 0);
+	EMIT(GN_SELECT, SLAVE_CAL, REG_PAGE, 2, 0);
+	EMIT(GN_RMW, SLAVE_CAL, 0xb6, 0x04, 0x04);
+	for (i = 0; i < ARRAY_SIZE(sparse); i++)
+		EMIT(GN_WRITE, SLAVE_CAL, sparse[i], cal[0x100 + sparse[i]], 0);
+
+	EMIT(GN_SELECT, SLAVE_CAL, REG_PAGE, 1, 0);
+	EMIT(GN_WRITE, SLAVE_CAL, 0xf8, cal[0x1f8], 0);
+	EMIT(GN_RMW, SLAVE_CAL, 0xf9, 0xc0, 0xc0);
+	/* Stock loads both F8 and FC from the same stack byte (cal[0x1f8]). */
+	EMIT(GN_WRITE, SLAVE_CAL, 0xfc, cal[0x1f8], 0);
+	EMIT(GN_RMW, SLAVE_CAL, 0xfd, 0xc0, 0xc0);
+	EMIT(GN_PULSE, SLAVE_CAL, 0x6e, 0x40, 0xbf);
+
+	EMIT(GN_SELECT, SLAVE_CAL, REG_PAGE, 2, 0);
+	EMIT(GN_WRITE, SLAVE_CAL, 0xa0, 0x6a, 0);
+	for (i = 0x7b; i <= 0x7e; i++)
+		EMIT(GN_WRITE, SLAVE_CAL, i, 0xff, 0);
+	EMIT(GN_SELECT, SLAVE_CAL, REG_PAGE, 2, 0);
+	EMIT(GN_WRITE, SLAVE_CAL, 0xd2, 0x01, 0);
+	EMIT(GN_WRITE, SLAVE_CAL, 0xd3, 0xc9, 0);
+	EMIT(GN_WRITE, SLAVE_CAL, 0xd4, lan_type == 1 ? 0xaa : 0xa9, 0);
+	EMIT(GN_WRITE, SLAVE_CAL, 0xd5, lan_type == 1 ? 0x00 : 0xca, 0);
+	return n;
+}
+
 int gn25l95_probe_ops(struct gn_op *out, u32 out_max)
 {
 	static const u8 PASSWORD[] = {

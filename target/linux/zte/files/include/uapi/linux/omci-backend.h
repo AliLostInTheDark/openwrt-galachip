@@ -29,6 +29,7 @@ struct omci_backend_topology {
 	__u32 tcont_base, scheduler_base, queue_base;
 	__u32 maximum_queue_size, allocated_queue_size;
 	__u32 tcont_count, queues_per_tcont, queue_config_option, scheduler_policy;
+	__u32 gem_port_count, qos_configuration, downstream_queues_per_uni, flags;
 };
 
 struct omci_backend_tcont {

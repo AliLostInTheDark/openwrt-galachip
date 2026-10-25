@@ -899,6 +899,10 @@ static int gc1601_xpon_get_ani_topology(struct omci_device *odev,
 		.queues_per_tcont = 8,
 		.queue_config_option = 1,
 		.scheduler_policy = 1,
+		.gem_port_count = 256,
+		.qos_configuration = BIT(3) | BIT(4),
+		.downstream_queues_per_uni = 8,
+		.flags = OMCI_TOPOLOGY_F_PROFILE_SERVICES,
 	};
 	return 0;
 }

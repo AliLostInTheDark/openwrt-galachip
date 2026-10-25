@@ -28,6 +28,7 @@ struct omcid {
 	struct omcid_olt_watch olt;
 };
 extern const struct omci_device_ops omcid_backend_ops;
+int omcid_get_topology(struct omci_device *odev, struct omci_ani_topology *t);
 int omcid_backend(struct omcid *ctx, u16 op, const void *data, size_t len,
 		  void *out, size_t out_len);
 int omcid_checkpoint_save(struct omcid *ctx);

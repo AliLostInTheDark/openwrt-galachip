@@ -6,13 +6,14 @@
 #include "daemon.h"
 
 #define CHECKPOINT_MAGIC 0x4f4d4331
-#define CHECKPOINT_VERSION 3
+#define CHECKPOINT_VERSION 4
 #define CHECKPOINT_MAX (2U * 1024 * 1024)
 #define CHECKPOINT_MAX_TABLE (256U * 1024)
 
 struct checkpoint_header {
 	u32 magic, version, size, object_size, count, generation, checksum;
 	struct omci_agent_config config;
+	struct omci_ani_topology topology;
 	u32 upload_index, profile_quirks, flags;
 	u16 mib_sync;
 	u16 uni_entity;
@@ -102,6 +103,7 @@ int omcid_checkpoint_save(struct omcid *ctx)
 	h->count = count;
 	h->generation = ctx->transport.generation;
 	h->config = a->config;
+	h->topology = a->topology;
 	h->mib_sync = a->mib_sync;
 	h->uni_entity = ctx->uni_entity;
 	h->upload_index = a->upload_index;
@@ -258,7 +260,8 @@ int omcid_checkpoint_load(struct omcid *ctx)
 		ret = -EBADMSG;
 		goto out;
 	}
-	if (memcmp(h->serial, ctx->identity.serial_number, sizeof(h->serial)) ||
+	if (memcmp(&h->topology, &a->topology, sizeof(h->topology)) ||
+	    memcmp(h->serial, ctx->identity.serial_number, sizeof(h->serial)) ||
 	    memcmp(h->password, ctx->identity.password, sizeof(h->password))) {
 		ret = -EXDEV;
 		goto out;

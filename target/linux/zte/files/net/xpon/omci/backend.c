@@ -71,9 +71,19 @@ int omci_backend_execute(struct omci_device *odev, u16 op, const void *data,
 		if (ret)
 			return ret;
 		*out = (struct omci_backend_topology) {
-			t.tcont_base, t.scheduler_base, t.queue_base,
-			t.maximum_queue_size, t.allocated_queue_size, t.tcont_count,
-			t.queues_per_tcont, t.queue_config_option, t.scheduler_policy
+			.tcont_base = t.tcont_base,
+			.scheduler_base = t.scheduler_base,
+			.queue_base = t.queue_base,
+			.maximum_queue_size = t.maximum_queue_size,
+			.allocated_queue_size = t.allocated_queue_size,
+			.tcont_count = t.tcont_count,
+			.queues_per_tcont = t.queues_per_tcont,
+			.queue_config_option = t.queue_config_option,
+			.scheduler_policy = t.scheduler_policy,
+			.gem_port_count = t.gem_port_count,
+			.qos_configuration = t.qos_configuration,
+			.downstream_queues_per_uni = t.downstream_queues_per_uni,
+			.flags = t.flags,
 		};
 		*output_len = sizeof(*out);
 		return 0;

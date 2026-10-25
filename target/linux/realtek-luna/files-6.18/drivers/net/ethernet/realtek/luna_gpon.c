@@ -180,6 +180,7 @@ static char *onu_sn = "";
 static DEFINE_MUTEX(bosa_lock);
 static bool luna_driver_ready, luna_activation_ready, luna_stopping;
 static bool bosa_gn_identified, bosa_cal_ready;
+static bool bosa_gn_v2802rh;
 static int bosa_cal_error;
 static int luna_optical_init_error;
 static int luna_health_los = -1;
@@ -2334,8 +2335,10 @@ static int luna_gn_wr(void *ctx, u8 slave, u8 reg, u8 val)
 /* Caller holds bosa_lock across the entire paged probe and calibration. */
 static int luna_gn_calibrate_locked(void)
 {
-	const struct firmware *fw;
+	const struct firmware *fw, *type_fw = NULL;
 	struct gn_op *ops;
+	char type[5] = { 0 };
+	u8 lan_type = 0;
 	u8 notes[GN_PROBE_NOTES];
 	struct gn_io io = { .rd = luna_gn_rd, .wr = luna_gn_wr,
 		.notes = notes, .notes_max = ARRAY_SIZE(notes) };
@@ -2346,12 +2349,27 @@ static int luna_gn_calibrate_locked(void)
 		return -ENODEV;
 	if (bosa_cal_ready)
 		return 0;
-	ret = request_firmware_direct(&fw, "rtkbosa_k.bin", NULL);
+	ret = request_firmware_direct(&fw, bosa_gn_v2802rh ?
+			"vsol/v2802rh-gn25l95.bin" : "rtkbosa_k.bin", NULL);
 	if (ret)
 		return ret;
 	if (fw->size != GN_CAL_LEN) {
 		ret = -EINVAL;
 		goto release;
+	}
+	if (bosa_gn_v2802rh) {
+		ret = request_firmware_direct(&type_fw,
+				"vsol/v2802rh-gn25l95-lan-type", NULL);
+		if (ret)
+			goto release;
+		if (!type_fw->size || type_fw->size >= sizeof(type)) {
+			ret = -EINVAL;
+			goto release;
+		}
+		memcpy(type, type_fw->data, type_fw->size);
+		ret = kstrtou8(type, 10, &lan_type);
+		if (ret)
+			goto release;
 	}
 	/* 7200 bytes exceeds the safe budget of the MIPS 8 KiB kernel stack. */
 	ops = kcalloc(GN_OPS_MAX, sizeof(*ops), GFP_KERNEL);
@@ -2376,17 +2394,25 @@ static int luna_gn_calibrate_locked(void)
 	io.notes = NULL;
 	io.notes_max = 0;
 	io.notes_n = 0;
-	n = gn25l95_cal_ops(fw->data, fw->size, &gn_variant_g24w,
-			      ops, GN_OPS_MAX);
+	if (bosa_gn_v2802rh)
+		n = gn25l95_v2802rh_cal_ops(fw->data, fw->size, lan_type,
+					  ops, GN_OPS_MAX);
+	else
+		n = gn25l95_cal_ops(fw->data, fw->size, &gn_variant_g24w,
+				  ops, GN_OPS_MAX);
 	ret = n < 0 ? n : gn25l95_cal_apply(ops, n, &io, &fail);
-	if (!ret)
+	if (!ret) {
 		bosa_cal_ready = true;
+		pr_info("luna-gpon: GN25L95 calibration applied (%s, %d operations)\n",
+			bosa_gn_v2802rh ? "V2802RH RTOS" : "default", n);
+	}
 free:
 	if (ret)
 		pr_err("luna-gpon: GN calibration refused: err=%d op=%u reg=0x%02x\n",
 		       ret, fail.op, fail.reg);
 	kfree(ops);
 release:
+	release_firmware(type_fw);
 	release_firmware(fw);
 	return ret;
 }
@@ -3715,12 +3741,20 @@ static void __init rtl8290b_apc_init(void)
 
 static void __init bosa_probe(void)
 {
-	int hb  = bosa_read_reg(BOSA_REG_NUM);
-	int lb  = bosa_read_reg(BOSA_REG_NUM + 1);
-	int vid = bosa_read_reg(BOSA_REG_VID);
+	int hb, lb, vid;
+	bool id_answered;
+
+	if (bosa_gn_v2802rh) {
+		bosa_not_8290b = true;
+		pr_info("luna-gpon: V2802RH GN25L95 selected; physical probe and per-unit calibration deferred to activation\n");
+		return;
+	}
+	hb = bosa_read_reg(BOSA_REG_NUM);
+	lb = bosa_read_reg(BOSA_REG_NUM + 1);
+	vid = bosa_read_reg(BOSA_REG_VID);
 	/* ★★★ A SILENT RTL8290B REGISTER MAP IS NOT A SILENT BUS, AND ...
 	 * dev/MEASURED-luna_gpon.c.md sec 108. */
-	bool id_answered = (hb >= 0 && lb >= 0 && vid >= 0);
+	id_answered = (hb >= 0 && lb >= 0 && vid >= 0);
 
 	if (id_answered) {
 		bosa_id_num = (hb << 8) | lb;
@@ -5352,12 +5386,36 @@ static u32 gpon_gem_flow_cnt(u32 idx, int rsel)
 }
 
 static int gpon_proc_show_locked(struct seq_file *s, void *v);
+static int v2802rh_gpon_show_locked(struct seq_file *s)
+{
+	u8 state = luna_xpon_hw_state();
+
+	seq_puts(s, "device: VSOL V2802RH (RTL9601D)\n");
+	seq_puts(s, OMCI_ID_FIELDS_LINE "\n");
+	seq_printf(s, "onu_state: O%u (%s)\nonu_id: %u\nomcc_gem: %d\n",
+		   state, state < ARRAY_SIZE(gpon_onu_state_name) ?
+		   gpon_onu_state_name[state] : "unknown",
+		   luna_xpon_hw_onu_id(), luna_xpon_hw_omcc_gem());
+	seq_printf(s, "optics: backend=GN25L95 identified=%u gn_cal_ready=%u upstream_ready=%u error=%d\n",
+		   bosa_gn_identified, bosa_cal_ready, luna_activation_ready,
+		   bosa_cal_error);
+	seq_printf(s, "data_ready: %u\nlos: %d\n", luna_xpon_data_ready(),
+		   READ_ONCE(luna_health_los));
+	bosa_a2h_show(s);
+	return 0;
+}
+
 static int gpon_proc_show(struct seq_file *s, void *v)
 {
 	int ret;
 
 	mutex_lock(&bosa_lock);
-	ret = luna_stopping ? -ESHUTDOWN : gpon_proc_show_locked(s, v);
+	if (luna_stopping)
+		ret = -ESHUTDOWN;
+	else if (bosa_gn_v2802rh)
+		ret = v2802rh_gpon_show_locked(s);
+	else
+		ret = gpon_proc_show_locked(s, v);
 	mutex_unlock(&bosa_lock);
 	return ret;
 }
@@ -9227,7 +9285,9 @@ static void __init luna_laser_gpio_from_dt(void)
 
 	if (!np)
 		return;
-	if (!of_property_read_u32(np, "realtek,tx-disable-gpio", &v))
+	bosa_gn_v2802rh = of_machine_is_compatible("vsol,v2802rh");
+	if (!of_property_read_u32(np, "realtek,tx-disable-pin", &v) ||
+	    !of_property_read_u32(np, "realtek,tx-disable-gpio", &v))
 		laser_tx_dis_gpio = (int)v;
 	if (!of_property_read_u32(np, "realtek,tx-power-gpio", &v))
 		laser_tx_pwr_gpio = (int)v;
@@ -9920,7 +9980,8 @@ static int __init rtl9602c_gpon_init(void)
 	/* skip_bosa (warm boot): leave the externally-powered BOSA in ...
 	 * dev/MEASURED-luna_gpon.c.md sec 335. */
 	if (skip_bosa || !bosa_regs_live()) {
-		pr_info("luna-gpon: RTL boot programming skipped; GN awaits per-unit calibration\n");
+		if (!bosa_gn_v2802rh)
+			pr_info("luna-gpon: RTL boot programming skipped; GN awaits per-unit calibration\n");
 		goto skip_bosa_init;
 	}
 
@@ -9998,7 +10059,8 @@ skip_bosa_init:
 	proc_create_single("gpon_log", 0444, NULL, luna_log_show);
 	proc_create_single("gpon_timing", 0444, NULL, luna_timing_show);
 	luna_mon_register();
-	proc_create_single("bosadump", 0444, NULL, bosadump_proc_show);
+	if (!bosa_gn_v2802rh)
+		proc_create_single("bosadump", 0444, NULL, bosadump_proc_show);
 	proc_create_single("pidump", 0444, NULL, pidump_proc_show);
 	proc_create_single("swdump", 0444, NULL, swdump_proc_show);
 #ifdef CONFIG_GPON_OLT_DIAG
@@ -10219,3 +10281,5 @@ module_exit(rtl9602c_gpon_exit);
 MODULE_DESCRIPTION("Realtek RTL9602C GPON MAC foundation driver");
 MODULE_LICENSE("GPL");
 MODULE_FIRMWARE("rtkbosa_k.bin");
+MODULE_FIRMWARE("vsol/v2802rh-gn25l95.bin");
+MODULE_FIRMWARE("vsol/v2802rh-gn25l95-lan-type");

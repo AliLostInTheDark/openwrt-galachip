@@ -5,9 +5,10 @@
  * PLOAM stays in luna_gpon.c. omcid owns the MIB and asks for T-CONTs, GEM
  * ports and services, which this file binds through luna_xpon_hw.h. The
  * services ride gpon0 through the CPU: upstream frames choose their GEM flow
- * by VLAN and get the service's network tag, as on the GC1601.
+ * by VLAN and get the service's network tag.
  */
 #include <linux/ctype.h>
+#include <linux/crc32.h>
 #include <linux/if_vlan.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
@@ -23,9 +24,14 @@
 
 #define GPON_O5		5
 #define OMCI_PDU_LEN	48
+#define OMCI_BASELINE_ID	0x0a
+#define OMCI_EXTENDED_ID	0x0b
+#define OMCI_EXT_HEADER_LEN	10
+#define OMCI_MIC_LEN	4
 #define LUNA_XPON_SERVICES	16
 #define LUNA_XPON_UNIS		4
 #define LUNA_XPON_VLAN_MAPS	8
+#define LUNA_XPON_TCONT_BASE	0x8000
 
 static bool omcid = true;
 module_param(omcid, bool, 0444);
@@ -57,6 +63,7 @@ struct luna_xpon_service {
 	u8 flow;
 	u8 pcp;
 	u8 uni_mode;
+	u8 direction;
 	bool vlan_valid;
 	bool pcp_valid;
 	bool default_service;
@@ -98,6 +105,7 @@ static struct {
 	u8 ev_onu_id;
 	u16 ev_gem;
 	bool data_up;
+	bool operational;
 } luna_xpon = {
 	.lock = __MUTEX_INITIALIZER(luna_xpon.lock),
 	.svc_lock = __SPIN_LOCK_UNLOCKED(luna_xpon.svc_lock),
@@ -128,19 +136,42 @@ EXPORT_SYMBOL(luna_xpon_active);
 
 bool luna_xpon_data_ready(void)
 {
-	return READ_ONCE(luna_xpon.data_up) && luna_xpon_hw_state() == GPON_O5;
+	return READ_ONCE(luna_xpon.data_up) && READ_ONCE(luna_xpon.operational) &&
+	       luna_xpon_hw_state() == GPON_O5;
 }
 EXPORT_SYMBOL(luna_xpon_data_ready);
+
+static void luna_xpon_update_carrier(void)
+{
+	if (!luna_xpon.wan)
+		return;
+	if (luna_xpon_data_ready())
+		netif_carrier_on(luna_xpon.wan);
+	else
+		netif_carrier_off(luna_xpon.wan);
+}
 
 static void luna_xpon_update_data(void)
 {
 	bool up = false;
-	unsigned int i;
+	unsigned int i, j;
 
-	for (i = 0; i < LUNA_XPON_GEMS; i++)
-		up |= luna_xpon.gem[i].hw &&
-		      (luna_xpon.gem[i].dir & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI);
+	spin_lock_bh(&luna_xpon.svc_lock);
+	for (i = 0; i < LUNA_XPON_SERVICES && !up; i++) {
+		const struct luna_xpon_service *s = &luna_xpon.svc[i];
+
+		if (!s->used || !(s->direction & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI))
+			continue;
+		for (j = 0; j < LUNA_XPON_GEMS; j++)
+			if (luna_xpon.gem[j].hw && luna_xpon.gem[j].gem == s->gem &&
+			    (luna_xpon.gem[j].dir & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI)) {
+				up = true;
+				break;
+			}
+	}
+	spin_unlock_bh(&luna_xpon.svc_lock);
 	WRITE_ONCE(luna_xpon.data_up, up);
+	luna_xpon_update_carrier();
 }
 
 /* An OMCC install scrubs the CAMs: what we bound before it is gone, and omcid
@@ -150,6 +181,11 @@ static void luna_xpon_forget(void)
 	memset(luna_xpon.tcont, 0, sizeof(luna_xpon.tcont));
 	memset(luna_xpon.gem, 0, sizeof(luna_xpon.gem));
 	WRITE_ONCE(luna_xpon.data_up, false);
+	WRITE_ONCE(luna_xpon.operational, false);
+	spin_lock_bh(&luna_xpon.svc_lock);
+	memset(luna_xpon.svc, 0, sizeof(luna_xpon.svc));
+	spin_unlock_bh(&luna_xpon.svc_lock);
+	luna_xpon_update_carrier();
 }
 
 /* ---- OMCI device operations ---- */
@@ -184,10 +220,6 @@ static int luna_xpon_backend_reset(struct omci_device *odev)
 		if (luna_xpon.tcont[i].hw)
 			luna_xpon_hw_tcont_remove(i);
 	luna_xpon_forget();
-
-	spin_lock_bh(&luna_xpon.svc_lock);
-	memset(luna_xpon.svc, 0, sizeof(luna_xpon.svc));
-	spin_unlock_bh(&luna_xpon.svc_lock);
 	return 0;
 }
 
@@ -203,14 +235,42 @@ static void luna_xpon_stop(struct omci_device *odev)
 static int luna_xpon_xmit(struct omci_device *odev, struct sk_buff *skb,
 			  u16 gem_port_id)
 {
+	unsigned int pdu_len;
+	u32 mic;
 	int rc;
 
 	if (gem_port_id != luna_xpon_hw_omcc_gem() ||
 	    luna_xpon_hw_state() != GPON_O5)
 		return -ENOLINK;
+
+	/* The userspace engine supplies the PDU without its CRC. The Luna NIC
+	 * consumes a complete OMCI frame, as the in-kernel responder sends.
+	 */
+	if (skb->len < 4)
+		return -EMSGSIZE;
+	if (skb->data[3] == OMCI_BASELINE_ID)
+		pdu_len = OMCI_PDU_LEN - OMCI_MIC_LEN;
+	else if (skb->data[3] == OMCI_EXTENDED_ID && skb->len >= OMCI_EXT_HEADER_LEN)
+		pdu_len = OMCI_EXT_HEADER_LEN + get_unaligned_be16(skb->data + 8);
+	else
+		return -EPROTO;
+	if (pdu_len + OMCI_MIC_LEN > OMCI_MAX_PDU_LEN)
+		return -EMSGSIZE;
+	if (skb->len == pdu_len) {
+		if (skb_tailroom(skb) < OMCI_MIC_LEN &&
+		    pskb_expand_head(skb, 0, OMCI_MIC_LEN, GFP_ATOMIC))
+			return -ENOMEM;
+		mic = ~crc32_be(~0U, skb->data, skb->len);
+		put_unaligned_be32(mic, skb_put(skb, OMCI_MIC_LEN));
+	} else if (skb->len != pdu_len + OMCI_MIC_LEN) {
+		return -EMSGSIZE;
+	}
 	rc = luna_xpon.tx(luna_xpon.cookie, skb->data, skb->len);
 	if (!rc)
 		dev_kfree_skb_any(skb);
+	else
+		pr_warn_ratelimited("luna-xpon: OMCI TX failed: %d (len=%u GEM=%u)\n",
+				    rc, skb->len, gem_port_id);
 	return rc;
 }
 
@@ -218,28 +278,60 @@ static int luna_xpon_get_ani_topology(struct omci_device *odev,
 				      struct omci_ani_topology *t)
 {
 	*t = (struct omci_ani_topology) {
-		.tcont_base = 0x8000,
+		.tcont_base = LUNA_XPON_TCONT_BASE,
 		.scheduler_base = 0x8000,
 		.queue_base = 0x8000,
 		/* stock's own Priority Queue sizes */
 		.maximum_queue_size = 3276,
 		.allocated_queue_size = 3276,
 		.tcont_count = LUNA_XPON_TCONTS,
-		.queues_per_tcont = 8,
+		.queues_per_tcont = 1,
 		.queue_config_option = 1,
-		.scheduler_policy = 2,
+		.scheduler_policy = 1,
+		.gem_port_count = LUNA_XPON_GEMS,
+		.downstream_queues_per_uni = 1,
 	};
 	return 0;
 }
 
 static struct luna_xpon_tcont *luna_xpon_tcont_find(u16 entity)
 {
+	struct luna_xpon_tcont *t;
+
+	if (entity < LUNA_XPON_TCONT_BASE ||
+	    entity >= LUNA_XPON_TCONT_BASE + LUNA_XPON_TCONTS)
+		return NULL;
+	t = &luna_xpon.tcont[entity - LUNA_XPON_TCONT_BASE];
+	return t->valid ? t : NULL;
+}
+
+static void luna_xpon_gem_unbind(unsigned int slot)
+{
+	struct luna_xpon_gem *g = &luna_xpon.gem[slot];
 	unsigned int i;
 
-	for (i = 0; i < LUNA_XPON_TCONTS; i++)
-		if (luna_xpon.tcont[i].valid && luna_xpon.tcont[i].entity == entity)
-			return &luna_xpon.tcont[i];
-	return NULL;
+	if (g->hw)
+		luna_xpon_hw_gem_remove(slot);
+	g->hw = false;
+	spin_lock_bh(&luna_xpon.svc_lock);
+	for (i = 0; i < LUNA_XPON_SERVICES; i++)
+		if (luna_xpon.svc[i].used && luna_xpon.svc[i].gem == g->gem)
+			luna_xpon.svc[i].used = false;
+	spin_unlock_bh(&luna_xpon.svc_lock);
+	luna_xpon_update_data();
+}
+
+static void luna_xpon_tcont_unbind(struct luna_xpon_tcont *t)
+{
+	unsigned int i;
+
+	for (i = 0; i < LUNA_XPON_GEMS; i++)
+		if (luna_xpon.gem[i].valid && luna_xpon.gem[i].tcont == t->entity)
+			luna_xpon_gem_unbind(i);
+	if (t->hw)
+		luna_xpon_hw_tcont_remove(t - luna_xpon.tcont);
+	t->hw = false;
+	t->omcc = false;
 }
 
 /*
@@ -251,17 +343,23 @@ static struct luna_xpon_tcont *luna_xpon_tcont_find(u16 entity)
 static int luna_xpon_tcont_bind(struct luna_xpon_tcont *t)
 {
 	unsigned int slot = t - luna_xpon.tcont;
+	u8 onu_id = luna_xpon_hw_onu_id();
+	bool omcc = onu_id != 0xff && t->alloc == onu_id &&
+		    luna_xpon_hw_omcc_gem() >= 0;
 	int rc;
 
+	if (!omcc && !luna_xpon_hw_alloc_known(t->alloc)) {
+		if (t->hw || t->omcc)
+			luna_xpon_tcont_unbind(t);
+		return 0;
+	}
 	if (t->hw || t->omcc)
 		return 0;
-	if (t->alloc == luna_xpon_hw_onu_id()) {
+	if (omcc) {
 		t->omcc = true;
 		t->qid = luna_xpon_hw_omcc_qid();
 		return 0;
 	}
-	if (!luna_xpon_hw_alloc_known(t->alloc))
-		return 0;
 	rc = luna_xpon_hw_tcont_install(slot, t->alloc);
 	if (rc)
 		return rc;
@@ -279,29 +377,32 @@ static int luna_xpon_set_tcont(struct omci_device *odev, u16 entity,
 			       u16 alloc, bool valid)
 {
 	struct luna_xpon_tcont *t = luna_xpon_tcont_find(entity);
-	unsigned int i;
+	unsigned int i, slot;
 
+	if (entity < LUNA_XPON_TCONT_BASE ||
+	    entity >= LUNA_XPON_TCONT_BASE + LUNA_XPON_TCONTS)
+		return -ERANGE;
+	slot = entity - LUNA_XPON_TCONT_BASE;
+	if (valid && alloc != 0xffff)
+		for (i = 0; i < LUNA_XPON_TCONTS; i++)
+			if (i != slot && luna_xpon.tcont[i].valid &&
+			    luna_xpon.tcont[i].alloc == alloc)
+				return -EEXIST;
 	if (t && valid && t->alloc == alloc)
 		return luna_xpon_tcont_bind(t);
 	if (t) {
-		if (t->hw)
-			luna_xpon_hw_tcont_remove(t - luna_xpon.tcont);
+		luna_xpon_tcont_unbind(t);
 		*t = (struct luna_xpon_tcont) { };
 	}
 	if (!valid)
 		return 0;
 
-	for (i = 0; i < LUNA_XPON_TCONTS; i++) {
-		if (luna_xpon.tcont[i].valid)
-			continue;
-		luna_xpon.tcont[i] = (struct luna_xpon_tcont) {
-			.entity = entity,
-			.alloc = alloc,
-			.valid = true,
-		};
-		return luna_xpon_tcont_bind(&luna_xpon.tcont[i]);
-	}
-	return -ENOSPC;
+	luna_xpon.tcont[slot] = (struct luna_xpon_tcont) {
+		.entity = entity,
+		.alloc = alloc,
+		.valid = true,
+	};
+	return luna_xpon_tcont_bind(&luna_xpon.tcont[slot]);
 }
 
 static int luna_xpon_set_gem_port(struct omci_device *odev, u16 entity,
@@ -310,7 +411,7 @@ static int luna_xpon_set_gem_port(struct omci_device *odev, u16 entity,
 {
 	struct luna_xpon_tcont *t = NULL;
 	struct luna_xpon_gem *g;
-	unsigned int i, slot = LUNA_XPON_GEMS;
+	unsigned int i, found = LUNA_XPON_GEMS, slot = LUNA_XPON_GEMS;
 	int rc;
 
 	if (gem > 0xfff || !dir || dir > OMCI_GEM_PORT_DIRECTION_BIDIRECTIONAL)
@@ -324,18 +425,20 @@ static int luna_xpon_set_gem_port(struct omci_device *odev, u16 entity,
 				slot = i;
 			continue;
 		}
-		if (luna_xpon.gem[i].entity == entity)
-			break;
+		if (luna_xpon.gem[i].entity == entity) {
+			found = i;
+			continue;
+		}
 		if (valid && luna_xpon.gem[i].gem == gem)
 			return -EEXIST;
 	}
+	i = found;
 	if (i < LUNA_XPON_GEMS) {
 		g = &luna_xpon.gem[i];
 		if (valid && g->hw && g->gem == gem && g->tcont == tcont_entity &&
 		    g->dir == dir)
 			return 0;
-		if (g->hw)
-			luna_xpon_hw_gem_remove(i);
+		luna_xpon_gem_unbind(i);
 		*g = (struct luna_xpon_gem) { };
 		slot = i;
 	}
@@ -372,6 +475,22 @@ static int luna_xpon_set_gem_port(struct omci_device *odev, u16 entity,
 	return 0;
 }
 
+/* The single-queue backend has no configured QoS or GEM policer to clear.
+ * Keep explicit scheduling/rate requests unsupported until they are mapped
+ * to hardware; accepting them would silently discard the OLT's policy.
+ */
+static int luna_xpon_set_tcont_qos(struct omci_device *odev, u16 entity,
+				   const struct omci_tcont_qos *qos)
+{
+	return qos->enabled ? -EOPNOTSUPP : 0;
+}
+
+static int luna_xpon_set_gem_rate(struct omci_device *odev, u16 gem,
+				  bool upstream, u32 rate, u32 burst)
+{
+	return rate || burst ? -EOPNOTSUPP : 0;
+}
+
 static int luna_xpon_uni_port(u16 entity)
 {
 	unsigned int i;
@@ -403,25 +522,36 @@ static int luna_xpon_get_uni_link(struct omci_device *odev, u16 entity,
 	return 0;
 }
 
-static int luna_xpon_gem_flow(u16 gem)
+static struct luna_xpon_gem *luna_xpon_gem_find(u16 gem)
 {
 	unsigned int i;
 
 	for (i = 0; i < LUNA_XPON_GEMS; i++)
-		if (luna_xpon.gem[i].hw && luna_xpon.gem[i].gem == gem)
-			return luna_xpon_hw_gem_flow(i);
-	return -ENOENT;
+		if (luna_xpon.gem[i].valid && luna_xpon.gem[i].gem == gem)
+			return &luna_xpon.gem[i];
+	return NULL;
 }
 
 static int luna_xpon_replace_service(struct omci_device *odev,
 				     const struct omci_service_config *s)
 {
 	struct luna_xpon_service *svc = NULL;
-	int flow = luna_xpon_gem_flow(s->gem_port_id);
+	struct luna_xpon_gem *g = luna_xpon_gem_find(s->gem_port_id);
+	struct luna_xpon_tcont *t = luna_xpon_tcont_find(s->tcont_entity_id);
+	int flow;
 	unsigned int i;
 
-	if (!s->multicast && flow < 0)
+	if (s->multicast || s->queue)
+		return -EOPNOTSUPP;
+	if (!g || !g->hw)
 		return -EAGAIN;
+	if ((g->dir & s->direction) != s->direction)
+		return -EINVAL;
+	if ((s->direction & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI) &&
+	    (!luna_xpon_tcont_ready(t) || t->alloc != s->alloc_id ||
+	     g->tcont != s->tcont_entity_id))
+		return -EAGAIN;
+	flow = luna_xpon_hw_gem_flow(g - luna_xpon.gem);
 
 	spin_lock_bh(&luna_xpon.svc_lock);
 	for (i = 0; i < LUNA_XPON_SERVICES; i++) {
@@ -441,6 +571,7 @@ static int luna_xpon_replace_service(struct omci_device *odev,
 			.flow = flow < 0 ? 0 : flow,
 			.pcp = s->pcp & 7,
 			.uni_mode = s->uni_vlan_mode,
+			.direction = s->direction,
 			.vlan_valid = s->vlan_valid,
 			.pcp_valid = s->pcp_valid,
 			.default_service = s->default_service,
@@ -450,6 +581,7 @@ static int luna_xpon_replace_service(struct omci_device *odev,
 	spin_unlock_bh(&luna_xpon.svc_lock);
 	if (!svc)
 		return -ENOSPC;
+	luna_xpon_update_data();
 	pr_info("luna-xpon: service %u: GEM %u flow %d VLAN %u%s\n", s->cookie,
 		s->gem_port_id, flow, s->vlan_valid ? s->vlan_id : 0,
 		s->multicast ? " multicast" : "");
@@ -465,6 +597,7 @@ static int luna_xpon_delete_service(struct omci_device *odev, u32 cookie)
 		if (luna_xpon.svc[i].used && luna_xpon.svc[i].cookie == cookie)
 			luna_xpon.svc[i].used = false;
 	spin_unlock_bh(&luna_xpon.svc_lock);
+	luna_xpon_update_data();
 	return 0;
 }
 
@@ -491,10 +624,8 @@ static int luna_xpon_get_telemetry(struct omci_device *odev,
 
 static void luna_xpon_set_operational(struct omci_device *odev, bool operational)
 {
-	if (operational && luna_xpon_hw_state() == GPON_O5)
-		netif_carrier_on(luna_xpon.wan);
-	else
-		netif_carrier_off(luna_xpon.wan);
+	WRITE_ONCE(luna_xpon.operational, operational);
+	luna_xpon_update_carrier();
 }
 
 static const struct omci_device_ops luna_xpon_ops = {
@@ -507,6 +638,8 @@ static const struct omci_device_ops luna_xpon_ops = {
 	.xmit			= luna_xpon_xmit,
 	.get_ani_topology	= luna_xpon_get_ani_topology,
 	.set_tcont		= luna_xpon_set_tcont,
+	.set_tcont_qos		= luna_xpon_set_tcont_qos,
+	.set_gem_rate		= luna_xpon_set_gem_rate,
 	.set_gem_port		= luna_xpon_set_gem_port,
 	.set_uni		= luna_xpon_set_uni,
 	.replace_service	= luna_xpon_replace_service,
@@ -594,6 +727,8 @@ static void luna_xpon_deliver_state(struct omci_device *odev, u8 state)
 {
 	enum xpon_registration_state reg;
 
+	if (state != GPON_O5)
+		omci_device_set_channel(odev, 0, false);
 	omci_device_set_state(odev, state);
 	if (state == GPON_O5)
 		schedule_work(&luna_xpon.reconcile_work);
@@ -646,6 +781,8 @@ static void luna_xpon_event_fn(struct work_struct *work)
 		luna_xpon_forget();
 		mutex_unlock(&luna_xpon.lock);
 		omci_device_set_channel(odev, gem, true);
+		/* Reinstalling the same OMCC still erased the data CAMs. */
+		schedule_work(&luna_xpon.reconcile_work);
 	}
 	if (ev & LUNA_XPON_EV_STATE)
 		luna_xpon_deliver_state(odev, state);
@@ -668,11 +805,22 @@ void luna_xpon_omci_rx(const u8 *msg, unsigned int len)
 
 	if (!odev || gem < 0)
 		return;
-	if (len >= OMCI_PDU_LEN) {
+	/* Only baseline PDUs have a fixed length. Extended messages carry
+	 * their content length at offset 8; discard DMA padding, not content.
+	 */
+	if (len >= OMCI_PDU_LEN && msg[3] == OMCI_BASELINE_ID) {
 		len = OMCI_PDU_LEN;
 		flags = OMCI_F_MIC_PRESENT;
 		if (luna_xpon_hw_mic_valid(msg, len))
 			flags |= OMCI_F_MIC_VALID;
+	} else if (len >= OMCI_EXT_HEADER_LEN && msg[3] == OMCI_EXTENDED_ID) {
+		unsigned int pdu_len = OMCI_EXT_HEADER_LEN +
+			get_unaligned_be16(msg + 8) + OMCI_MIC_LEN;
+
+		if (pdu_len > len || pdu_len > OMCI_MAX_PDU_LEN)
+			return;
+		len = pdu_len;
+		flags = OMCI_F_MIC_PRESENT;
 	}
 	skb = alloc_skb(len, GFP_ATOMIC);
 	if (!skb)
@@ -739,7 +887,8 @@ int luna_xpon_tx_flow(struct sk_buff **pskb)
 	spin_lock_bh(&luna_xpon.svc_lock);
 	for (i = 0; i < LUNA_XPON_SERVICES; i++) {
 		s = &luna_xpon.svc[i];
-		if (!s->used || s->multicast)
+		if (!s->used || s->multicast ||
+		    !(s->direction & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI))
 			continue;
 		mode = luna_xpon_lan_mode(s, &uni_vid);
 		if (tagged) {
@@ -802,7 +951,8 @@ void luna_xpon_rx_fixup(struct sk_buff *skb)
 	spin_lock_bh(&luna_xpon.svc_lock);
 	for (i = 0; i < LUNA_XPON_SERVICES; i++) {
 		s = &luna_xpon.svc[i];
-		if (s->used && s->vlan_valid && s->vlan == vid) {
+		if (s->used && s->vlan_valid && s->vlan == vid &&
+		    (s->direction & OMCI_GEM_PORT_DIRECTION_ANI_TO_UNI)) {
 			mode = luna_xpon_lan_mode(s, &uni_vid);
 			break;
 		}

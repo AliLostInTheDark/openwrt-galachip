@@ -6,7 +6,7 @@
 # into RAM and bootm'd by the vendor U-Boot (no flash write during bring-up).
 
 # The V2802RH is a 4 MiB L2 bridge: LuCI keeps only the views and menus that
-# apply to one (as the XZ000-G7 does). The rootfs is shared by every device in
+# apply to one. The rootfs is shared by every device in
 # a build, so this runs only when the V2802RH is the one selected.
 define Image/Prepare
 	$(if $(CONFIG_TARGET_realtek_luna_taroko_DEVICE_vsol_v2802rh), \
@@ -156,7 +156,7 @@ define Device/vsol_v2802rh
 	append-rootfs | pad-rootfs | check-size | append-metadata
   # An L2 bridge: no routing, NAT, DHCP server, firewall or WiFi. Nor TLS,
   # package fetching or process jails, which would leave no room in r0 for
-  # LuCI and the overlay. OMCI runs in omcid, as on the XZ000-G7.
+  # LuCI and the overlay. OMCI runs in omcid through the RTL9601D backend.
   DEVICE_PACKAGES := -iw -dnsmasq -firewall4 -nftables -kmod-nft-offload \
 	-odhcpd-ipv6only -odhcp6c -ppp -ppp-mod-pppoe -wpad-basic-mbedtls \
 	-procd-ujail -libustream-mbedtls -uclient-fetch -ca-bundle \

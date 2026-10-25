@@ -658,6 +658,7 @@ static const struct map MAP[] = {
 	{ "vendor_id",     F_HW, "PON_VENDOR_ID",     0, 0 },
 	{ "model",         F_HW, "GPON_ONU_MODEL",    0, 0 },
 	{ "hw_ver",        F_HW, "HW_HWVER",          0, 0 },
+	{ "lan_type",      F_HW, "LAN_TYPE",          0, 0 },
 	{ "wlan_cck_a",    F_HW, "HW_WLAN0_TX_POWER_CCK_A",     0, 0 },
 	{ "wlan_cck_b",    F_HW, "HW_WLAN0_TX_POWER_CCK_B",     0, 0 },
 	{ "wlan_ht40_a",   F_HW, "HW_WLAN0_TX_POWER_HT40_1S_A", 0, 0 },
