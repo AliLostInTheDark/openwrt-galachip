@@ -24,7 +24,10 @@ struct gn_op {
 	u8  mask;
 };
 
-/* V2802RH RTOS sequence; LAN_TYPE comes from this unit's hardware MIB. */
+/* The sequence that ranges the V2802RH, from its 1024-byte calibration file. */
+int gn25l95_cal_ops(const u8 *cal, u32 cal_len, struct gn_op *out, u32 out_max);
+
+/* The stock RTOS loader as read; LAN_TYPE comes from the hardware MIB. */
 int gn25l95_v2802rh_cal_ops(const u8 *cal, u32 cal_len, u8 lan_type,
 			  struct gn_op *out, u32 out_max);
 

@@ -1743,6 +1743,11 @@ static int luna_gn_wr(void *ctx, u8 slave, u8 reg, u8 val)
 	return bosa_i2c_write_raw(slave, reg, val);
 }
 
+/* The stock RTOS loader leaves the laser dark here; kept for investigation. */
+static bool gn_stock_seq;
+module_param(gn_stock_seq, bool, 0444);
+MODULE_PARM_DESC(gn_stock_seq, "program the GN25L95 with the stock RTOS loader's sequence (laser stays off)");
+
 /* Caller holds bosa_lock across the entire paged probe and calibration. */
 static int luna_gn_calibrate_locked(void)
 {
@@ -1799,7 +1804,11 @@ static int luna_gn_calibrate_locked(void)
 	io.notes = NULL;
 	io.notes_max = 0;
 	io.notes_n = 0;
-	n = gn25l95_v2802rh_cal_ops(fw->data, fw->size, lan_type, ops, GN_OPS_MAX);
+	if (gn_stock_seq)
+		n = gn25l95_v2802rh_cal_ops(fw->data, fw->size, lan_type,
+					    ops, GN_OPS_MAX);
+	else
+		n = gn25l95_cal_ops(fw->data, fw->size, ops, GN_OPS_MAX);
 	ret = n < 0 ? n : gn25l95_cal_apply(ops, n, &io, &fail);
 	if (!ret) {
 		bosa_cal_ready = true;

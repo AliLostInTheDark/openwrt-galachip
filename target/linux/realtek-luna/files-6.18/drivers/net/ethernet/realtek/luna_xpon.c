@@ -512,6 +512,17 @@ static int luna_xpon_set_uni(struct omci_device *odev, u16 entity, bool enable)
 	return luna_xpon.uni_admin_set(luna_xpon.cookie, port, !enable);
 }
 
+/* Pause, MAC-table and rate attributes are not applied to this switch yet:
+ * their defaults are what it runs, anything else is refused. */
+static int luna_xpon_set_uni_attrs(struct omci_device *odev, u16 entity,
+				   const struct omci_uni_attrs *a)
+{
+	if (a->pause_quanta || a->ageing_s || a->learn_limit || a->down_kbps ||
+	    a->up_kbps || a->auto_detection || a->max_frame_size)
+		return -EOPNOTSUPP;
+	return 0;
+}
+
 static int luna_xpon_get_uni_link(struct omci_device *odev, u16 entity,
 				  bool *link_up)
 {
@@ -679,6 +690,7 @@ static const struct omci_device_ops luna_xpon_ops = {
 	.set_gem_rate		= luna_xpon_set_gem_rate,
 	.set_gem_port		= luna_xpon_set_gem_port,
 	.set_uni		= luna_xpon_set_uni,
+	.set_uni_attrs		= luna_xpon_set_uni_attrs,
 	.replace_service	= luna_xpon_replace_service,
 	.delete_service		= luna_xpon_delete_service,
 	.get_telemetry		= luna_xpon_get_telemetry,
