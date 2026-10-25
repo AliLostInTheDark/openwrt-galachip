@@ -1,6 +1,6 @@
 {
 	"luci-app-omci": {
-		"description": "Grant access to the GC1601 OMCI control plane",
+		"description": "Grant access to the OMCI control plane",
 		"read": {
 			"ubus": {
 				"omci.agent": [

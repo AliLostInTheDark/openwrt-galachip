@@ -204,14 +204,13 @@ function hexLabel(value, text) {
 }
 
 /*
- * What saving costs. A new serial number or vendor ID ranges the ONU again
- * (gc1601_gpon_set_identity_locked); the password and every attribute the
- * OLT reads from the MIB count from the next registration; the rest the
- * agent and the switch pick up at once.
+ * What saving costs. A new serial number or vendor ID ranges the ONU again;
+ * the password and every attribute the OLT reads from the MIB count from the
+ * next registration; the agent and the PON driver take the rest at once.
  */
 var applyCost = {
 	enabled: 'drop', serial: 'drop', vendor_id: 'drop',
-	permissive: 'live', fake_omci: 'live', reboot: 'live',
+	permissive: 'live', fake_omci: 'live', reboot: 'live', transmit: 'next',
 	vlan_translate: 'live', vlan_stack: 'live', olt_profile: 'live', olt_profile_force: 'live',
 	mode: 'live', vid: 'live', prio: 'live',
 	password: 'next', loid: 'next', loid_password: 'next',
@@ -264,6 +263,11 @@ return view.extend({
 		o.default = o.disabled;
 		o.rmempty = false;
 
+		o = s.taboption('agent', form.Flag, 'transmit', _('Transmitter'));
+		o.default = o.enabled;
+		o.rmempty = false;
+		o.description = _('Off keeps the ONU receive-only from the next boot: it does not range and the laser stays off.');
+
 		o = s.taboption('rewrite', form.DynamicList, 'vlan_translate', _('VLAN translation'));
 		o.datatype = 'string';
 		o.placeholder = '100:10';
@@ -286,7 +290,7 @@ return view.extend({
 		o.default = 'unspecified';
 
 		o = s.taboption('identity', form.Value, 'serial', _('GPON serial number'));
-		o.placeholder = 'TPLG12345678';
+		o.placeholder = 'ABCD12345678';
 		o.description = _('12 characters: 4 vendor characters followed by 8 hexadecimal digits, or all 16 hexadecimal digits. The limit follows the first 4 characters.');
 		/* Only the vendor part can hold non-hex characters. */
 		limitLength(o, function(value) {
@@ -299,7 +303,7 @@ return view.extend({
 		};
 
 		o = s.taboption('identity', form.Value, 'vendor_id', _('Vendor ID'));
-		o.placeholder = 'TPLG';
+		o.placeholder = 'ABCD';
 		o.description = _('4 characters, or 8 hexadecimal digits.');
 		limitLength(o, asciiOrHexLength(4, 8));
 		o.validate = function(section_id, value) {

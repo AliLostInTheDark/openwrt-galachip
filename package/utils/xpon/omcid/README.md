@@ -51,8 +51,8 @@ an unacknowledged request after restart.
 
 The event loop only runs OMCI traffic, requested administration and protocol
 alarm/PM/reboot timers. There is no sample collector or mean/median history.
-Measured on the XZ000-G7 with an Airtel (Nokia) provisioned MIB: about
-1.1 MiB RSS (1.4 MiB peak) and a 270 KiB checkpoint in RAM.
+With an Airtel (Nokia) provisioned MIB it measured about 1.1 MiB RSS
+(1.4 MiB peak) and a 270 KiB checkpoint in RAM.
 
 ## Development
 

@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const source = fs.readFileSync(path.resolve(__dirname,
-    '../../../../../target/linux/galachip/files/net/xpon/omci/core.c'), 'utf8');
+    '../../../../../target/linux/realtek-luna/files-6.18/net/xpon/omci/core.c'), 'utf8');
 function extract(name) {
     const start = source.indexOf('static int ' + name + '(');
     if (start < 0) throw Error(name);

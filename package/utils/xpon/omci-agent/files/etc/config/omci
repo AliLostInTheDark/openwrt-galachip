@@ -8,7 +8,7 @@ config agent 'main'
 	option reset_mib '0'
 	# Turn the laser on at boot and let the ONU range. Off: it only listens.
 	option transmit '1'
-	# VLAN the LAN side sends untagged, added and removed by the switch (0: none).
+	# VLAN the LAN side sends untagged, added and removed by the PON driver (0: none).
 	# Set by omci-vlan from the LAN VLAN mode; edit omci.vlan instead.
 	option untag_vlan '0'
 	# LAN VLAN -> network VLAN, 'WAN:LAN', e.g. '100:10' (repeat the list).

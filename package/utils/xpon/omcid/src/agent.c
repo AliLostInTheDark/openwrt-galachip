@@ -1866,7 +1866,7 @@ static int omci_agent_populate_defaults(struct omci_device *odev)
 		}
 	}
 
-	/* Downstream queues for every Ethernet UNI and the VEIP, as the stock ONU has. */
+	/* Downstream queues for every Ethernet UNI and the VEIP, as vendor ONUs have. */
 	for (i = 0, queue_id = 0; i <= agent->config.uni_count; i++) {
 		u16 uni = i < agent->config.uni_count ?
 			  OMCI_UNI_ENTITY_ID(OMCI_ETHERNET_SLOT, i + 1) :
@@ -3164,8 +3164,8 @@ static bool upstream_queue_tm;
 /*
  * Services whose GEM ports share a priority queue share a hardware queue,
  * so an 802.1p mapper sending every P-bit to one GEM needs one flow.
- * Priority 0 stays on hardware queue 0, where stock puts all traffic;
- * hardware queue 7 drops the ONU to O2 on Airtel.
+ * Priority 0 stays on queue 0, where vendor firmware puts all traffic;
+ * queue 7 dropped an ONU to O2 on an Airtel (Nokia) OLT.
  */
 static int omci_agent_tm_queue_locked(struct omci_agent *agent,
 				      const struct omci_mib_object *gem, u8 *queue)
@@ -4926,8 +4926,8 @@ found:
 
 /*
  * Activate Software Image restarts the ONU into that image (G.988), and
- * OLTs use it as their "reboot ONT" (Nokia among them; stock gc_omcid
- * reboots five seconds after it). There is one image here, so either
+ * OLTs use it as their "reboot ONT" (Nokia among them; vendor OMCI daemons
+ * reboot a few seconds after it). There is one image here, so either
  * instance is a restart, under the same switch as an ONU-G Reboot.
  */
 static u8 omci_agent_activate_sw_locked(struct omci_device *odev, u16 entity_id)

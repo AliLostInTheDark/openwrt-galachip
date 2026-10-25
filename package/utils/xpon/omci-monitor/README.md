@@ -50,10 +50,10 @@ and preserve them when creating a sanitized fixture. JSON `ms` on replay is
 the replay process's clock, not the original capture timestamp.
 
 TX means the driver accepted the response, not that the OLT received it.
-Trailer generation/checking stays in the driver (software CRC in the GC1601
-backend, despite the historical `HW_MIC` capability name). The codec checks
+Trailer generation/checking stays in the PON driver, which may compute the
+CRC in software despite the historical `HW_MIC` capability name. The codec checks
 framing, not every G.988 semantic or MIC. TX trace is emitted before the
-corresponding RX observation because the current kernel responds first;
+corresponding RX observation because the responder answers first;
 do not use record arrival order as wire order or calculate RTT from it.
 `trace_dropped`, RX sequence gaps, and `transport_loss` expose incomplete
 captures. No timeout or interoperability conclusion is valid across a loss

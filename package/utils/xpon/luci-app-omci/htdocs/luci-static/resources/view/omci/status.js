@@ -20,16 +20,34 @@ function hex(value, width) {
 	return '0x' + Number(value).toString(16).padStart(width || 2, '0');
 }
 
-/* enum omci_fec_status. Upstream FEC is switched per burst by the OLT's
- * BWmap Use_FEC flag (G.984.3 13.3.3); the MAC exposes no status for it. */
-function fec(value, upstream) {
+/* enum omci_fec_status; absent when the PON driver does not report it. */
+function fec(value) {
 	switch (value) {
 	case 1: return _('Off');
 	case 2: return _('On');
-	case null: case undefined:
-		return upstream ? _('Not reported (switched by the OLT per burst)') : '-';
+	case null: case undefined: return _('Not reported');
 	default: return _('Unknown');
 	}
+}
+
+/* OPTICAL_FRONTEND_ALARM_* bits */
+var opticalAlarms = [
+	[ 0, _('TX power low') ], [ 1, _('TX power high') ],
+	[ 2, _('Bias low') ], [ 3, _('Bias high') ],
+	[ 4, _('RX power low') ], [ 5, _('RX power high') ],
+	[ 6, _('Voltage low') ], [ 7, _('Voltage high') ],
+	[ 8, _('Temperature low') ], [ 9, _('Temperature high') ]
+];
+
+function alarms(value) {
+	if (value == null)
+		return '-';
+	var set = opticalAlarms.filter(function(a) { return value & (1 << a[0]); });
+	return set.length ? set.map(function(a) { return a[1]; }).join(', ') : _('None');
+}
+
+function scaled(value, div, digits, unit) {
+	return value == null ? '-' : '%s %s'.format((Number(value) / div).toFixed(digits), unit);
 }
 
 function state(value) {
@@ -281,11 +299,11 @@ function values(status) {
 		omcc_version: identity['omcc-version'] == null ? '-' : '%s (%s)'.format(hex(identity['omcc-version'], 2), identity['omcc-version']),
 		olt_vendor: text(olt.vendor_id || olt.vendor), olt_equipment: text(olt.equipment_id || olt.model),
 		olt_version: text(olt.version),
-		fec_downstream: fec(status.fec_downstream), fec_upstream: fec(status.fec_upstream, true),
-		bosa_temperature: temperature(status.bosa_temperature_mc), bosa_voltage: status.bosa_voltage_uv == null ? '-' : status.bosa_voltage_uv + ' µV',
-		bosa_bias: status.bosa_bias_ua == null ? '-' : status.bosa_bias_ua + ' µA',
+		fec_downstream: fec(status.fec_downstream), fec_upstream: fec(status.fec_upstream),
+		bosa_temperature: temperature(status.bosa_temperature_mc), bosa_voltage: scaled(status.bosa_voltage_uv, 1e6, 3, 'V'),
+		bosa_bias: scaled(status.bosa_bias_ua, 1e3, 2, 'mA'),
 		bosa_tx_power: power(status.bosa_tx_power_nw), bosa_rx_power: power(status.bosa_rx_power_nw),
-		bosa_alarms: hex(status.bosa_alarms, 8)
+		bosa_alarms: alarms(status.bosa_alarms)
 	};
 
 	omciAlarmRows.forEach(function(row, i) {

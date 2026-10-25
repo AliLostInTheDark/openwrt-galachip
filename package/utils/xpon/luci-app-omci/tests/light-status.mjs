@@ -129,7 +129,7 @@ function view(file, data, mode = 'gpon') {
   return {result, data, calls, polls, reads, nodes, replaced: () => replacements};
 }
 
-// The module's levels, as xpon.public passes bosa_thresholds (this G7's BOSA).
+// The module's levels, as xpon.public passes bosa_thresholds (a sample module).
 const thresholds = {tx_alarm_high_nw: 3981100, tx_alarm_low_nw: 891300, tx_warn_high_nw: 3548100, tx_warn_low_nw: 1000000,
   rx_alarm_high_nw: 251200, rx_alarm_low_nw: 1000, rx_warn_high_nw: 199500, rx_warn_low_nw: 1300};
 const main = view(path.join(resource, 'view/omci/status.js'), {

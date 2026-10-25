@@ -2,7 +2,7 @@
 CC ?= cc
 CFLAGS ?= -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
 TEST_BIN ?= /tmp/omci-protocol-test
-KERNEL_FILES := ../../../../../target/linux/galachip/files
+KERNEL_FILES := ../../../../../target/linux/realtek-luna/files-6.18
 
 .PHONY: test check-sync
 test: check-sync
