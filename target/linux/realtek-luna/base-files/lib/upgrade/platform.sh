@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # One behaviour on every ONU (operator, 2026-10-18): the new image replaces the running one in the
 # same k0 and r0, the configuration kept. The build already refuses an image too big for them.
+# A board with one "firmware" partition (V2802RH) takes the kernel and rootfs as one image.
 
 REQUIRE_IMAGE_METADATA=1
 
@@ -24,6 +25,14 @@ platform_check_image() {
 		echo "This ONU runs from RAM, not from its flash: the flash is not ours to replace."
 		return 1
 	}
+	if onu_mtd firmware >/dev/null; then
+		[ "$(dd if="$img" bs=4 count=1 2>/dev/null | hexdump -v -e '1/1 "%02x"')" = 27051956 ] &&
+			dd if="$img" bs=1 skip=32 count=32 2>/dev/null | grep -qs OpenWrt || {
+			echo "Not an ONU firmware image: it does not start with an OpenWrt uImage."
+			return 1
+		}
+		return 0
+	fi
 	kernel=$(onu_member "$img" kernel)
 	root=$(onu_member "$img" root)
 	[ -n "$kernel" ] && [ -n "$root" ] || {
@@ -56,6 +65,10 @@ platform_check_image() {
 platform_do_upgrade() {
 	local kernel root
 
+	if onu_mtd firmware >/dev/null; then
+		default_do_upgrade "$1"
+		return
+	fi
 	kernel=$(onu_member "$1" kernel)
 	root=$(onu_member "$1" root)
 	sync

@@ -96,18 +96,21 @@ define Device/vsol_v2802rh
   DEVICE_DTS_DIR := $(DTS_DIR)/realtek-luna
   SOC := rtl9601d
   # 4 MiB Zbit ZB25VQ32 with the stock bootloader, env and hardware MIB below
-  # 0x27000 and the RTOS's OSK1FS files above 0x3e0000; U-Boot boots k0 in place:
-  #   k0 = 0x1f9000 (2020k) at 0x27000, r0 = 0x1c0000 (1792k) at 0x220000.
-  KERNEL_SIZE := $(call flash_kernel_size,2020k)
-  IMAGE_SIZE := 1792k
-  IMAGES := kernel.bin rootfs.bin sysupgrade.bin
-  IMAGE/kernel.bin := append-kernel | check-size $$(KERNEL_SIZE)
-  # The jffs2 marker lets the first boot from flash format the rest of r0 as
-  # the overlay; without it mount_root falls back to tmpfs. The flash erases
-  # in 4k, and padding to 256k as well would not fit r0.
+  # 0x27000 and the RTOS's OSK1FS files above 0x3e0000. U-Boot boots the uImage
+  # at 0x27000 in place; the firmware partition (0x3b9000, 3812k) holds it, the
+  # rootfs right behind it and the overlay in what is left.
+  IMAGE_SIZE := 3812k
+  # The flash erases in 4k. The jffs2 marker lets the first boot from flash
+  # format the free space as the overlay instead of falling back to tmpfs.
   BLOCKSIZE := 4k
-  IMAGE/rootfs.bin := append-rootfs | pad-rootfs | check-size
-  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+  IMAGES := kernel.bin rootfs.bin firmware.bin sysupgrade.bin
+  # kernel.bin and rootfs.bin are for a RAM boot (bootm + phram).
+  IMAGE/kernel.bin := append-kernel
+  IMAGE/rootfs.bin := append-rootfs | check-size 2048k
+  IMAGE/firmware.bin := append-kernel | pad-to $$(BLOCKSIZE) | \
+	append-rootfs | pad-rootfs | check-size
+  IMAGE/sysupgrade.bin := append-kernel | pad-to $$(BLOCKSIZE) | \
+	append-rootfs | pad-rootfs | check-size | append-metadata
   # An L2 bridge: no routing, NAT, DHCP server, firewall or WiFi. Nor TLS,
   # package fetching or process jails, which would leave no room in r0 for
   # LuCI and the overlay.

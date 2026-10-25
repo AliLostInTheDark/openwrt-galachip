@@ -154,14 +154,13 @@
 			reg = <0x025000 0x002000>;
 			read-only;
 		};
+		/* Stock's k0 and r0 as one partition: U-Boot still boots the uImage
+		 * at 0x27000, and the rootfs starts right after the kernel, so
+		 * every byte the kernel does not use becomes overlay. */
 		partition@27000 {
-			label = "k0";
-			reg = <0x027000 0x1f9000>;
-		};
-		partition@220000 {
-			label = "r0";
-			reg = <0x220000 0x1c0000>;
-			linux,rootfs;
+			compatible = "denx,uimage";
+			label = "firmware";
+			reg = <0x027000 0x3b9000>;
 		};
 		partition@3e0000 {
 			label = "osk";
