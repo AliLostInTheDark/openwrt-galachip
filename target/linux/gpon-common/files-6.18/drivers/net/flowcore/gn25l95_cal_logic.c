@@ -88,8 +88,8 @@ int gn25l95_cal_ops(const u8 *cal, u32 cal_len, struct gn_op *out, u32 out_max)
 
 /*
  * The stock V2802RH RTOS loader as read statically (0x80470404, temperature
- * correction at 0x80470354). It leaves the laser bias at 0 on this unit
- * (2026-10-26), so stock enables the transmitter in a step not yet found.
+ * correction at 0x80470354). It lacks the BB and C4 writes above and has not
+ * yet ranged an ONU.
  * File offsets are relative to the 1024-byte rtl-25l95-backup.bin.
  */
 int gn25l95_v2802rh_cal_ops(const u8 *cal, u32 cal_len, u8 lan_type,

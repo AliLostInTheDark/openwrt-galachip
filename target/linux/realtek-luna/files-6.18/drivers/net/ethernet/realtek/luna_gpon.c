@@ -1743,10 +1743,10 @@ static int luna_gn_wr(void *ctx, u8 slave, u8 reg, u8 val)
 	return bosa_i2c_write_raw(slave, reg, val);
 }
 
-/* The stock RTOS loader leaves the laser dark here; kept for investigation. */
+/* The stock RTOS loader as read statically; not yet ranged with. */
 static bool gn_stock_seq;
 module_param(gn_stock_seq, bool, 0444);
-MODULE_PARM_DESC(gn_stock_seq, "program the GN25L95 with the stock RTOS loader's sequence (laser stays off)");
+MODULE_PARM_DESC(gn_stock_seq, "program the GN25L95 with the stock RTOS loader's sequence instead of the one that ranged");
 
 /* Caller holds bosa_lock across the entire paged probe and calibration. */
 static int luna_gn_calibrate_locked(void)
@@ -6543,6 +6543,7 @@ int luna_xpon_hw_set_allow_tx(bool on)
 		ret = -ESHUTDOWN;
 	} else if (READ_ONCE(gpon_hold) == on) {
 		WRITE_ONCE(gpon_hold, !on);
+		WRITE_ONCE(luna_ploam_cfg_live.hold, !on);	/* the PLOAM core's copy */
 		/* An activation that cannot run yet (no serial) retries later. */
 		if (luna_driver_ready)
 			luna_activate_locked(false);
