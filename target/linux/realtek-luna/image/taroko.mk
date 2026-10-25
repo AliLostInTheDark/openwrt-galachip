@@ -102,11 +102,18 @@ define Device/vsol_v2802rh
   IMAGE_SIZE := 1792k
   IMAGES := kernel.bin rootfs.bin sysupgrade.bin
   IMAGE/kernel.bin := append-kernel | check-size $$(KERNEL_SIZE)
-  IMAGE/rootfs.bin := append-rootfs | check-size
+  # The jffs2 marker lets the first boot from flash format the rest of r0 as
+  # the overlay; without it mount_root falls back to tmpfs. The flash erases
+  # in 4k, and padding to 256k as well would not fit r0.
+  BLOCKSIZE := 4k
+  IMAGE/rootfs.bin := append-rootfs | pad-rootfs | check-size
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
-  # An L2 bridge: no routing, NAT, DHCP server, firewall or WiFi.
+  # An L2 bridge: no routing, NAT, DHCP server, firewall or WiFi. Nor TLS,
+  # package fetching or process jails, which would leave no room in r0 for
+  # LuCI and the overlay.
   DEVICE_PACKAGES := -iw -dnsmasq -firewall4 -nftables -kmod-nft-offload \
 	-odhcpd-ipv6only -odhcp6c -ppp -ppp-mod-pppoe -wpad-basic-mbedtls \
+	-procd-ujail -libustream-mbedtls -uclient-fetch -ca-bundle \
 	gpon-provision
 endef
 TARGET_DEVICES += vsol_v2802rh
