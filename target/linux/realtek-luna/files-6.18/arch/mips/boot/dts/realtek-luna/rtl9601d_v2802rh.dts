@@ -23,6 +23,10 @@
 
 	chosen {
 		stdout-path = "serial0:115200n8";
+		/* The family line without earlycon: EARLY_PRINTK's early0 already
+		 * prints from the first instruction, and with both every line up to
+		 * the 8250 console came out twice. */
+		bootargs = "console=ttyS0,115200 ignore_loglevel";
 	};
 
 	/* 32 MiB DDR2 (U-Boot: "DRAM: 32 MB"), laid out as the X100DG's. */
