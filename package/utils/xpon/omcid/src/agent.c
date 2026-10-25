@@ -3201,16 +3201,19 @@ static bool omci_agent_gem_qos_locked(struct omci_agent *agent,
 /*
  * A VLAN tagging filter on the ANI-side bridge port limits which VLANs reach
  * that port's GEMs (Airtel: VLAN 100 on one mapper, 660 on the other), so a
- * UNI rule must not pair a VLAN with a mapper whose port would drop it.
+ * UNI rule must not pair a VLAN with a mapper whose port would drop it. An
+ * untagged frame does not pass a VID filter either.
  */
 static bool
 omci_agent_vlan_filter_passes(const struct omci_vlan_tagging_filter *filter,
-			      u16 vid)
+			      bool vlan_valid, u16 vid)
 {
 	unsigned int i;
 
-	if (!filter || !filter->valid || !filter->num_entries)
+	if (!filter)
 		return true;
+	if (!vlan_valid)
+		return false;
 	for (i = 0; i < filter->num_entries; i++)
 		if (filter->entries[i].vid == vid)
 			return true;
@@ -3294,7 +3297,8 @@ omci_agent_stage_service_rule_locked(struct omci_device *odev,
 		service.vlan_id = filter->vid;
 		service.vlan_valid =
 			omci_agent_service_vlan_valid(filter->vid);
-		if (!mapper_pcp_valid) {
+		/* VID-only filtering on the ANI port leaves the P-bit alone. */
+		if (!mapper_pcp_valid && !ani_filter) {
 			service.pcp = filter->pbit;
 			service.pcp_valid = true;
 			service.queue = filter->pbit;
@@ -3366,8 +3370,8 @@ omci_agent_stage_service_rule_locked(struct omci_device *odev,
 		if (!network_vlan)
 			return -EOPNOTSUPP;
 	}
-	if (service.vlan_valid &&
-	    !omci_agent_vlan_filter_passes(ani_filter, service.vlan_id))
+	if (!omci_agent_vlan_filter_passes(ani_filter, service.vlan_valid,
+					   service.vlan_id))
 		return -EOPNOTSUPP;
 	if (upstream_queue_tm || omci_agent_gem_qos_locked(agent, gem)) {
 		int ret = omci_agent_tm_queue_locked(agent, gem, &service.queue);
@@ -3440,9 +3444,16 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 	bool has_vlan_rules = false;
 	int ret;
 
+	/*
+	 * A UNI-side VLAN table shared by several ANI ports must not bypass any
+	 * one port's VID filter (forward operation 0x10, the one a VID list
+	 * forwards on). Other operations leave the port unfiltered.
+	 */
 	object = omci_mib_lookup(agent, OMCI_CLASS_VLAN_TAGGING_FILTER_DATA,
 				 bridge_port_entity);
-	if (object && omci_mib_object_active(agent, object))
+	if (object && omci_mib_object_active(agent, object) &&
+	    object->vlan_filter.valid && object->vlan_filter.num_entries &&
+	    object->vlan_filter.forward_operation == 0x10)
 		ani_filter = &object->vlan_filter;
 
 	xa_for_each(&agent->mib, index, object) {
@@ -3490,7 +3501,8 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 		}
 	}
 
-	if (installed || has_vlan_rules)
+	/* A filtered path carries only what its filter allows: no wildcard. */
+	if (installed || has_vlan_rules || ani_filter)
 		return 0;
 
 	return omci_agent_stage_service_rule_locked(
