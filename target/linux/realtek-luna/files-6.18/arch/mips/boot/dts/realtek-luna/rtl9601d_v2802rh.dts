@@ -111,8 +111,11 @@
 /* LAN2 is port 0 over the SerDes to the 2.5G PHY. Stock powers the internal
  * GPHY 0 down and forces the port 0 MAC up (FORCE_P_ABLTY 0x76, mode 0xfff);
  * doing the same on a RAM boot carried traffic at 2.5G. */
+/* 128 RX buffers: each 2k buffer takes a 4k slab object, and 256 of them
+ * were a quarter of this board's slab (measured, kmalloc-4k 1 MB) for more
+ * burst than its CPU path can forward. */
 &nic {
-	realtek,rx-ring-entries = <256>;
+	realtek,rx-ring-entries = <128>;
 	realtek,port0-serdes;
 	/* The RTL8221B's MDIO, bit-banged as stock does it: MDC, MDIO. */
 	realtek,ext-mdio-gpios = <&gpio 5 GPIO_ACTIVE_HIGH>, <&gpio 10 GPIO_ACTIVE_HIGH>;
