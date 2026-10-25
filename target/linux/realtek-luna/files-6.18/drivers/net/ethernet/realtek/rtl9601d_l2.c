@@ -7,7 +7,7 @@
 #include <net/switchdev.h>
 
 #define V2802_L2_FIRST 32
-#define V2802_L2_RULES (2 * LUNA_L2_SERVICES)
+#define V2802_L2_RULES (4 * LUNA_L2_SERVICES)
 
 static struct {
 	struct rtl9602c_eth *ep;
@@ -24,7 +24,7 @@ static struct {
 
 /* Caller owns sw_table_lock, shared with the NIC's VLAN callbacks. */
 static int v2802_l2_table(u8 type, u16 addr, u32 *words, unsigned int n,
-                        bool write)
+			   bool write)
 {
 	struct rtl9602c_eth *ep = v2802_l2.ep;
 	struct hwio io = luna_sw_io(ep->sw);
@@ -32,16 +32,16 @@ static int v2802_l2_table(u8 type, u16 addr, u32 *words, unsigned int n,
 	int rc;
 
 	rc = gpon_ind_poll(&io, reg_make(SW_TBL_STS), SW_TBL_BUSY,
-                    SW_TBL_TRIES, rtl9602c_sw_tbl_pause);
+			   SW_TBL_TRIES, rtl9602c_sw_tbl_pause);
 	if (rc)
 		return rc;
 	if (write)
 		for (i = 0; i < n; i++)
 			iowrite32(words[i], ep->sw + SW_TBL_WRDATA + 4 * i);
 	iowrite32(((u32)addr << 9) | BIT(4) | (write ? BIT(3) : 0) | type,
-           ep->sw + SW_TBL_CTRL);
+		  ep->sw + SW_TBL_CTRL);
 	rc = gpon_ind_poll(&io, reg_make(SW_TBL_STS), SW_TBL_BUSY,
-                    SW_TBL_TRIES, rtl9602c_sw_tbl_pause);
+			   SW_TBL_TRIES, rtl9602c_sw_tbl_pause);
 	if (!rc && !write)
 		for (i = 0; i < n; i++)
 			words[i] = ioread32(ep->sw + 0x1201c + 4 * i);
@@ -65,7 +65,7 @@ static int v2802_l2_clear_locked(void)
 	}
 	for (i = 0; i < v2802_l2.count; i++) {
 		rc = v2802_l2_table(1, v2802_l2.service[i].vid,
-                        &v2802_l2.vlan[i], 1, true);
+				     &v2802_l2.vlan[i], 1, true);
 		if (rc)
 			error = rc;
 	}
@@ -110,7 +110,7 @@ EXPORT_SYMBOL(rtl9601d_l2_changed);
  * Rule bit 48 is validity; direction 31, C-tag 3, VID 11..22, UNI 0..2.
  */
 static int v2802_l2_rule(unsigned int idx, const struct luna_l2_service *s,
-                         unsigned int port)
+			  unsigned int port)
 {
 	u32 care[2] = { BIT(31) | BIT(3) | 7, 0 };
 	u32 data[2] = { port, 0 }, rule[2], mask[2];
@@ -135,7 +135,8 @@ static int v2802_l2_rule(unsigned int idx, const struct luna_l2_service *s,
 	return v2802_l2_table(4, 256 + idx, rule, 2, true);
 }
 
-static int v2802_l2_install(const struct luna_l2_service *service, int count, unsigned int generation)
+static int v2802_l2_install(const struct luna_l2_service *service, int count,
+			     unsigned int generation)
 {
 	struct rtl9602c_eth *ep = v2802_l2.ep;
 	unsigned long flags;
@@ -159,7 +160,7 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count, un
 	}
 	cfg = ioread32(ep->sw + L34_CF_CFG);
 	if (V2802_L2_FIRST + V2802_L2_RULES >
-					256 - ((cfg >> L34_CF_P1_COUNT_SH) & 255)) {
+	    256 - ((cfg >> L34_CF_P1_COUNT_SH) & 255)) {
 		rc = -ENOSPC;
 		goto out;
 	}
@@ -207,7 +208,8 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count, un
 		const struct luna_l2_service *s = &service[i];
 
 		members = s->lan_mask | BIT(2) | BIT(3);
-		untag = s->untagged ? s->lan_mask | BIT(3) : 0;
+		/* Keep the service VID on CPU copies for accurate forwarding marks. */
+		untag = s->untagged ? s->lan_mask : 0;
 		w[0] = BIT(11) | (untag << 4) | members;
 		rc = v2802_l2_table(1, s->vid, w, 1, true);
 		if (rc)
@@ -217,9 +219,18 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count, un
 				continue;
 			if (s->untagged)
 				pvid = sw_packed_ins(pvid, p, SW_VLAN_PB_VID_BITS, s->vid);
-			rc = v2802_l2_rule(V2802_L2_FIRST + 2 * i + p, s, p);
+			rc = v2802_l2_rule(V2802_L2_FIRST + 4 * i + 2 * p, s, p);
 			if (rc)
 				goto rollback;
+			if (s->untagged) {
+				struct luna_l2_service tagged = *s;
+
+				tagged.untagged = false;
+				rc = v2802_l2_rule(V2802_L2_FIRST + 4 * i + 2 * p + 1,
+						     &tagged, p);
+				if (rc)
+					goto rollback;
+			}
 		}
 	}
 	iowrite32(pvid, ep->sw + SW_VLAN_PB_VID);
@@ -252,15 +263,16 @@ static bool v2802_l2_bridge_ready(struct rtl9602c_eth *ep)
 	unsigned long required = BR_LEARNING | BR_FLOOD | BR_MCAST_FLOOD | BR_BCAST_FLOOD;
 
 	return br && netif_is_bridge_master(br) && ep->wan_ndev &&
-        netdev_master_upper_dev_get(ep->wan_ndev) == br &&
-        netif_running(ep->ndev) && netif_running(ep->wan_ndev) &&
-        !br_vlan_enabled(br) && !br_multicast_enabled(br) &&
-        br_port_get_stp_state(ep->ndev) == BR_STATE_FORWARDING &&
-        br_port_get_stp_state(ep->wan_ndev) == BR_STATE_FORWARDING &&
-        v2802_l2_flags(ep->ndev, required) &&
-        v2802_l2_flags(ep->wan_ndev, required) &&
-        !br_port_flag_is_set(ep->ndev, BR_ISOLATED | BR_PORT_LOCKED | BR_HAIRPIN_MODE) &&
-        !br_port_flag_is_set(ep->wan_ndev, BR_ISOLATED | BR_PORT_LOCKED | BR_HAIRPIN_MODE);
+	       netdev_master_upper_dev_get(ep->wan_ndev) == br &&
+	       netif_running(ep->ndev) && netif_running(ep->wan_ndev) &&
+	       ep->hw_up && !ep->closing && !ep->in_recovery &&
+	       !br_vlan_enabled(br) && !br_multicast_enabled(br) &&
+	       br_port_get_stp_state(ep->ndev) == BR_STATE_FORWARDING &&
+	       br_port_get_stp_state(ep->wan_ndev) == BR_STATE_FORWARDING &&
+	       v2802_l2_flags(ep->ndev, required) &&
+	       v2802_l2_flags(ep->wan_ndev, required) &&
+	       !br_port_flag_is_set(ep->ndev, BR_ISOLATED | BR_PORT_LOCKED | BR_HAIRPIN_MODE) &&
+	       !br_port_flag_is_set(ep->wan_ndev, BR_ISOLATED | BR_PORT_LOCKED | BR_HAIRPIN_MODE);
 }
 
 static void v2802_l2_work(struct work_struct *work)
@@ -328,8 +340,7 @@ static int v2802_l2_switchdev_event(struct notifier_block *nb, unsigned long eve
 	br = netdev_master_upper_dev_get_rcu(ep->ndev);
 	rcu_read_unlock();
 	if (event == SWITCHDEV_PORT_ATTR_SET &&
-					(info->dev == ep->ndev || info->dev == ep->wan_ndev ||
-						info->dev == br))
+	    (info->dev == ep->ndev || info->dev == ep->wan_ndev || info->dev == br))
 		rtl9601d_l2_changed();
 	return NOTIFY_DONE;
 }
@@ -351,8 +362,12 @@ static bool v2802_l2_forwarded(struct sk_buff *skb, unsigned int port)
 			const struct luna_l2_service *s = &v2802_l2.service[i];
 
 			if ((port == 2 || (s->lan_mask & BIT(port))) &&
-							((tagged && (tci & VLAN_VID_MASK) == s->vid) ||
-        (!tagged && s->untagged))) {
+			    tagged && (tci & VLAN_VID_MASK) == s->vid) {
+				/* LAN copies need the same untagging as downstream pon0 copies. */
+				if (port < 2 && s->untagged) {
+					memmove(skb->data + VLAN_HLEN, skb->data, 2 * ETH_ALEN);
+					skb_pull(skb, VLAN_HLEN);
+				}
 				forwarded = true;
 				break;
 			}
@@ -375,12 +390,12 @@ static int v2802_l2_parent_id(struct net_device *dev, struct netdev_phys_item_id
 static ssize_t l2_offload_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	return sysfs_emit(buf, "requested=%u active=%u services=%u error=%d\n",
-                   v2802_l2.requested, v2802_l2.active,
-                   v2802_l2.active ? v2802_l2.count : 0, v2802_l2.error);
+			  READ_ONCE(v2802_l2.requested), READ_ONCE(v2802_l2.active),
+			  v2802_l2.active ? v2802_l2.count : 0, v2802_l2.error);
 }
 
 static ssize_t l2_offload_store(struct device *dev, struct device_attribute *attr,
-                              const char *buf, size_t count)
+			      const char *buf, size_t count)
 {
 	bool enable;
 	int rc = kstrtobool(buf, &enable);

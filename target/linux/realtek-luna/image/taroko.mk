@@ -73,6 +73,6 @@ define Device/vsol_v2802rh
   DEVICE_PACKAGES := -iw -dnsmasq -firewall4 -nftables -kmod-nft-offload \
 	-odhcpd-ipv6only -odhcp6c -ppp -ppp-mod-pppoe -wpad-basic-mbedtls \
 	-procd-ujail -libustream-mbedtls -uclient-fetch -ca-bundle \
-	gpon-provision omcid omci-agent luci-app-omci
+	gpon-provision omcid omci-agent omci-monitor luci-app-omci
 endef
 TARGET_DEVICES += vsol_v2802rh

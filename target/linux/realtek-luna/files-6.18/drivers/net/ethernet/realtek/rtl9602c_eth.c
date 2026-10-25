@@ -1840,9 +1840,9 @@ static void rtl9602c_eth_recover_work(struct work_struct *work)
 	if (ep->closing || !ep->hw_up)
 		return;
 
+	ep->in_recovery = true;
 	rtl9601d_l2_changed();
 	luna_gpon_nic_reset_begin();
-	ep->in_recovery = true;
 	netdev_warn(ndev,
 		    "TX-DMA parked (head=%u dirty=%u otx=%u/%u cdo0=%u txok=%u IO_CMD=%08x ISR1=%08x): IP-block power-cycle recovery #%u\n",
 		    ep->tx_head, ep->tx_dirty, ep->otx_head, ep->otx_dirty,
@@ -1922,6 +1922,7 @@ static void rtl9602c_eth_recover_work(struct work_struct *work)
 	mod_timer(&ep->poll_timer, jiffies + 1);
 	netif_wake_queue(ndev);
 	luna_gpon_nic_reset_end();
+	rtl9601d_l2_changed();
 }
 
 /* gpon_pbo_init() */

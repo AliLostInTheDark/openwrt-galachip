@@ -7,7 +7,8 @@
 #include "native.h"
 
 static unsigned int checks, services;
-static bool realtek_resources;
+static bool realtek_resources, full_uni;
+static u16 last_uni;
 #define CHECK(v) do { assert(v); checks++; } while (0)
 
 static int tx(struct omci_device *odev, struct sk_buff *skb, u16 gem)
@@ -34,7 +35,8 @@ static int topology(struct omci_device *odev, struct omci_ani_topology *t)
 		.queue_config_option = 1, .scheduler_policy = 1,
 		.gem_port_count = 256, .qos_configuration = BIT(3) | BIT(4),
 		.downstream_queues_per_uni = 8,
-		.flags = OMCI_TOPOLOGY_F_PROFILE_SERVICES };
+		.flags = OMCI_TOPOLOGY_F_PROFILE_SERVICES |
+		(full_uni ? OMCI_TOPOLOGY_F_FULL_UNI_ENTITY : 0) };
 	return 0;
 }
 
@@ -46,6 +48,7 @@ static int gem(struct omci_device *odev, u16 entity, u16 port, u16 tcont_entity,
 static int service(struct omci_device *odev, const struct omci_service_config *s)
 {
 	services++;
+	last_uni = s->uni_entity_id;
 	return 0;
 }
 
@@ -78,7 +81,21 @@ int main(void)
 		CHECK(get_unaligned_be16(object.data + 9) == 0x0601);
 	}
 	CHECK(services > 0);
+	CHECK(last_uni == 1);
 	CHECK(odev.agent.operational);
+	omci_agent_cleanup(&odev);
+
+	/* Hardware port binding must distinguish VEIP 0x601 from PPTP 0x101. */
+	full_uni = true;
+	services = 0;
+	memset(&odev.agent, 0, sizeof(odev.agent));
+	odev.channel_up = false;
+	CHECK(!omci_agent_init(&odev));
+	CHECK(!omci_agent_config_set_source(&odev, OMCI_CONFIG_OLT_PROFILE_FORCE, &profile,
+					    1, OMCI_CONFIG_SOURCE_NETLINK));
+	odev.channel_up = true;
+	omci_agent_channel_changed(&odev, true);
+	CHECK(services > 0 && last_uni == 0x601);
 	omci_agent_cleanup(&odev);
 
 	/* The same OLT profile must not invent services on another provider. */

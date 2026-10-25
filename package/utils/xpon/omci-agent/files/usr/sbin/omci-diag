@@ -1,18 +1,53 @@
 #!/bin/sh
 # Collect what is needed to debug OMCI provisioning against an OLT.
-#   omci-diag          print status, the recorded exchange and the OMCI log
+#   omci-diag          print status, the PON driver's state and log, the
+#                      recorded exchange and the OMCI log
 #   omci-diag trace    start or stop recording every OMCI exchange
+#   omci-diag full [S] record S seconds (default 60) of OMCI, then print
+#                      everything, the OLT's PLOAM capture included
 trace=/tmp/omcid-trace.txt
 
-if [ "$1" = trace ]; then
+trace_toggle() {
 	pid=$(pidof omcid) || { echo "omcid is not running" >&2; exit 1; }
 	kill -USR1 "$pid"
+}
+
+section() {
+	[ -r "$2" ] || return 0
+	echo "== $1 ($2)"
+	if [ -n "$3" ]; then tail -n "$3" "$2"; else cat "$2"; fi
+}
+
+case "$1" in
+trace)
+	trace_toggle
 	echo "OMCI trace toggled: a recording goes to $trace and stops at 1 MiB"
 	exit 0
-fi
+	;;
+full)
+	rm -f "$trace"
+	trace_toggle
+	echo "recording OMCI for ${2:-60} s..." >&2
+	sleep "${2:-60}"
+	trace_toggle
+	;;
+esac
 
 echo "== omcictl status"
 omcictl status
+for dev in /sys/class/xpon/*; do
+	[ -r "$dev/device/gpon_state" ] || continue
+	echo "== $(basename "$dev")"
+	cat "$dev/device/gpon_state"
+done
+section "PON driver" /proc/gpon
+section "PON driver log" /proc/gpon_log 120
+if [ "$1" = full ]; then
+	section "OLT PLOAM capture" /proc/ploamcap
+	section "OLT OMCI capture" /proc/oltcap
+	section "PLOAM not understood" /proc/ploam_unknown
+	section "OMCI not understood" /proc/gpon_unknown
+fi
 if [ -s "$trace" ]; then
 	echo "== exchanges ($trace)"
 	if command -v omci-monitor >/dev/null; then
@@ -21,10 +56,5 @@ if [ -s "$trace" ]; then
 		echo "install omci-monitor to decode it"
 	fi
 fi
-for dev in /sys/class/xpon/*; do
-	[ -r "$dev/device/gpon_state" ] || continue
-	echo "== $(basename "$dev")"
-	cat "$dev/device/gpon_state"
-done
 echo "== log"
 logread | grep -i "omci\|gpon\|xpon\|Alloc-ID" | tail -n 200

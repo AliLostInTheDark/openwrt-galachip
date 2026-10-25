@@ -1427,7 +1427,8 @@ static int omci_agent_get_ani_topology(struct omci_device *odev,
 	    !topology->gem_port_count || topology->gem_port_count > 4096 ||
 	    topology->allocated_queue_size > topology->maximum_queue_size ||
 	    (topology->scheduler_policy != 1 && topology->scheduler_policy != 2) ||
-	    (topology->flags & ~OMCI_TOPOLOGY_F_PROFILE_SERVICES))
+	    (topology->flags & ~(OMCI_TOPOLOGY_F_PROFILE_SERVICES |
+			       OMCI_TOPOLOGY_F_FULL_UNI_ENTITY)))
 		return -EINVAL;
 
 	last_tcont = topology->tcont_base + topology->tcont_count - 1;
@@ -2870,6 +2871,13 @@ static int omci_agent_gem_rate_locked(struct omci_device *odev,
 	return 0;
 }
 
+static u16 omci_agent_backend_uni(const struct omci_agent *agent, u16 entity)
+{
+	if (agent->topology.flags & OMCI_TOPOLOGY_F_FULL_UNI_ENTITY)
+		return entity;
+	return omci_profile_normalize_uni_entity(agent->profile_effective, entity);
+}
+
 static int omci_agent_hw_update(struct omci_device *odev,
 				struct omci_mib_object *object,
 				u8 action, const u8 *content)
@@ -2918,8 +2926,7 @@ static int omci_agent_hw_update(struct omci_device *odev,
 			enable = object->data[4] == 0;
 		else
 			enable = object->data[0] == 0;
-		entity_id = omci_profile_normalize_uni_entity(
-			odev->agent.profile_effective, object->entity_id);
+		entity_id = omci_agent_backend_uni(&odev->agent, object->entity_id);
 		ret = ops->set_uni(odev, entity_id, enable);
 		ignore_unsupported_uni = odev->agent.profile_quirks &
 					 OMCI_OLT_QUIRK_IGNORE_UNSUPPORTED_UNI;
@@ -3281,8 +3288,7 @@ omci_agent_stage_service_rule_locked(struct omci_device *odev,
 	    omci_agent_has_olt_gem_ctp_locked(agent))
 		return 0;
 
-	service.uni_entity_id = omci_profile_normalize_uni_entity(
-		agent->profile_effective, uni_entity);
+	service.uni_entity_id = omci_agent_backend_uni(agent, uni_entity);
 	service.gem_ctp_entity_id = gem_ctp_entity;
 	service.gem_port_id = get_unaligned_be16(gem->data);
 	service.tcont_entity_id = get_unaligned_be16(gem->data + 2);
@@ -3677,8 +3683,7 @@ static int omci_agent_apply_uni_attrs_locked(struct omci_device *odev)
 		return 0;
 	if (!uni_entity && !agent->uni_attrs_set)
 		return 0;
-	uni_entity = omci_profile_normalize_uni_entity(agent->profile_effective,
-						       uni_entity);
+	uni_entity = omci_agent_backend_uni(agent, uni_entity);
 	ret = ops->set_uni_attrs(odev, uni_entity, &attrs);
 	if (ret)
 		return ret;

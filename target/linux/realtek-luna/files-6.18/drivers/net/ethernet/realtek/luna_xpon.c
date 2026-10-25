@@ -391,7 +391,8 @@ static int luna_xpon_set_tcont(struct omci_device *odev, u16 entity,
 	    entity >= LUNA_XPON_TCONT_BASE + LUNA_XPON_TCONTS)
 		return -ERANGE;
 	slot = entity - LUNA_XPON_TCONT_BASE;
-	if (valid && alloc != 0xffff)
+	/* 0x00ff and 0xffff both mean "no Alloc-ID" and may repeat. */
+	if (valid && alloc != 0xffff && alloc != 0x00ff)
 		for (i = 0; i < LUNA_XPON_TCONTS; i++)
 			if (i != slot && luna_xpon.tcont[i].valid &&
 			    luna_xpon.tcont[i].alloc == alloc)

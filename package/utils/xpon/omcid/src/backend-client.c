@@ -148,7 +148,8 @@ int omcid_get_topology(struct omci_device *odev, struct omci_ani_topology *t)
 	    result.queues_per_tcont > 0xff || result.queue_config_option > 0xff ||
 	    result.scheduler_policy > 0xff || result.gem_port_count > 0xffff ||
 	    result.qos_configuration > 0xffff || result.downstream_queues_per_uni > 0xff ||
-	    (result.flags & ~OMCI_TOPOLOGY_F_PROFILE_SERVICES))
+	    (result.flags & ~(OMCI_TOPOLOGY_F_PROFILE_SERVICES |
+			       OMCI_TOPOLOGY_F_FULL_UNI_ENTITY)))
 		return -ERANGE;
 	*t = (struct omci_ani_topology) {
 		.tcont_base = result.tcont_base, .scheduler_base = result.scheduler_base,
