@@ -22,11 +22,22 @@ void luna_omci_set_wan_mac(const u8 *mac);
 void luna_omci_rx_errors(u32 *bad_mic, u32 *runt);
 void luna_omci_report_oper_up(void);
 bool luna_gpon_data_ready(void);
+/* Normalized SFU services, independent of the in-kernel OMCI responder. */
+#define LUNA_L2_SERVICES 16
+struct luna_l2_service {
+	u16 vid;
+	u8 flow;
+	u8 lan_mask;
+	bool untagged;
+};
+void rtl9601d_l2_changed(void);
+
 /* omcid in place of the in-kernel responder (luna_xpon.c). */
 struct device;
 struct net_device;
 struct sk_buff;
 #if IS_ENABLED(CONFIG_XPON_OMCI)
+int luna_xpon_l2_services(struct luna_l2_service *services);
 bool luna_xpon_wanted(void);
 bool luna_xpon_active(void);
 bool luna_xpon_data_ready(void);
@@ -39,6 +50,10 @@ void luna_xpon_omci_rx(const u8 *msg, unsigned int len);
 int luna_xpon_tx_flow(struct sk_buff **pskb);
 void luna_xpon_rx_fixup(struct sk_buff *skb);
 #else
+static inline int luna_xpon_l2_services(struct luna_l2_service *services)
+{
+	return -EOPNOTSUPP;
+}
 static inline bool luna_xpon_wanted(void) { return false; }
 static inline bool luna_xpon_active(void) { return false; }
 static inline bool luna_xpon_data_ready(void) { return false; }

@@ -4,8 +4,8 @@
  *
  * PLOAM stays in luna_gpon.c. omcid owns the MIB and asks for T-CONTs, GEM
  * ports and services, which this file binds through luna_xpon_hw.h. The
- * services ride pon0 through the CPU: upstream frames choose their GEM flow
- * by VLAN and get the service's network tag.
+ * CPU fallback selects GEM flows and applies VLAN policy; the V2802RH SFU
+ * offload worker consumes the same service bindings for hardware forwarding.
  */
 #include <linux/ctype.h>
 #include <linux/crc32.h>
@@ -57,6 +57,7 @@ struct luna_xpon_gem {
 };
 
 struct luna_xpon_service {
+	u16 uni_entity;
 	u32 cookie;
 	u16 gem;
 	u16 vlan;
@@ -172,6 +173,7 @@ static void luna_xpon_update_data(void)
 	}
 	spin_unlock_bh(&luna_xpon.svc_lock);
 	WRITE_ONCE(luna_xpon.data_up, up);
+	rtl9601d_l2_changed();
 	luna_xpon_update_carrier();
 }
 
@@ -179,6 +181,7 @@ static void luna_xpon_update_data(void)
  * replays its MIB on the channel event that follows. */
 static void luna_xpon_forget(void)
 {
+	rtl9601d_l2_changed();
 	memset(luna_xpon.tcont, 0, sizeof(luna_xpon.tcont));
 	memset(luna_xpon.gem, 0, sizeof(luna_xpon.gem));
 	WRITE_ONCE(luna_xpon.data_up, false);
@@ -286,11 +289,15 @@ static int luna_xpon_get_ani_topology(struct omci_device *odev,
 		.maximum_queue_size = 3276,
 		.allocated_queue_size = 3276,
 		.tcont_count = LUNA_XPON_TCONTS,
-		.queues_per_tcont = 1,
+		/* Stock's eight queues per T-CONT, WRR: Nokia provisions the
+		 * internet GEM on queue 7 and resets an ONU that lacks it. They
+		 * all drain through the T-CONT's one hardware queue. */
+		.queues_per_tcont = 8,
 		.queue_config_option = 1,
-		.scheduler_policy = 1,
+		.scheduler_policy = 2,
 		.gem_port_count = LUNA_XPON_GEMS,
-		.downstream_queues_per_uni = 1,
+		.downstream_queues_per_uni = 8,
+		.flags = OMCI_TOPOLOGY_F_FULL_UNI_ENTITY,
 	};
 	return 0;
 }
@@ -553,8 +560,11 @@ static int luna_xpon_replace_service(struct omci_device *odev,
 	int flow;
 	unsigned int i;
 
-	if (s->multicast || s->queue)
-		return -EOPNOTSUPP;
+	/* Multicast is downstream only: recorded, never an upstream flow. */
+	if (s->multicast) {
+		flow = -1;
+		goto record;
+	}
 	if (!g || !g->hw)
 		return -EAGAIN;
 	if ((g->dir & s->direction) != s->direction)
@@ -564,7 +574,7 @@ static int luna_xpon_replace_service(struct omci_device *odev,
 	     g->tcont != s->tcont_entity_id))
 		return -EAGAIN;
 	flow = luna_xpon_hw_gem_flow(g - luna_xpon.gem);
-
+record:
 	spin_lock_bh(&luna_xpon.svc_lock);
 	for (i = 0; i < LUNA_XPON_SERVICES; i++) {
 		if (luna_xpon.svc[i].used && luna_xpon.svc[i].cookie == s->cookie) {
@@ -576,6 +586,7 @@ static int luna_xpon_replace_service(struct omci_device *odev,
 	}
 	if (svc)
 		*svc = (struct luna_xpon_service) {
+			.uni_entity = s->uni_entity_id,
 			.cookie = s->cookie,
 			.gem = s->gem_port_id,
 			.vlan = s->vlan_id,
@@ -612,6 +623,80 @@ static int luna_xpon_delete_service(struct omci_device *odev, u32 cookie)
 	luna_xpon_update_data();
 	return 0;
 }
+
+static u8 luna_xpon_lan_mode(const struct luna_xpon_service *s, u16 *uni_vid);
+
+/* The offload worker holds RTNL; backend transactions serialize this copy. */
+int luna_xpon_l2_services(struct luna_l2_service *services)
+{
+	unsigned int i, j;
+	u8 priorities[LUNA_L2_SERVICES] = { 0 };
+	int port, n = 0, rc = 0;
+	u16 uni_vid;
+	u8 mode;
+
+	mutex_lock(&luna_xpon.lock);
+	spin_lock_bh(&luna_xpon.svc_lock);
+	if (!luna_xpon_active() || !luna_xpon_data_ready())
+		goto out;
+	for (i = 0; i < LUNA_XPON_SERVICES; i++) {
+		const struct luna_xpon_service *s = &luna_xpon.svc[i];
+		struct luna_l2_service d;
+
+		if (!s->used)
+			continue;
+		mode = luna_xpon_lan_mode(s, &uni_vid);
+		if (!s->vlan_valid || !s->vlan || s->vlan >= 4095 ||
+		    s->multicast || s->direction != OMCI_GEM_PORT_DIRECTION_BIDIRECTIONAL ||
+		    (mode != OMCI_UNI_VLAN_SAME && mode != OMCI_UNI_VLAN_UNTAGGED)) {
+			rc = -EOPNOTSUPP;
+			goto out;
+		}
+		port = luna_xpon_uni_port(s->uni_entity);
+		/* A VEIP binds both physical LANs; emulated UNI identities stay intact. */
+		if ((port < 0 && s->uni_entity != 0x601) || port > 1) {
+			rc = -EOPNOTSUPP;
+			goto out;
+		}
+		d = (struct luna_l2_service) {
+			.vid = s->vlan,
+			.flow = s->flow,
+			.lan_mask = port < 0 ? 3 : BIT(port),
+			.untagged = mode == OMCI_UNI_VLAN_UNTAGGED,
+		};
+		for (j = 0; j < n; j++) {
+			if (services[j].vid == d.vid) {
+				if (services[j].flow != d.flow ||
+				    services[j].lan_mask != d.lan_mask ||
+				    services[j].untagged != d.untagged) {
+					rc = -EOPNOTSUPP;
+					goto out;
+				}
+				break;
+			}
+			if (services[j].untagged && d.untagged &&
+			    (services[j].lan_mask & d.lan_mask)) {
+				rc = -EOPNOTSUPP;
+				goto out;
+			}
+		}
+		if (j == n)
+			services[n++] = d;
+		priorities[j] |= s->pcp_valid ? BIT(s->pcp) : 0xff;
+	}
+	/* A single-GEM mapper can collapse all eight p-bits into one rule. */
+	for (j = 0; j < n; j++)
+		if (priorities[j] != 0xff) {
+			rc = -EOPNOTSUPP;
+			goto out;
+		}
+	rc = n;
+out:
+	spin_unlock_bh(&luna_xpon.svc_lock);
+	mutex_unlock(&luna_xpon.lock);
+	return rc;
+}
+EXPORT_SYMBOL(luna_xpon_l2_services);
 
 /* SFF-8472 A2h alarm flags, bytes 112-113 as one big-endian word. */
 static const struct {
@@ -673,6 +758,7 @@ static int luna_xpon_get_telemetry(struct omci_device *odev,
 static void luna_xpon_set_operational(struct omci_device *odev, bool operational)
 {
 	WRITE_ONCE(luna_xpon.operational, operational);
+	rtl9601d_l2_changed();
 	luna_xpon_update_carrier();
 }
 
@@ -776,6 +862,8 @@ static void luna_xpon_deliver_state(struct omci_device *odev, u8 state)
 {
 	enum xpon_registration_state reg;
 
+	if (state != GPON_O5)
+		rtl9601d_l2_changed();
 	if (state != GPON_O5)
 		omci_device_set_channel(odev, 0, false);
 	omci_device_set_state(odev, state);
@@ -1084,6 +1172,7 @@ static ssize_t sfu_untag_vlan_store(struct device *dev,
 	spin_lock_bh(&luna_xpon.svc_lock);
 	luna_xpon.untag_vlan = vid;
 	spin_unlock_bh(&luna_xpon.svc_lock);
+	rtl9601d_l2_changed();
 	return count;
 }
 static DEVICE_ATTR_RW(sfu_untag_vlan);
@@ -1137,6 +1226,7 @@ static ssize_t sfu_vlan_map_store(struct device *dev,
 	memcpy(luna_xpon.vlan_map, map, n * sizeof(map[0]));
 	luna_xpon.vlan_maps = n;
 	spin_unlock_bh(&luna_xpon.svc_lock);
+	rtl9601d_l2_changed();
 	return count;
 }
 static DEVICE_ATTR_RW(sfu_vlan_map);

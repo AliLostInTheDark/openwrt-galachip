@@ -403,6 +403,7 @@ struct rtl9602c_eth {
 	struct timer_list poll_timer;	/* IRQ-driven: 100ms TX-unpark backstop; no IRQ: 2ms pure-poll */
 	struct napi_struct napi;
 	int		irq;	/* GMAC0 INTC input (platform_get_irq); <=0 = pure-poll fallback */
+	spinlock_t sw_table_lock;
 	struct rtl9602c_l34 l34;	/* switch L3/L4 (NAPT) hardware-offload engine */
 #ifdef CONFIG_GPON_FLOW_OFFLOAD
 	struct gpon_flow_offload *fo;	/* the COMMON TC lifecycle, drivers/net/gpon/ */
@@ -618,12 +619,23 @@ static void rtl9602c_sw_tbl_pause(void)
 static int rtl9602c_vlan_write(struct rtl9602c_eth *ep, u16 vid, u32 mbr, u32 untag, u32 ext)
 {
 	struct hwio io = luna_sw_io(ep->sw);
+	unsigned long flags;
+	int rc;
 
-	iowrite32((ext << 11) | (untag << 4) | mbr, ep->sw + SW_TBL_WRDATA);
-	iowrite32(SW_TBL_VLAN_WR(vid), ep->sw + SW_TBL_CTRL);
-	return gpon_ind_poll(&io, reg_make(SW_TBL_STS), SW_TBL_BUSY, SW_TBL_TRIES,
-			     rtl9602c_sw_tbl_pause);
+	spin_lock_irqsave(&ep->sw_table_lock, flags);
+	rc = gpon_ind_poll(&io, reg_make(SW_TBL_STS), SW_TBL_BUSY,
+                    SW_TBL_TRIES, rtl9602c_sw_tbl_pause);
+	if (!rc) {
+		iowrite32((ext << 11) | (untag << 4) | mbr, ep->sw + SW_TBL_WRDATA);
+		iowrite32(SW_TBL_VLAN_WR(vid), ep->sw + SW_TBL_CTRL);
+		rc = gpon_ind_poll(&io, reg_make(SW_TBL_STS), SW_TBL_BUSY,
+                     SW_TBL_TRIES, rtl9602c_sw_tbl_pause);
+	}
+	spin_unlock_irqrestore(&ep->sw_table_lock, flags);
+	return rc;
 }
+
+#include "rtl9601d_l2.c"
 
 /* The values the V2802RH's stock RTOS runs with (docs/v2802rh/
  * STOCK-REGISTER-CHECKLIST.md): storm control on meters 8-15, its frame
@@ -1156,6 +1168,7 @@ static int rtl9602c_wan_vid_kill(struct net_device *ndev, __be16 proto, u16 vid)
 }
 
 static const struct net_device_ops rtl9602c_eth_wan_ops = {
+	.ndo_get_port_parent_id = v2802_l2_parent_id,
 #ifdef CONFIG_GPON_FLOW_OFFLOAD
 	.ndo_setup_tc		= rtl9602c_l34_setup_tc,
 #endif
@@ -1441,6 +1454,8 @@ static int rtl9602c_eth_rx(struct rtl9602c_eth *ep, int budget, bool napi_ctx)
 			}
 			/* The switch CPU port prepends a 2-byte offset word ahead */
 			skb_pull(skb, RX_CPU_PREFIX);
+			skb->offload_fwd_mark = v2802_l2_forwarded(skb,
+				luna_gmac_rx_src_port(ep->swm->rx_layout, ep->rx_ring[i].opts3));
 			if (!netif_running(rdev)) {
 				rdev->stats.rx_dropped++;
 				dev_kfree_skb_any(skb);
@@ -1825,6 +1840,7 @@ static void rtl9602c_eth_recover_work(struct work_struct *work)
 	if (ep->closing || !ep->hw_up)
 		return;
 
+	rtl9601d_l2_changed();
 	luna_gpon_nic_reset_begin();
 	ep->in_recovery = true;
 	netdev_warn(ndev,
@@ -2315,6 +2331,7 @@ static void rtl9602c_eth_set_rx_mode(struct net_device *ndev)
 #endif
 
 static const struct net_device_ops rtl9602c_eth_netdev_ops = {
+	.ndo_get_port_parent_id = v2802_l2_parent_id,
 #ifdef CONFIG_GPON_FLOW_OFFLOAD
 	.ndo_setup_tc		= rtl9602c_l34_setup_tc,
 #endif
@@ -2906,6 +2923,7 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	ep->ndev = ndev;
 	ep->dev = dev;
 	spin_lock_init(&ep->tx_lock);
+	spin_lock_init(&ep->sw_table_lock);
 	INIT_WORK(&ep->recover_work, rtl9602c_eth_recover_work);
 
 	ep->base = devm_platform_ioremap_resource(pdev, 0);
@@ -3071,6 +3089,10 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 		if (ret)
 			dev_err(dev, "omcid backend not registered: %d\n", ret);
 	}
+
+	ret = v2802_l2_init(ep);
+	if (ret)
+		dev_warn(dev, "V2802RH L2 offload unavailable: %d\n", ret);
 
 	if (ep->port0_serdes && ep->ext_phy_ok) {
 		ret = devm_delayed_work_autocancel(dev, &ep->port0_link_work,
