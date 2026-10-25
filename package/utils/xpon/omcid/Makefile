@@ -2,7 +2,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=omcid
-PKG_RELEASE:=9
+PKG_RELEASE:=10
 PKG_LICENSE:=GPL-2.0-only LGPL-2.1-or-later
 PKG_BUILD_DEPENDS:=libomci-protocol
 
@@ -12,8 +12,8 @@ define Package/omcid
   SECTION:=utils
   CATEGORY:=Utilities
   SUBMENU:=xPON
-  TITLE:=GC1601 userspace GPON OMCI responder
-  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125) +libomci-protocol
+  TITLE:=Userspace GPON OMCI responder
+  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125||TARGET_realtek_luna) +libomci-protocol
 endef
 
 define Package/omcid/description

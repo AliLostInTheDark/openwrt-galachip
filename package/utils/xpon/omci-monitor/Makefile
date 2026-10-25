@@ -13,7 +13,7 @@ define Package/omci-monitor
   CATEGORY:=Network
   SUBMENU:=xPON
   TITLE:=Read-only OMCI monitor and userspace wire core
-  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125)
+  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125||TARGET_realtek_luna)
 endef
 
 define Package/omci-monitor/description

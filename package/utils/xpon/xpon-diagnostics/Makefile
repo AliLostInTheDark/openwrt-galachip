@@ -13,7 +13,7 @@ define Package/xpon-diagnostics
   CATEGORY:=Utilities
   SUBMENU:=xPON
   TITLE:=Bounded GPON/EPON datapath diagnostic collector
-  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125)
+  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125||TARGET_realtek_luna)
 endef
 
 define Build/Compile

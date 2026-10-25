@@ -12,7 +12,7 @@ define Package/libomci-protocol
   SECTION:=libs
   CATEGORY:=Libraries
   TITLE:=Shared OMCI catalogue, attribute codec and OLT profiles
-  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125)
+  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125||TARGET_realtek_luna)
 endef
 
 define Package/libomci-protocol/description
