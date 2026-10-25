@@ -379,6 +379,153 @@ static const char *mib_value(const uint8_t *d, long n, const char *key)
 	return hit;
 }
 
+/*
+ * The Realtek RTOS ("OSK") storage of the VSOL V2802RH / V2801RD, measured on a
+ * full dump of the unit's 4 MiB NOR:
+ *
+ *   MIB    : be32 clen, be32 sum, then clen bytes of LZSS (4 KiB window, 3..18
+ *            byte matches, LSB-first flag bits) expanding to
+ *            <Config_Information_File_8671> XML of <V N="KEY" V="value"/>.
+ *            sum is the 32-bit total of the compressed bytes as be16 words.
+ *   OSK1FS : "-OSK1FS-", be32 len, be32 sum, then len bytes of entries
+ *            { char name[28]; be32 size; u8 data[size]; } each starting on a
+ *            16-byte boundary. sum is the body's be16 total folded to 16 bits
+ *            with end-around carry. Both checksums match the stock boot log.
+ */
+#define OSK_MAGIC	"-OSK1FS-"
+#define OSK_NAME_LEN	28
+
+static uint32_t sum_be16(const uint8_t *p, uint32_t n)
+{
+	uint32_t s = 0, i;
+
+	for (i = 0; i + 1 < n; i += 2)
+		s += be16(p + i);
+	if (n & 1)
+		s += (uint32_t)p[n - 1] << 8;
+	return s;
+}
+
+static uint32_t fold16(uint32_t s)
+{
+	while (s >> 16)
+		s = (s & 0xffff) + (s >> 16);
+	return s;
+}
+
+static long lzss_expand(uint8_t *out, long max, const uint8_t *in, uint32_t n)
+{
+	uint8_t win[4096];
+	unsigned int r = sizeof win - 18, flags = 0, k;
+	uint32_t i = 0;
+	long o = 0;
+
+	memset(win, ' ', sizeof win);
+	while (i < n) {
+		flags >>= 1;
+		if (!(flags & 0x100)) {
+			flags = in[i++] | 0xff00;
+			if (i >= n)
+				break;
+		}
+		if (flags & 1) {
+			if (o >= max)
+				return -1;
+			out[o++] = win[r] = in[i++];
+			r = (r + 1) & (sizeof win - 1);
+			continue;
+		}
+		if (i + 2 > n)
+			return -1;
+		unsigned int pos = in[i] | ((in[i + 1] & 0xf0) << 4);
+		unsigned int len = (in[i + 1] & 0x0f) + 3;
+
+		i += 2;
+		for (k = 0; k < len; k++) {
+			if (o >= max)
+				return -1;
+			out[o++] = win[r] = win[(pos + k) & (sizeof win - 1)];
+			r = (r + 1) & (sizeof win - 1);
+		}
+	}
+	return o;
+}
+
+/* -> the expanded XML length in filebuf, or -1 when d is not a valid OSK MIB. */
+static long osk_mib(const uint8_t *d, uint32_t n)
+{
+	uint32_t clen;
+	long len;
+
+	if (n < 8)
+		return -1;
+	clen = be32(d);
+	if (!clen || clen > n - 8 || sum_be16(d + 8, clen) != be32(d + 4))
+		return -1;
+	len = lzss_expand(filebuf, FILE_MAX, d + 8, clen);
+	if (len < 0 || !memmem(filebuf, len, "<Config_Information_File", 24))
+		return -1;
+	return len;
+}
+
+static const char *osk_value(const uint8_t *buf, long len, const char *key)
+{
+	static char out[256];
+	char pat[96];
+	int pl = snprintf(pat, sizeof pat, "<V N=\"%s\" V=\"", key);
+	const uint8_t *v = memmem(buf, len, pat, pl), *e;
+
+	if (!v)
+		return NULL;
+	v += pl;
+	e = memchr(v, '"', buf + len - v);
+	if (!e || e - v >= (long)sizeof out)
+		return NULL;
+	memcpy(out, v, e - v);
+	out[e - v] = 0;
+	return out;
+}
+
+/*
+ * One file from the OSK1FS containers in d (each on a 4 KiB boundary).
+ * -> its size, copied to filebuf; -1 when absent, or when a container fails its
+ * checksum (a file it might hold is never guessed at).
+ */
+static long osk1fs_read_file(const uint8_t *d, uint32_t n, const char *name)
+{
+	uint32_t o;
+	int corrupt = 0;
+
+	for (o = 0; o + 16 <= n; o += 0x1000) {
+		const uint8_t *body = d + o + 16;
+		uint32_t len, p;
+
+		if (memcmp(d + o, OSK_MAGIC, 8))
+			continue;
+		len = be32(d + o + 8);
+		if (len > n - o - 16 || fold16(sum_be16(body, len)) != be32(d + o + 12)) {
+			corrupt = 1;
+			continue;
+		}
+		for (p = 0; p + OSK_NAME_LEN + 4 <= len; ) {
+			const uint8_t *ent = body + p;
+			uint32_t size = be32(ent + OSK_NAME_LEN);
+
+			if (size > len - p - OSK_NAME_LEN - 4 || size > FILE_MAX)
+				break;
+			if (strnlen((const char *)ent, OSK_NAME_LEN) == strlen(name) &&
+			    !memcmp(ent, name, strlen(name))) {
+				memcpy(filebuf, ent + OSK_NAME_LEN + 4, size);
+				return size;
+			}
+			p = (p + OSK_NAME_LEN + 4 + size + 15) & ~15u;
+		}
+	}
+	if (corrupt)
+		fprintf(stderr, "rtk_factory: an OSK1FS container failed its checksum\n");
+	return -1;
+}
+
 static const char *chain_value(const uint8_t *buf, long len, const char *key);
 
 /* Extract Value of <... Name="key" ... Value="val" ...> from a buffer; a key
@@ -623,6 +770,7 @@ static ssize_t part_read(const char *part, char *devpath, size_t dplen)
  * and no other unit's will do.
  */
 #define BOSA_CAL_LEN	1024
+#define OSK_BOSA_NAME	"rtl-25l95-backup.bin"
 
 static int remove_file(const char *path)
 {
@@ -680,6 +828,21 @@ static int do_bosa_cal(const char *part, const char *out)
 	} else if (jffs2_root_ino(partbuf, (uint32_t)got, GEN_NAME, &saw) > 0) {
 		picked = GEN_NAME;
 		general = 1;
+	} else if (!saw) {
+		/* The RTOS keeps the same 1024 bytes as an OSK1FS file, with no sidecar. */
+		picked = OSK_BOSA_NAME;
+		flen = osk1fs_read_file(partbuf, (uint32_t)got, picked);
+		if (flen != BOSA_CAL_LEN) {
+			fprintf(stderr, "rtk_factory: no rtkbosa calibration in %s (OSK1FS: %ld)\n",
+				devpath, flen);
+			return 1;
+		}
+		snprintf(sumpath, sizeof sumpath, "%s.md5", out);
+		if (emit_file(out, filebuf, BOSA_CAL_LEN) || remove_file(sumpath))
+			return 1;
+		fprintf(stderr, "rtk_factory: %s -> %s (%d bytes)\n", picked, out,
+			BOSA_CAL_LEN);
+		return 0;
 	} else {
 		fprintf(stderr, "rtk_factory: no rtkbosa calibration in %s%s\n",
 			devpath, saw ? "" : " (no jffs2 nodes at all)");
@@ -872,11 +1035,24 @@ static int do_all(const char *part)
 	char path[256], prefix[40];
 	int is_jffs2 = 0;
 	ssize_t got;
+	long osk_len;
 	unsigned int r;
 
 	got = part_read(part, path, sizeof path);
 	if (got < 0)
 		return 1;
+	osk_len = osk_mib(partbuf, (uint32_t)got);
+	if (osk_len >= 0) {
+		for (m = MAP; m->verb; m++) {
+			const char *val = m->secret ? NULL : osk_value(filebuf, osk_len, m->key);
+
+			if (!val)
+				continue;
+			snprintf(prefix, sizeof prefix, "%s=", m->verb);
+			print_value(m, val, prefix);
+		}
+		return 0;
+	}
 	(void)jffs2_root_ino(partbuf, (uint32_t)got, "", &is_jffs2);
 	fam = jffs2_family(partbuf, (uint32_t)got);
 	if (!fam && is_jffs2) {
@@ -962,6 +1138,12 @@ int main(int argc, char **argv)
 	got = part_read(part, path, sizeof path);
 	if (got < 0)
 		return 1;
+
+	flen = osk_mib(partbuf, (uint32_t)got);
+	if (flen >= 0) {
+		val = osk_value(filebuf, flen, m->key);
+		goto have_val;
+	}
 
 	/* ★★ A JFFS2 FAILURE AND A DIFFERENT FORMAT ARE NOT THE SAME ANSWER. They
 	 * used to share one `if (!val)`, so a CRC rejection, a truncated node and a

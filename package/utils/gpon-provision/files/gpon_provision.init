@@ -326,10 +326,11 @@ set_wifi_cal() {
 }
 
 try_identity() {
-	local part source sn p backend
+	local part calpart source sn p backend
 
 	config_load gpon
 	config_get part storage config_part config
+	config_get calpart storage cal_part "$part"
 	rtk_load "$part"
 	sn=$(gpon_serial "${RTK_sn:-}")
 	[ -n "$sn" ] || { log "no GPON serial available; will retry"; return 1; }
@@ -337,7 +338,7 @@ try_identity() {
 	backend=$(optics_backend)
 	case "$backend" in
 	RTL8290B|self-managed) ;;
-	*) stage_gn_cal "$part" || return 1 ;;
+	*) stage_gn_cal "$calpart" || return 1 ;;
 	esac
 	laser_from_unit "$part" "$backend" || return 1
 	set_password "$part"
