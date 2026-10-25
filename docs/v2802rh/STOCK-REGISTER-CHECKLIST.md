@@ -68,6 +68,32 @@ and packet-header capture buffers. They differ between any two reads.
 
 These change how the board behaves as an L2 bridge today.
 
+**Resolved 2026-10-25.** `realtek,stock-switch-config` (rtl9602c_eth.c,
+`rtl9602c_sw_stock_config()`) applies:
+- stock's storm control, including meters 8–15 read from stock at 0x25004
+  (rate 0x100, packet mode on meter 10);
+- a 1600-byte frame limit;
+- LUT_CFG bits 28/26/23;
+- IGR_BWCTRL bit 1;
+- FIB_REG0 power-down.
+
+A RAM boot read all of these back as stock, with LAN1, LAN2 and the LEDs
+working and a 5 MB transfer through LuCI.
+
+Kept ours, with reasons:
+- **Learning:** stock sets the per-port learn limit to 0, traps over-limit
+  frames to the CPU and floods unknown unicast only to the CPU, so it bridges
+  the LAN in software. Ours learns in hardware.
+- **Aging:** ours ages out learned entries.
+- **IGMP and unknown-multicast:** ours floods them; there is no snooping
+  daemon.
+- **Source-port permit:** ours clears it on purpose.
+- **Interrupt mask:** ours unmasks only what the driver handles.
+- **HSG_SDS_EXT_REG0–3:** they read as status or counters (ours 0x4b, then
+  0x4a across boots), and LAN2 runs at 2.5G.
+
+The blink period moves to the PON section with the PON/LOS LEDs.
+
 | Address | Register | Stock | Ours | Reading | Proposal |
 |---|---|---|---|---|---|
 | 0x17000 | LUT_CFG | 0x14c00bb8 | 0x00400bb8 | Bit 21 (BCAM_DIS) is already cleared as stock; bits 28, 26 and 23 are set only on stock. Fields are unnamed; luna_gpon.c sets bits 22 and 21 by name. | Set 28/26/23 as stock and check LAN1↔LAN2 forwarding |

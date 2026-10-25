@@ -237,6 +237,22 @@ static bool rtl9602c_uni_port_locked(unsigned int port)
 /* P_MISC, the per-port misc word (bit2 = RX_SPC: accept ...
  * dev/MEASURED-rtl9602c_eth.c.md sec 17. */
 #define SW_SYS_LRN_LIMITNO	0x17018	/* system MAC-learn limit [10:0]; 0 = no learning */
+/* Registers realtek,stock-switch-config sets; names are Realtek's (G6 reg list). */
+#define SW_ACCEPT_MAX_LEN_CTRL(p)	(0x11008 + 4 * (p))	/* [1:0] max-length profile */
+#define SW_MAX_LENGTH_CFG1		0x11018
+#define SW_MAX_LENGTH_CFG0		0x23034	/* [13:0] bytes */
+#define SW_STORM_CTRL_UM_CTRL		0x1703c	/* per-port enable, likewise UC/BC/DHCP */
+#define SW_STORM_CTRL_UC_CTRL		0x17040
+#define SW_STORM_CTRL_BC_CTRL		0x17048
+#define SW_STORM_CTRL_DHCP_CTRL		0x17060
+#define SW_STORM_CTRL_UM_METER_IDX	0x1704c	/* 4-bit meter index per port */
+#define SW_STORM_CTRL_UC_METER_IDX	0x17050
+#define SW_STORM_CTRL_BC_METER_IDX	0x17058
+#define SW_STORM_CTRL_DHCP_METER_IDX	0x1706c
+#define SW_METER_GLB_CTRL(m)		(0x25004 + 8 * (m))	/* two words per meter */
+#define SW_METER_PKT_RATE		0x25088	/* [m] meter m counts packets */
+#define SW_IGR_BWCTRL_P_CTRL		0x20010
+#define SW_FIB_REG0			0x22c00	/* the fibre PHY's BMCR */
 #define SW_DLF_ACT_TRAP2CPU	2
 /* Forced ability value: 1000M (speed[1:0]=2) + full duplex (b2) + link-up (b4) */
 #define SW_ABLTY_1G_FD_UP	(0x2 | BIT(2) | BIT(4))
@@ -428,6 +444,7 @@ struct rtl9602c_eth {
 	 * its internal GPHY stays powered down and the MAC link is forced, following
 	 * the SerDes link polled by port0_link_work. */
 	bool		port0_serdes;
+	bool		stock_switch;
 	struct delayed_work port0_link_work;
 
 	/* The external PHY's MDIO bus, bit-banged on two GPIOs as stock does it
@@ -643,6 +660,41 @@ static int rtl9602c_vlan_write(struct rtl9602c_eth *ep, u16 vid, u32 mbr, u32 un
 			     rtl9602c_sw_tbl_pause);
 }
 
+/* The values the V2802RH's stock RTOS runs with (docs/v2802rh/
+ * STOCK-REGISTER-CHECKLIST.md): storm control on meters 8-15, 1600-byte
+ * frames, its LUT_CFG bits and the unused fibre PHY powered down. */
+static void rtl9602c_sw_stock_config(struct rtl9602c_eth *ep)
+{
+	void __iomem *sw = ep->sw;
+	int i;
+
+	for (i = 8; i < 16; i++) {
+		iowrite32(0x100, sw + SW_METER_GLB_CTRL(i));
+		iowrite32(0x27ffe, sw + SW_METER_GLB_CTRL(i) + 4);
+	}
+	iowrite32(BIT(10), sw + SW_METER_PKT_RATE);	/* the broadcast meter */
+	iowrite32(0xd99, sw + SW_STORM_CTRL_UM_METER_IDX);
+	iowrite32(0xfbb, sw + SW_STORM_CTRL_UC_METER_IDX);
+	iowrite32(0xeaa, sw + SW_STORM_CTRL_BC_METER_IDX);
+	iowrite32(0xc88, sw + SW_STORM_CTRL_DHCP_METER_IDX);
+	iowrite32(0x7, sw + SW_STORM_CTRL_UM_CTRL);
+	iowrite32(0x7, sw + SW_STORM_CTRL_UC_CTRL);
+	iowrite32(0x7, sw + SW_STORM_CTRL_BC_CTRL);
+	iowrite32(0x7, sw + SW_STORM_CTRL_DHCP_CTRL);
+
+	iowrite32(1600, sw + SW_MAX_LENGTH_CFG0);
+	iowrite32(0, sw + SW_MAX_LENGTH_CFG1);
+	iowrite32(0, sw + SW_ACCEPT_MAX_LEN_CTRL(0));
+	iowrite32(0, sw + SW_ACCEPT_MAX_LEN_CTRL(1));
+	iowrite32(0, sw + SW_ACCEPT_MAX_LEN_CTRL(ep->swm->cpu_port));
+
+	iowrite32(ioread32(sw + SW_LUT_CFG) | BIT(28) | BIT(26) | BIT(23),
+		  sw + SW_LUT_CFG);
+	iowrite32(ioread32(sw + SW_IGR_BWCTRL_P_CTRL) | BIT(1),
+		  sw + SW_IGR_BWCTRL_P_CTRL);
+	iowrite32(ioread32(sw + SW_FIB_REG0) | BMCR_PDOWN, sw + SW_FIB_REG0);
+}
+
 static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 {
 	if (!ep->sw)
@@ -759,6 +811,9 @@ static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 	/* Force P2 link UP (0xfff). This is REQUIRED for the DS path ...
 	 * dev/MEASURED-rtl9602c_eth.c.md sec 43. */
 	iowrite32(0xfff, ep->sw + SW_ABLTY_FORCE_MODE(ep, ep->swm->pon_port));
+
+	if (ep->stock_switch)
+		rtl9602c_sw_stock_config(ep);
 }
 
 /* THE FIRST RUNG of the declared precedence (bootarg -> ...
@@ -2964,6 +3019,7 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	/* The board's own WAN MAC offset from its stock (X100DG: LAN+1). */
 	of_property_read_u32(dev->of_node, "realtek,wan-mac-offset", &wan_mac_offset);
 	ep->port0_serdes = of_property_read_bool(dev->of_node, "realtek,port0-serdes");
+	ep->stock_switch = of_property_read_bool(dev->of_node, "realtek,stock-switch-config");
 	ret = rtl9602c_ext_phy_init(ep);
 	if (ret)
 		return ret;

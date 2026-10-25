@@ -117,6 +117,7 @@
 &nic {
 	realtek,rx-ring-entries = <128>;
 	realtek,port0-serdes;
+	realtek,stock-switch-config;
 	/* The RTL8221B's MDIO, bit-banged as stock does it: MDC, MDIO. */
 	realtek,ext-mdio-gpios = <&gpio 5 GPIO_ACTIVE_HIGH>, <&gpio 10 GPIO_ACTIVE_HIGH>;
 	realtek,ext-phy-addr = <7>;
