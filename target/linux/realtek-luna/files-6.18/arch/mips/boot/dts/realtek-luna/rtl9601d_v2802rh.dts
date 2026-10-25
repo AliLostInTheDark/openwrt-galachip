@@ -110,6 +110,9 @@
 &nic {
 	realtek,rx-ring-entries = <256>;
 	realtek,port0-serdes;
+	/* The RTL8221B's MDIO, bit-banged as stock does it: MDC, MDIO. */
+	realtek,ext-mdio-gpios = <&gpio 5 GPIO_ACTIVE_HIGH>, <&gpio 10 GPIO_ACTIVE_HIGH>;
+	realtek,ext-phy-addr = <7>;
 };
 
 /* Zbit ZB25VQ32, 4 MiB. U-Boot boots the uImage at 0x27000 (bootcmd bootm

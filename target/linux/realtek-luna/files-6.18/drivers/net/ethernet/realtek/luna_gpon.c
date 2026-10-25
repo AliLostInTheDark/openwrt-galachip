@@ -4704,7 +4704,11 @@ void gpon_pbo_init(void)
 	 * Without it a CPU direct-TX US-OMCI frame never reaches the US-NIC ingress.
 	 * Stock releases the force once trained; we hold it up. */
 	if (!usnic_strip) {
-		sw_field(ABLTY_FORCE_MODE, 4, 0, 0xc);	/* ABLTY_FORCE_MODE[4:0]=0xc — GPON internal-link force   */
+		/* ABLTY_FORCE_MODE[4:0]=0xc — GPON internal-link force. This word is
+		 * port 0's; a board that already forces port 0 whole (V2802RH, its
+		 * SerDes LAN, stock 0xfff) keeps it, or the port loses its forced link. */
+		if ((sw_rd(ABLTY_FORCE_MODE) & 0x1f) != 0x1f)
+			sw_field(ABLTY_FORCE_MODE, 4, 0, 0xc);
 		/* RTL9602C only: 0x0f4 is CFG_FE_POLL_WD_1 here and SSC_CTRL_1 on the
 		 * RTL9603CVD, which has no front-end poll/watchdog to translate to. */
 		if (!is_9603cvd)

@@ -13,6 +13,8 @@
 #include <linux/mii.h>	/* BMCR_* -- the standard MII bit names */
 #include <linux/interrupt.h>	/* request_irq, irqreturn_t, IRQF_SHARED */
 #include <linux/delay.h>
+#include <linux/devm-helpers.h>
+#include <linux/gpio/consumer.h>
 #include <linux/mutex.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
@@ -423,8 +425,16 @@ struct rtl9602c_eth {
 	unsigned int	host_port;
 
 	/* Port 0 runs over the SerDes to an external PHY (DT realtek,port0-serdes):
-	 * its internal GPHY stays powered down and the MAC link is forced. */
+	 * its internal GPHY stays powered down and the MAC link is forced, following
+	 * the SerDes link polled by port0_link_work. */
 	bool		port0_serdes;
+	struct delayed_work port0_link_work;
+
+	/* The external PHY's MDIO bus, bit-banged on two GPIOs as stock does it
+	 * (DT realtek,ext-mdio-gpios = MDC, MDIO; realtek,ext-phy-addr). */
+	struct gpio_desc *ext_mdc, *ext_mdio;
+	u8		ext_phy;
+	bool		ext_phy_ok;	/* answered on that bus; drives port 0's link */
 
 	/* Bootloader GMAC0 control snapshot (inherited). */
 	u32		ub_tcr, ub_rcr, ub_config, ub_cputagcr, ub_cputag1cr;
@@ -2714,6 +2724,200 @@ static int rtl9602c_uni_admin_set(void *cookie, unsigned int port, bool locked)
 	return 0;
 }
 
+/* ---- the external PHY's bit-banged MDIO ----------------------------------
+ * The V2802RH's RTL8221B hangs off GPIO 5 (MDC) and GPIO 10 (MDIO) at address
+ * 7, read from the stock RTOS's own bit-bang routines and its PHY-address
+ * global. The frame timing follows drivers/net/mdio/mdio-bitbang.c. */
+#define EXT_MDIO_C22_START	1
+#define EXT_MDIO_C45_START	0
+#define EXT_MDIO_OP_ADDR	0
+#define EXT_MDIO_OP_WRITE	1
+#define EXT_MDIO_OP_READ_C22	2
+#define EXT_MDIO_OP_READ_C45	3
+
+static void ext_mdio_send_bit(struct rtl9602c_eth *ep, int val)
+{
+	gpiod_set_value(ep->ext_mdio, val);
+	ndelay(400);
+	gpiod_set_value(ep->ext_mdc, 1);
+	ndelay(400);
+	gpiod_set_value(ep->ext_mdc, 0);
+}
+
+static int ext_mdio_get_bit(struct rtl9602c_eth *ep)
+{
+	ndelay(400);
+	gpiod_set_value(ep->ext_mdc, 1);
+	ndelay(400);
+	gpiod_set_value(ep->ext_mdc, 0);
+	return gpiod_get_value(ep->ext_mdio);
+}
+
+static void ext_mdio_send_num(struct rtl9602c_eth *ep, u16 val, int bits)
+{
+	while (bits--)
+		ext_mdio_send_bit(ep, (val >> bits) & 1);
+}
+
+static u16 ext_mdio_get_num(struct rtl9602c_eth *ep, int bits)
+{
+	u16 val = 0;
+
+	while (bits--)
+		val = (val << 1) | ext_mdio_get_bit(ep);
+	return val;
+}
+
+static void ext_mdio_cmd(struct rtl9602c_eth *ep, int start, int op, u8 reg)
+{
+	int i;
+
+	gpiod_direction_output(ep->ext_mdio, 1);
+	for (i = 0; i < 32; i++)
+		ext_mdio_send_bit(ep, 1);
+	ext_mdio_send_num(ep, start, 2);
+	ext_mdio_send_num(ep, op, 2);
+	ext_mdio_send_num(ep, ep->ext_phy, 5);
+	ext_mdio_send_num(ep, reg, 5);
+}
+
+static void ext_mdio_turnaround_write(struct rtl9602c_eth *ep, u16 val)
+{
+	ext_mdio_send_bit(ep, 1);
+	ext_mdio_send_bit(ep, 0);
+	ext_mdio_send_num(ep, val, 16);
+	gpiod_direction_input(ep->ext_mdio);
+	ext_mdio_get_bit(ep);
+}
+
+static int ext_mdio_turnaround_read(struct rtl9602c_eth *ep)
+{
+	int val;
+
+	gpiod_direction_input(ep->ext_mdio);
+	if (ext_mdio_get_bit(ep)) {
+		ext_mdio_get_num(ep, 16);	/* nothing answered: flush the frame */
+		ext_mdio_get_bit(ep);
+		return -EIO;
+	}
+	val = ext_mdio_get_num(ep, 16);
+	ext_mdio_get_bit(ep);
+	return val;
+}
+
+static int ext_mdio_read(struct rtl9602c_eth *ep, u8 reg)
+{
+	ext_mdio_cmd(ep, EXT_MDIO_C22_START, EXT_MDIO_OP_READ_C22, reg);
+	return ext_mdio_turnaround_read(ep);
+}
+
+static void ext_mdio_c45_addr(struct rtl9602c_eth *ep, u8 dev, u16 reg)
+{
+	ext_mdio_cmd(ep, EXT_MDIO_C45_START, EXT_MDIO_OP_ADDR, dev);
+	ext_mdio_turnaround_write(ep, reg);
+}
+
+static int ext_mdio_read_c45(struct rtl9602c_eth *ep, u8 dev, u16 reg)
+{
+	ext_mdio_c45_addr(ep, dev, reg);
+	ext_mdio_cmd(ep, EXT_MDIO_C45_START, EXT_MDIO_OP_READ_C45, dev);
+	return ext_mdio_turnaround_read(ep);
+}
+
+static void ext_mdio_write_c45(struct rtl9602c_eth *ep, u8 dev, u16 reg, u16 val)
+{
+	ext_mdio_c45_addr(ep, dev, reg);
+	ext_mdio_cmd(ep, EXT_MDIO_C45_START, EXT_MDIO_OP_WRITE, dev);
+	ext_mdio_turnaround_write(ep, val);
+}
+
+/* The RTL8221B's LED setup, exactly as stock leaves it (read back through
+ * stock's own "debug ext-mdio c45"): LED0 link at any speed with activity
+ * blink, LED1 1G link, LED2 2.5G link, all three enabled active-high.
+ * Without it the PHY's power-on default leaves the LAN2 lamp dark. */
+static const struct { u16 reg, val; } rtl8221b_stock_leds[] = {
+	{ 0xd032, 0x00a7 },	/* LED0 link 10/100/1000/2500 */
+	{ 0xd034, 0x0004 },	/* LED1 link 1000 */
+	{ 0xd036, 0x0020 },	/* LED2 link 2500 */
+	{ 0xd040, 0x0901 },	/* LCR6: activity on LED0 */
+	{ 0xd044, 0x00f8 },	/* LCR7: LED0-2 enabled, active-high */
+};
+
+#define MDIO_MMD_VEND2_RTL	31
+
+static int rtl9602c_ext_phy_init(struct rtl9602c_eth *ep)
+{
+	struct device *dev = ep->dev;
+	int id1, id2, i;
+	u32 addr;
+
+	ep->ext_mdc = devm_gpiod_get_index_optional(dev, "realtek,ext-mdio", 0,
+						    GPIOD_OUT_LOW);
+	if (IS_ERR(ep->ext_mdc))
+		return PTR_ERR(ep->ext_mdc);
+	if (!ep->ext_mdc)
+		return 0;
+	ep->ext_mdio = devm_gpiod_get_index(dev, "realtek,ext-mdio", 1,
+					    GPIOD_OUT_HIGH);
+	if (IS_ERR(ep->ext_mdio))
+		return PTR_ERR(ep->ext_mdio);
+	if (of_property_read_u32(dev->of_node, "realtek,ext-phy-addr", &addr) ||
+	    addr > 31) {
+		dev_err(dev, "realtek,ext-mdio-gpios without a valid realtek,ext-phy-addr\n");
+		return -EINVAL;
+	}
+	ep->ext_phy = addr;
+
+	id1 = ext_mdio_read(ep, MII_PHYSID1);
+	id2 = ext_mdio_read(ep, MII_PHYSID2);
+	if (id1 < 0 || id2 < 0) {
+		dev_err(dev, "external PHY at MDIO address %u did not answer\n", addr);
+		return 0;
+	}
+	dev_info(dev, "external PHY %04x:%04x at MDIO address %u\n", id1, id2, addr);
+	ep->ext_phy_ok = true;
+	if (id1 != 0x001c || (id2 & 0xfff0) != 0xc840)
+		return 0;
+
+	for (i = 0; i < ARRAY_SIZE(rtl8221b_stock_leds); i++)
+		ext_mdio_write_c45(ep, MDIO_MMD_VEND2_RTL, rtl8221b_stock_leds[i].reg,
+				   rtl8221b_stock_leds[i].val);
+	i = ext_mdio_read_c45(ep, MDIO_MMD_VEND2_RTL, 0xd044);
+	if (i != 0x00f8)
+		dev_warn(dev, "RTL8221B LED setup read back %04x, not 00f8\n", i);
+	return 0;
+}
+
+/* Mirror the external PHY's link into port 0's forced link, so a LAN2 jack
+ * with no cable is a down port to the switch, as a copper port would be. An
+ * administrative lock keeps it down whatever the cable does. BMSR's link bit
+ * latches low, so the second read is the live state. */
+static void rtl9602c_port0_link_work(struct work_struct *work)
+{
+	struct rtl9602c_eth *ep = container_of(to_delayed_work(work),
+					       struct rtl9602c_eth, port0_link_work);
+	u32 cur, want = SW_ABLTY_SERDES_UP;
+	int bmsr;
+	bool up;
+
+	ext_mdio_read(ep, MII_BMSR);
+	bmsr = ext_mdio_read(ep, MII_BMSR);
+	up = bmsr >= 0 && (bmsr & BMSR_LSTATUS);
+
+	mutex_lock(&rtl9602c_gphy_lock);
+	if (!up || rtl9602c_uni_port_locked(0))
+		want &= ~ABLTY_LINK;
+	cur = ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, 0));
+	if (cur != want) {
+		iowrite32(want, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
+		if ((cur ^ want) & ABLTY_LINK)
+			dev_info(ep->dev, "port 0 (SerDes) link %s\n",
+				 want & ABLTY_LINK ? "up" : "down");
+	}
+	mutex_unlock(&rtl9602c_gphy_lock);
+	schedule_delayed_work(&ep->port0_link_work, HZ);
+}
+
 static void rtl9602c_eth_omci_release(void *cookie)
 {
 	WRITE_ONCE(g_ep, NULL);
@@ -2760,6 +2964,9 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	/* The board's own WAN MAC offset from its stock (X100DG: LAN+1). */
 	of_property_read_u32(dev->of_node, "realtek,wan-mac-offset", &wan_mac_offset);
 	ep->port0_serdes = of_property_read_bool(dev->of_node, "realtek,port0-serdes");
+	ret = rtl9602c_ext_phy_init(ep);
+	if (ret)
+		return ret;
 
 	/* Switch core (best-effort; minimal L2 flood enabled at open). */
 	ep->swm = &rtl9602c_sw_map;
@@ -2909,6 +3116,14 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 			else
 				dev_warn(dev, "gpon0 (WAN) register failed; WAN datapath disabled\n");
 		}
+	}
+
+	if (ep->port0_serdes && ep->ext_phy_ok) {
+		ret = devm_delayed_work_autocancel(dev, &ep->port0_link_work,
+						   rtl9602c_port0_link_work);
+		if (ret)
+			return ret;
+		schedule_delayed_work(&ep->port0_link_work, HZ);
 	}
 
 	ep->omci_mds = (u8)omci_mds_seed;	/* poison seed: fail the OLT's ME2 audit so a warm
