@@ -1,0 +1,384 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * LANLY G24W GPON ONU -- Realtek RTL9603CVD.
+ *
+ * Bring-up scaffold: serial console + initramfs, run from RAM.
+ *
+ * WHAT IS CLAIMED, as of 2026-09-02 -- this paragraph said "no Ethernet, no
+ * WiFi, no GPON" and had been wrong for a week, which is worse than saying
+ * nothing: a reader trusts it and stops looking.
+ *   - Ethernet: WORKS. The board answers on its declared LAN address.
+ *   - GPON: WIRED, and NOT working. luna_gpon.c selects this chip's own
+ *     register map (`gpon_swc_9603cvd`, added 2026-08-26) and /proc/gpon
+ *     exists, but activation stops at O1 and the far end reports the ONU
+ *     offline. Measured both firmwares 2026-09-02: the vendor image reaches
+ *     O5 and is Online, so the hardware ranges and the fault is ours. The
+ *     GTC register window reads one constant value at 143 of 152 distinct
+ *     addresses, so every witness above it is a phantom -- see
+ *     dev/FINDING-g24w-gtc-window-returns-a-constant.md before touching an
+ *     offset here.
+ *   - Flash: READ-ONLY, claimed 2026-09-06 (the `mtd-rom` node below). It
+ *     is what lets gpon-provision read this unit's own GPON_SN out of the
+ *     vendor MIB in `config`, so the board announces ITS OWN serial with
+ *     nothing on the kernel command line. Program/erase have no driver.
+ *   - Panel LEDs: PON, LOS and the four socket lamps through the SoC LED
+ *     controller (the gpon node, at the end). PWR is a GPIO lamp and the
+ *     GPIO block is still in the "DELIBERATELY ABSENT" list of
+ *     rtl9603cvd.dtsi.
+ *
+ * Clean-room: board description from observed hardware only.
+ *
+ * WHAT IS MEASURED HERE (tier 1, from the running vendor 4.4.140 kernel,
+ * captured 2026-08-19):
+ *   - MemTotal: 84140 kB
+ *   - the seven-partition flash table below, from the board's own /proc/mtd
+ *     (sizes and erasesize are read; the OFFSETS are derived -- see the
+ *     flash node)
+ *   - four printed Ethernet sockets, 3x100 + 1x1000, presented as QinQ
+ *     eth0.<N>.0 devices bridged into br0
+ *   - one 2.4 GHz radio
+ *
+ * WHAT THE VENDOR KERNEL SAYS ABOUT ITSELF, and why we do NOT copy it:
+ *   /proc/cpuinfo reports `machine : rtk,9607c`. That is strong evidence
+ *   the vendor ships this board with the RTL9607C board description, and
+ *   it is why rtl9603cvd.dtsi is allowed to inherit the 9607C register
+ *   bases as a starting point. It is NOT a reason to put
+ *   "realtek,rtl9607c" in this board's compatible list: the GPON drivers
+ *   in this tree select their PON-MAC table off exactly that string, so
+ *   claiming it would make them probe happily against the wrong chip's
+ *   analog bring-up. The board says what it is; the drivers get taught.
+ */
+
+/dts-v1/;
+
+#include "rtl9603cvd.dtsi"
+
+/ {
+	model = "LANLY G24W (RTL9603CVD)";
+	compatible = "lanly,g24w", "realtek,rtl9603cvd";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		/*
+		 * 115200 is DECLARED by the operator for this bench (and is
+		 * range-checked in the rig's bench table); it is not derived
+		 * from anything in the firmware. `earlycon` with no argument
+		 * resolves through stdout-path above, so it costs nothing and
+		 * is the only thing that will print if the GIC or the timer
+		 * base turns out to be wrong.
+		 */
+		stdout-path = "serial0:115200n8";
+		/* ★★★ keep_bootcon REMOVED 2026-09-07 -- the same defect measured on the
+		 * X111W, where it was the O4 wall itself.  `earlycon` and `console=`
+		 * are the SAME 16550 at 115200 here; keep_bootcon never releases the
+		 * boot console, so every printk is shifted out MORE THAN ONCE and
+		 * printk blocks in console_unlock().  Measured on the X111W: boots
+		 * with it emit 2.91-3.00 copies per message and the PLOAM FSM tick
+		 * stretches 4 ms -> 12 ms; the one boot without it emitted 1.00 and
+		 * went O4 -> O5 in 48 ms.  The FSM polls BETWEEN prints, so this is
+		 * not a logging nicety -- it is the ranging deadline.
+		 * `earlycon` and `ignore_loglevel` STAY: readability was never the
+		 * cost, duplication was, and the boot that ranged had both.
+		 */
+		bootargs = "console=ttyS0,115200 earlycon ignore_loglevel";
+	};
+
+	/*
+	 * The laser driver's two enable pins are SoC GPIOs on this board, and
+	 * both must be driven LOW for the ONU to emit at all. Read by
+	 * luna_gpon.c (luna_laser_gpio_from_dt), which owns the pad because
+	 * it owns the laser.
+	 *
+	 * MEASURED (tier 1, 2026-09-06, this unit on its STOCK firmware at O5,
+	 * stock_peek read-only): PABCD_DIR 0x18003308 = 0x00008014 (pins 2, 4,
+	 * 15 are outputs), PABCD_DAT 0x1800330c = 0xffe3170b (bits 2 and 4
+	 * LOW), switch IO_GPIO_EN (0x3c) = 0x00008014. Tier 2: this board's
+	 * stock kernel config carries CONFIG_TX_DISABLE_GPIO_PIN=2 and
+	 * CONFIG_TX_POWER_GPO_PIN=4 (IKCONFIG embedded in mtd4 k0, and
+	 * /proc/config.gz live). Under OUR image both pins read as INPUTS
+	 * (DIR 0x8000), which is one reason the OLT never heard this board.
+	 *
+	 * Pin 15 is ALSO an output on stock and is NOT declared here: nothing
+	 * in this tree establishes what it drives, and a guessed name is worse
+	 * than an unnamed pin.
+	 */
+	/*
+	 * The UNI panel this board presents over OMCI, MEASURED from its own
+	 * stock firmware (omcicli mib get 11/264, 2026-09-13).
+	 *
+	 * ME 11 (PPTP Ethernet UNI) and ME 264 (UNI-G) are SEPARATE lists and
+	 * neither is derivable from the other.  This board has SIX UNI-Gs against
+	 * four Ethernet UNIs, and numbers its fourth Ethernet UNI 0x0401 -- a
+	 * low byte it shares with the first, 0x0101.  Its PhysicalPortId runs
+	 * 0,1,2,3 over those four, the OPPOSITE order to the X400AXF's.
+	 *
+	 * The ids are full 16-bit OMCI instance numbers, not port indices.
+	 */
+	omci-uni {
+		ethernet-uni-instances = /bits/ 16 <0x0101 0x0102 0x0103 0x0401>;
+		/* The SWITCH PORT each of those instances is, from this board's OWN inverse 0x31c00 and forward 0x31b30, round-tripping
+		 * against its captured gInfo, and agreeing with its own PhysicalPortId.
+		 * ⚠ NEVER COMPUTED: the two Luna boards and the Cortina one run
+		 * their port order in OPPOSITE directions, and one numbers its
+		 * fourth UNI 0x0401, so no arithmetic on an instance id is
+		 * right on more than one board. */
+		ethernet-uni-ports = /bits/ 8 <0 1 2 3>;
+		/* G.988 plug-in type per instance, from this board's own stock:
+		 * 0x0101..0x0103 are FE ports (24) and 0x0401 the GE one (47). */
+		ethernet-uni-types = /bits/ 8 <24 24 24 47>;
+		uni-g-instances = /bits/ 16 <0x0101 0x0102 0x0103 0x0401 0x0601 0x0801>;
+		uni-g-management-capability = /bits/ 8 <1 1 1 1 0 1>;
+		/* What else the OLT counts, from this board's own stock MIB
+		 * (stock_gpon_oracle 2026-10-01, omci_panel.py). */
+		circuit-packs = /bits/ 16 <
+			0x0101  24 3  24  0  0
+			0x0104  47 1   8  0  0
+			0x0106  48 1   8  0  0
+			0x0108  40 1   0  0  0
+			0x0180 248 1 127 16 16>;
+		ip-host-instances = /bits/ 16 <0x0000 0x0001 0x0002 0x0003 0x0004 0x0005>;
+		ip-host-wan-mac = /bits/ 8 <1 1 1 1 1 1>;
+		onu-capacity = /bits/ 16 <16 127 16 127>;
+		downstream-queue-ports = /bits/ 16 <0x0401 0x0101 0x0102 0x0103 0x0601>;
+		/* Stock's CTC ONU capability, OnuType 1 = HGU (omcicli mib get 65529,
+		 * 2026-10-06): without it the HSGQ OLT keeps the type it last saw. */
+		extra-me-instances = /bits/ 16 <65529 0>;
+	};
+
+	pon-optics {
+		realtek,tx-disable-gpio = <2>;	/* driven 0 = laser may emit */
+		realtek,tx-power-gpio = <4>;	/* driven 0 = laser driver powered (active-low) */
+	};
+
+	/*
+	 * RAM -- 128 MiB DDR2, with TWO HARDWARE HOLES the port must respect.
+	 *
+	 * MEASURED (tier 1, this board's own boot console). U-Boot calibrates
+	 * the part and reports its true size; the vendor kernel then carves
+	 * two packet-buffer-offload windows out of it before handing the rest
+	 * to Linux, and prints the resulting map:
+	 *
+	 *   AK: DRAM size=0x8000000                             <- 128 MiB
+	 *   DEBUG_MEM_AUTO: mem_size=0x08000000, bankcnt=0x08,
+	 *                   banksize=0x01000000
+	 *   DEBUG_MEM_AUTO: LUNA_PBO_DL_DRAM_OFFSET = 0x06c00000,
+	 *                   SIZE_BARRIER = 0x00400000            <- 4 MiB hole
+	 *   DEBUG_MEM_AUTO: LUNA_PBO_UL_DRAM_OFFSET = 0x07f00000,
+	 *                   SIZE_BARRIER = 0x00100000            <- 1 MiB hole
+	 *   Determined physical RAM map:
+	 *     memory: 06c00000 @ 00000000 (usable)
+	 *     memory: 00f00000 @ 07000000 (usable)
+	 *
+	 * so the physical layout is:
+	 *
+	 *   0x00000000 - 0x06bfffff   108 MiB  usable
+	 *   0x06c00000 - 0x06ffffff     4 MiB  PBO DOWNLINK  -- hardware DMA
+	 *   0x07000000 - 0x07efffff    15 MiB  usable
+	 *   0x07f00000 - 0x07ffffff     1 MiB  PBO UPLINK    -- hardware DMA
+	 *
+	 * THE TWO RANGES BELOW ARE THE TWO USABLE ONES, VERBATIM. This is
+	 * exactly the map the vendor kernel runs on, which is what makes it
+	 * safe: every byte claimed is a byte a working kernel has been using
+	 * on this silicon, and neither hole is handed to the allocator.
+	 *
+	 * WHY NOT ONE FLAT SPAN: a single 128 MiB memory node would hand the
+	 * kernel the DRAM the PON hardware DMAs into. It would also boot
+	 * fine right up until the PON is brought up in M4, which is the worst
+	 * possible time to discover it.
+	 *
+	 * WHY NOT THE EARLIER 80 MiB: that value predated this console and
+	 * was chosen to stop safely below the first hole. It is not wrong,
+	 * it is just not the board -- it throws away 43 MiB and describes a
+	 * memory map no measurement ever produced.
+	 *
+	 * The "MemTotal: 84140 kB" the running vendor kernel reports is NOT
+	 * the fitted size and must not be used as one: it is what survived
+	 * that kernel's own reservations (it prints "42004K reserved").
+	 */
+	memory@0 {
+		device_type = "memory";
+		reg = <0x00000000 0x06c00000>,	/* 108 MiB below the PBO DL hole */
+		      <0x07000000 0x00f00000>;	/*  15 MiB between the two holes */
+	};
+
+	/*
+	 * ★ CRASH TRACE (2026-08-20).  A reserved DRAM window the kernel writes
+	 * its dying words into, read back from /sys/fs/pstore on the NEXT boot.
+	 *
+	 * WHY HERE AND NOT IN A SHARED .dtsi: the address must land in real RAM on
+	 * THIS board, and the boards on this target do not share a memory map --
+	 * the X111W has one 128 MiB span, the G24W has two with PBO DL holes
+	 * between them.  One shared constant would put a panic into unbacked
+	 * address space on one of them, and every CONFIG_ symbol would still read
+	 * enabled.  It sits beside the memory node above so the two are checked
+	 * together; `crash_trace.py --probe` verifies containment and REFUSES a
+	 * region that crosses a hole.
+	 *
+	 * 0x06000000 is mid-DRAM on purpose: the kernel loads low and U-Boot
+	 * relocates itself to the top, so neither runs through it.
+	 *
+	 * NOT `no-map`: pstore/ram memremaps this window, and carving it out of the
+	 * linear map is what breaks that.  DRAM contents survive a warm reset, so
+	 * this answers a panic or a watchdog bite -- never a power cut.
+	 */
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		ramoops@6000000 {
+			compatible = "ramoops";
+			reg = <0x06000000 0x00020000>;	/* 128 KiB */
+			record-size  = <0x00004000>;	/*  16 KiB per oops/panic */
+			console-size = <0x00010000>;	/*  64 KiB rolling console */
+		};
+	};
+
+	/*
+	 * 16 MB SPI-NOR, read through the controller's memory-mapped window.
+	 *
+	 * ENABLED 2026-09-06. The base and the access method were the two
+	 * unknowns that kept this node disabled; both are now established by
+	 * two independent tiers, which is the bar for believing a value:
+	 *
+	 *   BASE 0x14000000, tier 1 (this unit, its vendor kernel):
+	 *     /proc/iomem   14000000-17ffffff : physmap-flash
+	 *     boot log      physmap platform flash device: 04000000 at 14000000
+	 *     boot log      SPI-F: 5E4018/MMIO16-1/ModeC 1x16 MB      (the loader)
+	 *     boot log      Luna SPI NOR FLASH G3 driver-5E4018/MMIO16-1/ModeC
+	 *   ACCESS, tier 3 (this SoC's own SDK: drivers/mtd/maps + the spi-nor
+	 *   "G3" driver): the vendor registers a physmap device whose resource
+	 *     ends at 0x17ffffff, and its READ path for any offset+len <= 16 MB
+	 *     is a plain memcpy from that window; the SPI-F PIO block at
+	 *     0x18001200 serves program/erase and parts above 16 MB only. So
+	 *     a read-only `mtd-rom` over the window IS the vendor's own read
+	 *     path minus the writes. Nothing to configure: the loader already
+	 *     put the controller in MMIO read mode ("MMIO16-1/ModeC") to boot
+	 *     from it, and nothing in our image touches that mode.
+	 *   JEDEC id 5E4018 (both loader lines): capacity byte 0x18 ->
+	 *     2^24 = 16 MiB, which the partition sum below also gives.
+	 *
+	 * WHAT IT IS FOR: gpon-provision's rtk_factory reads the vendor MIB
+	 * (JFFS2, config_hs.xml) out of `config` and hands GPON_SN /
+	 * GPON_PLOAM_PASSWD / ELAN_MAC_ADDR to the driver -- the SAME chain
+	 * the X111W uses, PROVEN offline on x86 against this unit's own mtd3
+	 * dump before the first boot (sn=XPON23B3CE90, ploam=1234567890,
+	 * mac=5c:19:23:b3:ce:90).
+	 *
+	 * Flash-bootable since 2026-10-19 (operator: every model whose flash holds
+	 * our image): reads through the window, erase/program through the SPI-F
+	 * PIO block luna_nor drives on the X111W -- the vendor's luna_norsf_g3
+	 * uses the same block. r0 carries `linux,rootfs`; a RAM boot ignores it.
+	 */
+	spi_nor: flash@14000000 {
+		compatible = "realtek,luna-spi-nor";
+		reg = <0x14000000 0x1000000>,	/* 16 MiB: JEDEC 5E4018 + the partition sum */
+		      <0x18001200 0x10>;
+		/*
+		 * 4: the width the vendor map declares (tier 3). It does not
+		 * alter the read path -- map_rom copies with memcpy_fromio at
+		 * any width -- so this records the vendor's bus, it chooses none.
+		 */
+		bank-width = <4>;
+
+		/*
+		 * MEASURED, and DIFFERENT from the X111W's declaration: this
+		 * board's /proc/mtd reports erasesize 0x1000 (4 KiB) on every
+		 * partition, and luna_nor erases in these sectors (opcode 0x20).
+		 * It was load-bearing on the earlier read-only mapping too --
+		 * map_rom falls back to the WHOLE CHIP as one erase block when
+		 * this property is absent, which makes the squashfs splitter
+		 * round a rootfs past the end of every partition and publish
+		 * rootfs_data at size 0.
+		 */
+		erase-size = <0x1000>;
+
+		/*
+		 * ★ NO #address-cells/#size-cells HERE. With `fixed-partitions`
+		 * the cells belong to the `partitions` node -- each partition
+		 * child carries its own `reg` against THOSE. Declaring them on
+		 * the flash node too is what `dtc` flags as
+		 * `avoid_unnecessary_addr_size`: this node has no child with a
+		 * `reg` of its own and no `ranges`, so the pair described a
+		 * child address space that does not exist.
+		 */
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			/*
+			 * SIZES and NAMES are MEASURED from /proc/mtd.
+			 *
+			 * OFFSETS: PROVEN 2026-09-06, tier 1 -- the vendor kernel
+			 * prints them as it carves the device (this unit's boot
+			 * log, "Creating 7 MTD partitions on physmap-flash"):
+			 *   0x000000-0x040000 boot     0x040000-0x042000 env
+			 *   0x042000-0x044000 env2     0x044000-0x084000 config
+			 *   0x084000-0x3b8000 k0       0x3b8000-0xe58000 r0
+			 *   0xe58000-0x1000000 framework1
+			 * and its command line carries the same table as
+			 * `mtdparts=physmap-flash:256K(boot),8K(env),...`.
+			 * Every `reg` below matches that print.
+			 *
+			 * SINGLE BANK: there is no k1/r1 here, unlike the
+			 * X111W. Whatever fallback scheme this product uses, it
+			 * is not a second kernel/rootfs pair, and `framework1`
+			 * sits ABOVE r0 -- an overlay appended after the rootfs
+			 * would collide with it.
+			 */
+			partition@0 {
+				label = "boot";
+				reg = <0x000000 0x040000>;	/* 256K */
+				read-only;
+			};
+			partition@40000 {
+				label = "env";
+				reg = <0x040000 0x002000>;	/* 8K -- U-Boot env */
+				read-only;
+			};
+			partition@42000 {
+				label = "env2";
+				reg = <0x042000 0x002000>;	/* 8K -- U-Boot env backup */
+				read-only;
+			};
+			partition@44000 {
+				label = "config";
+				reg = <0x044000 0x040000>;	/* 256K */
+				read-only;
+			};
+			partition@84000 {
+				label = "k0";
+				reg = <0x084000 0x31c000>;	/* 3184K kernel; then the 64K-aligned crashlog */
+			};
+			partition@3b8000 {
+				label = "r0";
+				reg = <0x3b8000 0xaa0000>;	/* 10880K rootfs; mtd5, as the vendor's root=31:5 */
+				linux,rootfs;
+			};
+			partition@e58000 {
+				label = "framework1";
+				reg = <0xe58000 0x1a8000>;	/* 1696K, the vendor's: never written */
+				read-only;
+			};
+			partition@3a0000 {
+				label = "crashlog";	/* declared last: r0 stays mtd5 */
+				reg = <0x3a0000 0x010000>;	/* 64K: onu_crashlog records; 32K unused before r0 */
+			};
+		};
+	};
+};
+
+/* Panel map from this board's stock: PON index 15 and LOS index 9 CPU-forced
+ * (rtk_pon_led_group_set disassembled: the profile's stores are reordered, so
+ * 9/15 read in declaration order is the wrong way round), the four sockets on
+ * indices 17/5/4/13 typed to switch ports 0..3 -- the index set its own
+ * LED_EN/IO_LED_EN capture enables. */
+&gpon {
+	realtek,pon-led = <15>;
+	realtek,los-led = <9>;
+	realtek,port-leds = <17 1>, <5 2>, <4 3>, <13 4>;
+};

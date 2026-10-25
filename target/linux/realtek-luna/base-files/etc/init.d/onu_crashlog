@@ -1,0 +1,11 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Tell onu_crashlog the image revision, so every record it writes from now on names its build.
+START=11
+
+boot() {
+	local p=/sys/module/onu_crashlog/parameters/rev
+	[ -w "$p" ] || return 0
+	. /etc/openwrt_release
+	printf '%s' "${DISTRIB_REVISION:-?}" > "$p"
+}

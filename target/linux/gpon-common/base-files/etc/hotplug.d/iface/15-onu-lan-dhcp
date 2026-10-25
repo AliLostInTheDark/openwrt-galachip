@@ -1,0 +1,18 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Serve DHCP on an interface the moment it comes up. dnsmasq's own procd interface trigger
+# waits in procd's one-at-a-time trigger queue behind every other service's reload: at boot
+# the LAN got no lease until 6-16 s after it was up, on the field X111W only after the WAN.
+[ "$ACTION" = ifup ] && /etc/init.d/dnsmasq enabled || exit 0
+
+dnsmasq_serves() {
+	local iface ignore
+	config_get iface "$1" interface
+	config_get_bool ignore "$1" ignore 0
+	[ "$iface" = "$INTERFACE" ] && [ "$ignore" = 0 ] && serves=1
+}
+
+serves=
+config_load dhcp
+config_foreach dnsmasq_serves dhcp
+[ -n "$serves" ] && /etc/init.d/dnsmasq reload &

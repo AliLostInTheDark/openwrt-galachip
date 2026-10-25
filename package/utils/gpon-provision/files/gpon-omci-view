@@ -1,0 +1,141 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# What the OLT configured on this ONU, decoded from OMCI records (olt1 lines).
+# Usage: gpon-omci-view [file]   (default: /proc/gpon_prov, else /proc/oltcap)
+#        gpon-omci-view --unknown [omci-file [ploam-file]]   what this ONU did not identify
+#                       (default: /proc/gpon_unknown and /proc/ploam_unknown; the dumps there replay)
+if [ "${1:-}" = "--unknown" ]; then
+	om=${2:-/proc/gpon_unknown}
+	pl=${3:-/proc/ploam_unknown}
+	set --
+	[ -r "$om" ] && set -- "$om"
+	[ -r "$pl" ] && set -- "$@" "$pl"
+	[ $# -gt 0 ] || { echo "no record of what this ONU did not identify ($om)" >&2; exit 1; }
+	plok=0
+	[ -r "$pl" ] && plok=1
+	exec awk -v om="$om" -v pl="$pl" -v plok="$plok" '
+function hx(s,   i, v) { v = 0; s = tolower(s); for (i = 1; i <= length(s); i++) v = v * 16 + index("0123456789abcdef", substr(s, i, 1)) - 1; return v }
+function by(h, o) { return hx(substr(h, o * 2 + 1, 2)) }
+function lost(hdr) { return match(hdr, /dropped=[0-9]+/) ? substr(hdr, RSTART + 8, RLENGTH - 8) + 0 : 0 }
+BEGIN {
+	split("success processing-error not-supported parameter-error unknown-ME unknown-instance busy - - attribute-failed", RC, " ")
+	pn = "Upstream_Overhead Serial_Number_Mask Assign_ONU-ID Ranging_Time Deactivate_ONU-ID Disable_Serial_Number"
+	pn = pn " Configure_VP/VC Encrypted_Port-ID Request_Password Assign_Alloc-ID No_message POPUP Request_Key"
+	pn = pn " Configure_Port-ID Physical_Equipment_Error Change_Power_Level PST BER_interval Key_Switching_Time"
+	split(pn " Extended_Burst_Length PON-ID Swift_POPUP Ranging_Adjustment", PN, " ")
+	mt = "4 create 6 delete 8 set 9 get 11 get-all-alarms 12 get-all-alarms-next 13 mib-upload 14 mib-upload-next"
+	mt = mt " 15 mib-reset 18 test 19 start-download 20 download-section 21 end-download 22 activate-image"
+	k = split(mt " 23 commit-image 24 synchronize-time 25 reboot 26 get-next 28 get-current-data 29 set-table", t, " ")
+	for (i = 1; i < k; i += 2) MT[t[i]] = t[i + 1]
+}
+/^olt1-hdr/ { if (FILENAME == pl) pdrop = lost($0); else odrop = lost($0); next }
+$1 != "olt1" || NF != 8 { next }
+FILENAME == pl { ty = by($8, 1); np++; P[np] = sprintf("  PLOAM 0x%02x %s, last at %.1f s: %s", ty, (PN[ty] != "" ? PN[ty] : "not in G.984.3"), $3 / 1e6, $8); next }
+$4 == "d" { h = $8; mt = and(by(h, 2), 31); n++
+	D[n] = (MT[mt] != "" ? MT[mt] : "type " mt) " ME " hx(substr(h, 9, 4)) " #0x" substr(h, 13, 4) (mt == 8 || mt == 9 ? " mask 0x" substr(h, 17, 4) : "")
+	T[n] = $3; M[n] = mt; A[n] = "no answer"; next }
+$4 == "u" && n { rc = by($8, 8); A[n] = (rc && (M[n] < 11 || M[n] > 14)) ? (RC[rc + 1] != "" ? RC[rc + 1] : "result " rc) : "answered, but this ONU holds no model of this class (vendor-range policy)" }
+END {
+	if (n) { print "Not identified by this ONU (the latest of each kind; " om " replays them):"
+		for (i = 1; i <= n; i++) printf "  %s, last at %.1f s: %s\n", D[i], T[i] / 1e6, A[i] }
+	else print "Not identified by this ONU: nothing since boot"
+	if (odrop) print "  ... and " odrop " more kind(s) not kept: the table is full"
+	if (np) { print "PLOAM types this ONU does not handle (" pl "):"; for (i = 1; i <= np; i++) print P[i] }
+	else print "PLOAM this ONU does not handle: " (plok ? "none since boot" : "not observable here (activation runs in the PON-MAC)")
+	if (pdrop) print "  ... and " pdrop " more PLOAM type(s) not kept"
+}' "$@"
+fi
+in=${1:-}
+if [ -z "$in" ]; then
+	for f in /proc/gpon_prov /proc/oltcap; do [ -r "$f" ] && { in=$f; break; }; done
+fi
+[ -n "$in" ] && [ -r "$in" ] || { echo "no OMCI record source (/proc/gpon_prov or /proc/oltcap)" >&2; exit 1; }
+exec awk -v src="$in" '
+function hx(s,   i, v) { v = 0; s = tolower(s); for (i = 1; i <= length(s); i++) v = v * 16 + index("0123456789abcdef", substr(s, i, 1)) - 1; return v }
+function by(h, o) { return hx(substr(h, o * 2 + 1, 2)) }
+function wd(h, o) { return hx(substr(h, o * 2 + 1, 4)) }
+function dw(h, o) { return hx(substr(h, o * 2 + 1, 8)) }
+function ip(h, o) { return dw(h, o) == 0 ? "-" : by(h, o) "." by(h, o + 1) "." by(h, o + 2) "." by(h, o + 3) }
+function txt(h, o, n,   i, c, s) { s = ""; for (i = 0; i < n; i++) { c = by(h, o + i); if (c == 0) break; s = s (c >= 32 && c < 127 ? sprintf("%c", c) : ".") } return s }
+function tz(s) { sub(/(00)+$/, "", s); return s == "" ? "00" : s }
+function pfx(m,   n) { n = 0; while (m > 0) { n += and(m, 1); m = rshift(m, 1) } return n }
+function attrs(cls, m, h,   a, o, sz, out, bit) {
+	# ATTR[cls, a] = size; walk the mask MSB first from content byte 2
+	o = 10; out = ""
+	for (a = 1; a <= 16; a++) {
+		bit = and(m, lshift(1, 16 - a)); if (!bit) continue
+		sz = ATTR[cls, a]; if (sz == "") return out (out ? " " : "") "attr" a "=?"
+		VAL[cls, a] = substr(h, o * 2 + 1, sz * 2); SEEN[cls, a] = 1; o += sz
+	}
+	return out
+}
+BEGIN {
+	split("4 20 14 14", t); for (i = 1; i <= 4; i++) ATTR[131, i] = t[i]
+	split("1 6 25 4 4 4 4 4 4 4 4 25 25", t); for (i = 1; i <= 13; i++) ATTR[134, i] = t[i]
+	split("1 2 2", t); for (i = 1; i <= 3; i++) ATTR[340, i] = t[i]
+	split("1 25 25 25 14", t); for (i = 1; i <= 5; i++) ATTR[148, i] = t[i]
+	ATTR[157, 1] = 1; for (i = 2; i <= 16; i++) ATTR[157, i] = 25
+	ATTR[262, 1] = 2
+	NM[11] = "PPTP Ethernet UNI"; NM[45] = "MAC bridge service profile"; NM[47] = "MAC bridge port"
+	NM[84] = "VLAN tagging filter"; NM[130] = "802.1p mapper"; NM[131] = "OLT-G"; NM[134] = "IP host config"
+	NM[137] = "network address"; NM[138] = "VoIP config"; NM[148] = "authentication method"; NM[157] = "large string"
+	NM[171] = "extended VLAN tagging"; NM[256] = "ONU-G"; NM[257] = "ONU2-G"; NM[262] = "T-CONT"
+	NM[266] = "GEM interworking TP"; NM[268] = "GEM port network CTP"; NM[272] = "GAL Ethernet profile"
+	NM[281] = "multicast GEM interworking TP"; NM[329] = "virtual Ethernet interface point"
+	NM[340] = "TR-069 management server"
+	split("success processing-error not-supported parameter-error unknown-ME unknown-instance busy - - attribute-failed", RC, " ")
+	TP[1] = "Ethernet UNI"; TP[3] = "802.1p mapper"; TP[4] = "IP host"; TP[5] = "GEM port"; TP[6] = "multicast GEM"; TP[11] = "VEIP"
+}
+$1 != "olt1" || NF != 8 { next }
+{
+	h = $8; tci = substr(h, 1, 4); mt = and(by(h, 2), 31); cls = wd(h, 4); inst = wd(h, 6)
+	if ($4 == "u") { if (tci in PEND) { rc = by(h, 8); if (rc) REFUSED[++nref] = PEND[tci] " -> " (RC[rc + 1] ? RC[rc + 1] : "rc " rc); delete PEND[tci] } next }
+	if (mt == 15) { reset++; next }
+	if (mt != 4 && mt != 8 && mt != 6) next
+	what = (mt == 4 ? "create" : mt == 8 ? "set" : "delete") " ME " cls " #0x" sprintf("%04x", inst) (mt == 8 ? " mask 0x" substr(h, 17, 4) : "")
+	PEND[tci] = what
+	if (mt == 6) { DEL[cls, inst] = 1; next }
+	key = cls SUBSEP inst
+	if (!(key in ORDER)) ORDER[key] = ++norder; KEYS[norder] = key
+	if (mt == 4) CREATE[cls, inst] = substr(h, 17, 64)
+	if (mt == 8) { sv = tz(substr(h, 17, 64)); if (!SETN[cls, inst, sv]++) SETV[cls, inst] = SETV[cls, inst] SUBSEP sv }
+	if (mt == 8) { m = wd(h, 8); if (ATTR[cls, 1] != "") { attrs(cls, m, h); for (a = 1; a <= 16; a++) if (SEEN[cls, a]) { IV[cls, inst, a] = VAL[cls, a]; delete SEEN[cls, a] } } }
+	if (cls == 171 && mt == 8 && and(wd(h, 8), 1024)) VLR[++nvlr] = sprintf("#0x%04x %s", inst, substr(h, 21, 32))
+}
+END {
+	if (!norder) { print "no Create or Set from the OLT in " src " (not provisioned yet, or the records were overwritten)"; exit }
+	print "Source: " src (reset ? " (" reset " MIB reset(s) seen)" : "")
+	v = IV[131, 0, 1]; e = IV[131, 0, 2]; r = IV[131, 0, 3]
+	print "OLT identity (ME 131): vendor " (v != "" ? txt(v, 0, 4) : "not reported") ", model " (e != "" && txt(e, 0, 20) != "" ? txt(e, 0, 20) : "not reported by the OLT") ", version " (r != "" && txt(r, 0, 14) != "" ? txt(r, 0, 14) : "not reported by the OLT")
+	for (k = 1; k <= norder; k++) { split(KEYS[k], p, SUBSEP); c = p[1]; i = p[2]
+		if (c == 134 && IV[c, i, 4] != "") {
+			o = hx(IV[c, i, 1]); mk = dw(IV[c, i, 5], 0)
+			print "Management IP (ME 134 #" i "): " (and(o, 1) ? "DHCP" : "static " ip(IV[c, i, 4], 0) "/" pfx(mk) " gateway " ip(IV[c, i, 6], 0)) ", DNS " (IV[c, i, 7] != "" ? ip(IV[c, i, 7], 0) : "-") " " (IV[c, i, 8] != "" ? ip(IV[c, i, 8], 0) : "-") " (options 0x" IV[c, i, 1] ")"
+		}
+		if (c == 84 && CREATE[c, i] != "") { b = CREATE[c, i]; n = by(b, 25); s = ""; for (j = 0; j < n && j < 12; j++) { tci2 = wd(b, j * 2); s = s sprintf(" %d(prio %d)", and(tci2, 4095), rshift(tci2, 13)) }
+			print "VLAN filter (ME 84 #0x" sprintf("%04x", i) "):" (s ? s : " none") ", forward operation 0x" sprintf("%02x", by(b, 24)) }
+		if (c == 47 && CREATE[c, i] != "") { b = CREATE[c, i]; tp = by(b, 3)
+			print "Bridge port (ME 47 #0x" sprintf("%04x", i) "): bridge 0x" sprintf("%04x", wd(b, 0)) " port " by(b, 2) " -> " (TP[tp] ? TP[tp] : "type " tp) " 0x" sprintf("%04x", wd(b, 4)) }
+		if (c == 262 && IV[c, i, 1] != "") print "T-CONT (ME 262 #0x" sprintf("%04x", i) "): alloc-id " hx(IV[c, i, 1])
+		if (c == 268 && CREATE[c, i] != "") { b = CREATE[c, i]; d = by(b, 4)
+			print "GEM port (ME 268 #0x" sprintf("%04x", i) "): port-id " wd(b, 0) ", T-CONT 0x" sprintf("%04x", wd(b, 2)) ", " (d == 3 ? "both directions" : d == 2 ? "downstream" : d == 1 ? "upstream" : "direction " d) }
+		if (c == 11 && SETV[c, i] != "") { nv = split(substr(SETV[c, i], 2), vv, SUBSEP); s = ""; for (j = 1; j <= nv; j++) s = s " " vv[j]; print "Ethernet UNI (ME 11 #0x" sprintf("%04x", i) "): set" s }
+		if (c == 340 && IV[c, i, 2] != "") { acs = hx(IV[c, i, 2]) }
+	}
+	for (j = 1; j <= nvlr; j++) { split(VLR[j], q, " "); b = q[2]; w3 = dw(b, 8); w4 = dw(b, 12)
+		f = (rshift(dw(b, 0), 28) == 15 ? (rshift(dw(b, 4), 28) == 15 ? "untagged" : "single-tagged VID " and(rshift(dw(b, 4), 15), 8191)) : "double-tagged")
+		tr = (rshift(w4, 16) % 16 == 15 ? "no inner tag" : "inner VID " and(rshift(w4, 3), 8191) " prio " and(rshift(w4, 16), 15))
+		print "VLAN rule (ME 171 " q[1] "): " f " frames -> remove " rshift(w3, 30) " tag(s), " (and(rshift(w3, 16), 15) == 15 ? "" : "outer VID " and(rshift(w3, 3), 8191) ", ") tr }
+	if (acs != "") { sec = hx(substr(CREATE[137, acs], 1, 4)); adr = hx(substr(CREATE[137, acs], 5, 4)); url = ""
+		for (a = 2; a <= 16; a++) if (IV[157, adr, a] != "") url = url txt(IV[157, adr, a], 0, 25)
+		print "TR-069 ACS (ME 340 -> 137 #0x" sprintf("%04x", acs) "): " (url != "" ? url : "address not set") ", user " (IV[148, sec, 2] != "" ? "\"" txt(IV[148, sec, 2], 0, 25) "\"" : "-") ", password " (IV[148, sec, 3] != "" ? "set (not shown)" : "-") ", scheme " (IV[148, sec, 1] != "" ? hx(IV[148, sec, 1]) : "-") }
+	np = 0
+	for (k = 1; k <= norder; k++) { split(KEYS[k], p, SUBSEP); c = p[1]; i = p[2]
+		if (NM[c] != "") continue
+		if (!np++) print "Not modelled here (proprietary or rare), as sent:"
+		if (CREATE[c, i] != "") print "  ME " c " #0x" sprintf("%04x", i) " create " tz(CREATE[c, i])
+		nv = split(substr(SETV[c, i], 2), vv, SUBSEP)
+		for (j = 1; j <= nv; j++) print "  ME " c " #0x" sprintf("%04x", i) " set " vv[j] (SETN[c, i, vv[j]] > 1 ? " (x" SETN[c, i, vv[j]] ")" : "")
+	}
+	if (nref) { print "Refused by this ONU:"; for (j = 1; j <= nref; j++) print "  " REFUSED[j] } else print "Refused by this ONU: none"
+}' "$in"

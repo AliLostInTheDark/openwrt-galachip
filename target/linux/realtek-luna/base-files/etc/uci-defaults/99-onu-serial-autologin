@@ -1,0 +1,5 @@
+#!/bin/sh
+# Auto-login root shell on serial console (no password prompt)
+# needed for headless serial access during bring-up
+sed -i 's|::askconsole:/usr/libexec/login.sh|::respawn:/bin/sh|' /etc/inittab
+exit 0

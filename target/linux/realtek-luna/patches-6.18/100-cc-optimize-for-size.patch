@@ -1,0 +1,21 @@
+--- a/Makefile
++++ b/Makefile
+@@ -871,7 +871,17 @@
+ KBUILD_CFLAGS	+= -fno-delete-null-pointer-checks
+
++# RTL9602C (Lexra RLX, 4KC-scheduled) MDU erratum: a load scheduled into the
++# shadow of an integer div/mult (between it and its mflo/mfhi) silently corrupts
++# HI/LO on this core. gcc's post-reload scheduler fills that shadow with loads at
++# every -O level (a -O2 vmlinux measured 142 such windows incl. tcp_ack), so turn
++# that pass off kernel-wide. Verified 0 hazard windows after; modest cost on this
++# in-order core. Proper fix = a -mfix-lexra div-fusion in the toolchain, then drop.
++KBUILD_CFLAGS	+= -fno-schedule-insns2
++
+ ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE
+-KBUILD_CFLAGS += -O2
++# realtek-luna: the NAND kernel partition (k0 = 3 MB) is size-constrained and the
++# OpenWrt config-merge always resolves this choice to PERFORMANCE, so force -Os.
++KBUILD_CFLAGS += -Os
+ KBUILD_RUSTFLAGS += -Copt-level=2
+ else ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
+ KBUILD_CFLAGS += -Os

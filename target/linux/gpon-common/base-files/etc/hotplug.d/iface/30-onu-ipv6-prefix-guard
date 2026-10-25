@@ -1,0 +1,67 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Announce a delegated IPv6 prefix on the LAN only once traffic sent from it comes back.
+# An upstream that delegates a prefix but does not route it leaves every LAN client with a
+# dead IPv6 default, and Android reports "no internet" over a working IPv4. The LAN ships
+# with ip6class 'local' (ULA only); this adds the wan6 class when the probe answers and takes
+# it back when it stops, never committed, so a boot starts unannounced and odhcpd never has
+# a withdrawn prefix to keep advertising for its whole valid lifetime.
+[ "$INTERFACE" = wan6 ] || exit 0
+case "$ACTION" in ifup|ifupdate) ;; *) exit 0 ;; esac
+. /lib/functions/network.sh
+
+LAN=lan
+STATE=/tmp/onu-ipv6-prefix-guard
+PROBE_HOST=6a75
+ANCHORS="2001:4860:4860::8888 2606:4700:4700::1111"
+
+answers() {
+	ping6 -q -c 3 -W 1 -I "$1" "$2" >/dev/null 2>&1
+}
+
+first_answer() {
+	for target in $targets; do
+		answers "$1" "$target" && { echo "$target"; return 0; }
+	done
+	return 1
+}
+
+say() {
+	echo "$1" > "$STATE"
+	logger -t onu-ipv6-prefix-guard "$1"
+}
+
+network_flush_cache
+network_get_prefixes6 prefixes wan6
+network_get_device device wan6
+network_get_gateway6 gateway wan6
+network_get_dnsserver dns wan6
+network_get_ipaddr6 wan_address wan6
+[ -n "$prefixes" ] && [ -n "$device" ] || { say "no delegated prefix: nothing to judge"; exit 0; }
+targets="${gateway:+$gateway%$device} $dns $ANCHORS"
+
+verdict=withdrawn
+why="nothing answered the delegated prefix ($prefixes) from: $targets"
+for prefix in $prefixes; do
+	case "${prefix%%/*}" in *::) ;; *) continue ;; esac
+	probe="${prefix%%/*}$PROBE_HOST"
+	ip -6 addr add "$probe/128" dev lo || { say "could not add the probe address $probe"; exit 1; }
+	answered=$(first_answer "$probe") && { verdict=announced; why="$answered answered $probe"; }
+	ip -6 addr del "$probe/128" dev lo || logger -t onu-ipv6-prefix-guard "could not remove $probe"
+	[ "$verdict" = announced ] && break
+done
+if [ "$verdict" = withdrawn ] && [ -n "$wan_address" ] && answered=$(first_answer "$wan_address"); then
+	why="$why; $answered answers the WAN address $wan_address, so upstream does not route the prefix back"
+fi
+
+case " $(uci -q get "network.$LAN.ip6class") " in
+*" wan6 "*) lan_state=announced ;;
+"  ") lan_state=open ;;
+*) lan_state=withheld ;;
+esac
+case "$verdict:$lan_state" in
+announced:withheld) uci add_list "network.$LAN.ip6class=wan6" && ubus call network reload ;;
+withdrawn:announced) uci del_list "network.$LAN.ip6class=wan6" && ubus call network reload ;;
+withdrawn:open) uci add_list "network.$LAN.ip6class=local" && ubus call network reload ;;
+esac
+say "$verdict: $why"

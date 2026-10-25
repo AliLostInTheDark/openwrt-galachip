@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/dts-v1/;
+
+#include "rtl9602c.dtsi"
+
+/ {
+	model = "VSOL V2801RGW (RTL9602C, LAN bring-up)";
+	compatible = "vsol,v2801rgw", "realtek,rtl9602c";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+		/* The family's line plus this module's reference crystal: the
+		 * RTL8192EE here runs on 25 MHz (stock: "clock 25MHz",
+		 * AFE_CTRL2 = 0x05), mainline assumes 40 MHz. */
+		bootargs = "console=ttyS0,115200 earlycon ignore_loglevel rtl8192ee.xtal_khz=25000";
+	};
+
+	memory@0 {
+		device_type = "memory";
+		reg = <0x00000000 0x02f00000>, <0x03000000 0x00f00000>;
+	};
+
+	/* Own stock map and bsp_prom_meminit exclude these; purpose is unproven. */
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		stock-reserved@2f00000 {
+			no-map;
+			reg = <0x02f00000 0x00100000>;
+		};
+
+		stock-reserved@3f00000 {
+			no-map;
+			reg = <0x03f00000 0x00100000>;
+		};
+	};
+
+	/* The X111W's pad routing, which this board has run with so far:
+	 * IO_GPIO_EN w0 w1, GPIO dir/data ABCD, dir/data EFGH. */
+	pon-optics {
+		/* MENTECHOPTO NOG22-D6C-ST: its stock kernel carries no host laser
+		 * calibration at all (no RTL8290B, no GN25L95 symbol) */
+		realtek,optics-self-managed;
+		realtek,gpio-pads = <0x40202006 0x00000819 0x40002006 0xdbff1246
+				     0x00000819 0x000037e5>;
+	};
+
+	/* What the OLT counts, from this board's own stock MIB (stock_gpon_oracle
+	 * 2026-10-06, omci_panel.py): one GE UNI, and 30 upstream queues spread
+	 * unevenly over 16 T-CONTs. */
+	omci-uni {
+		ethernet-uni-instances = /bits/ 16 <0x0101>;
+		ethernet-uni-ports = /bits/ 8 <0>;
+		ethernet-uni-types = /bits/ 8 <47>;
+		uni-g-instances = /bits/ 16 <0x0101 0x0601 0x0501>;
+		uni-g-management-capability = /bits/ 8 <1 0 1>;
+		circuit-packs = /bits/ 16 <
+			0x0106  48 1  8  0  0
+			0x0102  32 1  0  0  0
+			0x0105  40 1  0  0  0
+			0x0180 248 1 64 16 16>;
+		ip-host-instances = /bits/ 16 <0x0000 0x0001 0x0002>;
+		ip-host-wan-mac = /bits/ 8 <0 0 0>;
+		onu-capacity = /bits/ 16 <16 64 16 64>;
+		downstream-queue-ports = /bits/ 16 <0x0101 0x0601>;
+		upstream-queues-per-tcont = /bits/ 8 <4 4 2 1 1 1 1 1 1 1 1 1 1 2 4 4>;
+		/* Stock's CTC ONU capability: HGU, TX power supply control 1 (the
+		 * core serves 2 undeclared); without it the HSGQ OLT keeps the ISP
+		 * ONU type it last saw. */
+		ctc-onu-capability = /bits/ 8 <0 1 1 1>;
+		extra-me-instances = /bits/ 16 <65529 0>;
+	};
+};
+
+/* The laser is keyed (operator, 2026-10-03): the module drives it itself
+ * (/pon-optics above) and the GTC's burst-enable gates it, active high as
+ * stock's "burst-enable polarity: high". */
+&gpon {
+	/* Panel map from the stock kernel (board_01_led_init, pon_led_*_spec_type_00,
+	 * libmib set_los_led_state): PON index 6, LOS index 10, the copper port's
+	 * lamp index 5 on switch port 1 (type 2). */
+	realtek,pon-led = <6>;
+	realtek,los-led = <10>;
+	realtek,port-leds = <5 2>;
+};
+
+/* Stock's WAN MAC is LAN+5: the OLT learnt 80:14:a8:87:d0:2d behind this
+ * unit's row while stock ran (2026-09-30). */
+&nic {
+	realtek,wan-mac-offset = <5>;
+};
+
+/* The identity the OLT and the LAN see (VSOL/GZNO/V1.1, GPON SN, LOID, factory
+ * MAC) lives in this unit's own `config` partition, which rtk_factory reads
+ * (proven offline on the 2026-09-26 mapped capture, CRC32 8c72e6b7) -- its
+ * U-Boot has no bootargs variable to carry any of it. Same SoC and PIO block
+ * as the X111W: read through the memory-mapped window, erase/program through
+ * the controller, so the OpenWrt overlay in r0 persists. The six partitions
+ * are this unit's own /proc/mtd and U-Boot environment (8 MiB, one bank:
+ * flashing bank 0 replaces stock, so the full NOR is dumped first). */
+&spi_nor {
+	compatible = "realtek,luna-spi-nor";
+	reg = <0x14000000 0x800000>, <0x18001200 0x10>;
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		partition@0 {
+			label = "boot";
+			reg = <0x000000 0x040000>;	/* 256K */
+			read-only;
+		};
+		partition@40000 {
+			label = "env";
+			reg = <0x040000 0x002000>;	/* 8K */
+			read-only;
+		};
+		partition@42000 {
+			label = "env2";
+			reg = <0x042000 0x002000>;	/* 8K */
+			read-only;
+		};
+		partition@44000 {
+			label = "config";
+			reg = <0x044000 0x05c000>;	/* 368K, the identity */
+			read-only;
+		};
+		partition@a0000 {
+			label = "k0";
+			reg = <0x0a0000 0x290000>;	/* 2624K kernel (img0_kernel), the crashlog behind it */
+		};
+		partition@340000 {
+			label = "r0";
+			reg = <0x340000 0x4c0000>;	/* 4864K rootfs + overlay; stays mtd5 */
+			linux,rootfs;
+		};
+		partition@330000 {
+			label = "crashlog";	/* declared last, so r0 keeps its index */
+			reg = <0x330000 0x010000>;	/* 64K: onu_crashlog records, operator 2026-10-18 */
+		};
+	};
+};

@@ -1,0 +1,17 @@
+Subject: [DEBUG] realtek-luna: memblock alloc memset split breadcrumbs (temporary)
+
+--- a/mm/memblock.c
++++ b/mm/memblock.c
+@@ -1724,8 +1724,11 @@
+ 		     &max_addr, (void *)_RET_IP_);
+ 	ptr = memblock_alloc_internal(size, align,
+ 					   min_addr, max_addr, nid, false);
+-	if (ptr)
++	if (ptr) {
++		pr_emerg("LUNA: mb ptr=%px sz=%llx pre-memset\n", ptr, (unsigned long long)size);
+ 		memset(ptr, 0, size);
++		pr_emerg("LUNA: mb post-memset\n");
++	}
+ 
+ 	return ptr;
+ }

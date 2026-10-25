@@ -1,0 +1,81 @@
+#!/bin/sh
+# Per-board WiFi personalization (runs at boot, before netifd brings up wireless).
+# SSID and key are this unit's stock (label) values, else a unique ONU-<MAC>
+# name and a random key; WPA2-PSK, never open. See CLAUDE.md.
+
+# This unit's MAC in the order every identity consumer uses (unit_mac: the factory
+# partition, else the flasher's boot parameter) -- never eth0, which without a
+# pin holds the driver's random.
+. /lib/functions/onu-identity.sh
+unit_mac && MAC=$UNIT_MAC || MAC=""
+SN=$(/usr/sbin/rtk_factory -p config sn 2>/dev/null)
+
+# A MAC every unit carries is no identity -- none, the family placeholders, a
+# group address. Such a unit gets a locally administered one from what else is
+# its own (its GPON serial, else this boot), never a literal shared by the fleet.
+unit_mac_valid "$MAC" || {
+	H=$(printf '%s' "${SN:-$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)}" | sha256sum | cut -c1-10)
+	MAC="02:$(echo "$H" | sed 's/\(..\)/\1:/g; s/:$//')"
+	logger -t onu-wifi "no factory MAC: WiFi identity $MAC derived from ${SN:-this boot}"
+}
+
+# SSID + key = this unit's stock values (operator 2026-10-16), read as one pair: the
+# first row of the vendor's SSID chain, else its flat pair; else ONU-<last 3 MAC
+# octets> and a random per-unit key. ONE name and key on every band; never logged.
+SUFFIX=$(echo "$MAC" | awk -F: '{ printf "%s%s%s", toupper($4), toupper($5), toupper($6) }')
+pick() {
+	S=$(/usr/sbin/rtk_factory -p config "$1" 2>/dev/null)
+	P=$(/usr/sbin/rtk_factory -p config "$2" 2>/dev/null)
+	case "$S$P" in *\'*) return 1 ;; esac
+	[ -n "$S" ] && [ "${#P}" -ge 8 ] && SSID=$S && PSK=$P
+}
+pick wlan_ssid wlan_psk || pick wlan_ssid_flat wlan_psk_flat || {
+	SSID="ONU-$SUFFIX"
+	PSK=$(head -c 32 /dev/urandom | sha256sum | cut -c1-16)
+}
+
+# Default 2.4GHz channel = one of the 3 non-overlapping channels (1/6/11), chosen
+# per board from the MAC's last octet -- THE ONE RULE, the same as Elnath's
+# 10_wireless and the suite's wifi_channel_from_mac_2g (a sha256 rule here agreed
+# with them on a third of the MACs).  Many ONUs share one RF zone; a fleet fans
+# out across 1/6/11 with zero coordination; ACS on this driver just re-picks ch1.
+CHIDX=$(( 0x$(printf '%s' "$MAC" | tr -d ':' | tail -c 2) % 3 ))
+CHAN=$(echo 1 6 11 | cut -d' ' -f$((CHIDX + 1)))
+[ -n "$CHAN" ] || CHAN=1
+
+uci -q batch <<EOF
+set wireless.radio0.channel='$CHAN'
+# WPA2-PSK for now. WPA2/WPA3-mixed (sae-mixed) needs 802.11w/PMF, which the rtl8192fe
+# AP driver does not yet support -- with sae-mixed a WPA3-first phone fails SAE and may
+# not fall back, giving zero association. WPA2-only is deterministic (all clients use the
+# WPA2 path). Re-enable sae-mixed once PMF is added to the driver.
+set wireless.radio0.country='BO'
+# Enable 802.11b/CCK legacy rates (1/2/5.5/11) so the beacon is a standard 2.4GHz
+# beacon transmitted at 1 Mbit CCK. Without this (OpenWrt default legacy_rates=0)
+# the AP is OFDM-only and beacons at 6 Mbit; some phones will NOT list a 2.4GHz AP
+# that has no CCK basic rates -- confirmed: with legacy_rates the phone sees the AP
+# where before it was invisible. (An mt7921e/Linux client is lenient and saw it either
+# way; strict phone scan firmware requires the CCK-rate beacon.)
+set wireless.radio0.legacy_rates='1'
+commit wireless
+EOF
+for IF in default_radio0 default_radio1; do
+	uci -q get wireless.$IF >/dev/null || continue
+	uci -q batch <<EOF
+set wireless.$IF.ssid='$SSID'
+set wireless.$IF.encryption='psk2'
+set wireless.$IF.key='$PSK'
+commit wireless
+EOF
+done
+
+# The BSSID is this unit's own MAC. The driver's compiled-in board cal carries ONE
+# unit's address, so without this every flashed unit of a model shares one BSSID.
+case "$MAC" in
+??:??:??:??:??:??)
+	uci -q set wireless.default_radio0.macaddr="$MAC"
+	uci -q commit wireless
+	;;
+esac
+
+exit 0

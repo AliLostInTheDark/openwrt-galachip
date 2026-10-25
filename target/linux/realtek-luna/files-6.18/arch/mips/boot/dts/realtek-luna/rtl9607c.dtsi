@@ -1,0 +1,249 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Realtek RTL9607C GPON ONU SoC (MIPS interAptiv core, "8198D" family).
+ *
+ * Clean-room device description from observed hardware facts: register
+ * bases, interrupt numbers and clock rates read from a running unit. The
+ * interrupt model is a single-core Coherent Processing System -- a CP0
+ * interrupt controller feeding a MIPS GIC; peripherals hang off the GIC.
+ * The system tick comes from the Realtek Otto SoC timer (the GIC local
+ * timer / CP0 compare are not used on this part), so no gic-timer node.
+ *
+ * GIC interrupt cells are <type hwirq flags>: type 0 = GIC_SHARED,
+ * flags 4 = IRQ_TYPE_LEVEL_HIGH.
+ */
+
+#include "luna.dtsi"
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	compatible = "realtek,rtl9607c", "rtk,8198d";
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "mti,interaptiv";
+			reg = <0>;
+		};
+	};
+
+	clocks {
+		/* OCP/SoC reference clock generator. */
+		apro_clk: apro-soc-clk {
+			compatible = "rtk,apro-ocpclk";
+			#clock-cells = <1>;
+		};
+
+		/* LX (Lexra) peripheral bus clock, 200 MHz; feeds the Otto timer. */
+		lx_clk: lx-clk {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <200000000>;
+		};
+	};
+
+	/* 512 MB DDR3 is calibrated (U-Boot reports "DRAM size=0x20000000"), but
+	 * only the low 288 MB (0x00000000-0x12000000) is actually decoded to the
+	 * MIPS core. A clean U-Boot uncached md scan responds at phys 0, 128 MB,
+	 * 256 MB and 288 MB but HANGS at 320 MB (0x14000000) -- the upper range is
+	 * the packet-engine / auxiliary processor plus undecoded space and does
+	 * NOT answer CPU reads/writes. Claiming any of it makes the top-down
+	 * memblock alloc in setup_zero_pages() touch a non-responding address and
+	 * hang. So cap usable RAM at the highest md-confirmed-responding boundary,
+	 * 0x12000000. All KSEG0 low memory, so HIGHMEM is unnecessary. */
+	memory@0 {
+		device_type = "memory";
+		reg = <0x00000000 0x12000000>;	/* 288 MB usable (CPU-decoded; 0x14000000+ does not respond) */
+	};
+
+	cpuintc: interrupt-controller {
+		#address-cells = <0>;
+		#interrupt-cells = <1>;
+		interrupt-controller;
+		compatible = "mti,cpu-interrupt-controller";
+	};
+
+	/* DesignWare APB interrupt aggregator (cascaded on CP0 IRQ 2). */
+	ictl: interrupt-controller@1f000000 {
+		compatible = "rtk,dw-apb-ictl";
+		reg = <0x1f000000 0x100>;
+		interrupt-controller;
+		#interrupt-cells = <1>;
+		interrupt-parent = <&cpuintc>;
+		interrupts = <2>;
+	};
+
+	gic: interrupt-controller@1fbc0000 {
+		compatible = "mti,gic";
+		reg = <0x1fbc0000 0x20000>;
+		interrupt-controller;
+		#interrupt-cells = <3>;
+		interrupt-parent = <&cpuintc>;
+		interrupts = <2>;
+		/* No mti,gic-timer child: the SoC timer below drives the tick. */
+	};
+
+	/*
+	 * Realtek Otto SoC timer. Five register banks: the first four are
+	 * per-CPU clockevents (GIC_EXT_TC0..TC3), the fifth (0x...280) is the
+	 * free-running clocksource (GIC_EXT_TC7). Driven by the mainline
+	 * timer-rtl-otto driver via timer_probe().
+	 */
+	timer@18003200 {
+		compatible = "realtek,otto-timer";
+		reg = <0x18003200 0x10>,
+		      <0x18003210 0x10>,
+		      <0x18003220 0x10>,
+		      <0x18003230 0x10>,
+		      <0x18003280 0x10>;
+		interrupt-parent = <&gic>;
+		interrupts = <0 0 4>,	/* TC0 */
+			     <0 1 4>,	/* TC1 */
+			     <0 2 4>,	/* TC2 */
+			     <0 3 4>,	/* TC3 */
+			     <0 7 4>;	/* TC7 (clocksource) */
+		clocks = <&lx_clk>;
+	};
+
+	/* The family watchdog at TC_BASE + 0x60. Its kick reloads on the RTL9601D,
+	 * RTL9602C and RTL9603CVD (measured 2026-10-08), and this unit's own stock
+	 * kernel feeds the same block every 5 s ("CPU0 kick watchdog!" on onu4).
+	 * The live proof on our 9607C image is owed: U-Boot could not be caught on
+	 * this unit that day. */
+	watchdog@18003260 {
+		compatible = "realtek,rtl9607c-wdt", "realtek,rtl960x-wdt";
+		reg = <0x18003260 0xc>;
+		clocks = <&lx_clk>;
+		timeout-sec = <30>;
+	};
+
+	uart0: serial@18002000 {
+		compatible = "ns16550a";
+		reg = <0x18002000 0x100>;
+		reg-shift = <2>;
+		reg-io-width = <1>;
+		clock-frequency = <197235200>;
+		interrupt-parent = <&gic>;
+		interrupts = <0 23 4>;
+	};
+
+	switch@0 {
+		compatible = "rtk,switch";
+		interrupt-parent = <&gic>;
+		interrupts = <0 15 4>;
+	};
+
+	/*
+	 * GMAC0 is the CPU port to the on-chip switch and is brought up as eth0.
+	 * No MAC is baked in: it is per-board, supplied at boot (U-Boot ethaddr
+	 * -> DT/nvmem -> random LAA), never compiled into the image. The switch
+	 * core (phys 0x1b000000) is programmed directly by the NIC driver; the
+	 * other GMAC instances (GMAC1 @0x18014000 IRQ 38, GMAC2 @0x18016000
+	 * IRQ 40) are unused by the minimal LAN datapath.
+	 */
+	nic: ethernet@18012000 {
+		compatible = "realtek,rtl9607c-nic";
+		reg = <0x18012000 0x2000>;
+		interrupt-parent = <&gic>;
+		interrupts = <0 36 4>;
+	};
+
+	usb@0 {
+		compatible = "rtk,usb";
+		interrupt-parent = <&gic>;
+		interrupts = <0 51 4>;
+	};
+
+	usb@1 {
+		compatible = "rtk,usb";
+		interrupt-parent = <&gic>;
+		interrupts = <0 17 4>;
+	};
+
+	usb@2 {
+		compatible = "rtk,usb";
+		interrupt-parent = <&gic>;
+		interrupts = <0 52 4>;
+	};
+
+	gpio: gpio@1b000038 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		compatible = "rtk,gpio";
+		/* Data/direction window + the per-bank interrupt/config window. */
+		reg = <0x1b000038 0x0c>, <0x18003308 0x54>;
+
+		bank@0 {
+			gpio-controller;
+			interrupt-controller;
+			reg = <0>;
+			ngpios = <32>;
+			#gpio-cells = <2>;
+			#interrupt-cells = <2>;
+			interrupt-parent = <&gic>;
+			interrupts = <0 21 4>;
+		};
+
+		gpio1: bank@1 {
+			gpio-controller;
+			interrupt-controller;
+			reg = <1>;
+			ngpios = <32>;
+			#gpio-cells = <2>;
+			#interrupt-cells = <2>;
+			interrupt-parent = <&gic>;
+			interrupts = <0 22 4>;
+		};
+
+		bank@2 {
+			gpio-controller;
+			interrupt-controller;
+			reg = <2>;
+			ngpios = <32>;
+			#gpio-cells = <2>;
+			#interrupt-cells = <2>;
+			interrupt-parent = <&gic>;
+			interrupts = <0 18 4>;
+		};
+	};
+
+	/* GPIO lines used to reset the PCIe endpoints / Ethernet PHY at probe. */
+	board_setting {
+		pci0_gpio_rst = <&gpio1 8 0>;
+		pci1_gpio_rst = <&gpio1 7 0>;
+		rtl8221b_dev0_reset = <&gpio1 28 1>;
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		/* Shared memory window for the SoC's auxiliary processor IPC. */
+		ipc_shm: ipc-shm@10000000 {
+			no-map;
+			reg = <0x10000000 0x600000>;
+		};
+	};
+
+	/* Doorbell/mailbox to the auxiliary processor, backed by ipc_shm. */
+	soft_ipc@18141180 {
+		compatible = "rtk,soft_ipc";
+		memory-region = <&ipc_shm>;
+		reg = <0x18141180 0x04>, <0x18141184 0x04>;
+		interrupt-parent = <&gic>;
+		interrupts = <0 45 4>;
+		pe-ipc-cpuid = <0>;
+	};
+};
+
+/* The GPON block raises the switch interrupt, GIC shared 15 like switch@0 above
+ * (stock's "apl_sw"): a downstream PLOAM is answered from it, not the FSM tick. */
+&gpon {
+	interrupt-parent = <&gic>;
+	interrupts = <0 15 4>;
+};

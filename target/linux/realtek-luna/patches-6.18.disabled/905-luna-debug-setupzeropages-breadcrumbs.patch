@@ -1,0 +1,14 @@
+Subject: [DEBUG] realtek-luna: setup_zero_pages breadcrumbs (temporary)
+
+--- a/arch/mips/mm/init.c
++++ b/arch/mips/mm/init.c
+@@ -68,7 +68,9 @@
+ 	else
+ 		order = 0;
+ 
++	pr_emerg("LUNA: szp0-before-alloc\n");
+ 	empty_zero_page = (unsigned long)memblock_alloc_or_panic(PAGE_SIZE << order, PAGE_SIZE);
++	pr_emerg("LUNA: szp1-after-alloc\n");
+ 
+ 	zero_page_mask = ((PAGE_SIZE << order) - 1) & PAGE_MASK;
+ }

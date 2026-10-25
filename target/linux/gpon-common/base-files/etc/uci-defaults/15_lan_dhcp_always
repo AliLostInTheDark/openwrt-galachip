@@ -1,0 +1,7 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Serve DHCP on the LAN always, as stock's udhcpd does: without `force`, dnsmasq stays silent
+# on the LAN for the whole boot once another server answers its probe (operator, 2026-10-08).
+uci -q get dhcp.lan >/dev/null || exit 0
+uci set dhcp.lan.force=1
+uci commit dhcp

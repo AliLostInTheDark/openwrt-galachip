@@ -1,0 +1,39 @@
+Subject: [DEBUG] realtek-luna: trap_init breadcrumbs to pinpoint the post-parity interAptiv hang (temporary)
+
+--- a/arch/mips/kernel/traps.c
++++ b/arch/mips/kernel/traps.c
+@@ -2541,6 +2541,7 @@
+ 	 * it different ways.
+ 	 */
+ 	parity_protection_init();
++	pr_emerg("LUNA: trap1 post-parity\n");
+ 
+ 	/*
+ 	 * The Data Bus Errors / Instruction Bus Errors are signaled
+@@ -2608,9 +2609,11 @@
+ 		set_except_vector(EXCCODE_THREAD, handle_mt);
+ 
+ 	set_except_vector(EXCCODE_DSPDIS, handle_dsp);
++	pr_emerg("LUNA: trap2 vectors-set\n");
+ 
+ 	if (board_cache_error_setup)
+ 		board_cache_error_setup();
++	pr_emerg("LUNA: trap3 cache-err-setup\n");
+ 
+ 	if (cpu_has_vce)
+ 		/* Special exception: R4[04]00 uses also the divec space. */
+@@ -2620,11 +2623,14 @@
+ 	else
+ 		set_handler(0x080, &except_vec3_generic, 0x80);
+ 
++	pr_emerg("LUNA: trap4 pre-iflush\n");
+ 	local_flush_icache_range(ebase, ebase + vec_size);
++	pr_emerg("LUNA: trap5 post-iflush\n");
+ 
+ 	sort_extable(__start___dbe_table, __stop___dbe_table);
+ 
+ 	cu2_notifier(default_cu2_call, 0x80000000);	/* Run last  */
++	pr_emerg("LUNA: trap6 trap-end\n");
+ }
+ 
+ static int trap_pm_notifier(struct notifier_block *self, unsigned long cmd,

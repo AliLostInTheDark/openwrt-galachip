@@ -1,0 +1,46 @@
+Subject: [DEBUG] mm_core_init early breadcrumbs (temporary)
+
+--- a/mm/mm_init.c
++++ b/mm/mm_init.c
+@@ -2678,30 +2678,41 @@
+  */
+ void __init mm_core_init(void)
+ {
++	pr_emerg("LUNA: mci0-start\n");
+ 	arch_mm_preinit();
++	pr_emerg("LUNA: mci1-after-arch_mm_preinit\n");
+ 	hugetlb_bootmem_alloc();
++	pr_emerg("LUNA: mci2-after-hugetlb\n");
+ 
+ 	/* Initializations relying on SMP setup */
+ 	BUILD_BUG_ON(MAX_ZONELISTS > 2);
+ 	build_all_zonelists(NULL);
++	pr_emerg("LUNA: mci3-after-zonelists\n");
+ 	page_alloc_init_cpuhp();
++	pr_emerg("LUNA: mci4-after-page_alloc_cpuhp\n");
+ 	alloc_tag_sec_init();
+ 	/*
+ 	 * page_ext requires contiguous pages,
+ 	 * bigger than MAX_PAGE_ORDER unless SPARSEMEM.
+ 	 */
+ 	page_ext_init_flatmem();
++	pr_emerg("LUNA: mci5-after-page_ext\n");
+ 	mem_debugging_and_hardening_init();
++	pr_emerg("LUNA: mci6-after-mem_dbg_harden\n");
+ 	kfence_alloc_pool_and_metadata();
++	pr_emerg("LUNA: mci7-after-kfence\n");
+ 	report_meminit();
++	pr_emerg("LUNA: mci8-after-report_meminit\n");
+ 	kmsan_init_shadow();
+ 	stack_depot_early_init();
++	pr_emerg("LUNA: mci9-after-stackdepot\n");
+ 
+ 	/*
+ 	 * KHO memory setup must happen while memblock is still active, but
+ 	 * as close as possible to buddy initialization
+ 	 */
+ 	kho_memory_init();
++	pr_emerg("LUNA: mci10-after-kho\n");
+ 
+ 	pr_emerg("LUNA: mci-before-free_all\n");
+ 	memblock_free_all();

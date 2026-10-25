@@ -1,0 +1,78 @@
+#!/bin/sh
+# GPON WAN cold-start auto-recovery watchdog.
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# The RTL9602C upstream TX serializer/CMU analog lock is non-deterministic at
+# COLD START: on roughly 40-60% of cold boots the OLT never provisions the ONU
+# (no downstream data ever flows -> DHCP never completes). The lock is latched
+# at chip power-on and CANNOT be re-rolled at runtime -- a soft SerDes re-init
+# or re-range does not recover it (proven by HW A/B; stock firmware has no
+# runtime TX-PLL relock for this silicon either). A full power-on REBOOT does
+# re-roll the analog, so this watchdog detects the stuck state and reboots until
+# WAN provisions: "fail at boot, work after a reboot". Entirely ONU-side -- it
+# never sends anything to the OLT.
+#
+# Health signal: gpon0 rx_packets. Once the OLT provisions the ONU, downstream
+# frames (multicast/broadcast, then the DHCP OFFER and data) are demuxed to
+# gpon0 and rx_packets climbs > 0. On the stuck cold-start lock ("Laser-out")
+# it stays exactly 0. A reboot cap (persisted on the overlay rootfs) stops an
+# infinite loop on a genuinely dead optic / when no fibre is connected.
+
+IFACE=gpon0
+THRESHOLD=180          # seconds since boot before declaring WAN dead (slowest
+                       # healthy lease ~135s; rx>0 happens earlier -> safe margin)
+POLL=10                # seconds between checks
+MAXREBOOT=6            # give up after this many auto-reboots (1-0.5^6 ~= 98.4%)
+COUNTF=/etc/gpon-wan-recover.count   # persists on the overlay rootfs (NOT on a
+                                     # pure initramfs, where it resets each boot)
+ENABLE=0		# DISABLED: soft/WDT reboot does NOT re-roll the cold-start analog lock (only a physical power cut does) -> auto-reboot cannot recover WAN. Kept for reference; enable only if a HW power-cycle GPIO is wired.
+
+# Optional site overrides (ENABLE / THRESHOLD / POLL / MAXREBOOT / IFACE).
+[ -f /etc/gpon-wan-recover.conf ] && . /etc/gpon-wan-recover.conf
+
+# note(): record to syslog AND to the kernel console (/dev/kmsg, crit level so it
+# survives a quiet console loglevel) — the reboot reason must be visible on the
+# serial line, not only in a syslog that the reboot then discards.
+note() {
+	logger -t gpon-wan-recover "$1"
+	echo "<2>gpon-wan-recover: $1" > /dev/kmsg 2>/dev/null
+}
+
+[ "$ENABLE" = "1" ] || { note "disabled (ENABLE=$ENABLE)"; exec sleep infinity; }
+
+rxc()       { cat /sys/class/net/"$IFACE"/statistics/rx_packets 2>/dev/null || echo 0; }
+uptime_s()  { cut -d. -f1 /proc/uptime 2>/dev/null || echo 0; }
+
+# Wait (bounded) for the WAN netdev to appear.
+i=0
+while [ ! -e /sys/class/net/"$IFACE" ] && [ "$i" -lt 30 ]; do sleep 2; i=$((i+1)); done
+
+note "watchdog armed (iface=$IFACE threshold=${THRESHOLD}s maxreboot=$MAXREBOOT)"
+
+while :; do
+	rx=$(rxc)
+	if [ "${rx:-0}" -gt 0 ] 2>/dev/null; then
+		note "WAN provisioned (rx_packets=$rx) -- clearing reboot count, monitor idle"
+		rm -f "$COUNTF" 2>/dev/null
+		# Stop here: do NOT reboot mid-session if the link drops later. A
+		# provisioned link is stable; cold-start is the only failure mode.
+		exec sleep infinity
+	fi
+
+	up=$(uptime_s)
+	if [ "${up:-0}" -ge "$THRESHOLD" ]; then
+		n=0; [ -f "$COUNTF" ] && n=$(cat "$COUNTF" 2>/dev/null)
+		n=$(( ${n:-0} + 1 ))
+		if [ "$n" -gt "$MAXREBOOT" ]; then
+			note "WAN still dead after $MAXREBOOT auto-reboots -- giving up (check fibre/optic/OLT). Monitor idle."
+			exec sleep infinity
+		fi
+		echo "$n" > "$COUNTF" 2>/dev/null; sync
+		note "WAN not provisioned ${up}s after boot (rx_packets=0) -- auto-reboot $n/$MAXREBOOT to re-roll the cold-start lock"
+		sleep 2
+		reboot
+		exec sleep infinity   # reboot is asynchronous; stop looping
+	fi
+
+	sleep "$POLL"
+done

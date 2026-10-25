@@ -1,0 +1,409 @@
+#!/bin/sh /etc/rc.common
+# Per-board GPON ONU provisioning. Reads THIS unit's identity from the factory
+# (apmib) config partition and applies it before the network starts, so one
+# identical image self-provisions an entire fleet. Factory flash is read-only.
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+START=09
+USE_PROCD=1
+
+RTK=/usr/sbin/rtk_factory
+ENVFILE=/var/run/gpon.env
+BOSA_CAL_DST=/lib/firmware/rtkbosa_k.bin
+LASER_PARAM_DIR=/sys/module/luna_gpon/parameters
+GPON_SN_PATHS="/sys/module/luna_gpon/parameters/onu_sn
+/sys/module/gpon_luna/parameters/onu_sn
+/sys/module/gpon_rtl9602c/parameters/onu_sn
+/sys/module/gpon/parameters/onu_sn"
+GPON_PWD_PATHS="/sys/module/luna_gpon/parameters/onu_password"
+# This unit's WiFi cal from its MIB (HW_WLAN0_*): rtk_factory verb wlan_<x> ->
+# rtl8192fe parameter unit_<x>. All or nothing: the driver needs the whole set.
+WIFI_CAL_VERBS="wlan_cck_a wlan_cck_b wlan_ht40_a wlan_ht40_b wlan_thermal wlan_xcap wlan_reg_domain"
+WIFI_CAL_DIR=/sys/module/rtl8192fe/parameters
+KMSG=/dev/kmsg
+GPON_HEALTH=/proc/gpon_health
+
+. /lib/functions/gpon-cal.sh
+. /lib/functions/onu-identity.sh
+
+# logd starts after this START=09 script, so syslog alone loses every boot-time line
+# (G24W 2026-10-12: a failed factory read left no trace). The kernel log keeps them.
+log() {
+	logger -t gpon_provision "$@"
+	echo "gpon_provision: $*" >> "$KMSG" 2>/dev/null
+}
+
+# Every factory field from ONE rtk_factory read (the fields cost ~0.12 s each when
+# asked one by one): RTK_<verb>, and RTK_HAS_<verb>=1 when the unit has the key,
+# since an empty value is not an absent one (see set_password).
+rtk_load() {
+	local k v out
+	for k in ${RTK_LOADED:-}; do unset "RTK_$k" "RTK_HAS_$k"; done
+	RTK_LOADED=
+	out=$("$RTK" -p "$1" all 2>/dev/null) ||
+		log "factory read of '$1' failed (rc $?); a re-read says: $("$RTK" -p "$1" all 2>&1 >/dev/null)"
+	while IFS='=' read -r k v; do
+		case "$k" in ''|*[!a-z0-9_]*) continue ;; esac
+		eval "RTK_$k=\$v; RTK_HAS_$k=1"
+		RTK_LOADED="$RTK_LOADED $k"
+	done <<EOF
+$out
+EOF
+}
+
+rtk_need() { [ -n "${RTK_LOADED:-}" ] || rtk_load "$1"; }
+
+apply_mac() {
+	local ifname="$1" mac="$2"
+	[ -n "$mac" ] || return 1
+	if [ ! -d "/sys/class/net/$ifname" ]; then
+		log "iface $ifname absent; MAC $mac not applied yet"
+		return 1
+	fi
+	# Idempotent: skip if already set.
+	[ "$(cat /sys/class/net/$ifname/address 2>/dev/null)" = "$mac" ] && return 0
+	# Set the MAC LIVE, without a down/up: eth0 is the SHARED GMAC that carries the
+	# GPON upstream OMCI TX. Bringing it down tears down the GMAC rings and the
+	# GPON-specific TX setup (done once at driver probe, not re-done on ndo_open),
+	# permanently killing the US-OMCI path -> the OLT keeps issuing Deactivate /
+	# "Laser out" and the ONU churns O5<->O1. The driver sets IFF_LIVE_ADDR_CHANGE
+	# so a live address write just reprograms the RX-filter IDR (TX untouched).
+	ip link set dev "$ifname" address "$mac" && log "set $ifname MAC $mac (live)"
+}
+
+provision() {
+	local source part base mac oui sn loid loid_pw ploam vid
+
+	config_load gpon
+	config_get source identity source factory
+	config_get part   storage  config_part config
+	config_get base   storage  base_ifname eth0
+	config_get mac    identity mac
+	config_get oui    identity oui
+	config_get sn     identity sn
+	config_get loid    identity loid
+	config_get loid_pw identity loid_passwd
+	config_get ploam   identity ploam_passwd
+	config_get vid     identity pon_vendor_id
+
+	if [ -x "$RTK" ]; then
+		rtk_load "$part"
+		# manual: a value left empty keeps the factory one (cloning only the serial keeps the MAC).
+		if [ "$source" = "factory" ]; then
+			mac=${RTK_mac:-}
+			oui=${RTK_oui:-}
+			sn=${RTK_sn:-}
+		else
+			[ -n "$mac" ] || mac=${RTK_mac:-}
+			[ -n "$oui" ] || oui=${RTK_oui:-}
+			[ -n "$sn" ]  || sn=${RTK_sn:-}
+		fi
+		[ -n "$vid" ]     || vid=${RTK_vendor_id:-}
+		# SW-block params: adopt the factory value only where the installer left UCI empty.
+		[ -n "$loid" ]    || loid=${RTK_loid:-}
+		[ -n "$loid_pw" ] || loid_pw=${RTK_loid_passwd:-}
+		[ -n "$ploam" ]   || ploam=${RTK_ploam_passwd:-}
+	fi
+
+	mac=$(echo "$mac" | tr 'A-F' 'a-f')
+	if [ -n "$mac" ] && ! unit_mac_valid "$mac"; then
+		log "factory MAC '$mac' on '$part' is a placeholder or not unicast - not this unit's identity"
+		mac=""
+	fi
+	if [ -z "$mac" ]; then
+		# ★★ NO FACTORY MAC: DO NOT STOMP A MAC SOMEBODY BETTER ALREADY SET.
+		# MEASURED on the LANLY G24W (census 2026-08-27, mac_parity_vs_stock
+		# FAIL): the kernel driver had taken the unit's real MAC from the
+		# `mac=` boot parameter at probe, and this fallback then overwrote
+		# eth0 with derive_laa() -- which, with no /proc/cpuinfo Serial, is
+		# md5(boot_id): a DIFFERENT random every boot. The board wore a fresh
+		# identity per boot and every MAC-keyed measurement described
+		# something else. The next source is the boot parameter itself, read
+		# from the command line: eth0's current address without one is the
+		# driver's random, and adopting it pinned an invented MAC into uci.
+		mac=$(cmdline_mac)
+		if unit_mac_valid "$mac"; then
+			log "no factory MAC on '$part' - using $mac from the mac= boot parameter; PROVISIONING MISSING on this unit"
+		else
+			mac=""
+			# No identity from any source: none is invented (operator, 2026-10-01).
+			log "NO factory MAC on '$part' and no mac= boot parameter - no MAC is invented; PROVISIONING MISSING on this unit"
+		fi
+	fi
+
+	# Hand the GPON identity to the OMCI/GPON stack (Phase 1C consumer) FIRST,
+	# before touching netifd/uci (which can be slow/incomplete at START=09) — the
+	# env file is the authoritative per-board data and must always be written.
+	umask 077
+	mkdir -p "$(dirname "$ENVFILE")" 2>/dev/null
+	{
+		echo "GPON_MAC=$mac"
+		echo "GPON_OUI=$oui"
+		echo "GPON_SN=$sn"
+		echo "GPON_LOID=$loid"
+		echo "GPON_LOID_PASSWD=$loid_pw"
+		echo "GPON_PLOAM_PASSWD=$ploam"
+		echo "PON_VENDOR_ID=$vid"
+	} > "$ENVFILE"
+
+	log "provisioned: MAC=$mac SN=${sn:-?} (source=$source)"
+
+	set_wifi_cal "$part"
+
+	apply_mac "$base" "$mac"
+
+	# netifd builds br-lan AFTER this early (START=09) script and resets the
+	# bridge port to the driver default, so also pin the per-board MAC in UCI on
+	# bridge device sections for netifd to apply (best-effort; the GPON identity
+	# exported below is the authoritative per-board data for the ONU stack).
+	if [ -n "$mac" ] && [ -f /etc/config/network ]; then
+		local sec cid
+		for sec in $(uci -q show network 2>/dev/null | \
+			     sed -n "s/^network\.\([^.=]*\)\.type='bridge'\$/\1/p"); do
+			uci -q set "network.$sec.macaddr=$mac"
+		done
+		# Pin a STABLE, per-board WAN DHCP client-id (option 61 = 01:<MAC>, like a
+		# normal Ethernet host). This image RAM-boots with no persistent storage, so
+		# without this OpenWrt generates a fresh RFC4361 UUID-DUID client-id every boot;
+		# the OLT-side DHCP server (dnsmasq) keys leases on the client-id, so each boot
+		# looked like a NEW client and consumed a new pool address -> pool exhaustion ->
+		# no DHCP OFFER (no WAN). A MAC-derived client-id is stable per board + unique
+		# across the 1000-board fleet, so each board keeps a single lease.
+		# Derive the WAN (gpon0) MAC = LAN MAC + 3 (this model's stock offset, CONFIRMED
+		# from the live stock firmware's own DHCP lease: hostname RTK_GW, MAC ..b1 =
+		# LAN ..ae + 3, client-id 01:..b1; the 2nd ONU agrees, base ..a2 -> WAN ..a5 = +3).
+		# MUST match the driver's wan_mac_offset (default 3). 48-bit add (bash, carries up).
+		# ★★★ AND THE OFFSET IS THE FALLBACK, NOT THE SOURCE (MEASURED 2026-09-18
+		# on the G24W / RTL9603CVD, where it is WRONG). That die's WAN MAC is
+		# LAN+5, not LAN+3: br-lan 5c:19:23:b3:ce:90, gpon0 ...:95, while this
+		# code computed ...:93 and advertised client-id 015c1923b3ce93. Stock
+		# sends 01 + its own WAN MAC (...95), dnsmasq keys leases on the
+		# CLIENT-ID, so the SAME board held TWO leases -- ours .215 and stock's
+		# .216 -- and every probe keyed on the declared address then reported
+		# "no WAN" about a board whose WAN was up. It cost eight stock benchmark
+		# cells: the PPPoE AC reads the ONU's WAN MAC from the neighbour entry
+		# for that address, found nothing, and refused to start.
+		# ⇒ ASK THE INTERFACE. Its address IS the value this needs; an offset is
+		# a guess about a die, and the offset that was CONFIRMED on the X111W
+		# family (+3, and correct there) was silently applied to a die that does
+		# not share it. The computation stays as the LAST resort, for the boot
+		# where the netdev is not up yet, and the log SAYS which one answered --
+		# a client-id nobody can attribute is how this went unnoticed for weeks.
+		local wanoff=3 lannum wannum wanhex wansrc wanif
+		wanif="${ifname:-gpon0}"
+		if [ -r "/sys/class/net/$wanif/address" ]; then
+			wanhex=$(tr -d ':' < "/sys/class/net/$wanif/address" | tr 'A-F' 'a-f')
+			wansrc="$wanif's own MAC"
+		fi
+		case "$wanhex" in
+		[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+		*)	wanhex="" ;;
+		esac
+		if [ -z "$wanhex" ]; then
+			lannum=$(printf '%d' "0x$(echo "$mac" | tr 'A-F' 'a-f' | tr -d ':')" 2>/dev/null)
+			wannum=$((lannum + wanoff))
+			wanhex=$(printf '%012x' "$wannum")
+			wansrc="LAN+$wanoff (COULD NOT READ $wanif -- a per-die guess)"
+		fi
+		logger -t gpon-provision "wan client-id 01$wanhex from $wansrc"
+		# Stable per-board WAN DHCP client-id (option 61 = 01:<WAN-MAC>), EXACTLY like stock
+		# (RTK_GW used 01:..b1). Stable across reboots + unique per board -> one lease, no
+		# pool exhaustion (this RAM-boot image otherwise emits a random DUID client-id/boot).
+		uci -q set "network.wan.clientid=01$wanhex"
+		# ROOT fix: pin a STABLE, MAC-derived system DUID. This RAM-boot image has no
+		# persistent /etc/machine-id, so OpenWrt otherwise generates a fresh RANDOM
+		# DUID-UUID every boot (from boot_id) -> the DHCPv4 RFC4361 client-id AND the
+		# DHCPv6 DUID change every boot -> the OLT-side server treats each boot as a new
+		# client and burns a fresh lease -> DHCP pool exhaustion (no OFFER -> no WAN), and
+		# would do the same fleet-wide. A DUID-LL (type 3, hw 1) derived from the per-board
+		# MAC is stable across reboots and unique per board, fixing IPv4 + IPv6.
+		uci -q set "network.globals.dhcp_default_duid=00030001$wanhex"
+		uci -q commit network 2>/dev/null
+	fi
+
+}
+
+# The optics the driver identified: RTL8290B, GN25L95, self-managed or unknown (a GN
+# part names itself only once calibrated); empty when the driver does not say.
+optics_backend() {
+	sed -n 's/^optics_backend: //p' "$GPON_HEALTH" 2>/dev/null
+}
+
+# RTL8290B: THIS unit's laser currents, handed to the driver before the serial
+# that starts ranging -- two units on one image never share a calibration.
+laser_from_unit() {
+	local part="$1" out key val
+	case "$2" in RTL8290B|'') ;; *) return 0 ;; esac
+	[ -w "$LASER_PARAM_DIR/laser_bias" ] || return 0
+	out=$("$RTK" -p "$part" laser_cal 2>/dev/null) || {
+		log "no RTL8290B laser calibration on '$part'"
+		return 0
+	}
+	for key in laser_bias laser_mod; do
+		val=$(echo "$out" | sed -n "s/^${key}_dac=//p")	# the full 12-bit DAC code
+		{ [ -n "$val" ] && echo "$val" > "$LASER_PARAM_DIR/$key"; } || {
+			log "could not hand $key='$val' to the driver; not activating GPON"
+			return 1
+		}
+	done
+	log "laser from this unit: $(echo $out)"
+}
+
+# GN25L95: the host calibrates the part from this unit's rtkbosa file. A failed
+# stage must not leave older bytes available to request_firmware.
+stage_gn_cal() {
+	local part="$1" tmp why=
+	tmp=$(mktemp -d /tmp/gpon-cal.XXXXXX) || return 1
+	if ! "$RTK" -p "$part" bosa_cal "$tmp/cal" 2>"$tmp/err" ||
+	   ! gpon_cal_stage "$tmp/cal" "$tmp/cal.md5" "$BOSA_CAL_DST" 1024 2>>"$tmp/err"; then
+		why=$(cat "$tmp/err")
+		why=${why:-no reason given}
+	fi
+	rm -f "$tmp/cal" "$tmp/cal.new" "$tmp/cal.md5" "$tmp/cal.md5.new" "$tmp/err" ||
+		log "could not remove calibration candidate files in $tmp"
+	rmdir "$tmp" || log "could not remove calibration candidate directory $tmp"
+	[ -n "$why" ] || return 0
+	rm -f "$BOSA_CAL_DST" || {
+		log "cannot withdraw stale GN25L95 calibration; not activating GPON"
+		return 1
+	}
+	log "GN25L95 calibration unavailable ($why); GPON activation waits for it"
+}
+
+# The PLOAM password stock sends: LuCI/UCI first, else this unit's factory MIB, where an
+# EMPTY value is sent as ten zero octets as stock does; only a MIB without the key keeps
+# the driver's default. Written before the serial, whose write
+# starts ranging. The newline is what lets an empty value reach the driver at all.
+set_password() {
+	local pw p
+	rtk_need "$1"
+	pw=$(gpon_ploam_password "${RTK_HAS_ploam_passwd:+1}" "${RTK_ploam_passwd:-}") || {
+		log "no PLOAM password in this unit's MIB - the driver keeps its default"
+		return 0
+	}
+	for p in $GPON_PWD_PATHS; do
+		[ -w "$p" ] || continue
+		printf '%s\n' "$pw" > "$p" && { log "PLOAM password handed to the driver"; return 0; }
+		log "PLOAM password refused by the driver (0..10 printable characters)"
+		return 0
+	done
+}
+
+# The OMCI identity (onu-identity.sh omci_id_apply): LuCI/UCI first, else this
+# unit's MIB, read once by rtk_factory. Refusals are logged, never fatal.
+rtk_mib_value() { eval "printf '%s' \"\${RTK_$1:-}\""; }
+set_omci_identity() {
+	rtk_need "$1"
+	omci_id_apply rtk_mib_value | while read -r msg; do log "$msg"; done
+}
+
+# Before the radio starts (hw_init applies it), so this unit calibrates with its
+# own TX power and crystal trim instead of another unit's.
+set_wifi_cal() {
+	local part="$1" verb val vals=""
+	[ -d "$WIFI_CAL_DIR" ] || return 0
+	rtk_need "$part"
+	for verb in $WIFI_CAL_VERBS; do
+		eval "val=\${RTK_$verb:-}"
+		case "$verb" in
+		wlan_cck_*|wlan_ht40_*)
+			echo "$val" | grep -qxE '([0-9a-fA-F]{2},){13}[0-9a-fA-F]{2}' ||
+				{ log "WiFi cal: $verb '$val' is not 14 hex bytes; the radio keeps the board table"; return 0; }
+			val=$(echo "$val" | sed 's/\([0-9a-fA-F][0-9a-fA-F]\)/0x\1/g') ;;
+		*)
+			echo "$val" | grep -qxE '[0-9]{1,3}' ||
+				{ log "WiFi cal: $verb '$val' is not a number; the radio keeps the board table"; return 0; }
+			;;
+		esac
+		vals="$vals$verb=$val "
+	done
+	for verb in $WIFI_CAL_VERBS; do
+		val=$(echo "$vals" | tr ' ' '\n' | sed -n "s/^$verb=//p")
+		printf '%s' "$val" > "$WIFI_CAL_DIR/unit_${verb#wlan_}" ||
+			log "WiFi cal: unit_${verb#wlan_}='$val' refused by the driver"
+	done
+	log "WiFi cal from this unit's MIB handed to the driver"
+}
+
+try_identity() {
+	local part source sn p backend
+
+	config_load gpon
+	config_get part storage config_part config
+	rtk_load "$part"
+	sn=$(gpon_serial "${RTK_sn:-}")
+	[ -n "$sn" ] || { log "no GPON serial available; will retry"; return 1; }
+
+	backend=$(optics_backend)
+	case "$backend" in
+	RTL8290B|self-managed) ;;
+	*) stage_gn_cal "$part" || return 1 ;;
+	esac
+	laser_from_unit "$part" "$backend" || return 1
+	set_password "$part"
+	set_omci_identity "$part"
+
+	for p in $GPON_SN_PATHS; do
+		[ -w "$p" ] || continue
+		if printf '%s' "$sn" > "$p"; then
+			log "GPON serial accepted by driver"
+			return 0
+		fi
+		log "GPON activation rejected; will retry"
+		return 1
+	done
+	log "GPON serial endpoint not ready; will retry"
+	return 1
+}
+
+retry_identity() {
+	local interval=5
+	while :; do
+		sleep "$interval"
+		try_identity && return 0
+		interval=$((interval * 2))
+		[ "$interval" -le 300 ] || interval=300
+	done
+}
+
+# A board whose GPON driver takes no Luna serial parameter applies its identity
+# through its own family service (gpon-identity on Cortina), from the same policy.
+luna_gpon_present() {
+	local p
+	for p in $GPON_SN_PATHS; do [ -e "$p" ] && return 0; done
+	return 1
+}
+
+start_service() {
+	provision
+	luna_gpon_present || {
+		log "no Luna GPON serial parameter: this board's identity is its family service's"
+		return 0
+	}
+	try_identity && return 0
+	procd_open_instance identity
+	procd_set_param command /bin/sh /etc/init.d/gpon_provision --retry-identity
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+# LuCI 'Save & Apply' (Phase 1E): procd calls reload_service when /etc/config/gpon
+# changes -> re-provision live, no reboot.
+reload_service() {
+	restart || return $?
+	[ ! -x /etc/init.d/gpon-identity ] || /etc/init.d/gpon-identity restart
+	if [ -x /etc/init.d/omci ]; then
+		/etc/init.d/omci reload 2>/dev/null
+	fi
+}
+
+service_triggers() {
+	procd_add_reload_trigger "gpon"
+}
+# The worker bypasses rc.common: sourcing procd.sh would retain its service
+# lock throughout retries and prevent stop/reload from acquiring that lock.
+if [ "${1:-}" = --retry-identity ]; then
+	. /lib/functions.sh
+	retry_identity
+fi

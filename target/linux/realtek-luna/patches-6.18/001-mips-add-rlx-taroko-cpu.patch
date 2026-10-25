@@ -1,0 +1,59 @@
+From: Confiared <contact@confiared.com>
+Subject: [PATCH] mips: add Realtek RLX "Taroko" CPU type (RTL960xC/RTL8672)
+
+The Realtek "Luna" GPON ONU SoCs (RTL9602C and siblings) use a Lexra-derived
+RLX "Taroko" core. Its PRId is 0x0000dc02: the company field (23:16) reads as
+PRID_COMP_LEGACY, so cpu_probe_legacy() handles it, but mainline has no case
+for implementation 0xdc and falls through to CPU_UNKNOWN -> BUG.
+
+Add the PRID implementation id, a CPU_RLX_TAROKO cpu type, and a
+cpu_probe_legacy() case describing the core (R4K-style exceptions/caches,
+64-entry TLB, no FPU). CP0 Count is unreliable on this core so MIPS_CPU_COUNTER
+is intentionally left unset; the SoC timer provides the clockevent.
+
+Signed-off-by: Confiared <contact@confiared.com>
+---
+--- a/arch/mips/include/asm/cpu.h
++++ b/arch/mips/include/asm/cpu.h
+@@ -95,6 +95,7 @@
+ #define PRID_IMP_LOONGSON_64R	0x6100  /* Reduced Loongson-2 */
+ #define PRID_IMP_LOONGSON_64C	0x6300  /* Classic Loongson-2 and Loongson-3 */
+ #define PRID_IMP_LOONGSON_64G	0xc000  /* Generic Loongson-2 and Loongson-3 */
++#define PRID_IMP_RLX_TAROKO	0xdc00  /* Realtek RLX "Taroko" (RTL960xC/RTL8672) */
+ 
+ #define PRID_IMP_UNKNOWN	0xff00
+ 
+@@ -298,6 +299,9 @@ enum cpu_type_enum {
+ 	CPU_R2000, CPU_R3000, CPU_R3000A, CPU_R3041, CPU_R3051, CPU_R3052,
+ 	CPU_R3081, CPU_R3081E,
+ 
++	/* Realtek RLX (Lexra-derived) cores */
++	CPU_RLX_TAROKO,
++
+ 	/*
+ 	 * R4000 class processors
+ 	 */
+--- a/arch/mips/kernel/cpu-probe.c
++++ b/arch/mips/kernel/cpu-probe.c
+@@ -1041,6 +1041,21 @@ static inline void cpu_probe_vz(struct c
+ static inline void cpu_probe_legacy(struct cpuinfo_mips *c, unsigned int cpu)
+ {
+ 	switch (c->processor_id & PRID_IMP_MASK) {
++	case PRID_IMP_RLX_TAROKO:
++		/*
++		 * Realtek RLX "Taroko" (RTL960xC/RTL8672 GPON ONU SoCs).
++		 * Lexra-derived MIPS, company field reads as LEGACY.
++		 * R4K-style exceptions/caches and a 64-entry TLB; no FPU.
++		 * CP0 Count is unreliable here, so MIPS_CPU_COUNTER is left
++		 * unset and the SoC timer drives the clockevent instead.
++		 */
++		c->cputype = CPU_RLX_TAROKO;
++		__cpu_name[cpu] = "Realtek Taroko (RLX)";
++		c->options = MIPS_CPU_TLB | MIPS_CPU_4KEX |
++			     MIPS_CPU_4K_CACHE | MIPS_CPU_NOFPUEX;
++		c->tlbsize = 64;
++		set_isa(c, MIPS_CPU_ISA_M32R1);
++		break;
+ 	case PRID_IMP_R2000:
+ 		c->cputype = CPU_R2000;
+ 		__cpu_name[cpu] = "R2000";

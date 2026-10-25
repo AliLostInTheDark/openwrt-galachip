@@ -1,0 +1,92 @@
+#!/bin/sh
+# Read-only diagnostics: no radio restart, register scan or clear-on-read GPON counters.
+. /usr/share/libubox/jshn.sh
+. /lib/functions.sh
+
+count_radio() {
+	local disabled
+	config_get_bool disabled "$1" disabled 0
+	configured=$((configured + 1))
+	[ "$disabled" = 1 ] || enabled=$((enabled + 1))
+}
+
+case "$1:$2" in
+list:*) echo '{"status":{}}'; exit 0 ;;
+call:status) ;;
+*) exit 1 ;;
+esac
+
+json_init
+json_add_string build_id "$(cat /etc/build-id 2>/dev/null)"
+read -r uptime rest < /proc/uptime
+json_add_string uptime "$uptime"
+json_add_object gpon
+if snapshot=$(cat /proc/gpon_health 2>/dev/null); then
+	json_add_boolean available 1
+	json_add_string snapshot "$snapshot"
+else
+	json_add_boolean available 0
+	json_add_string error 'Cached GPON diagnostics are unavailable'
+fi
+json_close_object
+
+configured=0
+enabled=0
+config_load wireless
+configuration_rc=$?
+config_foreach count_radio wifi-device
+json_add_object wifi
+json_add_int configuration_rc "$configuration_rc"
+json_add_int configured_radios "$configured"
+json_add_int enabled_radios "$enabled"
+json_add_array radios
+for phy in /sys/class/ieee80211/phy*; do
+	[ -d "$phy" ] || continue
+	json_add_object ''
+	json_add_string phy "${phy##*/}"
+	driver=$(readlink "$phy/device/driver" 2>/dev/null)
+	json_add_string driver "${driver##*/}"
+	json_close_object
+done
+json_close_array
+
+json_add_array interfaces
+iw_output=$(iw dev 2>&1)
+iw_rc=$?
+for interface in $(printf '%s\n' "$iw_output" | awk '$1 == "Interface" { print $2 }'); do
+	case "$interface" in ''|*[!a-zA-Z0-9_.-]*) continue ;; esac
+	json_add_object ''
+	json_add_string name "$interface"
+	info=$(iw dev "$interface" info 2>&1)
+	json_add_int info_rc "$?"
+	json_add_string info "$info"
+	stations=$(iw dev "$interface" station dump 2>&1)
+	json_add_int stations_rc "$?"
+	json_add_string stations "$stations"
+	json_close_object
+done
+json_close_array
+json_add_int inventory_rc "$iw_rc"
+[ "$iw_rc" = 0 ] || json_add_string inventory_error "$iw_output"
+
+# These files expose cached ring/counter state, not RF register reads. Counters
+# are historical; zero does not establish RF health, especially on uninstrumented drivers.
+json_add_array driver_counters
+for directory in /sys/kernel/debug/rtlwifi /sys/kernel/debug/ieee80211; do
+	[ -d "$directory" ] || continue
+	for file in "$directory"/*/rtlwifi_tx_queues; do
+		[ -r "$file" ] || continue
+		json_add_object ''
+		json_add_string source "$file"
+		counters=$(cat "$file" 2>&1)
+		json_add_int rc "$?"
+		json_add_string snapshot "$counters"
+		json_close_object
+	done
+done
+json_close_array
+json_close_object
+kernel_log=$(dmesg 2>&1)
+json_add_int kernel_log_rc "$?"
+json_add_string kernel_log "$(printf '%s\n' "$kernel_log" | grep -iE 'gpon|ponmac|bosa|rtl8|wlan|wifi|pcie|firmware' | tail -80)"
+json_dump

@@ -1,0 +1,38 @@
+config wifi-device 'radio0'
+	option type 'mac80211'
+	option phy 'phy0'
+	option channel '1'
+	option band '2g'
+	# ★★ HT20 ON 2.4 GHz -- the operator's field finding (2026-10-06, X111W on STOCK):
+	# channel auto->7 and 40->20 MHz made the phone work; before, it worked 10-20 s and
+	# failed 10-20 s with 70 % retries.  In a saturated band an HT40 BSS lives under the
+	# 20/40 coexistence rules and many phones tolerate it badly.  Every Luna stock ships
+	# 2.4 GHz at 20 MHz (X111W, G24W, V2801RGW scan points), so this is also parity.
+	# The ceiling stays WIFI_MAX_HTMODE['2g'] = HT40 in each board's config.xml; the
+	# comparison point WIFI_COMPARE_POINT['2g'] follows this value (wifi_config_guard).
+	# ⚠⚠ THE SHAPE OF THIS FILE REMAINS A DEFECT INDEPENDENT OF ITS VALUE: a fixed
+	# per-target /etc/config/wireless ships ONE radio's operating point to every board
+	# on the target, exactly as this project records for /etc/config/network.  It is
+	# correct for the Luna boards TODAY only because all carry a 2.4 GHz-only part; a
+	# Luna board with a 5 GHz radio would silently come up on 2g.
+	option htmode 'HT20'
+	option country 'BO'
+	option disabled '0'
+
+config wifi-iface 'default_radio0'
+	option device 'radio0'
+	option network 'lan'
+	option mode 'ap'
+	# Convert broadcast/multicast (ARP, the DHCP OFFER, IPv6 ND) to per-STA
+	# unicast so they reach power-saving clients. rtlwifi never services the DTIM
+	# broadcast-buffer path (it never calls ieee80211_get_buffered_bc), so
+	# without this a sleeping phone's DHCP OFFER is buffered forever and the phone
+	# hangs at "Obtaining IP". Converted to unicast, the OFFER rides the uAPSD
+	# path the driver's WIPHY_FLAG_AP_UAPSD advertisement enables.
+	option multicast_to_unicast '1'
+	# ssid + key are overwritten per-board at boot by /etc/uci-defaults/99-onu-wifi
+	# (SSID derived from the board MAC to avoid collisions; PSK from provisioning).
+	# These remain only as a never-open fallback if that script can't read the MAC.
+	option ssid 'ONU-X111W-AP'
+	option encryption 'psk2'
+	option key '12345678'

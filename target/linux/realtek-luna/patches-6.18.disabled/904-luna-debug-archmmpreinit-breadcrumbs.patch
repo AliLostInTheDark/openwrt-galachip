@@ -1,0 +1,18 @@
+Subject: [DEBUG] arch_mm_preinit breadcrumbs (temporary)
+
+--- a/arch/mips/mm/init.c
++++ b/arch/mips/mm/init.c
+@@ -463,9 +463,13 @@
+ 	 */
+ 	BUILD_BUG_ON(IS_ENABLED(CONFIG_32BIT) && (PFN_PTE_SHIFT > PAGE_SHIFT));
+ 
++	pr_emerg("LUNA: mmp0-before-maar\n");
+ 	maar_init();
++	pr_emerg("LUNA: mmp1-after-maar\n");
+ 	setup_zero_pages();	/* Setup zeroed pages.  */
++	pr_emerg("LUNA: mmp2-after-zeropages\n");
+ 	highmem_init();
++	pr_emerg("LUNA: mmp3-after-highmem\n");
+ 
+ #ifdef CONFIG_64BIT
+ 	if ((unsigned long) &_text > (unsigned long) CKSEG0)

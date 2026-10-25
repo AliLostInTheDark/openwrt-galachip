@@ -1,0 +1,20 @@
+#!/bin/sh
+# DNS-forwarding fix: pin dnsmasq's upstream query port to a fixed value.
+#
+# Observed on this build: dnsmasq's default per-query, random-source-port upstream
+# sockets are not serviced -- the kernel delivers the upstream replies into the
+# socket buffers (rx_queue grows) but dnsmasq never reads them, so every forwarded
+# query times out ("no servers could be reached") and name resolution fails, even
+# though the WAN datapath and a direct query to the upstream resolver both work.
+# Forcing a fixed query-port makes dnsmasq use a single, persistent upstream socket
+# that is created at startup and polled in the main loop, so replies are read and
+# resolution works (verified: google.com / openwrt.org resolve, ping-by-name 0% loss).
+#
+# Trade-off: a fixed source port slightly lowers DNS anti-spoofing entropy vs random
+# ports. Acceptable as the working fix until the per-query-socket path is repaired.
+# Idempotent: only sets the value if not already present.
+if ! uci -q get dhcp.@dnsmasq[0].queryport >/dev/null; then
+	uci -q set dhcp.@dnsmasq[0].queryport='40000'
+	uci -q commit dhcp
+fi
+exit 0

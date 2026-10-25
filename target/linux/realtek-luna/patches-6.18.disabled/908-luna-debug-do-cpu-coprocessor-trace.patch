@@ -1,0 +1,36 @@
+Subject: [DEBUG] realtek-luna: do_cpu user-mode coprocessor-unusable opcode + neighbour trace (temporary)
+
+--- a/arch/mips/kernel/traps.c
++++ b/arch/mips/kernel/traps.c
+@@ -1413,6 +1413,31 @@
+ 	prev_state = exception_enter();
+ 	cpid = (regs->cp0_cause >> CAUSEB_CE) & 3;
+ 
++	/*
++	 * M1 bring-up: trace user-mode Coprocessor-Unusable faults. Print the
++	 * coprocessor id, the EPC, the faulting word and the four neighbouring
++	 * words (all read coherently with get_user). The neighbour signature
++	 * pins the exact file offset in the on-disk binary, so a clean on-disk
++	 * word there means load/cache corruption while a matching one means the
++	 * binary itself carries the bad word.
++	 */
++	if (user_mode(regs)) {
++		static int luna_cpu_traces;
++
++		if (luna_cpu_traces++ < 8) {
++			unsigned int __user *pc =
++				(unsigned int __user *)exception_epc(regs);
++			unsigned int w[5] = { 0, 0, 0, 0, 0 };
++			int i;
++
++			for (i = 0; i < 5; i++)
++				get_user(w[i], pc - 2 + i);
++			pr_emerg("LUNA-CPU: cp=%u epc=%lx insn=%08x nbr=%08x %08x [%08x] %08x %08x\n",
++				 cpid, (unsigned long)regs->cp0_epc, w[2],
++				 w[0], w[1], w[2], w[3], w[4]);
++		}
++	}
++
+ 	if (cpid != 2)
+ 		die_if_kernel("do_cpu invoked from kernel context!", regs);
+ 

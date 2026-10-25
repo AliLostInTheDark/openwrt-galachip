@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Unsupported hardware flows remain on the software flowtable.
+if ! { uci set 'firewall.@defaults[0].flow_offloading=1' &&
+	uci set 'firewall.@defaults[0].flow_offloading_hw=1' &&
+	uci commit firewall; }; then
+	logger -t flow-offload 'Cannot save flowtable defaults'
+	exit 1
+fi
+
+# A running firewall may have loaded its rules before these defaults.
+if /etc/init.d/firewall running 2>/dev/null; then
+	/etc/init.d/firewall reload || {
+		logger -t flow-offload 'Cannot reload flowtable defaults'
+		exit 1
+	}
+fi
+
+exit 0

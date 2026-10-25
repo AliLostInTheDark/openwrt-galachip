@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/dts-v1/;
+
+#include "rtl9602c.dtsi"
+
+/* The RTL9601D runs the RTL9602C platform map: its own stock kernel (k1, Linux
+ * 2.6.30.9) programs the same UART, INTC, timer, watchdog, UMSAR and NIC blocks
+ * and never the PCIe host block, hence no "realtek,rtl9602c" root compatible
+ * (pcie-luna keys on it).  dev/ONU-X100DG.md, 2026-09-30. */
+/ {
+	model = "HSGQ X100DG (RTL9601D, console bring-up)";
+	compatible = "hsgq,x100dg", "realtek,rtl9601d";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	/* Own stock map: two spans; the hole after each is a PON packet pool. */
+	memory@0 {
+		device_type = "memory";
+		reg = <0x00000000 0x016ff000>, <0x01800000 0x006ff000>;
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		/* The two holes are stock's PON packet pools (its live PON-IP
+		 * registers: MSTBASE_DS 0x016ff000, MSTBASE_US 0x01eff000). */
+		pbo_ds: stock-reserved@16ff000 {
+			no-map;
+			reg = <0x016ff000 0x00101000>;
+		};
+
+		pbo_us: stock-reserved@1eff000 {
+			no-map;
+			reg = <0x01eff000 0x00101000>;
+		};
+	};
+
+	/* Its BOSA is on I2C bus 1: stock loads europa_drv with I2C_PORT=1, and its
+	 * live registers show bus 1's config (slave 0x54) and indirect block in use. */
+	pon-optics {
+		realtek,i2c-bus = <1>;
+		realtek,tx-disable-gpio = <13>;	/* stock europa_drv TXDIS_PIN=13 */
+		realtek,tx-power-gpio = <0>;	/* stock europa_drv TXPWR_PIN=0 */
+	};
+
+	/* The OMCI panel the OLT counts, from this unit's stock MIB (omci_panel.py
+	 * over its gpon-oracle 2026-10-01): without it the OLT read 5 differences. */
+	omci-uni {
+		ethernet-uni-instances = /bits/ 16 <0x0101>;
+		ethernet-uni-ports = /bits/ 8 <1>;
+		ethernet-uni-types = /bits/ 8 <47>;
+		uni-g-instances = /bits/ 16 <0x0101 0x0601>;
+		uni-g-management-capability = /bits/ 8 <1 0>;
+		circuit-packs = /bits/ 16 <
+			0x0101 47 1 8 0 0
+			0x0106 48 1 8 0 0
+			0x0180 248 1 128 16 16>;
+		ip-host-instances = /bits/ 16 <0x0000 0x0001 0x0002>;
+		ip-host-wan-mac = /bits/ 8 <0 0 0>;
+		onu-capacity = /bits/ 16 <16 128 16 64>;
+		downstream-queue-ports = /bits/ 16 <0x0101 0x0601>;
+		/* Stock's CTC ONU capability, OnuType 1 = HGU (omcicli mib get 65529,
+		 * 2026-10-06): without it the HSGQ OLT keeps the type it last saw. */
+		extra-me-instances = /bits/ 16 <65529 0>;
+	};
+};
+
+/* The GE jack is switch port 1: the vendor SDK gives the RTL9601D sub-types
+ * port 0 = none, port 1 = GE (its HGU/SFU port table), the X111W's GE port. */
+
+/* Stock's own ring: its boot prints RX[256,...]. 1024 buffers (~2.4 MB) do not
+ * fit this board's 19 MB (2026-09-30: MemAvailable 2148 kB just before eth0). */
+&nic {
+	realtek,rx-ring-entries = <256>;
+	realtek,wan-mac-offset = <1>;	/* stock nas0_0 is LAN+1 (98:c7:a4:29:a2:8f) */
+};
+
+/* Its own 8 MiB SPI-NOR (A14017). OpenWrt runs from it in ONE bank laid over both of the vendor's:
+ * our 2 MB kernel does not fit its 1328K k0 (operator, 2026-10-19: "todos los que caben"); the stock
+ * stays whole in results/stock_firmware. The vendor b0 boots img0_kernel (0x80000) with root=31:5, so
+ * k0 starts there and r0 is mtd5; the crashlog sits right behind k0 and is declared last. A RAM boot
+ * maps its own rootfs through phram and names it root=/dev/mtdblock0, which wins over linux,rootfs. */
+&spi_nor {
+	compatible = "realtek,luna-spi-nor";
+	reg = <0x14000000 0x800000>, <0x18001200 0x10>;
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		partition@0 {
+			label = "boot";
+			reg = <0x000000 0x040000>;
+			read-only;
+		};
+		partition@40000 {
+			label = "env";
+			reg = <0x040000 0x002000>;
+			read-only;
+		};
+		partition@42000 {
+			label = "env2";
+			reg = <0x042000 0x002000>;
+			read-only;
+		};
+		partition@44000 {
+			label = "config";
+			reg = <0x044000 0x03c000>;
+			read-only;
+		};
+		partition@80000 {
+			label = "k0";
+			reg = <0x080000 0x220000>;	/* 2176K kernel */
+		};
+		partition@2b0000 {
+			label = "r0";
+			reg = <0x2b0000 0x550000>;	/* 5440K rootfs + rootfs_data, to the chip's end */
+			linux,rootfs;
+		};
+		partition@2a0000 {
+			label = "crashlog";	/* declared last: r0 stays mtd5 */
+			reg = <0x2a0000 0x010000>;	/* 64K: onu_crashlog records */
+		};
+	};
+};
+
+/* US then DS, as luna_gpon reads them. Panel map from this board's stock: its
+ * capture has indices 6 and 15 PON-typed and CPU-forced, index 1 on switch port
+ * 1 (type 2); its kernel's GPON spec inits configure 6 and its "others" (LOS)
+ * spec inits 15, the layout whose LOS lamp is 10 on the V2801RGW. */
+&gpon {
+	memory-region = <&pbo_us>, <&pbo_ds>;
+	realtek,pon-led = <6>;
+	realtek,los-led = <15>;
+	realtek,port-leds = <1 2>;
+};
+
+/* The GPON stays ENABLED: the NIC's open re-runs the PON buffer init and the
+ * switch fabric is programmed by this driver, so without it there is no LAN
+ * (2026-09-30: Oops in rtl9602c_eth_open). A first boot holds the FSM at O1
+ * with luna_gpon.gpon_hold=1 until this unit's own laser calibration (its
+ * config partition, read above) is proven handed to the driver. */

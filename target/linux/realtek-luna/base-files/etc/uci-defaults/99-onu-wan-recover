@@ -1,0 +1,8 @@
+#!/bin/sh
+# GPON WAN auto-recovery watchdog — DISABLED. A software reboot (incl. WDT
+# full-chip reset) does NOT re-roll the RTL9602C cold-start US analog lock (only
+# a physical power cut does), so an auto-reboot-on-stuck-WAN watchdog cannot
+# recover WAN — it would just reboot-loop. Left not-enabled. The /usr/sbin script
+# also self-disables (ENABLE=0). Re-enable ONLY if a hardware power-cycle path
+# (GPIO/PMIC controlling the SoC/board power rail) is added.
+exit 0

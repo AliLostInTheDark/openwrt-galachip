@@ -1,0 +1,133 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# RTL9607C (interAptiv) kernel-config deltas, layered over the shared
+# config-6.18 (which carries the RLX/RTL960xC values for the rtl960x
+# subtarget). Each value here is the proven-good one from a kernel that
+# boots this exact board to "VFS: Mounted root"; it overrides the RLX value
+# for this subtarget only and leaves rtl960x untouched.
+
+#
+# CPU: MIPS interAptiv (MIPS32 R2) instead of the RLX "Taroko" (R1/R3K).
+# Crucially we do NOT select CPU_R3K_TLB here, which is what keeps the ASID
+# at the R4000 layout (SHIFT=0 / BITS=8) rather than the R3000 6/6 -- the
+# inherited-from-the-RLX-subtarget bring-up landmine.
+#
+# CONFIG_CPU_MIPS32_R1 is not set
+CONFIG_CPU_MIPS32_R2=y
+CONFIG_SYS_HAS_CPU_MIPS32_R2=y
+# CONFIG_CPU_MIPSR1 is not set
+CONFIG_CPU_MIPSR2=y
+CONFIG_CPU_HAS_PREFETCH=y
+CONFIG_CPU_R4K_FPU=y
+
+#
+# Coherent Processing System: GIC interrupt controller, Coherency Manager,
+# Cluster Power Controller where present; MIPS-MT for non-CPS interAptiv parts.
+#
+CONFIG_MIPS_CPS=y
+CONFIG_MIPS_GIC=y
+CONFIG_CLKSRC_MIPS_GIC=y
+# CLKSRC_MIPS_GIC selects CLOCKSOURCE_WATCHDOG, whose skew bound is a new
+# prompted int with no value in the minimal merged config -- pin its default
+# so kernel syncconfig stays non-interactive on a clean build.
+CONFIG_CLOCKSOURCE_WATCHDOG=y
+CONFIG_CLOCKSOURCE_WATCHDOG_MAX_SKEW_US=125
+CONFIG_SMP=y
+CONFIG_NR_CPUS=2
+# CONFIG_FORCE_NR_CPUS is not set
+# CONFIG_HOTPLUG_CPU is not set
+CONFIG_MIPS_MT_SMP=y
+# CONFIG_MIPS_MT_FPAFF is not set
+CONFIG_CPU_MIPSR2_IRQ_VI=y
+CONFIG_CPU_MIPSR2_IRQ_EI=y
+# Pin the SMP/CPS-gated symbols that only become visible once SMP is on, so
+# the minimal merged config carries a value for each and the kernel config
+# step never has a NEW symbol to prompt for. RPS/RFS/flow-limit take their
+# upstream defaults; the CPS NS16550 early-UART poke stays off (the normal
+# 8250 console handles output).
+CONFIG_RPS=y
+CONFIG_RFS_ACCEL=y
+CONFIG_NET_FLOW_LIMIT=y
+# CONFIG_MIPS_CPS_NS16550_BOOL is not set
+
+#
+# 100 Hz, matching the proven-good 9607C bring-up.
+#
+# CONFIG_HZ_250 is not set
+CONFIG_HZ_100=y
+CONFIG_HZ=100
+
+#
+# 512 MB DDR3 used as 320 MB of low memory; high memory disabled.
+#
+# CONFIG_HIGHMEM is not set
+
+#
+# Kernel debugging -- the reason this subtarget exists (these symbols do not
+# exist on the 9602C's 3.18 stock kernel). NOTE: OpenWrt gates ftrace/kprobes/
+# dynamic-debug through its own buildroot CONFIG_KERNEL_* options, which are
+# appended after this fragment and win, so these lines only take effect when
+# the build config also sets CONFIG_KERNEL_FTRACE=y / CONFIG_KERNEL_KPROBES=y /
+# CONFIG_KERNEL_DYNAMIC_DEBUG=y (etc.). They are kept here to record intent.
+# DEBUG_INFO and MAGIC_SYSRQ are already enabled in the shared config.
+#
+CONFIG_FTRACE=y
+CONFIG_FUNCTION_TRACER=y
+CONFIG_DYNAMIC_FTRACE=y
+CONFIG_KPROBES=y
+CONFIG_KPROBE_EVENTS=y
+CONFIG_DYNAMIC_DEBUG=y
+
+#
+# The RTL9602C GMAC driver is for the r1/RLX sibling and does not apply here;
+# this SoC uses its own RTL9607C NIC + switch driver (M2). The GPON driver IS
+# shared (chip-agnostic family lib + the interAptiv c7 path, picked by DT
+# compatible), so it is enabled here for M3 (SerDes/PON-MAC ranging -> O5).
+#
+# Flash: MTD_ROM + MTD_PHYSMAP(_OF) come from the shared config-6.18 and, since
+# 2026-09-06, this subtarget no longer switches them OFF (it did while the
+# G24W's flash base was unverified). The G24W reads its 16 MB SPI-NOR through
+# the same memory-mapped window the RTL9602C does (`mtd-rom` at 0x14000000;
+# the evidence is in rtl9603cvd_g24w.dts) -- it is how gpon-provision learns
+# this unit's own GPON_SN. READ-ONLY: no program/erase driver exists here.
+#
+# CONFIG_RTL9602C_ETH is not set
+CONFIG_LUNA_GPON=y
+CONFIG_LUNA_FLOWOFFLOAD=y
+# The on-chip NIC + switch live under the Realtek vendor menu, so the kernel
+# only descends into drivers/net/ethernet/realtek/ when this umbrella is set.
+CONFIG_NET_VENDOR_REALTEK=y
+CONFIG_LUNA_ETH=y
+#
+# ★★★ PCI IS ON SINCE 2026-08-27, AND THE REASON IT WAS OFF IS GONE.
+#
+# It read: "the host-bridge driver built under CONFIG_PCI is the RTL9602C PCIe
+# controller: its late_initcall unconditionally registers the controller and runs
+# SoC clock / SerDes bring-up against 9602C register offsets, which differ on
+# this SoC and wedge the late-initcall phase." That was true and it is no longer:
+# `arch/mips/realtek-luna/pcie-rtl960x.c` now serves BOTH chips from one per-chip
+# table and resolves which one from the DEVICE-TREE ROOT COMPATIBLE, so on a
+# board that declares neither it registers nothing and says so. The RTL9607C
+# engineering board, which shares this kernel, takes that path.
+#
+# ⚠ WITHOUT THIS LINE THERE IS NO WiFi ON THE G24W AND NO WAY TO SEE WHY. The
+# radio is a PCIe endpoint (10ec:818c); with CONFIG_PCI off there is no PCI
+# subsystem, `CONFIG_RTL8192FE` is not even EMITTED into the generated .config
+# (measured: 0 occurrences of RTL8192 in 2381 lines), `lspci` is empty and
+# `/sys/class/ieee80211/` is empty. The board document said for weeks that the
+# driver was "compiled in" and the only gap was a device-tree node; it was
+# reading the SHARED config-6.18, which this file overrides.
+CONFIG_PCI=y
+
+#
+# Match the proven-good 9607C kernel's known-good config: disable the OpenWrt
+# hardening options the stock kernel does NOT use, in case one wedges
+# mm_core_init early on this big-endian interAptiv. Bisect aid for M1 bring-up;
+# re-evaluate (re-enable individually) for the verify phase.
+#
+# CONFIG_HARDENED_USERCOPY is not set
+# CONFIG_FORTIFY_SOURCE is not set
+# CONFIG_SLAB_FREELIST_HARDENED is not set
+# CONFIG_SLAB_FREELIST_RANDOM is not set
+# CONFIG_LD_DEAD_CODE_DATA_ELIMINATION is not set
+# CONFIG_LUNA_DEBUG is not set

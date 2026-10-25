@@ -1,0 +1,11 @@
+#!/bin/sh
+# Serve LuCI over plain HTTP: drop the HTTPS listeners so uhttpd never runs the
+# px5g self-signed-cert generation. On the read-only-overlay image that keygen
+# would repeat at EVERY boot and costs real time on the RLX core; the LAN is
+# management-only (not reachable from the WAN side), so HTTP is acceptable.
+uci -q batch <<EOF
+delete uhttpd.main.listen_https
+delete uhttpd.main.redirect_https
+commit uhttpd
+EOF
+exit 0

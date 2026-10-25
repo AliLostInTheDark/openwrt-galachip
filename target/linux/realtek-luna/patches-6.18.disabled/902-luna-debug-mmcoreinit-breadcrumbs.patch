@@ -1,0 +1,18 @@
+Subject: [DEBUG] realtek-luna: mm_core_init breadcrumbs around memblock_free_all/mem_init (temporary)
+
+--- a/mm/mm_init.c
++++ b/mm/mm_init.c
+@@ -2703,9 +2703,13 @@
+ 	 */
+ 	kho_memory_init();
+ 
++	pr_emerg("LUNA: mci-before-free_all\n");
+ 	memblock_free_all();
++	pr_emerg("LUNA: mci-after-free_all\n");
+ 	mem_init();
++	pr_emerg("LUNA: mci-after-mem_init\n");
+ 	kmem_cache_init();
++	pr_emerg("LUNA: mci-after-kmem_cache_init\n");
+ 	/*
+ 	 * page_owner must be initialized after buddy is ready, and also after
+ 	 * slab is ready so that stack_depot_init() works properly

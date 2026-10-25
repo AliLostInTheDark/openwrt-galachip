@@ -1,0 +1,22 @@
+Subject: [DEBUG] realtek-luna: do_ri user-mode reserved-instruction opcode trace (temporary)
+
+--- a/arch/mips/kernel/traps.c
++++ b/arch/mips/kernel/traps.c
+@@ -1355,6 +1355,17 @@
+ 			status = simulate_rdhwr_mm(regs, opcode);
+ 	}
+ 
++	/*
++	 * M1 bring-up: decode any user-mode reserved instruction we are about to
++	 * turn into SIGILL, so the console shows the faulting opcode. A SPEC3/RDHWR
++	 * word (0x7c..e83b, rd=29) is the C library's rdhwr $29 TLS read.
++	 */
++	if (status < 0 && user_mode(regs))
++		pr_emerg("LUNA-RI: epc=%lx opcode=%08x rd=%u spec3=%d rdhwr=%d\n",
++			 old_epc, opcode, (opcode >> 11) & 0x1f,
++			 (opcode & 0xfc000000) == 0x7c000000,
++			 (opcode & 0x3f) == 0x3b);
++
+ 	if (status < 0)
+ 		status = SIGILL;
+ 

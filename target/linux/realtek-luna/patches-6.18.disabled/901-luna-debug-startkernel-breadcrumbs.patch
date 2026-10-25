@@ -1,0 +1,26 @@
+Subject: [DEBUG] realtek-luna: start_kernel breadcrumbs (temporary)
+
+--- a/init/main.c
++++ b/init/main.c
+@@ -992,9 +992,12 @@
+ 	sort_main_extable();
+ 	trap_init();
+ 	mm_core_init();
++	pr_emerg("LUNA: sk-after-mm_core_init\n");
+ 	maple_tree_init();
+ 	poking_init();
++	pr_emerg("LUNA: sk-after-poking_init\n");
+ 	ftrace_init();
++	pr_emerg("LUNA: sk-after-ftrace_init\n");
+ 
+ 	/* trace_printk can be enabled here */
+ 	early_trace_init();
+@@ -1036,6 +1039,8 @@
+ 	context_tracking_init();
+ 	/* init some links before init_ISA_irqs() */
+ 	early_irq_init();
++	pr_emerg("LUNA: sk-after-early_irq_init\n");
++	pr_emerg("LUNA: sk-before-init_IRQ\n");
+ 	init_IRQ();
+ 	tick_init();
+ 	rcu_init_nohz();

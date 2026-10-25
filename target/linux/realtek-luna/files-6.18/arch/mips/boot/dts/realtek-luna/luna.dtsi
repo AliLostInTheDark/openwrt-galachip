@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Realtek Luna (RTL960x) -- what every part of the family shares.
+ *
+ * ★★★ THE KERNEL COMMAND LINE IS FAMILY CONFIGURATION, NOT A BOARD FACT, AND
+ * IT MUST NOT BE INHERITED FROM THE BOOTLOADER (measured 2026-08-27 on the
+ * X111W).  `printenv bootargs` at that board's U-Boot prompt answers with an
+ * EMPTY value -- the vendor bootloader passes the kernel NOTHING -- so
+ * everything the kernel gets has to come from here.  `uboot.py`'s own comment
+ * assumed the opposite ("the existing line carries console=, mtdparts= and
+ * root="); that assumption is refuted for this family.
+ *
+ * ★★ WHAT IT COST: the two boards in this tree disagreed, and only one of them
+ * could be debugged.
+ *
+ *     rtl9602c_x111w.dts     bootargs = "console=ttyS0,115200"
+ *     rtl9607c_engboard.dts  bootargs = "console=ttyS0,115200 earlycon
+ *                                        ignore_loglevel keep_bootcon"
+ *
+ * With the first line the X111W's kernel prints NOTHING between "Starting
+ * kernel ..." and OpenWrt's userspace preinit: no version banner, no memory
+ * map, not one driver probe.  The UART works throughout -- the arch code's own
+ * putchar markers come out and userspace reaches /dev/console -- so the board
+ * looks alive and says nothing, and every conclusion drawn about its ~29 s
+ * reset was reached WITHOUT A KERNEL LOG.  The moment `ignore_loglevel` was
+ * added by hand the cause was visible in one boot.
+ *
+ * ⇒ so the line lives ONCE, here, and the whole family gets a kernel that can
+ *   be read.  A board that needs something else adds it to its own `chosen`;
+ *   the properties merge by node path.
+ *
+ * ★ WHY THESE FOUR:
+ *   console=ttyS0,115200  the family's UART: serial@18002000 at the same
+ *                         address and the same rate on every Luna part here.
+ *   earlycon              printk before the 8250 driver binds -- without it a
+ *                         fault in early init is silent by construction.
+ *   keep_bootcon          ★★★ REMOVED 2026-09-07, AND IT WAS THE O4 RANGING
+ *                         WALL.  It used to be here, "so an early driver
+ *                         failure cannot vanish in the hand-over window", and
+ *                         the 2026-08-31 note above it already measured that it
+ *                         costs 2-3x the bytes and left it on anyway.  The cost
+ *                         is not bytes.  It is TIME, and it is spent inside the
+ *                         GPON PLOAM state machine.
+ *
+ *                         MEASURED, from this board's own console captures:
+ *
+ *                           2026-08-22   1.09 copies/printk   FSM tick  4 ms
+ *                                        O4 -> O5 in 48 ms, Ranging_Time seen
+ *                           2026-08-27+  3.00 copies/printk   FSM tick 12 ms
+ *                                        DEACT ~110 ms after O4, every cycle
+ *
+ *                         Both consoles here are the SAME 16550 at 115200, so
+ *                         `printk` blocks in `console_unlock()` for as long as
+ *                         it takes to shift every copy out.  The FSM polls
+ *                         BETWEEN those prints: tripling them tripled its
+ *                         period, and the OLT's ranging deadline did not move.
+ *                         The board then reaches O4 and never answers the
+ *                         PLOAMu grant in time -- `bwm_acpt=0`, `us_ploam_tx=0`
+ *                         with a valid grant sitting in the capture buffer.
+ *
+ *                         ★ THE CONTROL IS INSIDE ONE FILE: on 2026-09-07 the
+ *                         known-good NAND image printed each message ONCE and
+ *                         reached O5 in 6.5 s, while every other boot that day
+ *                         printed each message THREE times and was deactivated.
+ *
+ *                         ★ WHAT IS *NOT* GIVEN UP: `earlycon` stays, so early
+ *                         init is still visible; it is simply RELEASED when
+ *                         ttyS0 binds, which is ~0.47 s in and long before the
+ *                         GPON driver runs.  `ignore_loglevel` stays too -- it
+ *                         was present on the day the board ranged, at 1x.
+ *                         Readability was never the cost; DUPLICATION was.
+ *
+ *                         ★ Guarded, so it cannot come back unnoticed:
+ *                         `ONU-test-case/console_amplification_guard.py`.
+ *   ignore_loglevel       the default level hides driver messages, which is
+ *                         what made this board undebuggable.
+ *
+ * ⚠ IT SHIPS: printk never waits on the UART here.  From late_initcall the
+ *   console is asynchronous (drivers/tty/serial/8250/luna_console.c, a ring
+ *   drained into the FIFO by a thread), so verbosity costs console bytes, not
+ *   time in the caller.  Before it, every line held the GPON FSM ~6 ms and the
+ *   production OLT deactivated the ONU 98 times (2026-10-07).
+ */
+
+/ {
+	chosen {
+		bootargs = "console=ttyS0,115200 earlycon ignore_loglevel";
+	};
+
+	/* The family GPON core (luna_gpon.c) drives the optical front end from
+	 * its init. A board whose PON wiring is not proven sets this "disabled":
+	 * a laser keyed on an unproven board transmits into a SHARED PON. */
+	gpon: gpon {
+		compatible = "realtek,luna-gpon";
+		status = "okay";
+	};
+};

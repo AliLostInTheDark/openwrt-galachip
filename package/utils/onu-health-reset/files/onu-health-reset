@@ -1,0 +1,62 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Restart an ONU that stays sick while procd keeps feeding the watchdog: procd/ubus or netifd
+# not answering, or a reclaim livelock (code re-read from flash without end). The reason goes to
+# the kernel log first; a deliberate panic then keeps that log in the unit's crash records.
+
+ROOT=${ONU_HEALTH_ROOT:-}
+POLL=60
+LIMIT=5
+GRACE=600
+MAJFAULT_PER_S=100
+GIVE_UP=3
+COUNT=$ROOT/etc/onu-health-reset.count
+[ -f "$ROOT/etc/onu-health-reset.conf" ] && . "$ROOT/etc/onu-health-reset.conf"
+
+say() {
+	logger -t onu-health-reset "$1"
+	echo "<2>onu-health-reset: $1" > "$ROOT/dev/kmsg"
+}
+
+uptime_s() {
+	cut -d. -f1 "$ROOT/proc/uptime"
+}
+
+majfaults() {
+	awk '$1 == "pgmajfault" { print $2 }' "$ROOT/proc/vmstat"
+}
+
+failing() {
+	ubus -t 30 call system info > /dev/null 2>&1 || printf 'procd '
+	ubus -t 30 call network.interface dump > /dev/null 2>&1 || printf 'netifd '
+	[ -n "$1" ] && [ -n "$2" ] && [ $((($2 - $1) / POLL)) -ge "$MAJFAULT_PER_S" ] && printf 'thrash '
+}
+
+streak=0
+last=
+while :; do
+	sleep "$POLL"
+	now=$(majfaults)
+	bad=$(failing "$last" "$now")
+	bad=${bad% }
+	last=$now
+	if [ -z "$bad" ]; then
+		streak=0
+		[ -f "$COUNT" ] && [ "$(uptime_s)" -ge 86400 ] && rm -f "$COUNT"
+		continue
+	fi
+	[ "$(uptime_s)" -lt "$GRACE" ] && continue
+	streak=$((streak + 1))
+	[ "$streak" -lt "$LIMIT" ] && continue
+	streak=0
+	resets=$(cat "$COUNT" 2> /dev/null || echo 0)
+	if [ "$resets" -ge "$GIVE_UP" ]; then
+		say "sick ($bad) after $resets resets in a row: no more until it stays healthy for a day"
+		continue
+	fi
+	echo $((resets + 1)) > "$COUNT"
+	sync
+	say "sick for $LIMIT min: $bad; reset $((resets + 1))/$GIVE_UP by a panic, so the crash records keep this log"
+	echo c > "$ROOT/proc/sysrq-trigger" || reboot -f
+	exit 0
+done
