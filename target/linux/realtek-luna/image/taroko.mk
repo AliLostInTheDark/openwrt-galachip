@@ -5,6 +5,49 @@
 # Boards are brought up run-from-RAM first: the initramfs uImage is TFTP'd
 # into RAM and bootm'd by the vendor U-Boot (no flash write during bring-up).
 
+# The V2802RH is a 4 MiB L2 bridge: LuCI keeps only the views and menus that
+# apply to one (as the XZ000-G7 does). The rootfs is shared by every device in
+# a build, so this runs only when the V2802RH is the one selected.
+define Image/Prepare
+	$(if $(CONFIG_TARGET_realtek_luna_taroko_DEVICE_vsol_v2802rh), \
+	rm -f $(TARGET_DIR)/www/luci-static/resources/view/network/wireless.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/network/dhcp.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/network/dns.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/network/switch* \
+		$(TARGET_DIR)/www/luci-static/resources/view/network/routes.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/network/diagnostics.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/status/wireless.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/status/channel_analysis.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/status/nftables.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/status/iptables.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/status/connections.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/status/syslog.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/status/routes* \
+		$(TARGET_DIR)/www/luci-static/resources/view/status/load.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/status/bandwidth.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/status/include/30_network.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/status/include/40_dhcp.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/status/include/50_dsl.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/status/include/60_wifi.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/system/plugins.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/system/repokeys.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/system/mounts.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/system/crontab.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/system/pwpolicy.js \
+		$(TARGET_DIR)/www/luci-static/resources/view/system/leds.js \
+		$(TARGET_DIR)/www/luci-static/resources/icons/wireguard* \
+		$(TARGET_DIR)/www/luci-static/resources/icons/wifi* \
+		$(TARGET_DIR)/www/luci-static/resources/icons/signal* \
+		$(TARGET_DIR)/www/luci-static/resources/icons/tunnel* \
+		$(TARGET_DIR)/www/luci-static/resources/icons/vrf* \
+		$(TARGET_DIR)/www/luci-static/resources/icons/port_pse*; \
+	rm -rf $(TARGET_DIR)/www/luci-static/resources/view/system/led-trigger; \
+	if [ -d $(TARGET_DIR)/usr/share/luci/menu.d ]; then \
+		$(CP) $(TOPDIR)/target/linux/realtek-luna/taroko/v2802rh/menu.d/* \
+			$(TARGET_DIR)/usr/share/luci/menu.d/; \
+	fi)
+endef
+
 define Device/hsgq_x111w
   DEVICE_VENDOR := HSGQ
   DEVICE_MODEL := X111W
