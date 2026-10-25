@@ -235,7 +235,7 @@ int luna_mib_attach(struct net_device *ndev, void __iomem *sw,
 	if (ret)
 		return ret;
 	luna_mib_check_names(ndev->dev.parent, luna_mib_ports(s));
-	netdev_info(ndev, "ethtool -S: %d switch counters%s\n", luna_mib_count(s),
+	netdev_dbg(ndev, "ethtool -S: %d switch counters%s\n", luna_mib_count(s),
 		    luna_mib_has_rx(s) ? "" : " (RX base unavailable)");
 	return 0;
 }

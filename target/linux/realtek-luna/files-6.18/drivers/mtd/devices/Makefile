@@ -20,7 +20,6 @@ obj-$(CONFIG_MTD_ST_SPI_FSM)    += st_spi_fsm.o
 obj-$(CONFIG_MTD_POWERNV_FLASH)	+= powernv_flash.o
 obj-$(CONFIG_MTD_INTEL_DG)	+= mtd_intel_dg.o
 obj-$(CONFIG_MTD_LUNA_NOR)	+= luna_nor.o
-obj-$(CONFIG_MTD_ONU_CRASHLOG)	+= onu_crashlog.o onu_crashlog_core.o
 
 
 CFLAGS_docg3.o			+= -I$(src)

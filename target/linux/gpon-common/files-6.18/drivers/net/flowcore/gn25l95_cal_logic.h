@@ -25,20 +25,6 @@ struct gn_op {
 	u8  mask;
 };
 
-/* The two places the units' own binaries differ. */
-struct gn_variant {
-	bool bb_set;		/* G24W: BB |= 1   ·  X400AXF: BB &= ~1        */
-	bool tail_c4_7f;	/* G24W only: page2 C4 = 0x7f, then 0x50:7f    */
-};
-
-extern const struct gn_variant gn_variant_g24w;
-extern const struct gn_variant gn_variant_x400axf;
-
-/* Build the sequence for `cal` (GN_CAL_LEN bytes) into `out`. ...
- * dev/MEASURED-gn25l95_cal_logic.h.md sec 2. */
-int gn25l95_cal_ops(const u8 *cal, u32 cal_len, const struct gn_variant *v,
-		    struct gn_op *out, u32 out_max);
-
 /* V2802RH RTOS sequence; LAN_TYPE comes from this unit's hardware MIB. */
 int gn25l95_v2802rh_cal_ops(const u8 *cal, u32 cal_len, u8 lan_type,
 			  struct gn_op *out, u32 out_max);

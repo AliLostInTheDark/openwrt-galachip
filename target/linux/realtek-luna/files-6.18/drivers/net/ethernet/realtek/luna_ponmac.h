@@ -10,8 +10,6 @@
  * dev/MEASURED-luna_ponmac.h.md sec 2. */
 enum luna_chip {
 	LUNA_CHIP_9602C = 0,	/* + 9601C / 9601C_VB subtypes */
-	LUNA_CHIP_9603CVD,
-	LUNA_CHIP_9607C,
 };
 
 /* Chip revision id as read from HW: A=0x1, B=0x2, C=0x3, ... rev>A => B+ */
@@ -51,9 +49,6 @@ int luna_ponmac_mode_set(enum luna_chip chip, int rev, int subtype,
 			    const struct luna_ops *o);
 int luna_ponmac_serdes_cdr_reset(enum luna_chip chip,
 				    const struct luna_ops *o);
-
-struct seq_file;
-void luna_c7_diag(const struct luna_ops *o, struct seq_file *s);
 
 extern int luna_c2_postmode_perturb;
 extern int luna_c2_sds_cfgrst;

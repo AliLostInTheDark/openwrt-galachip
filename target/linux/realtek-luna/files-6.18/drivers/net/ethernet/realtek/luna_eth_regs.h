@@ -173,8 +173,6 @@
  * how SW_MACPP_STRIDE_9602C got used on the RTL9603CVD.  Nothing outside that
  * die's own table row may name one of these. */
 #define SW_STAT_PORT_RX_MIB_RTL9602C	0x32200
-#define SW_STAT_PORT_RX_MIB_RTL9603CVD	0x32600
-#define SW_STAT_PORT_RX_MIB_RTL9607C	0x32600
 #define SW_STAT_PORT_MIB_STRIDE	0x80u	/* the per-port step, stated by the
 					 * dump's own comment and confirmed by
 					 * every TX address it reads */
@@ -512,91 +510,6 @@ static const struct luna_sw_map rtl9602c_sw_map = {
 	.rx_layout	= &luna_rx_layout_rtl9602c,
 };
 
-static const struct luna_sw_map rtl9603cvd_sw_map = {
-	.force_ablty	= 0x00198,
-	.p_ablty	= 0x001B8,
-	.ablty_force	= 0x001DC,
-	.gphy_misc	= 0x000EC,
-	.cfg_unhiol	= 0,		/* this chip's bring-up does not touch it */
-	.src_permit	= 0x1C0B0,
-	.piso_base	= 0x27000,
-	.cpu_port	= 5,
-	.pon_port	= 4,
-	.n_copper	= 4,	/* 0..3 */
-	.macpp_stride	= 0x100,	/* macPpInfo.interval, this chip's own */
-	.port_mask	= GENMASK(5, 0),
-	.swcore_size	= 0x43000,
-	.lut_unkn_sa	= 0x1C004,
-	.lut_unkn_uc_da	= 0x1C00C,
-	.unkn_l2_mc	= 0x1C018,
-	.unkn_ip4_mc	= 0x1C01C,
-	.unkn_ip6_mc	= 0x1C020,
-	.bc_flood	= 0x1C028,
-	.unkn_mc_flood	= 0x1C02C,
-	.unkn_uc_flood	= 0x1C030,
-	.rx_mib		= SW_STAT_PORT_RX_MIB_RTL9603CVD,	/* [tier 3, its chipdef] */
-	.n_mib_ports	= 7,		/* chipdef port index 0..6 */
-	.gmac_mib16	= 0,		/* NOT ESTABLISHED on this die -- no mac_* rows */
-	.omci_cpu_reason = 229,	/* RTL9603CVD_CHIP_ID -> omciRsn 229 [tier 3, gponapi.c] */
-	.rx_layout	= &luna_rx_layout_rtl9603cvd,
-};
-
-/* The RTL9607C's eight LUT offsets were CROSS-READ from its own chipdef on
- * 2026-08-28 and are identical to the RTL9603CVD's, every one of them -- so
- * luna_eth.c serving both chips from one constant set was correct, and this
- * table records that rather than leaving it as an assumption.
- *
- * ⚠ swcore_size is NOT from the chipdef: it is an ioremap LENGTH, a decision
- * about how much of the block this driver touches, not a silicon fact.  It
- * carries the value that driver has been using.
- */
-static const struct luna_sw_map rtl9607c_sw_map = {
-	.force_ablty	= 0x001CC,
-	.p_ablty	= 0x00200,
-	.ablty_force	= 0x00238,
-	.gphy_misc	= 0x00114,
-	.cfg_unhiol	= 0,		/* this chip's bring-up does not touch it */
-	/* ⚠ 0x1C114, NOT the RTL9603CVD's 0x1C0B0.  This was written as 0x1C0B0 by
-	 * copying the sibling's value; the driver's own table and this chip's
-	 * chipdef both say 0x1C114, and two guards caught it before it shipped.
-	 * The number matters more than it looks: 0x1C114 is what the RTL9602C's
-	 * own comment records as WRONG for THAT chip -- it is QOS_PB_PRI there, and
-	 * using it left the CPU port's ingress permit unset so the fabric dropped
-	 * every CPU-injected frame.  One address, correct on one die and
-	 * catastrophic on another: that is what this table is for. */
-	.src_permit	= 0x1C114,
-	.piso_base	= 0x27000,
-	.cpu_port	= 9,
-	.pon_port	= 5,
-	.n_copper	= 5,	/* 0..4 */
-	.macpp_stride	= 0x100,	/* macPpInfo.interval, this chip's own */
-	.port_mask	= GENMASK(9, 0),
-	.swcore_size	= 0x43000,
-	.lut_unkn_sa	= 0x1C004,
-	.lut_unkn_uc_da	= 0x1C00C,
-	.unkn_l2_mc	= 0x1C018,
-	.unkn_ip4_mc	= 0x1C01C,
-	.unkn_ip6_mc	= 0x1C020,
-	.bc_flood	= 0x1C028,
-	.unkn_mc_flood	= 0x1C02C,
-	.unkn_uc_flood	= 0x1C030,
-	.rx_mib		= SW_STAT_PORT_RX_MIB_RTL9607C,	/* [tier 3, its chipdef] */
-	.n_mib_ports	= 12,		/* chipdef port index 0..11 */
-	.gmac_mib16	= 0,		/* NOT ESTABLISHED on this die -- no mac_* rows */
-	.omci_cpu_reason = 229,	/* RTL9607C_CHIP_ID -> omciRsn 229 [tier 3, gponapi.c] */
-	/* ★★ INHERITED FROM THE 9603CVD, DECLARED AS SUCH, NOT VERIFIED
-	 * (2026-09-12). NULL here was WORSE than a guess: luna_eth.c has no
-	 * payload OMCI fallback, so an unset layout makes every OMCI metadata
-	 * match fail, sends all WAN data to the LAN netdev, and -- worst --
-	 * feeds BIT(sp) a shift of UINT_MAX, which is undefined behaviour.
-	 * I wrote that NULL AS the safe option, having reasoned about the
-	 * X111W shell, which does have a fallback; the property did not carry.
-	 * ⇒ this die keeps EXACTLY the behaviour it ships with today, and the
-	 *   borrowing that used to be invisible is now written down. It is a
-	 *   candidate for its own row the moment 9607C stock evidence exists. */
-	.rx_layout	= &luna_rx_layout_rtl9603cvd,
-};
-
 
 /* ---- station address: the family's BRING-UP DEFAULT ----------------------- */
 /* The address the silicon/bootloader leaves in IDR0/IDR4 when nothing has
@@ -884,19 +797,8 @@ static_assert(SW_STAT_PORT_TX_MIB + 2 * SW_STAT_PORT_MIB_STRIDE == 0x32100u,
 	      "p2 TX MIB moved");
 static_assert(SW_STAT_PORT_TX_MIB + 3 * SW_STAT_PORT_MIB_STRIDE == 0x32180u,
 	      "p3 TX MIB moved");
-/* ★ AND THE RX SIDE IS PINNED PER DIE.  Two separate claims, because they fail
- * for different reasons: each base is what its own chipdef says, and the
- * RTL9602C's is NOT its siblings' -- which is the borrowing this table exists
- * to prevent.  On that die 0x32600 is STAT_ACL_CNT, a real register that
- * answers a real read, so the borrowed value would never fault; it would just
- * report ACL hits as received frames. */
-static_assert(SW_STAT_PORT_RX_MIB_RTL9602C == 0x32200 &&
-	      SW_STAT_PORT_RX_MIB_RTL9603CVD == 0x32600 &&
-	      SW_STAT_PORT_RX_MIB_RTL9607C == 0x32600,
-	      "an RX MIB base no longer matches its own chipdef");
-static_assert(SW_STAT_PORT_RX_MIB_RTL9602C != SW_STAT_PORT_RX_MIB_RTL9603CVD &&
-	      SW_STAT_PORT_RX_MIB_RTL9602C != SW_STAT_PORT_RX_MIB_RTL9607C,
-	      "the RTL9602C's RX MIB base was borrowed from a sibling die");
+static_assert(SW_STAT_PORT_RX_MIB_RTL9602C == 0x32200,
+	      "the RX MIB base no longer matches the chipdef");
 static_assert(SW_VLAN_EGRESS_TAG + 3 * 4 == 0x2a00cu,
 	      "the VLAN egress-tag array moved");
 static_assert(SW_PISO_PORT + 1 * SW_PISO_PORT_STRIDE == 0x27004u,

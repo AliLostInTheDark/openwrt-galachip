@@ -139,7 +139,7 @@ branch-to-break, cache-flush barriers, module-reloc / kexec / r4kcache support.
 +		 * L2).  Fall back to that stock geometry if Config1 reads bogus.
 +		 */
 +		config1 = read_c0_config1();
-+		pr_info("RLX cache probe: Config0=%08x Config1=%08lx\n",
++		pr_debug("RLX cache probe: Config0=%08x Config1=%08lx\n",
 +			config, config1);
 +		lsize = (config1 >> 19) & 7;
 +		c->icache.linesz = lsize ? 2 << lsize : 0;
@@ -152,7 +152,7 @@ branch-to-break, cache-flush barriers, module-reloc / kexec / r4kcache support.
 +		c->dcache.ways = 1 + ((config1 >> 7) & 7);
 +		dcache_size = c->dcache.sets * c->dcache.ways * c->dcache.linesz;
 +		if (icache_size != 0x10000 || dcache_size != 0x8000) {
-+			pr_info("RLX: Config1 cache fields bogus (ic=%lu dc=%lu) -> stock geometry\n",
++			pr_debug("RLX: Config1 cache fields bogus (ic=%lu dc=%lu) -> stock geometry\n",
 +				icache_size, dcache_size);
 +			c->icache.linesz = 32; c->icache.ways = 4; c->icache.sets = 512;
 +			icache_size = 0x10000;

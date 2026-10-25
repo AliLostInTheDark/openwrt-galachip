@@ -20,11 +20,7 @@ obj-y += flowcore_hash.o
 # cg_sn_parse wraps the common core's gpon_sn_parse(), hence the include path
 # (same spelling as both shells' own -I for the shared GPON core).
 ccflags-y += -I$(srctree)/drivers/net/gpon
-obj-$(CONFIG_CORTINA_GPON) += cortina_gpon_logic.o
-obj-$(CONFIG_CORTINA_NI) += cortina_ni_rx_logic.o cortina_ni_tx_logic.o
-obj-$(CONFIG_CORTINA_NI_FLOWOFFLOAD) += cortina_ni_flowoffload_logic.o \
-	cortina_l3fe_logic.o
-obj-$(CONFIG_LUNA_GPON) += luna_gpon_logic.o luna_ponmac_logic.o
+obj-$(CONFIG_LUNA_GPON) += luna_ponmac_logic.o
 # ★ REMOVED 2026-09-10: CONFIG_RTL9607C_GPON is not a Kconfig symbol -- no
 #   `config RTL9607C_GPON` exists anywhere in target/linux, so this line was
 #   always empty. It was harmless (line 27 already builds the object under
@@ -40,8 +36,6 @@ obj-$(CONFIG_RTL9602C_ETH) += rtl9602c_l34_logic.o
 # logic listed under one symbol alone links on one board and breaks the
 # other -- the measured crossconfig_call_guard defect.
 obj-$(CONFIG_RTL9602C_ETH) += luna_gmac_logic.o
-obj-$(CONFIG_LUNA_ETH) += luna_gmac_logic.o
-obj-$(CONFIG_LUNA_ETH) += luna_flow_logic.o
 
 # The GN25L95 BOSA calibration: the ORDERED sequence and a fail-first executor,
 # both HW-decoupled.  Under BOTH GPON gates for the luna_gmac_logic.o reason --
@@ -49,7 +43,6 @@ obj-$(CONFIG_LUNA_ETH) += luna_flow_logic.o
 # object listed under one family's symbol alone links on one and breaks the
 # other.  Proven against stock on the real part by
 # dev/rtl9607c-test/gn25l95_cal_diff_test.c.
-obj-$(CONFIG_CORTINA_GPON) += gn25l95_cal_logic.o
 obj-$(CONFIG_LUNA_GPON) += gn25l95_cal_logic.o
 
 # The OMCI WAN service model's VLAN half: the core DECIDES (drivers/net/gpon/
@@ -60,5 +53,4 @@ obj-$(CONFIG_LUNA_GPON) += gn25l95_cal_logic.o
 # crossconfig_call_guard defect).  Neither object names a register ADDRESS --
 # those arrive in the per-die table the shell fills -- so both build on x86 and
 # their write SEQUENCE is asserted by dev/rtl9607c-test/gpon_vlan_install_diff_test.
-obj-$(CONFIG_CORTINA_GPON) += cortina_vlan_install.o
 obj-$(CONFIG_LUNA_GPON) += luna_vlan_install.o

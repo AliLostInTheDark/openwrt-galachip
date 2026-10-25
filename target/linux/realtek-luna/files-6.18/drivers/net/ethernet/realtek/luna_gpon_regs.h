@@ -52,7 +52,6 @@
  */
 #define SOC_IP_ENABLE_PHYS	0x1800063cu
 #define   SOC_IP_EN_PON		BIT(5)
-#define   SOC_IP_EN_PONPBO	BIT(25)	/* rev>A PON packet-datapath (9607C) */
 
 #define GPON_INT_DLT		0x0000
 #define GPON_RESET		0x000c
@@ -637,8 +636,6 @@
 #define SMI_CTRL_2		0x230C0u
 #define SMI_CTRL_3		0x230C4u
 #define SMI_BC_PHYID		0x230C8u
-#define SWCORE_PROXY_PHY	10
-#define SW_IO_MODE_EN_9607C	0x23014u	/* 9607C: I2C_EN[13] + MDX_M_EN[10] */
 
 /* ★ THE SWCORE REGISTERS rtl9602c_datapath_tables_init() AND
  * rtl9602c_ponmac_modeset_gpon() WROTE AS BARE HEX (named 2026-09-05).  The names
@@ -1111,31 +1108,5 @@ static inline void luna_smi_write(void __iomem *sw, u8 phy, u8 reg, u16 val)
 		      luna_smi_pause);
 }
 
-/* 32-bit SWCORE access through the PHY-%d proxy: address low/high, then the
- * trigger word, then read the two data halves back. */
-static inline u32 luna_sw_proxy_rd(void __iomem *sw, u32 swc_off)
-{
-	u16 lo, hi;
-
-	luna_smi_write(sw, SWCORE_PROXY_PHY, 0, (u16)(swc_off & 0xffff));
-	luna_smi_write(sw, SWCORE_PROXY_PHY, 1, (u16)((swc_off >> 16) & 0xffff));
-	luna_smi_write(sw, SWCORE_PROXY_PHY, 6, 0x800b);	/* read trigger */
-	/* ~0u for a stuck bus, the convention cortina_ni_rx_mib_read already uses
-	 * here: a failed indirect read is made VISIBLE rather than silently
-	 * plausible.  0 would be a legitimate register value. */
-	if (luna_smi_read(sw, SWCORE_PROXY_PHY, 4, &lo) ||
-	    luna_smi_read(sw, SWCORE_PROXY_PHY, 5, &hi))
-		return ~0u;
-	return ((u32)hi << 16) | lo;
-}
-
-static inline void luna_sw_proxy_wr(void __iomem *sw, u32 swc_off, u32 val)
-{
-	luna_smi_write(sw, SWCORE_PROXY_PHY, 0, (u16)(swc_off & 0xffff));
-	luna_smi_write(sw, SWCORE_PROXY_PHY, 1, (u16)((swc_off >> 16) & 0xffff));
-	luna_smi_write(sw, SWCORE_PROXY_PHY, 2, (u16)(val & 0xffff));
-	luna_smi_write(sw, SWCORE_PROXY_PHY, 3, (u16)((val >> 16) & 0xffff));
-	luna_smi_write(sw, SWCORE_PROXY_PHY, 6, 0x804b);	/* write trigger */
-}
 
 #endif /* _LUNA_GPON_REGS_H */

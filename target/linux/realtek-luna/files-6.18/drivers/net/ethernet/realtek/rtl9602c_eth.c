@@ -320,7 +320,7 @@ static int rtl9602c_l34_setup_tc(struct net_device *dev,
  * offload-vs-AQM comparison is one bootarg apart rather than one build.  The
  * default is the OPERATOR'S: it decides which datapath ships, and that decision
  * is taken with measured throughput and loaded latency, never quietly here. */
-static int hw_nat = 1;	/* ON by default (operator, 2026-09-15) */
+static int hw_nat;	/* the V2802RH bridges: no L3/L4 NAT to offload */
 /* ★★★ THE DEFAULT IS 1, AND IT IS THE OPERATOR'S CALL, NOT AN INFERENCE.
  * (2026-09-15: *"=1 por defecto y corrigir"*.)  The standing objective has
  * always been *"mantener el acelerador de hardware activo por defecto"*, and 0
@@ -3086,18 +3086,9 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 					  eng_ok ? eng : NULL, mac);
 		eth_hw_addr_set(ndev, mac);
 
-		if (src == GPON_HWADDR_RANDOM)
-			dev_warn(dev,
-				 "MAC engine holds %pM: %s. Using %s %pM instead -- this board's real MAC lives in the vendor config partition and is not read yet\n",
-				 eng,
-				 eng_ok
-				 ? "not a valid unicast address"
-				 : "the SILICON BRING-UP DEFAULT, identical on every board of this family, which would collide on a shared segment",
-				 gpon_hwaddr_src_name(src), ndev->dev_addr);
-		else
-			/* an address from outside the device must be auditable */
-			dev_info(dev, "MAC %pM from %s\n", ndev->dev_addr,
-				 gpon_hwaddr_src_name(src));
+		/* gpon_provision sets this unit's MAC from its config partition. */
+		dev_dbg(dev, "MAC %pM from %s\n", ndev->dev_addr,
+			gpon_hwaddr_src_name(src));
 	}
 
 	/* Bring up the switch L3/L4 NAT engine (gated by the hw_nat ...
@@ -3117,7 +3108,7 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 		if (rtl9602c_l34_init(&ep->l34, ep->sw)) {
 			dev_warn(dev, "L34 hw-nat init failed; software forwarding\n");
 		} else {
-			dev_info(dev, "L34 hw-nat engine initialised\n");
+			dev_dbg(dev, "L34 hw-nat engine initialised\n");
 #ifdef CONFIG_GPON_FLOW_OFFLOAD
 			/* The COMMON lifecycle owns the cookie map and the entry; ...
 			 * dev/MEASURED-rtl9602c_eth.c.md sec 118. */
@@ -3175,9 +3166,7 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	dev_info(dev, "RTL9602C NIC at %pR, MAC %pM (inherited IO_CMD %08x)\n",
-		 platform_get_resource(pdev, IORESOURCE_MEM, 0),
-		 ndev->dev_addr, ep->ub_iocmd);
+	dev_dbg(dev, "inherited IO_CMD %08x\n", ep->ub_iocmd);
 
 	/* gpon0: the WAN data-GEM netdev (clean-room nas0-equivalent). Shares ep's RX/TX
 	 * rings + NAPI (owned by eth0); RX is demux'd by ingress port (PON port 2 -> gpon0)

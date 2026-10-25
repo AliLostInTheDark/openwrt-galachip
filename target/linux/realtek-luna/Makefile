@@ -7,30 +7,19 @@ BOARD:=realtek-luna
 BOARDNAME:=Realtek Luna GPON ONU
 DEVICE_TYPE:=basic
 FEATURES:=ramdisk squashfs gpio
-SUBTARGETS:=taroko interaptiv
+SUBTARGETS:=taroko
 
 KERNEL_PATCHVER:=6.18
 
 define Target/Description
-	Build firmware images for Realtek "Luna" GPON ONU SoCs.  The SUBTARGET
-	IS THE CPU CORE, and it is named after it: `taroko` for the RLX/Lexra
-	"Taroko" core (RTL9602C, RTL9603C) and `interaptiv` for the licensed
-	MIPS interAptiv core (RTL9607C, RTL9603CVD).  They were called rtl960x
-	and rtl9607x until 2026-08-29, and both names were wrong in the same
-	way: they claimed a PART-NUMBER RANGE while selecting a CORE, so a
-	part had to be routed against its name rather than by it -- the
-	RTL9603CVD is an interAptiv part and had to live in "rtl9607x", which
-	each target.mk needed a warning paragraph to explain.  A board now
-	goes to the subtarget its own boot banner names.
+	Build firmware images for the VSOL V2802RH GPON ONU (Realtek RTL9601D).
 endef
 
 include $(INCLUDE_DIR)/target.mk
 
 # --- the SHARED GPON protocol core ------------------------------------------
-# A THIRD files- tree, appended to FILES_DIR, so drivers/net/gpon/ is authored
-# ONCE and compiled by BOTH GPON targets (realtek-luna MIPS32 big-endian and
-# realtek-elnath aarch64 little-endian).  Operator, 2026-08-05: "la idea es
-# poner en comun el codigo que corresponde para no tener mucho duplicado".
+# A third files- tree, appended to FILES_DIR: the GPON core under
+# target/linux/gpon-common.
 #
 # This is not a new mechanism -- the build ALREADY concatenates two trees:
 # include/quilt.mk:93 is
@@ -79,14 +68,12 @@ Kernel/Patch := $(Kernel/Patch/Default)
 endif
 
 # No urngd: the jitter-entropy daemon burned ~60s of CPU at every boot on the
-# 624-BogoMIPS RLX core (measured on the X111W, 2026-07-08) while the kernel
+# RLX core while the kernel
 # crng already seeds itself from interrupt entropy by ~6s. (A "-urngd" negation
 # in DEVICE_PACKAGES is NOT honored by the rootfs assembly - filter it here.)
 DEFAULT_PACKAGES := $(filter-out urngd,$(DEFAULT_PACKAGES))
 
 DEFAULT_PACKAGES += \
-	kmod-gpio-button-hotplug \
-	uboot-envtools \
-	iw
+	kmod-gpio-button-hotplug
 
 $(eval $(call BuildTarget))

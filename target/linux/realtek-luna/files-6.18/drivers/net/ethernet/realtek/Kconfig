@@ -76,29 +76,7 @@ config LUNA_GPON
 	  GPON MAC register block (SWCORE + 0x700000) and exposes /proc/gpon.
 
 	  It gates the family-tier luna_gpon.o and luna_ponmac.o plus their
-	  flowcore logic halves, for BOTH subtargets (taroko and interaptiv).
-
-config LUNA_ETH
-	tristate "Realtek Luna (interAptiv) GMAC + switch"
-	depends on REALTEK_LUNA
-	select LUNA_ETH_MIB
-	default y
-	help
-	  Clean-room driver for the Luna GMAC0 CPU port plus the on-chip switch
-	  core (eth0 over an interAptiv SoC). One driver, a per-chip TABLE:
-	  RTL9607C (11 switch ports, 3 CPU GMACs, SerDes uplink) and RTL9603CVD
-	  (6 ports, 1 CPU GMAC, no SerDes). The MAC engine is identical on both;
-	  508 of 1361 switch registers move, which is why the table exists and
-	  why neither chip may borrow the other's offsets.
-
-config LUNA_FLOWOFFLOAD
-	bool "Realtek Luna FLOWBASED hardware flow offload"
-	depends on LUNA_ETH
-	select GPON_FLOW_OFFLOAD
-	default y
-	help
-	  SRAM IPv4 NAT backend for supported FLOWBASED switch layouts.
-	  Unsupported dies and flow shapes keep software forwarding.
+	  flowcore logic halves, on the RTL9601D.
 
 config LUNA_DEBUG
 	bool "Luna family bring-up diagnostics (boot markers, frame dumps, link diag, PHY survey)"

@@ -128,7 +128,7 @@ config GPON_FLOW_DIAG
 	  name one of the eleven.
 
 	  ★ IT DOES NOT TURN THE ACCELERATOR ON OR OFF.  That is
-	  RTL9602C_FLOWOFFLOAD / LUNA_FLOWOFFLOAD / CORTINA_NI_FLOWOFFLOAD,
+	  RTL9602C_FLOWOFFLOAD,
 	  all default y. This symbol decides only whether the REPORTING is compiled
 	  in -- and with it off the facility is ABSENT and says so, rather than
 	  printing counters nobody measured.

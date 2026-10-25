@@ -2,47 +2,7 @@
 /*
  * Realtek RTL960x "Luna" SoC interrupt controller (the "GISR" aggregator).
  *
- * ONE driver, two chips, a table for what differs.  It replaces
- * irq-rtl9602c.c and irq-rtl9603cvd.c, which were 96-98%% identical: the same
- * struct, the same mask/unmask/map/dispatch/of_init, the same offsets, and two
- * spellings of every name (`LUNA_INTC_GIMR` and `GISR_GIMR`, same value).  What
- * actually differed was three things, and all three are now DATA: the routing
- * table, whether a second CPU block must be masked, and nothing else.
- *
- * ★ THE MERGE WAS DEFERRED ON PURPOSE, AND THE DEFERRAL'S OWN TERMS ARE MET.
- * irq-rtl9603cvd.c said: *"kept apart deliberately for now -- that driver
- * carries two routing overrides established empirically on the X111W, which are
- * facts about THAT board's cascade and must not be inherited here.  Merge them
- * into one luna_* driver once this chip has booted and both routings are
- * proven."*  Both halves were checked before merging rather than assumed:
- *   - the per-board routing is NOT inherited: each chip keeps its own `irr[]`,
- *     which is the whole point of the table;
- *   - the RTL9602C's routing is proven by the X111W booting on it;
- *   - the RTL9603CVD's is proven by the G24W's console log of 2026-08-23,
- *     which shows `Linux version 6.18.31` and an INTERACTIVE `root@OpenWrt:~#`
- *     shell at uptime 1:50 answering commands.  That is this file's own stated
- *     test: without this aggregator delivering the UART interrupt, "early
- *     printk would work and the console would never become interactive".
- *
- * Clean-room: written from observed hardware facts only -- register bases and
- * offsets, bit semantics, the routing scheme and the vendor's own init values.
- * No proprietary source text or structure was copied.
- *
- * ---------------------------------------------------------------------
- * WHY THIS FAMILY DOES NOT USE A MIPS GIC
- *
- * The RTL9603CVD has NO MIPS GIC and no Coherence Manager.  Its own vendor
- * kernel says so on this exact board (tier 1, LANLY G24W boot console, captured
- * 2026-08-18):
- *
- *	MIPS CPS SMP unable to proceed without a CM
- *	GIC isn't present!
- *	rtl9603cvd_gisr_init: gisr_translate_d2c = ...
- *
- * so a "mti,gic" node here describes silicon that is not present: the UART
- * interrupt would never arrive, early printk would work and the console would
- * never become interactive.  Describe this aggregator instead.
- * ---------------------------------------------------------------------
+ * The V2802RH's RTL9601D runs the RTL9602C's aggregator and routing.
  *
  * REGISTER MAP (one block PER CPU where the chip has more than one; stride is
  * a table field, 0 where there is only one block to arrange):
@@ -145,8 +105,7 @@
 #define LUNA_INTC_PERIPH_EN	12	/* GIMR0 bit12 = master peripheral enable */
 
 /*
- * ★★ THE PER-CHIP TABLE -- the only thing that differs between these two SoCs.
- * A third Luna chip is a table entry, never a fork of the logic.
+ * The chip's routing table.
  */
 struct luna_intc_chip {
 	const char	*name;
@@ -166,14 +125,6 @@ static const struct luna_intc_chip rtl9602c_intc_chip = {
 		    0x63333063, 0x32322022, 0x00333000 },
 	.cpu_stride = 0,	/* this driver arranges one block here */
 	.cpu1_timer_irr = 0,
-};
-
-static const struct luna_intc_chip rtl9603cvd_intc_chip = {
-	.name	= "RTL9603CVD",
-	.irr	= { 0x03333330, 0x30302222, 0x00020222, 0x22020333,
-		    0x33333063, 0x32322022, 0x00333000 },
-	.cpu_stride = 0x40,
-	.cpu1_timer_irr = 0x33333603,	/* TC1 to CPU1; TC0 disconnected */
 };
 
 struct luna_intc {
@@ -367,12 +318,4 @@ static int __init rtl9602c_intc_of_init(struct device_node *node,
 	return luna_intc_init(node, &rtl9602c_intc_chip);
 }
 
-static int __init rtl9603cvd_intc_of_init(struct device_node *node,
-					  struct device_node *parent)
-{
-	return luna_intc_init(node, &rtl9603cvd_intc_chip);
-}
-
 IRQCHIP_DECLARE(rtl9602c_intc, "realtek,rtl9602c-intc", rtl9602c_intc_of_init);
-IRQCHIP_DECLARE(rtl9603cvd_intc, "realtek,rtl9603cvd-intc",
-		rtl9603cvd_intc_of_init);

@@ -9,26 +9,16 @@ USE_PROCD=1
 
 RTK=/usr/sbin/rtk_factory
 ENVFILE=/var/run/gpon.env
-BOSA_CAL_DST=/lib/firmware/rtkbosa_k.bin
-BOSA_CAL_TYPE_DST=
-LASER_PARAM_DIR=/sys/module/luna_gpon/parameters
-GPON_SN_PATHS="/sys/module/luna_gpon/parameters/onu_sn
-/sys/module/gpon_luna/parameters/onu_sn
-/sys/module/gpon_rtl9602c/parameters/onu_sn
-/sys/module/gpon/parameters/onu_sn"
-GPON_PWD_PATHS="/sys/module/luna_gpon/parameters/onu_password"
-# This unit's WiFi cal from its MIB (HW_WLAN0_*): rtk_factory verb wlan_<x> ->
-# rtl8192fe parameter unit_<x>. All or nothing: the driver needs the whole set.
-WIFI_CAL_VERBS="wlan_cck_a wlan_cck_b wlan_ht40_a wlan_ht40_b wlan_thermal wlan_xcap wlan_reg_domain"
-WIFI_CAL_DIR=/sys/module/rtl8192fe/parameters
+BOSA_CAL_DST=/lib/firmware/vsol/v2802rh-gn25l95.bin
+BOSA_CAL_TYPE_DST=/lib/firmware/vsol/v2802rh-gn25l95-lan-type
+GPON_SN_PARAM=/sys/module/luna_gpon/parameters/onu_sn
+GPON_PWD_PARAM=/sys/module/luna_gpon/parameters/onu_password
 KMSG=/dev/kmsg
-GPON_HEALTH=/proc/gpon_health
 
 . /lib/functions/gpon-cal.sh
 . /lib/functions/onu-identity.sh
 
-# logd starts after this START=09 script, so syslog alone loses every boot-time line
-# (G24W 2026-10-12: a failed factory read left no trace). The kernel log keeps them.
+# logd starts after this START=09 script, so the kernel log keeps the boot-time lines.
 log() {
 	logger -t gpon_provision "$@"
 	echo "gpon_provision: $*" >> "$KMSG" 2>/dev/null
@@ -112,16 +102,7 @@ provision() {
 		mac=""
 	fi
 	if [ -z "$mac" ]; then
-		# ★★ NO FACTORY MAC: DO NOT STOMP A MAC SOMEBODY BETTER ALREADY SET.
-		# MEASURED on the LANLY G24W (census 2026-08-27, mac_parity_vs_stock
-		# FAIL): the kernel driver had taken the unit's real MAC from the
-		# `mac=` boot parameter at probe, and this fallback then overwrote
-		# eth0 with derive_laa() -- which, with no /proc/cpuinfo Serial, is
-		# md5(boot_id): a DIFFERENT random every boot. The board wore a fresh
-		# identity per boot and every MAC-keyed measurement described
-		# something else. The next source is the boot parameter itself, read
-		# from the command line: eth0's current address without one is the
-		# driver's random, and adopting it pinned an invented MAC into uci.
+		# The driver may have taken the MAC from a mac= boot parameter.
 		mac=$(cmdline_mac)
 		if unit_mac_valid "$mac"; then
 			log "no factory MAC on '$part' - using $mac from the mac= boot parameter; PROVISIONING MISSING on this unit"
@@ -149,109 +130,22 @@ provision() {
 
 	log "provisioned: MAC=$mac SN=${sn:-?} (source=$source)"
 
-	set_wifi_cal "$part"
-
 	apply_mac "$base" "$mac"
 
-	# netifd builds br-lan AFTER this early (START=09) script and resets the
-	# bridge port to the driver default, so also pin the per-board MAC in UCI on
-	# bridge device sections for netifd to apply (best-effort; the GPON identity
-	# exported below is the authoritative per-board data for the ONU stack).
+	# netifd builds br-lan after this script and resets the bridge MAC to the
+	# driver's: pin this unit's MAC on the bridge sections in UCI too.
 	if [ -n "$mac" ] && [ -f /etc/config/network ]; then
-		local sec cid
+		local sec
 		for sec in $(uci -q show network 2>/dev/null | \
 			     sed -n "s/^network\.\([^.=]*\)\.type='bridge'\$/\1/p"); do
 			uci -q set "network.$sec.macaddr=$mac"
 		done
-		# Pin a STABLE, per-board WAN DHCP client-id (option 61 = 01:<MAC>, like a
-		# normal Ethernet host). This image RAM-boots with no persistent storage, so
-		# without this OpenWrt generates a fresh RFC4361 UUID-DUID client-id every boot;
-		# the OLT-side DHCP server (dnsmasq) keys leases on the client-id, so each boot
-		# looked like a NEW client and consumed a new pool address -> pool exhaustion ->
-		# no DHCP OFFER (no WAN). A MAC-derived client-id is stable per board + unique
-		# across the 1000-board fleet, so each board keeps a single lease.
-		# Derive the WAN (gpon0) MAC = LAN MAC + 3 (this model's stock offset, CONFIRMED
-		# from the live stock firmware's own DHCP lease: hostname RTK_GW, MAC ..b1 =
-		# LAN ..ae + 3, client-id 01:..b1; the 2nd ONU agrees, base ..a2 -> WAN ..a5 = +3).
-		# MUST match the driver's wan_mac_offset (default 3). 48-bit add (bash, carries up).
-		# ★★★ AND THE OFFSET IS THE FALLBACK, NOT THE SOURCE (MEASURED 2026-09-18
-		# on the G24W / RTL9603CVD, where it is WRONG). That die's WAN MAC is
-		# LAN+5, not LAN+3: br-lan 5c:19:23:b3:ce:90, gpon0 ...:95, while this
-		# code computed ...:93 and advertised client-id 015c1923b3ce93. Stock
-		# sends 01 + its own WAN MAC (...95), dnsmasq keys leases on the
-		# CLIENT-ID, so the SAME board held TWO leases -- ours .215 and stock's
-		# .216 -- and every probe keyed on the declared address then reported
-		# "no WAN" about a board whose WAN was up. It cost eight stock benchmark
-		# cells: the PPPoE AC reads the ONU's WAN MAC from the neighbour entry
-		# for that address, found nothing, and refused to start.
-		# ⇒ ASK THE INTERFACE. Its address IS the value this needs; an offset is
-		# a guess about a die, and the offset that was CONFIRMED on the X111W
-		# family (+3, and correct there) was silently applied to a die that does
-		# not share it. The computation stays as the LAST resort, for the boot
-		# where the netdev is not up yet, and the log SAYS which one answered --
-		# a client-id nobody can attribute is how this went unnoticed for weeks.
-		local wanoff=3 lannum wannum wanhex wansrc wanif
-		wanif="${ifname:-gpon0}"
-		if [ -r "/sys/class/net/$wanif/address" ]; then
-			wanhex=$(tr -d ':' < "/sys/class/net/$wanif/address" | tr 'A-F' 'a-f')
-			wansrc="$wanif's own MAC"
-		fi
-		case "$wanhex" in
-		[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
-		*)	wanhex="" ;;
-		esac
-		if [ -z "$wanhex" ]; then
-			lannum=$(printf '%d' "0x$(echo "$mac" | tr 'A-F' 'a-f' | tr -d ':')" 2>/dev/null)
-			wannum=$((lannum + wanoff))
-			wanhex=$(printf '%012x' "$wannum")
-			wansrc="LAN+$wanoff (COULD NOT READ $wanif -- a per-die guess)"
-		fi
-		logger -t gpon-provision "wan client-id 01$wanhex from $wansrc"
-		# Stable per-board WAN DHCP client-id (option 61 = 01:<WAN-MAC>), EXACTLY like stock
-		# (RTK_GW used 01:..b1). Stable across reboots + unique per board -> one lease, no
-		# pool exhaustion (this RAM-boot image otherwise emits a random DUID client-id/boot).
-		uci -q set "network.wan.clientid=01$wanhex"
-		# ROOT fix: pin a STABLE, MAC-derived system DUID. This RAM-boot image has no
-		# persistent /etc/machine-id, so OpenWrt otherwise generates a fresh RANDOM
-		# DUID-UUID every boot (from boot_id) -> the DHCPv4 RFC4361 client-id AND the
-		# DHCPv6 DUID change every boot -> the OLT-side server treats each boot as a new
-		# client and burns a fresh lease -> DHCP pool exhaustion (no OFFER -> no WAN), and
-		# would do the same fleet-wide. A DUID-LL (type 3, hw 1) derived from the per-board
-		# MAC is stable across reboots and unique per board, fixing IPv4 + IPv6.
-		uci -q set "network.globals.dhcp_default_duid=00030001$wanhex"
 		uci -q commit network 2>/dev/null
 	fi
-
-}
-
-# The optics the driver identified: RTL8290B, GN25L95, self-managed or unknown (a GN
-# part names itself only once calibrated); empty when the driver does not say.
-optics_backend() {
-	sed -n 's/^optics_backend: //p' "$GPON_HEALTH" 2>/dev/null
-}
-
-# RTL8290B: THIS unit's laser currents, handed to the driver before the serial
-# that starts ranging -- two units on one image never share a calibration.
-laser_from_unit() {
-	local part="$1" out key val
-	case "$2" in RTL8290B|'') ;; *) return 0 ;; esac
-	[ -w "$LASER_PARAM_DIR/laser_bias" ] || return 0
-	out=$("$RTK" -p "$part" laser_cal 2>/dev/null) || {
-		log "no RTL8290B laser calibration on '$part'"
-		return 0
-	}
-	for key in laser_bias laser_mod; do
-		val=$(echo "$out" | sed -n "s/^${key}_dac=//p")	# the full 12-bit DAC code
-		{ [ -n "$val" ] && echo "$val" > "$LASER_PARAM_DIR/$key"; } || {
-			log "could not hand $key='$val' to the driver; not activating GPON"
-			return 1
-		}
-	done
-	log "laser from this unit: $(echo $out)"
 }
 
 # The RTOS temperature correction selects one of two tables using LAN_TYPE.
-stage_v2802rh_lan_type() {
+stage_lan_type() {
 	local tmp="$1" lan_type
 	[ -n "${RTK_lan_type:-}" ] || return 1
 	lan_type=$(printf '%d' "$RTK_lan_type") || return 1
@@ -266,8 +160,7 @@ stage_v2802rh_lan_type() {
 stage_gn_cal() {
 	local part="$1" tmp why=
 	tmp=$(mktemp -d /tmp/gpon-cal.XXXXXX) || return 1
-	if [ -n "$BOSA_CAL_TYPE_DST" ] &&
-	   ! stage_v2802rh_lan_type "$tmp" 2>"$tmp/err"; then
+	if ! stage_lan_type "$tmp" 2>"$tmp/err"; then
 		why="missing or invalid factory LAN_TYPE, or staging failed"
 	fi
 	if [ -z "$why" ] && {
@@ -284,7 +177,7 @@ stage_gn_cal() {
 		log "cannot withdraw stale GN25L95 calibration; not activating GPON"
 		return 1
 	}
-	[ -z "$BOSA_CAL_TYPE_DST" ] || rm -f "$BOSA_CAL_TYPE_DST" || return 1
+	rm -f "$BOSA_CAL_TYPE_DST" || return 1
 	log "GN25L95 calibration unavailable ($why); GPON activation waits for it"
 	return 1
 }
@@ -300,12 +193,9 @@ set_password() {
 		log "no PLOAM password in this unit's MIB - the driver keeps its default"
 		return 0
 	}
-	for p in $GPON_PWD_PATHS; do
-		[ -w "$p" ] || continue
-		printf '%s\n' "$pw" > "$p" && { log "PLOAM password handed to the driver"; return 0; }
-		log "PLOAM password refused by the driver (0..10 printable characters)"
-		return 0
-	done
+	[ -w "$GPON_PWD_PARAM" ] || return 0
+	printf '%s\n' "$pw" > "$GPON_PWD_PARAM" && { log "PLOAM password handed to the driver"; return 0; }
+	log "PLOAM password refused by the driver (0..10 printable characters)"
 }
 
 # The OMCI identity (onu-identity.sh omci_id_apply): LuCI/UCI first, else this
@@ -316,36 +206,8 @@ set_omci_identity() {
 	omci_id_apply rtk_mib_value | while read -r msg; do log "$msg"; done
 }
 
-# Before the radio starts (hw_init applies it), so this unit calibrates with its
-# own TX power and crystal trim instead of another unit's.
-set_wifi_cal() {
-	local part="$1" verb val vals=""
-	[ -d "$WIFI_CAL_DIR" ] || return 0
-	rtk_need "$part"
-	for verb in $WIFI_CAL_VERBS; do
-		eval "val=\${RTK_$verb:-}"
-		case "$verb" in
-		wlan_cck_*|wlan_ht40_*)
-			echo "$val" | grep -qxE '([0-9a-fA-F]{2},){13}[0-9a-fA-F]{2}' ||
-				{ log "WiFi cal: $verb '$val' is not 14 hex bytes; the radio keeps the board table"; return 0; }
-			val=$(echo "$val" | sed 's/\([0-9a-fA-F][0-9a-fA-F]\)/0x\1/g') ;;
-		*)
-			echo "$val" | grep -qxE '[0-9]{1,3}' ||
-				{ log "WiFi cal: $verb '$val' is not a number; the radio keeps the board table"; return 0; }
-			;;
-		esac
-		vals="$vals$verb=$val "
-	done
-	for verb in $WIFI_CAL_VERBS; do
-		val=$(echo "$vals" | tr ' ' '\n' | sed -n "s/^$verb=//p")
-		printf '%s' "$val" > "$WIFI_CAL_DIR/unit_${verb#wlan_}" ||
-			log "WiFi cal: unit_${verb#wlan_}='$val' refused by the driver"
-	done
-	log "WiFi cal from this unit's MIB handed to the driver"
-}
-
 try_identity() {
-	local part calpart source sn p backend
+	local part calpart sn
 
 	config_load gpon
 	config_get part storage config_part config
@@ -353,34 +215,22 @@ try_identity() {
 	grep -qs '"osk"$' /proc/mtd && calpart=osk || calpart=$part
 	config_get calpart storage cal_part "$calpart"
 	rtk_load "$part"
-	case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in
-	vsol,v2802rh)
-		BOSA_CAL_DST=/lib/firmware/vsol/v2802rh-gn25l95.bin
-		BOSA_CAL_TYPE_DST=/lib/firmware/vsol/v2802rh-gn25l95-lan-type
-		;;
-	esac
 	sn=$(gpon_serial "${RTK_sn:-}")
 	[ -n "$sn" ] || { log "no GPON serial available; will retry"; return 1; }
 
-	backend=$(optics_backend)
-	case "$backend" in
-	RTL8290B|self-managed) ;;
-	*) stage_gn_cal "$calpart" || return 1 ;;
-	esac
-	laser_from_unit "$part" "$backend" || return 1
+	stage_gn_cal "$calpart" || return 1
 	set_password "$part"
 	set_omci_identity "$part"
 
-	for p in $GPON_SN_PATHS; do
-		[ -w "$p" ] || continue
-		if printf '%s' "$sn" > "$p"; then
-			log "GPON serial accepted by driver"
-			return 0
-		fi
-		log "GPON activation rejected; will retry"
+	if [ ! -w "$GPON_SN_PARAM" ]; then
+		log "GPON serial endpoint not ready; will retry"
 		return 1
-	done
-	log "GPON serial endpoint not ready; will retry"
+	fi
+	if printf '%s' "$sn" > "$GPON_SN_PARAM"; then
+		log "GPON serial accepted by driver"
+		return 0
+	fi
+	log "GPON activation rejected; will retry"
 	return 1
 }
 
@@ -394,20 +244,8 @@ retry_identity() {
 	done
 }
 
-# A board whose GPON driver takes no Luna serial parameter applies its identity
-# through its own family service (gpon-identity on Cortina), from the same policy.
-luna_gpon_present() {
-	local p
-	for p in $GPON_SN_PATHS; do [ -e "$p" ] && return 0; done
-	return 1
-}
-
 start_service() {
 	provision
-	luna_gpon_present || {
-		log "no Luna GPON serial parameter: this board's identity is its family service's"
-		return 0
-	}
 	try_identity && return 0
 	procd_open_instance identity
 	procd_set_param command /bin/sh /etc/init.d/gpon_provision --retry-identity
@@ -420,7 +258,6 @@ start_service() {
 # changes -> re-provision live, no reboot.
 reload_service() {
 	restart || return $?
-	[ ! -x /etc/init.d/gpon-identity ] || /etc/init.d/gpon-identity restart
 	if [ -x /etc/init.d/omci ]; then
 		/etc/init.d/omci reload 2>/dev/null
 	fi

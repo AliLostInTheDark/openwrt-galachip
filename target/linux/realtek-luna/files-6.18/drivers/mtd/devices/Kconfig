@@ -68,14 +68,6 @@ config MTD_LUNA_NOR_WRITE
 	  identity in them) stay readable and nothing can be written, which is what a
 	  bench unit booted from RAM over a vendor bank needs.
 
-config MTD_ONU_CRASHLOG
-	bool "ONU crash records on a reserved MTD partition"
-	depends on MTD
-	help
-	  A boot record per boot, a clean record per orderly reboot and the kernel
-	  log tail on panic, written to the partition labelled "crashlog" and read
-	  back from /proc/onu_crashlog after any reset.
-
 config MTD_DATAFLASH
 	tristate "Support for AT45xxx DataFlash"
 	depends on SPI_MASTER

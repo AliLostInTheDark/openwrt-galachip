@@ -1,24 +1,5 @@
-#
-# RTL9602C "Luna" GPON ONU (subtarget taroko) — the network layout for THIS SoC.
-#
-# ★ PER SoC, NOT PER TARGET (operator, 2026-09-15: "es por SoC"). This file used
-# to sit at target/linux/realtek-luna/base-files and therefore shipped to BOTH
-# Luna subtargets, so the RTL9603CVD received the RTL9602C's topology -- two
-# copper jacks described for a board that has four. shipped_netdev_guard.py has
-# measured that sharing since 2026-09-10; splitting it is what lets the two
-# diverge where the SILICON differs, while the per-UNIT values (LAN address,
-# MAC, DHCP client id) stay reconfigure-image.py's job as before.
-#
-# Topology: the on-chip switch core bridges both Ethernet jacks (port0 = FE/100M,
-# port1 = GE/1000M) behind the single CPU GMAC netdev (eth0), so eth0 carries
-# the whole wired LAN. WAN is the GPON datapath, presented to the CPU on VLAN 2
-# (eth0.2) once the ONU activates (O5/OMCI). LAN and WAN are deliberately kept
-# on separate L3 interfaces so the ONU ROUTES + NATs between them (firewall
-# lan->wan zone forwarding + masq do the rest).
-#
-# This file is shipped verbatim; config_generate(8) leaves an existing
-# /etc/config/network untouched, so the layout below is authoritative and the
-# per-board MAC (gpon_provision) is applied onto br-lan/eth0 at START=09.
+# VSOL V2802RH: an L2 bridge. eth0 carries both LAN jacks through the switch;
+# pon0 is the GPON side, whose VLANs omcid and omci-vlan manage.
 
 config interface 'loopback'
 	option device 'lo'
@@ -29,94 +10,14 @@ config interface 'loopback'
 config globals 'globals'
 	option ula_prefix 'auto'
 
-# LAN bridge over the Ethernet jack(s). Today only the CPU GMAC (eth0) is a
-# Linux netdev — the switch hardware-bridges FE+GE behind it — so eth0 is the
-# sole bridge port. When per-port netdevs land (directed-TX datapath work),
-# add 'eth1' (the GE jack) here for an explicit two-port bridge.
 config device
 	option name 'br-lan'
 	option type 'bridge'
-# ⚠⚠ REVERTED 2026-09-16 PENDING A CONTROL, and the measurement is why.
-# With the per-jack bridge (and rtl9602c_eth.port_vlans=1) the board itself
-# stayed healthy -- host->board ping 4/4, board->far-end ping 0% loss, the
-# per-socket RX counters discriminating correctly -- but TRANSIT through it
-# stopped: offload_ab's software leg went from 104.7/105.1 Mbps to no rate
-# at all, with iperf3 returning a book carrying no bits_per_second. A LAN
-# client's frames are what the per-port VLAN path changes, and nothing else
-# in that run changed, so the bridge goes back to the shape that forwards
-# until the cause is found. The DRIVER half stays (port_vlans defaults 0),
-# so nothing is lost and the experiment is one bootarg away.
-#
-# ONE BRIDGE PORT PER PHYSICAL JACK is stock's own shape: its br0
-# carries eth0.2 and eth0.3 (its capture shows both, with eth0.2 the one holding
-# the cable). Our switch used to give EVERY port SW_DEFAULT_VID, so the CPU saw
-# one untagged domain and a single bare eth0 was all that could exist -- the
-# per-socket information was destroyed in the switch, not missing from the
-# netdev layer.
-# ⚠⚠ IT TRAVELS WITH THE DRIVER HALF: these netdevs exist only while
-# rtl9602c_eth is programming per-port VIDs (rtl9602c_eth.port_vlans=1). Without
-# that bootarg the bridge carries nothing and the board is unreachable on the
-# LAN -- recoverable here because the dev loop is TFTP->RAM, so a powerctl
-# restart returns the board to flash.
-# ⚠ The VIDs are DERIVED, not typed: SW_PORT_VID_BASE (2) + the copper port
-# index, with the CPU and PON ports excluded from the chip's own map. On this
-# die that is ports 0 and 1 -> VIDs 2 and 3, which is exactly what stock shows.
 	list ports 'eth0'
+	list ports 'pon0'
 
 config interface 'lan'
 	option device 'br-lan'
 	option proto 'static'
 	option ipaddr '192.168.1.1'
 	option netmask '255.255.255.0'
-	option ip6assign '60'
-	list ip6class 'local'
-
-# WAN = GPON upstream (IPoE/DHCP), pulls 192.168.158.x from the OLT once the ONU
-# activates. Carried on the dedicated UNTAGGED data-GEM netdev gpon0 (the clean-room
-# nas0-equivalent): the driver demuxes downstream data-GEM frames (switch PON port 2)
-# to gpon0 and steers upstream frames to the data GEM's internal flow. The stock WAN
-# (nas0_0) is likewise UNTAGGED (VLAN 0) IPoE — NOT a tagged switch VLAN, so eth0.2 was
-# wrong. LAN (br-lan/eth0) and WAN (gpon0) stay on separate L3 interfaces -> the ONU
-# routes + NATs (firewall lan->wan).
-# keepalive = "<lcp-echo-failure> <lcp-echo-interval>"; persist and holdoff are
-# read by the same ppp.sh. All three are INERT while proto is 'dhcp' -- netifd's
-# dhcp.sh declares none of them and uci drops an undeclared option silently -- and
-# they are here so that a switch to proto 'pppoe' (uci, the vendor UI's
-# equivalent, or a test case) inherits a survivable session instead of OpenWrt's
-# default.
-#
-# ★ WHY, and it is measured on THIS board. ppp.sh's default is an LCP echo EVERY
-# SECOND with teardown after 5 misses = a FIVE SECOND budget, and it sets
-# `maxfail 1` with no `persist`, so pppd EXITS and netifd destroys and re-creates
-# the ppp netdev. Under a 60 B upstream UDP flood the echo crosses the same
-# congested upstream queue as the load, five are lost in a row, and the session
-# dies -- recorded on the X111W as `pppoe-wan` ifindex 8 -> 9 plus
-# `pppd: Connection terminated`, on 2026-08-22 and again on 2026-09-10.
-# `lcp-echo-adaptive` does not save it: it suppresses the echo only when the PPP
-# unit's pkts_in MOVED (ppp-2.5.2 pppd/lcp.c), and an upstream-only flow gives
-# the peer nothing to send back.
-#
-# ★ THE VALUE COMES FROM STOCK. This board's own vendor image (etc/producttype
-# X111WF1) runs spppd, and two independent points in its binaries agree on the
-# retry count: lib/libmib.so holds the literal pair `spppctl katimer 30` +
-# `spppctl echo_retry 6`, and bin/spppd's .data `max_alive_cnt` (0x4932c4) is
-# initialised to 6. So stock tolerates 30 s x 6 = 180 s.
-#
-# DELIBERATE DEVIATION: we take 20 s x 6 = 120 s, not stock's 180 s. It is 24x
-# ppp.sh's budget and far beyond any congestion gap this ONU produces, while
-# detecting a genuinely dead peer a minute sooner -- and it is the same value the
-# realtek-elnath target already ships, so the two boards do not need two answers
-# to one question. `pppoe_dead_peer_redial` allows 170 s, which 180 s would not
-# fit inside.
-config interface 'wan'
-	option device 'gpon0'
-	option proto 'dhcp'
-	option keepalive '6 20'
-	option persist '1'
-	option holdoff '5'
-
-config interface 'wan6'
-	option device 'gpon0'
-	option proto 'dhcpv6'
-	option reqaddress 'try'
-	option reqprefix 'auto'

@@ -109,11 +109,7 @@ u32 rtl9602c_eth_omci_tx_dirty(void);
 
 /* US-OMCI responses the shell's TX ring REFUSED. Read beside ...
  * dev/MEASURED-luna_gpon_nic.h.md sec 5. */
-#if IS_ENABLED(CONFIG_LUNA_ETH)
-u32 rtl9602c_eth_omci_tx_dropped(void);
-#else
 static inline u32 rtl9602c_eth_omci_tx_dropped(void) { return 0; }
-#endif
 
 /* OLT-INDEPENDENT US-OMCI datapath self-test: inject a synthetic OMCI frame
  * through the US-OMCI TX path so RX_SID_GOOD_CNT_US[4] can be checked at O5
@@ -148,7 +144,7 @@ int gpon_install_data_gem(void);
 
 /* Publish the cached live DDM optical levels into ME 263 ...
  * dev/MEASURED-luna_gpon_nic.h.md sec 7. */
-#if IS_ENABLED(CONFIG_RTL9602C_ETH) || IS_ENABLED(CONFIG_LUNA_ETH)
+#if IS_ENABLED(CONFIG_RTL9602C_ETH)
 void rtl9602c_eth_omci_set_optical(s16 rx_level, s16 tx_level);
 #else
 static inline void rtl9602c_eth_omci_set_optical(s16 rx_level, s16 tx_level)
