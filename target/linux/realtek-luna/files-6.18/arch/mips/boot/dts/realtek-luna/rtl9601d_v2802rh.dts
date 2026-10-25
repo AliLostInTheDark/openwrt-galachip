@@ -41,9 +41,11 @@
 	};
 
 	/* Semtech GN25L95, host-calibrated from the stock rtl-25l95-backup.bin.
-	 * Stock drives TX_DISABLE on GPIO 13 ("debug gpio set pin 13"); its I2C
-	 * bus and any TX power pin are not yet measured. */
+	 * Stock drives TX_DISABLE on GPIO 13 ("debug gpio set pin 13"). Bus 0
+	 * fails every access (RAM boot: GN calibration err=-5 at the first
+	 * write), so it is taken to be on bus 1, as on the X100DG. */
 	pon-optics {
+		realtek,i2c-bus = <1>;
 		realtek,tx-disable-gpio = <13>;
 	};
 

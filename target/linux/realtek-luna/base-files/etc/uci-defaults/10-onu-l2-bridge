@@ -1,7 +1,6 @@
 #!/bin/sh
 # Boards run as a pure L2 bridge: the PON joins br-lan and there is no routed
-# WAN, so the router-mode WAN discovery stays off. The VSOL RTOS boards also
-# keep their GN25L95 calibration outside the config partition.
+# WAN, so the router-mode WAN discovery stays off.
 
 board=""
 [ -r /tmp/sysinfo/board_name ] && board=$(cat /tmp/sysinfo/board_name)
@@ -14,7 +13,6 @@ vsol,v2802rh)
 	uci -q add_list network.@device[0].ports='gpon0'
 	uci -q commit network
 	uci -q set gpon.wan_auto.enabled='0'
-	uci -q set gpon.storage.cal_part='osk'
 	uci -q commit gpon
 	;;
 esac

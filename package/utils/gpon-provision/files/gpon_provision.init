@@ -330,7 +330,9 @@ try_identity() {
 
 	config_load gpon
 	config_get part storage config_part config
-	config_get calpart storage cal_part "$part"
+	# The VSOL RTOS boards keep the calibration in their "osk" partition.
+	grep -qs '"osk"$' /proc/mtd && calpart=osk || calpart=$part
+	config_get calpart storage cal_part "$calpart"
 	rtk_load "$part"
 	sn=$(gpon_serial "${RTK_sn:-}")
 	[ -n "$sn" ] || { log "no GPON serial available; will retry"; return 1; }
