@@ -67,6 +67,16 @@
 		interrupts = <2>, <3>, <6>;
 	};
 
+	/* Second reg is the SWCORE IO_GPIO_EN pair (0x1b000048/4c), the pad
+	 * mux that hands a pin to this block. */
+	gpio: gpio-controller@18003300 {
+		compatible = "realtek,rtl960x-gpio";
+		reg = <0x18003300 0x40>, <0x1b000048 0x8>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		status = "disabled";
+	};
+
 	uart0: serial@18002000 {
 		compatible = "ns16550a";
 		reg = <0x18002000 0x100>;
