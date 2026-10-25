@@ -16,8 +16,9 @@ names it. Field names are not in that kernel's debug info, so bit-level
 differences are given by position.
 
 **Our dump predates** the commits that brought up LAN2, the LEDs and the
-2.5G SerDes (e63c66a472, 990f869f43). The rows marked *re-dump* must be
-confirmed against a fresh dump of the current build (see the end).
+2.5G SerDes (e63c66a472, 990f869f43). A re-dump of the differing addresses
+on the current build (`~/Desktop/register-dump-owrt.log`, 2026-10-25)
+confirmed section 2; every other configuration row reads as before.
 
 Status key:
 - **ok:** runtime state or an intended difference; no action.
@@ -52,16 +53,16 @@ and packet-header capture buffers. They differ between any two reads.
 | 0x2a104 | RSVD_ALE_HSA | reserved |
 | 0x360f4 | EPON_LOCAL_TIME | free-running clock |
 
-## 2. Fixed after our dump (re-dump)
+## 2. Fixed after our first dump (confirmed by the re-dump)
 
-| Address | Register | Stock | Ours (dump) | Now |
+| Address | Register | Stock | First dump | Re-dump |
 |---|---|---|---|---|
 | 0x00180 | FORCE_P_ABLTY port 0 | 0x76 | 0x16 | 0x76, SerDes forced 2.5G with pause (990f869f43) |
+| 0x00198, 0x0019c | P_ABLTY port 0/1 | 0x76, 0x60 | 0x15, 0xe0 | 0x76, 0x60: same as stock |
 | 0x001b4 | ABLTY_FORCE_MODE port 0 | 0xfff | 0xfec | 0xfff; the GPON modeset no longer clears it |
 | 0x1e008 | DATA_LED_CFG LED1 | 0x20f78 | 0 | 0x20f78, LAN1 link/activity |
-| 0x1e05c | LED_EN | 0x10084 | 0 | bit 2 (LED1) set; bits 7 and 16 are the PON rows below |
-| 0x23014 | IO_LED_EN | 0x8042 | 0 | bit 1 (LED1) set; bits 6 and 15 are the PON rows below |
-| 0x21a00–0x21a0c, 0x21a68 | HSG_SDS_EXT_REG0–3, 26 | 0xffff / 0xff00 / 3 | 0x4b / 0 / 1 | 2.5G SerDes (LAN2), not brought up at dump time |
+| 0x1e05c | LED_EN | 0x10084 | 0 | 0x4: bit 2 (LED1); bits 7 and 16 are the PON rows below |
+| 0x23014 | IO_LED_EN | 0x8042 | 0 | 0x2: bit 1 (LED1); bits 6 and 15 are the PON rows below |
 
 ## 3. Decide or fix before flashing
 
@@ -85,7 +86,8 @@ These change how the board behaves as an L2 bridge today.
 | 0x1c094 | MIR_CTRL | 0x33 | 0 | Port mirroring config. | Investigate: likely stock's disabled encoding |
 | 0x1c098, 0x1c09c | STAT_PRIVATE_REASON | 0x181, 0xf7 | 0 | MIB counter selection. | ok |
 | 0x1d00c | INTR_IMR | 0x2481 | 0x400 | Ours unmasks only what the driver handles. | ok |
-| 0x1e050 | LED_BLINK_RATE_CFG | 0x3249 | 0x249 | Bits 13:12 force-blink period. | Match stock with the PON/LOS LEDs |
+| 0x1e050 | LED_BLINK_RATE_CFG | 0x3249 | 0x4249 (was 0x249) | Bits 14:12 force-blink period: stock 3, ours 4 since the LED commit. | Match stock with the PON/LOS LEDs |
+| 0x21a00–0x21a0c, 0x21a68 | HSG_SDS_EXT_REG0–3, 26 | 0xffff / 0xff00 / 0xffff / 0xff00 / 3 | 0x4a / 0 / 0x4a / 0 / 1 | 2.5G SerDes (LAN2) extension registers: still differ though LAN2 carries traffic at 2.5G. | Investigate: read stock's bits against ours before deciding |
 | 0x20010 | IGR_BWCTRL_P_CTRL | 0x1ffffe | 0x1ffffc | Bit 1 differs (port 0 ingress rate control). | Match stock |
 | 0x22c00 | FIB_REG0 | 0x1940 | 0x1140 | BMCR layout: stock sets bit 11 (power-down) on the unused fibre PHY. | Match stock: power it down |
 | 0x23018 | IO_MODE_EN | 0x01024040 | 0x010a4040 | Bit 19 = OEM_EN (optics pads), which luna_gpon.c sets. | PON: set only while the optics are in use |
