@@ -22,8 +22,7 @@
 
 #include "gpon_edge.h"	/* core: the router edge, read from the live kernel */
 
-/* Indirect table-access block (byte offsets within the ...
- * dev/MEASURED-rtl9602c_l34.h.md sec 7. */
+/* Indirect table-access block */
 #define L34_CMD			0x800100	/* command/trigger register */
 #define  L34_CMD_RD_EXE		BIT(25)		/* start read  (self-clears when done) */
 #define  L34_CMD_WR_EXE		BIT(24)		/* start write (self-clears when done) */
@@ -37,8 +36,7 @@
 #define L34_SWTCR0		0x800010	/* engine control (NAT mode / flow route) */
 #define  L34_SWTCR0_TTL_MINUS	BIT(12)
 #define  L34_SWTCR0_FRAG2CPU	BIT(23)
-/* ⚠⚠ THESE BIT NAMES WERE WRONG UNTIL 2026-09-12, AND THE ...
- * dev/MEASURED-rtl9602c_l34.h.md sec 1. */
+/* ⚠⚠ THESE BIT NAMES WERE WRONG UNTIL 2026-09-12, AND */
 #define  L34_SWTCR0_V6FLRT_EN	BIT(29)		/* IPv6 flow routing	*/
 #define  L34_SWTCR0_V4FLRT_EN	BIT(30)		/* IPv4 flow routing	*/
 #define  L34_SWTCR0_CF_SIP_ARP_TRF_EN BIT(31)	/* NOT a routing enable */
@@ -91,8 +89,7 @@
 #define L34_GLB_CFG		0x01106c	/* master L34 routing enable */
 #define L34_NAPT_HIT		0x800400	/* outbound NAPT hit/age bitmap (idx/32 words) */
 
-/* Table types (L34_CMD_TYPE). The NAPT path is a hashed pair: ...
- * dev/MEASURED-rtl9602c_l34.h.md sec 2. */
+/* Table types (L34_CMD_TYPE). The NAPT path is a hashed pair */
 enum l34_tbl {
 	L34_TBL_L3ROUTE		= 0,	/* 16 entries, 2 words: LPM route -> nexthop */
 	L34_TBL_PPPOE		= 1,	/* 8 entries,  1 word:  the negotiated session id */
@@ -117,18 +114,15 @@ enum l34_tbl {
 #define L34_NAPT_ENTRIES	4096
 #define L34_NAPT_WAYS		4		/* 4-way bucket: index = (hash << 2) + way */
 
-/* Entry field LAYOUTS (L34_NAPT_* / L34_NAPTR_* / L34_EXTIP_* ...
- * dev/MEASURED-rtl9602c_l34.h.md sec 3. */
+/* Entry field LAYOUTS */
 #define L34_EXTIP_SLOTS		8	/* EXTIP/EXTIP_IDX is 3-bit: netif idx must be < 8 */
 #define L34_NETIF_DEF_VLAN	1
 
-/* The two interface slots this driver provisions. They are a ...
- * dev/MEASURED-rtl9602c_l34.h.md sec 4. */
+/* The two interface slots this driver provisions. */
 #define L34_NETIF_WAN		0
 #define L34_NETIF_LAN		1
 
-/* Two more index CHOICES the same argument covers, and they ...
- * dev/MEASURED-rtl9602c_l34.h.md sec 5. */
+/* Two more index CHOICES the same argument covers, and */
 #define L34_RT_CPU_SLOT_OFF	8	/* L3ROUTE[netif + 8] = that netif's CPU self-route */
 
 /* The general LPM pool: L3ROUTE[2..7].  The table's convention is
@@ -141,8 +135,7 @@ enum l34_tbl {
 #define L34_RT_POOL_N		6
 #define L34_ARP_WAN_BASE	64	/* the WAN half of the 128-entry ARP table */
 
-/* L2 unicast table (the gateway/peer destination MAC). ...
- * dev/MEASURED-rtl9602c_l34.h.md sec 6. */
+/* L2 unicast table (the gateway/peer destination MAC). */
 #define L2_CMD			0x12000
 #define  L2_CMD_TYPE_SH		0	/* [2:0] table type (0 = L2_UC) */
 #define  L2_CMD_WR		BIT(3)	/* 0 = read, 1 = write */

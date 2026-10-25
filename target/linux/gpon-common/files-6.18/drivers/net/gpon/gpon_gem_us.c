@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* TIER: CORE (prefix gpon_) — protocol only. NEVER touches ...
- * dev/MEASURED-gpon_gem_us.c.md sec 1. */
+
 
 #include <linux/types.h>
 
@@ -13,8 +12,7 @@ bool gpon_gem_us_range_ok(const struct gpon_gem_us_range *r)
 	return GPON_GEM_US_RANGE_OK(r->base, r->count, r->index_max);
 }
 
-/* Alloc-ID -> T-CONT. ★ WHY THIS PREDICATE HAS A FILE TO ...
- * dev/MEASURED-gpon_gem_us.c.md sec 2. */
+/* Alloc-ID -> T-CONT. */
 bool gpon_gem_us_ride_range(const struct gpon_gem_us_range *omcc,
 			    struct gpon_gem_us_range *out)
 {
@@ -96,5 +94,4 @@ const char *gpon_gem_us_bind_name(enum gpon_gem_us_bind v)
 	return "unknown";
 }
 
-/* ★ TWO UPSTREAM FACTS THAT ARE *NOT* HERE, AND WHY — so a ...
- * dev/MEASURED-gpon_gem_us.c.md sec 3. */
+/* TWO UPSTREAM FACTS THAT ARE *NOT* HERE, AND WHY */

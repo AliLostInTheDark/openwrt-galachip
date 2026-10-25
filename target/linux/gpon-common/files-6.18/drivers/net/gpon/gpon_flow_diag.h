@@ -1,16 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* TIER: CORE, strict host-buildable subset.  CONFIG_GPON_FLOW_DIAG, the fourth
- * member of the CONFIG_GPON_<SUBSYSTEM>_DIAG family -- why a flow was NOT
- * accelerated.  Evidence: dev/MEASURED-gpon_flow_diag.h.md sec 1. */
+
 #ifndef GPON_FLOW_DIAG_H
 #define GPON_FLOW_DIAG_H
 
 #include <linux/types.h>
 
-/* WHY a TC replace did not end up in the engine.  A CLOSED set: every refusal
- * point in gpon_flow.c and gpon_flow_offload.c names exactly one of these, and
- * the three errnos they collapse into cannot tell them apart --
- * dev/MEASURED-gpon_flow_diag.h.md sec 2. */
+/* WHY a TC replace did not end up in the engine. A CLOSED set */
 enum gpon_flow_refusal {
 	GPON_FLOW_OK = 0,		/* installed                            */
 	GPON_FLOW_REF_NO_ENGINE,	/* no lifecycle / table not ready       */
@@ -69,10 +64,7 @@ struct gpon_flow_tally {
 void gpon_flow_tally_note(struct gpon_flow_tally *t, enum gpon_flow_refusal r);
 void gpon_flow_tally_leg(struct gpon_flow_tally *t, int iif, bool ds_leg);
 
-/* What only the FAMILY can read: its own offer count and its engine's state.
- * A clear bit is COULD NOT ASK and renders n/a -- never 0, because "0 entries
- * live" is a device finding and "we never asked" is not --
- * dev/MEASURED-gpon_flow_diag.h.md sec 3. */
+/* What only the FAMILY can read: its own offer count and its engine's state. * A clear bit is COULD NOT ASK and renders n/a */
 #define GPON_FDIAG_HAS_OFFERED		0x01u
 #define GPON_FDIAG_HAS_LIVE		0x02u
 #define GPON_FDIAG_HAS_CAPACITY		0x04u	/* a per-CHIP table fact */
@@ -87,9 +79,7 @@ struct gpon_flow_diag {
 	u32 hw_hits;	/* the hit witness, in the family's own units    */
 };
 
-/* ONE line, fields in a fixed order so a reader can grep it.  Only the causes
- * that FIRED are listed, so a healthy board prints a short line and this cannot
- * flood -- dev/MEASURED-gpon_flow_diag.h.md sec 4. */
+/* ONE line, fields in a fixed order so a reader can grep it. */
 int gpon_flow_diag_line(const struct gpon_flow_tally *t,
 			const struct gpon_flow_diag *d, char *out, size_t sz);
 

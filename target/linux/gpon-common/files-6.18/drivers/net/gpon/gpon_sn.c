@@ -10,8 +10,7 @@
 /* Local, so the file needs no <ctype.h>: the spec's alphabet is ASCII and the
  * kernel's ctype is locale-free anyway -- spelling it out costs four lines and
  * removes a dependency from a file that must also build on a host. */
-/* A vendor ID character: printable ASCII, and not a space. ...
- * dev/MEASURED-gpon_sn.c.md sec 2. */
+/* A vendor ID character: printable ASCII, and not a space. */
 static int sn_id_char_ok(char c)
 {
 	unsigned char u = (unsigned char)c;
@@ -90,7 +89,6 @@ bool gpon_sn_is_set(const u8 sn[GPON_SN_BYTES])
 {
 	if (!sn)
 		return false;
-	/* ★★ EITHER HALF BLANK IS "NOT PROVISIONED", not just both of ...
-	 * dev/MEASURED-gpon_sn.c.md sec 1. */
+	/* EITHER HALF BLANK IS "NOT PROVISIONED", not just both */
 	return !sn_half_blank(sn) && !sn_half_blank(sn + 4);
 }

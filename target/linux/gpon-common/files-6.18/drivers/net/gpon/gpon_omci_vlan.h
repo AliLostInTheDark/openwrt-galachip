@@ -49,8 +49,7 @@
 
 #include <linux/types.h>
 
-/* ME 171 — the received-frame VLAN tagging operation table row
- * dev/MEASURED-gpon_omci_vlan.h.md sec 1. */
+/* ME 171 — the received-frame VLAN tagging operation table */
 #define GPON_EXT_VLAN_ROW_LEN	16
 
 /* The RAW row, field by field, exactly as the wire carries it — no meaning
@@ -76,8 +75,7 @@ struct gpon_ext_vlan_row {
 	u8	t_in_tpid;	/* 3 bits */
 };
 
-/* THE SENTINELS. Every one of these is a value one past the ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 2. */
+/* THE SENTINELS. */
 #define GPON_VLAN_PRI_ANY	8	/* filter: do not filter on priority.
 					 * Stock's own OMCI_PRI_FILTER_IGNORE */
 #define GPON_VLAN_PRI_DEFAULT	14	/* filter: part of the default-rule
@@ -88,8 +86,7 @@ struct gpon_ext_vlan_row {
 					 * Stock's own OMCI_VID_FILTER_IGNORE */
 #define GPON_VLAN_ETYPE_ANY	0	/* filter: do not filter on EtherType */
 
-/* The TPID/DE code, 3 bits. Stock splits it with one `sltiu ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 19. */
+/* The TPID/DE code, 3 bits. */
 #define GPON_VLAN_TPID_INPUT_MIN	5
 #define GPON_VLAN_TPID_C		0x8100
 
@@ -98,8 +95,7 @@ struct gpon_ext_vlan_row {
  * emits any filter at all. */
 #define GPON_VLAN_REMOVE_DISCARD	3
 
-/* The EtherType filter codes, and the wire values they name. ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 20. */
+/* The EtherType filter codes, and the wire values they name. */
 #define GPON_VLAN_ETYPE_MAX	5	/* ⚠ AND CODES 6..15 ARE A STOCK DEFECT WE
 					 * DO NOT COPY: its table lookup falls
 					 * past the end, the EtherType field is
@@ -132,8 +128,7 @@ static inline u16 gpon_vlan_etype_of(u8 code)
 	}
 }
 
-/* Decode one 16-octet row. Explicit byte math, never a struct ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 21. */
+/* Decode one 16-octet row. */
 static inline void gpon_ext_vlan_row_decode(const u8 *b,
 					    struct gpon_ext_vlan_row *r)
 {
@@ -191,8 +186,7 @@ static inline void gpon_ext_vlan_row_encode(const struct gpon_ext_vlan_row *r,
 	b[14] = (u8)(w3 >> 8); b[15] = (u8)w3;
 }
 
-/* ME 49 — the MAC bridge port filter table row ★★ THE LAYOUT ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 3. */
+/* ME 49 — the MAC bridge port filter table row THE */
 #define GPON_MAC_FILTER_ROW_LEN		8
 #define GPON_MAC_FILTER_MAC_OFF		2	/* where the address starts */
 
@@ -236,8 +230,7 @@ static inline bool gpon_mac_filter_same_key(const u8 *a, const u8 *b)
 	return true;
 }
 
-/* The DECIDED rule — what the family is asked to install What ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 4. */
+/* The DECIDED rule */
 #define GPON_VLANF_NO_CARE_TAG	0x01	/* the tag may be there or not */
 #define GPON_VLANF_CARE_TAG	0x02	/* it must be there; nothing else matched */
 #define GPON_VLANF_NO_TAG	0x04	/* it must NOT be there */
@@ -267,8 +260,7 @@ struct gpon_vlan_filter {
 					 * 0x8100, so the tag is a SERVICE tag */
 };
 
-/* The TREATMENT half — what to do with the frame the filter ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 5. */
+/* The TREATMENT half */
 #define GPON_VLAN_REMOVE_NONE	0	/* strip nothing */
 #define GPON_VLAN_REMOVE_OUTER	1	/* strip the outer (S) tag only */
 #define GPON_VLAN_REMOVE_BOTH	2
@@ -357,8 +349,7 @@ struct gpon_vlan_rule {
 	struct gpon_vlan_treat	t;
 };
 
-/* The pure translation — the half stock proves can be pure Is ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 6. */
+/* The pure translation */
 static inline bool gpon_ext_vlan_row_is_default(const struct gpon_ext_vlan_row *r)
 {
 	return r->t_remove == 0 &&
@@ -371,15 +362,13 @@ static inline bool gpon_ext_vlan_row_is_default(const struct gpon_ext_vlan_row *
 	       r->f_in_pri == GPON_VLAN_PRI_DEFAULT;
 }
 
-/* Is this row a DISCARD rule -- the OLT telling us to drop ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 22. */
+/* Is this row a DISCARD rule */
 static inline bool gpon_ext_vlan_row_is_discard(const struct gpon_ext_vlan_row *r)
 {
 	return r->t_remove == GPON_VLAN_REMOVE_DISCARD;
 }
 
-/* A row is DELETED by writing it back with BOTH TREATMENT ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 7. */
+/* A row is DELETED by writing it back with BOTH */
 static inline bool gpon_ext_vlan_raw_is_delete(const u8 *b)
 {
 	unsigned int i;
@@ -390,8 +379,7 @@ static inline bool gpon_ext_vlan_raw_is_delete(const u8 *b)
 	return true;
 }
 
-/* ONE TAG's filter mode, from its raw (priority, VID) pair. ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 8. */
+/* ONE TAG's filter mode, from its raw (priority, VID) pair. */
 static inline u8 gpon_ext_vlan_tag_mode(u8 pri, u16 vid)
 {
 	if (pri == GPON_VLAN_PRI_NONE)
@@ -402,8 +390,7 @@ static inline u8 gpon_ext_vlan_tag_mode(u8 pri, u16 vid)
 	return vid == GPON_VLAN_VID_ANY ? GPON_VLANF_PRI : GPON_VLANF_TCI;
 }
 
-/* Turn the FILTER half of a raw row into the decided filter. ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 9. */
+/* Turn the FILTER half of a raw row into the decided filter. */
 static inline bool gpon_ext_vlan_filter(const struct gpon_ext_vlan_row *r,
 					u16 in_tpid,
 					struct gpon_vlan_filter *f)
@@ -438,8 +425,7 @@ static inline bool gpon_ext_vlan_filter(const struct gpon_ext_vlan_row *r,
 	return true;
 }
 
-/* ONE output tag, from its raw treatment priority, VID and ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 23. */
+/* ONE output tag, from its raw treatment priority, VID */
 static inline bool gpon_ext_vlan_tag_treat(u8 pri, u16 vid, u8 tpid_code,
 					   u8 tags_matched,
 					   struct gpon_vlan_tag_treat *o)
@@ -482,8 +468,7 @@ static inline bool gpon_ext_vlan_tag_treat(u8 pri, u16 vid, u8 tpid_code,
 	return true;
 }
 
-/* The TREATMENT half of a raw row, decided. ⚠ DISCARD IS ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 10. */
+/* The TREATMENT half of a raw row, decided. */
 static inline bool gpon_ext_vlan_treat(const struct gpon_ext_vlan_row *r,
 				       u8 tags_matched,
 				       struct gpon_vlan_treat *t)
@@ -527,8 +512,7 @@ static inline bool gpon_ext_vlan_decide(const struct gpon_ext_vlan_row *r,
 	return gpon_ext_vlan_treat(r, gpon_vlan_tags_matched(&out->f), &out->t);
 }
 
-/* The stored model — what the OLT has told us, per ME How ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 11. */
+/* The stored model */
 #ifndef GPON_EXT_VLAN_MAX
 #define GPON_EXT_VLAN_MAX	4
 #endif
@@ -775,8 +759,7 @@ static inline void gpon_mac_filter_copy_row(u8 *dst, const u8 *src)
 		dst[i] = src[i];
 }
 
-/* Apply one ME 49 table-attribute write. @body is the 8 ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 12. */
+/* Apply one ME 49 table-attribute write. */
 static inline bool gpon_mac_filter_row_set(struct gpon_vlan_model *m, u16 inst,
 					   const u8 *body)
 {
@@ -882,8 +865,7 @@ static inline const u8 *gpon_mac_filter_raw(const struct gpon_vlan_model *m,
 	return NULL;
 }
 
-/* The other six: pure decoders over the dense instance body ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 13. */
+/* The other six */
 struct gpon_vlan_op {
 	u8	us_mode;	/* #1 upstream tagging operation mode */
 	u16	us_tci;		/* #2 upstream TCI (pri<<13 | cfi<<12 | vid) */
@@ -905,7 +887,7 @@ static inline bool gpon_vlan_op_decode(const u8 *body, unsigned int blen,
 	return true;
 }
 
-/* ⚠ AND THERE IS NO gpon_vlan_op_to_rule() HERE, ... -- dev/MEASURED-gpon_omci_vlan.h.md sec 14. */
+/* ⚠ AND THERE IS NO gpon_vlan_op_to_rule() */
 #define GPON_VLAN_FILTER_MAX	12	/* #1 is 24 octets = 12 TCI entries */
 
 struct gpon_vlan_admit {
@@ -928,8 +910,7 @@ static inline bool gpon_vlan_admit_decode(const u8 *body, unsigned int blen,
 	return a->n <= GPON_VLAN_FILTER_MAX;
 }
 
-/* > is @vid one of the VIDs this list NAMES? A fact about the ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 15. */
+/* > is @vid one of the VIDs this list NAMES? A fact about */
 static inline bool gpon_vlan_admit_lists_vid(const struct gpon_vlan_admit *a,
 					     u16 vid)
 {
@@ -1077,8 +1058,7 @@ static inline bool gpon_mcast_iw_decode(const u8 *body, unsigned int blen,
 	return true;
 }
 
-/* The family seam What a family shell must supply to make a ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 16. */
+/* The family seam What a family shell must supply to make */
 struct gpon_vlan_ops {
 	int (*rule_install)(void *ctx, const struct gpon_vlan_rule *r);
 	int (*rule_remove)(void *ctx, const struct gpon_vlan_rule *r);
@@ -1100,8 +1080,7 @@ enum gpon_vlan_emit {
 	GPON_VLAN_INSTALL_FAILED,
 };
 
-/* Hand one decided rule to the family. @ops and @ctx may both ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 24. */
+/* Hand one decided rule to the family. */
 static inline enum gpon_vlan_emit
 gpon_vlan_rule_emit(struct gpon_vlan_model *m, const struct gpon_vlan_ops *ops,
 		    void *ctx, const struct gpon_vlan_rule *r)
@@ -1121,8 +1100,7 @@ static inline u16 gpon_vlan_owed(const struct gpon_vlan_model *m)
 	return m->owed;
 }
 
-/* The GEOMETRY of a decided rule — the half BOTH families ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 17. */
+/* The GEOMETRY of a decided rule */
 enum gpon_vlan_shape {
 	GPON_VLAN_SHAPE_DISCARD = 0,	/* drop what matched; nothing else applies */
 	GPON_VLAN_SHAPE_TRANSPARENT,	/* strip nothing, write nothing */
@@ -1182,8 +1160,7 @@ static inline void gpon_vlan_rule_want(const struct gpon_vlan_rule *r,
 		w->all_assigned = false;	/* nothing was assigned at all */
 }
 
-/* Walking one ME 171 instance into the family ME 171's ...
- * dev/MEASURED-gpon_omci_vlan.h.md sec 18. */
+/* Walking one ME 171 instance into the family ME */
 struct gpon_vlan_inst_attrs {
 	u8	assoc_type;	/* #1 */
 	u16	in_tpid;	/* #3 */

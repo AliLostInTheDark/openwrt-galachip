@@ -1,12 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* The Luna GPON<->NIC contract: what luna_gpon.c and ...
- * dev/MEASURED-luna_gpon_nic.h.md sec 1. */
+/* The Luna GPON<->NIC contract */
 #ifndef _LUNA_GPON_NIC_H
 #define _LUNA_GPON_NIC_H
 
 struct omci_onu;
-/* @uni_admin_set: drive ONE Ethernet UNI's administrative ...
- * dev/MEASURED-luna_gpon_nic.h.md sec 2. */
+/* @uni_admin_set */
 int luna_omci_attach(struct omci_onu *onu, void *cookie, u8 seed,
 		    int (*tx)(void *, const u8 *, unsigned int),
 		    void (*tx_fence)(void *),
@@ -94,12 +92,11 @@ void rtl9602c_eth_set_omci_sid(unsigned int sid);
  * the PLOAM Serial_Number the OLT ranged. Provided by rtl9602c_eth.c. */
 void rtl9602c_eth_set_omci_identity(const u8 *sn8);
 
-/* DS OMCI frames that reached the CPU NIC ring (defined in ...
- * dev/MEASURED-luna_gpon_nic.h.md sec 3. */
+/* DS OMCI frames that reached the CPU NIC ring */
 #define GPON_OMCI_RX_UNAVAIL	0xffffffffu
 u32 rtl9602c_eth_omci_rx_count(void);
 
-/* gpon0 (WAN) RX packet count, used by the GPON O5 ... -- dev/MEASURED-luna_gpon_nic.h.md sec 4. */
+/* gpon0 (WAN) RX packet count, used by the GPON */
 u32 rtl9602c_eth_wan_rx_count(void);
 
 /* US-OMCI TX-ring reclaim cursor ("dirty"): count of OMCC descriptors the HW has
@@ -107,8 +104,7 @@ u32 rtl9602c_eth_wan_rx_count(void);
  * in rtl9602c_eth.c; surfaced for the periodic O5 serial diagnostic. */
 u32 rtl9602c_eth_omci_tx_dirty(void);
 
-/* US-OMCI responses the shell's TX ring REFUSED. Read beside ...
- * dev/MEASURED-luna_gpon_nic.h.md sec 5. */
+/* US-OMCI responses the shell's TX ring REFUSED. */
 static inline u32 rtl9602c_eth_omci_tx_dropped(void) { return 0; }
 
 /* OLT-INDEPENDENT US-OMCI datapath self-test: inject a synthetic OMCI frame
@@ -126,8 +122,7 @@ void gpon_pbo_init(void);
  * resync, before the GMAC is programmed/armed). Defined in luna_gpon.c. */
 void rtl9602c_datapath_tables_init(void);
 
-/* WAN data-GEM datapath. GPON_DATA_FLOW = the internal ...
- * dev/MEASURED-luna_gpon_nic.h.md sec 6. */
+/* WAN data-GEM datapath. */
 #define GPON_DATA_FLOW		1
 #define GPON_DATA_GEM_DEFAULT	193u
 
@@ -142,8 +137,7 @@ void rtl9602c_datapath_tables_init(void);
 /* Timer-owned data installation consumes the accepted common OMCI binding. */
 int gpon_install_data_gem(void);
 
-/* Publish the cached live DDM optical levels into ME 263 ...
- * dev/MEASURED-luna_gpon_nic.h.md sec 7. */
+/* Publish the cached live DDM optical levels into ME */
 #if IS_ENABLED(CONFIG_RTL9602C_ETH)
 void rtl9602c_eth_omci_set_optical(s16 rx_level, s16 tx_level);
 #else

@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* MAY THIS ONU RANGE, AND WHAT MUST CHANGE IF NOT. The ...
- * dev/MEASURED-gpon_range_gate.h.md sec 1. */
+/* MAY THIS ONU RANGE, AND WHAT MUST CHANGE IF NOT. */
 #ifndef _GPON_RANGE_GATE_H
 #define _GPON_RANGE_GATE_H
 
@@ -23,8 +22,7 @@ struct gpon_range_request {
 	bool laser_wanted;	/* the operator has not switched the laser off */
 };
 
-/* THE ORDER IS THE ANSWER, which is why this is three flags ...
- * dev/MEASURED-gpon_range_gate.h.md sec 2. */
+/* THE ORDER IS THE ANSWER, which is why this is three */
 struct gpon_range_action {
 	bool quiesce;		/* FIRST: clear the GO bit                   */
 	bool program;		/* THEN: program the laser, config, and arm  */

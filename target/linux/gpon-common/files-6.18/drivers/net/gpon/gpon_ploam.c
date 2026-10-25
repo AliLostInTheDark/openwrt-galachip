@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* TIER: CORE (prefix gpon_) — protocol only. NEVER touches ...
- * dev/MEASURED-gpon_ploam.c.md sec 1. */
+
 
 #include "gpon_sn.h"	/* the one ONU-SN codec */
 #include "gpon_ploam.h"
@@ -23,8 +22,7 @@
 #define GPON_PLOAM_BOH_PTN_DEFAULT	0xaa
 #define GPON_PLOAM_BOH_DELIM_DEFAULT	{ 0xab, 0x59, 0x83 }
 
-/* Small internal helpers. No file-scope state: everything ...
- * dev/MEASURED-gpon_ploam.c.md sec 2. */
+/* Small internal helpers. No file-scope state */
 static bool ms_after(u32 a, u32 b)
 {
 	u32 diff = a - b;
@@ -38,8 +36,7 @@ static void ev(const struct gpon_ploam *o, enum gpon_ploam_ev e, u32 a, u32 b)
 		o->ops->trace(o->sh, e, a, b);
 }
 
-/* The core's outlet for "we received something we do not ...
- * dev/MEASURED-gpon_ploam.c.md sec 3. */
+/* The core's outlet for */
 static void unsup(const struct gpon_ploam *o, const char *kind,
 		  enum gpon_unsup_class cls, u32 val, const char *want,
 		  const u8 *d, unsigned int len)
@@ -66,8 +63,7 @@ static void ploam_tx(struct gpon_ploam *o, u8 queue,
 	o->us_queued[ploam_slot(m[1])]++;
 }
 
-/* Upstream message builders. Pure byte assembly; the hardware ...
- * dev/MEASURED-gpon_ploam.c.md sec 39. */
+/* Upstream message builders. Pure byte assembly */
 static void send_sn(struct gpon_ploam *o)
 {
 	u8 m[GPON_PLOAM_US_LEN];
@@ -82,8 +78,7 @@ static void send_sn(struct gpon_ploam *o)
 	o->sn_tx++;
 }
 
-/* Password (US type 0x02), from luna_gpon.c:5788-5132. GROUND ...
- * dev/MEASURED-gpon_ploam.c.md sec 4. */
+/* Password (US type 0x02). */
 static int send_password(struct gpon_ploam *o)
 {
 	u8 p[GPON_PLOAM_US_LEN] = { 0 };
@@ -97,8 +92,7 @@ static int send_password(struct gpon_ploam *o)
 	return 3;
 }
 
-/* Acknowledge (US type 0x09), from luna_gpon.c:5809-5154. The ...
- * dev/MEASURED-gpon_ploam.c.md sec 5. */
+/* Acknowledge (US type 0x09). */
 static int send_ack(struct gpon_ploam *o, const u8 *ds)
 {
 	u8 a[GPON_PLOAM_US_LEN] = { 0 };
@@ -113,8 +107,7 @@ static int send_ack(struct gpon_ploam *o, const u8 *ds)
 	return 1;
 }
 
-/* Encryption_Key (US type 0x05), from luna_gpon.c:5861-5224. ...
- * dev/MEASURED-gpon_ploam.c.md sec 6. */
+/* Encryption_Key (US type 0x05). */
 static int send_key(struct gpon_ploam *o)
 {
 	u8 m[GPON_PLOAM_US_LEN];
@@ -148,8 +141,7 @@ static void build_template(u8 m[GPON_PLOAM_US_LEN], u8 type)
 	m[1] = type;
 }
 
-/* Burst overhead and equalization delay: the two computations ...
- * dev/MEASURED-gpon_ploam.c.md sec 7. */
+/* Burst overhead and equalization delay */
 static u32 apply_boh(struct gpon_ploam *o, bool ranged)
 {
 	u8 oh[GPON_PLOAM_BOH_LEN];
@@ -163,8 +155,7 @@ static u32 apply_boh(struct gpon_ploam *o, bool ranged)
 		guard = 32;
 	rep = guard / 8;			/* boh_repeat = whole guard bytes */
 
-	/* ★ FOLLOW-UP P4, DISCHARGED 2026-09-02. This read boh_len = ...
-	 * dev/MEASURED-gpon_ploam.c.md sec 8. */
+	/* FOLLOW-UP P4, DISCHARGED 2026-09-02. */
 	/* stock's length (gpon_res.c): the Type-1+2 preamble rides in front of
 	 * the Type-3 bytes. Without it an OLT that sends Extended_Burst_Length
 	 * gets a short preamble at O5, reads no burst and deactivates (LOAi). */
@@ -196,8 +187,7 @@ static u32 apply_boh(struct gpon_ploam *o, bool ranged)
 	return cfg_word;	/* the caller emits GPON_PLOAM_EV_BOH, outside any HW window */
 }
 
-/* Upstream equalization delay, from luna_gpon.c:7012-6026. ...
- * dev/MEASURED-gpon_ploam.c.md sec 9. */
+/* Upstream equalization delay. */
 static void set_eqd(struct gpon_ploam *o, u32 value)
 {
 	u32 min_delay1 = o->ops->get_min_delay(o->sh);
@@ -275,8 +265,7 @@ static void set_state(struct gpon_ploam *o, enum gpon_ostate st, u32 now_ms)
 		o->popup_until_tick = 0;
 	o->state = st;
 
-	/* ★ The EARLY clock, armed AFTER the state is really set -- ...
-	 * dev/MEASURED-gpon_ploam.c.md sec 40. */
+	/* The EARLY clock, armed AFTER the state is really set */
 	if (st <= GPON_O3_SERIAL) {
 		if (prev != st || !o->early_entry_tick)
 			o->early_entry_tick = o->ticks ? o->ticks : 1;
@@ -287,8 +276,7 @@ static void set_state(struct gpon_ploam *o, enum gpon_ostate st, u32 now_ms)
 		o->early_report_tick = 0;
 
 	if (st == GPON_O5_OPERATION && prev != GPON_O5_OPERATION) {
-		/* Re-range completion: if we had dropped below O5 (fibre LOS, ...
-		 * dev/MEASURED-gpon_ploam.c.md sec 41. */
+		/* Re-range completion */
 		if (o->rerange_start_ms) {
 			o->rerange_cnt++;
 			o->last_outage_ms = now_ms - o->rerange_start_ms;
@@ -298,8 +286,7 @@ static void set_state(struct gpon_ploam *o, enum gpon_ostate st, u32 now_ms)
 					     GPON_PLOAM_RERANGE_LOG_MS)) {
 				ev(o, GPON_PLOAM_EV_RERANGE_DONE,
 				   o->rerange_cnt, o->last_outage_ms);
-				/* FOLLOW-UP P8: stored raw, exactly as the driver stores ...
-				 * dev/MEASURED-gpon_ploam.c.md sec 10. */
+				/* FOLLOW-UP P8 */
 				o->rerange_last_log_ms = now_ms;
 			}
 		}
@@ -319,8 +306,7 @@ static void set_state(struct gpon_ploam *o, enum gpon_ostate st, u32 now_ms)
 	o->ops->set_hw_state(o->sh, st);
 }
 
-/* Activation teardowns. ★ FOUR PATHS, WRITTEN OUT IN FULL AND ...
- * dev/MEASURED-gpon_ploam.c.md sec 12. */
+/* Activation teardowns. */
 int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_ms)
 {
 	u32 tx0 = o->tx_total;
@@ -350,15 +336,13 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 	if (o->cfg->trace && !gpon_ploam_ds_repetitive(type))
 		ev(o, GPON_PLOAM_EV_DS, onu_id, type);
 
-	/* ★★★ NO DEFINED SERIAL, NO PARTICIPATION -- AND IT IS THE ...
-	 * dev/MEASURED-gpon_ploam.c.md sec 13. */
+	/* NO DEFINED SERIAL, NO PARTICIPATION */
 	if (!gpon_sn_is_set(o->sn))
 		return 0;
 
 	switch (type) {
 	case PLM_DS_UPSTREAM_OVERHEAD:
-		/* The OLT is acquiring ONUs (it broadcasts this continuously)
-		 * dev/MEASURED-gpon_ploam.c.md sec 14. */
+		/* The OLT is acquiring ONUs */
 		if (o->state < GPON_O3_SERIAL) {
 			u32 pre_eqd = ((d[7] >> 5) & 1) ?
 				(((u32)d[8] << 8) | d[9]) * 32 * 8 : 0;
@@ -375,8 +359,7 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 			set_eqd(o, pre_eqd);
 			set_state(o, GPON_O2_STANDBY, now_ms);
 			set_state(o, GPON_O3_SERIAL, now_ms);
-			/* Re-lock the TX CMU PLL now the downstream optics are ...
-			 * dev/MEASURED-gpon_ploam.c.md sec 42. */
+			/* Re-lock the TX CMU PLL now the downstream optics */
 			o->ops->analog_relock(o->sh);
 			if (o->cfg->o3_feed_reset) {
 				/* The relock re-parks the GEM-US feed run-state.
@@ -399,8 +382,7 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 
 			o->onu_id = d[0];
 			o->ops->set_hw_onu_id(o->sh, o->onu_id);
-			/* Bind the OMCC's T-CONT to its management Alloc-ID. ★ THE ...
-			 * dev/MEASURED-gpon_ploam.c.md sec 15. */
+			/* Bind the OMCC's T-CONT to its management Alloc-ID. */
 			gpon_omcc_tcont_decide(o->cfg->omcc_alloc_override,
 					     o->onu_id, o->cfg->omcc_alt_bind,
 					     &plan);
@@ -410,8 +392,7 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 				break; /* Keep O3: the next matching Assign retries. */
 			ev(o, GPON_PLOAM_EV_CAM_READBACK, o->cfg->omcc_tcont,
 			   tcont16_alloc);
-			/* NON-STOCK double-bind (default off): binding the same alloc ...
-			 * dev/MEASURED-gpon_ploam.c.md sec 16. */
+			/* NON-STOCK double-bind (default off) */
 			if (plan.bind_alt &&
 			    o->ops->install_tcont(o->sh, o->cfg->omcc_tcont_alt,
 						  tcont16_alloc))
@@ -440,8 +421,8 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 				ev(o, GPON_PLOAM_EV_RANGING_TIME, eqd, 0);
 				break;
 			}
-			/* Re-apply the O5 packed-burst gate cluster and re-arm the ...
-			 * dev/MEASURED-gpon_ploam.c.md sec 11.  Still in O4 (stock
+			/* Re-apply the O5 packed-burst gate cluster and re-arm.
+			 * Still in O4 (stock
 			 * writes its template before any O5) and ahead of the group
 			 * below, which nothing that may log is allowed into. */
 			if (o->cfg->o5_rearm_burst_gate) {
@@ -459,8 +440,7 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 			}
 			set_eqd(o, eqd);
 			boh = apply_boh(o, true);	/* switch to the ranged burst */
-			/* Flush any pre-ranged-format upstream PLOAM still latched in ...
-			 * dev/MEASURED-gpon_ploam.c.md sec 17. */
+			/* Flush any pre-ranged-format upstream PLOAM still latched */
 			o->ops->us_ploam_flush(o->sh);
 			/* Stock's O4 -> O5: EqD, ranged BOH, flush, ONU_STATE, back
 			 * to back, before any event: a trace hook may print to a
@@ -479,9 +459,7 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 #ifdef CONFIG_OLT_ZTE
 	case PLM_DS_DISABLE_SN_ZTE:
 #endif
-		/* G.984.3 9.2.3.6, 10.2.5.1 i/j: broadcast only; a disable of our
-		 * serial number is O7 and silence until an enable, 0x0f = enable
-		 * every disabled ONU.  dev/MEASURED-gpon_ploam.c.md sec 18. */
+		/* G.984.3 9.2.3.6, 10.2.5.1 i/j: broadcast only; a disable of our * serial number is O7 and silence until an enable, 0x0f = enable * every disabled ONU. */
 		if (onu_id != GPON_PLOAM_ONU_ID_BROADCAST)
 			break;
 		if (o->state == GPON_O7_EMERGENCY) {
@@ -505,8 +483,7 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 			if (o->state == GPON_O7_EMERGENCY)
 				break;		/* only an enable leaves O7 */
 			ev(o, GPON_PLOAM_EV_DEACT, o->onu_id, 0);
-			/* TEARDOWN 1 of 4: OLT Deactivate / Disable_SN. FULL reset to ...
-			 * dev/MEASURED-gpon_ploam.c.md sec 19. */
+			/* TEARDOWN 1 of 4: OLT Deactivate / Disable_SN. */
 			o->onu_id = 0xff;
 			o->omcc_installed = false;
 			o->omcc_gem = 0;
@@ -519,8 +496,7 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 			o->aes_switch_time = 0xffffffff;
 			o->key_staged = false;
 			o->ops->set_hw_onu_id(o->sh, 0xff);
-			/* Re-seat the serializer ONLY when the prior O5 was ...
-			 * dev/MEASURED-gpon_ploam.c.md sec 20. */
+			/* Re-seat the serializer ONLY when the prior O5 */
 			if (o->cfg->cdr_reseat_on_reactivate &&
 			    !(o->state == GPON_O5_OPERATION && o->o5_entry_tick &&
 			      (o->ticks - o->o5_entry_tick) > GPON_PLOAM_HEALTHY_O5_TICKS)) {
@@ -537,8 +513,7 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 		break;
 
 	case PLM_DS_EXT_BURST_LENGTH:
-		/* Extended_Burst_Length: d[0] = Type-3 preamble length for the
-		 * dev/MEASURED-gpon_ploam.c.md sec 21. */
+		/* Extended_Burst_Length */
 		o->boh_t3ranged = d[1];		/* applied at the O5 transition */
 		if (o->onu_id == 0xff && o->boh_t3pre != d[0]) {
 			o->boh_t3pre = d[0];
@@ -549,13 +524,11 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 		break;
 
 	case PLM_DS_CONFIG_PORT:
-		/* Configure_Port-ID: the OLT assigns the OMCC GEM port for ...
-		 * dev/MEASURED-gpon_ploam.c.md sec 22. */
+		/* Configure_Port-ID */
 		if (addressed(o, onu_id, false)) {
 			u16 gem = ((u16)d[1] << 4) | (d[2] >> 4);
 
-			/* ★ REBIND ON CHANGE, not once. A one-shot install drops an ...
-			 * dev/MEASURED-gpon_ploam.c.md sec 43. */
+			/* REBIND ON CHANGE, not once. */
 			enum gpon_omcc_action act =
 				gpon_omcc_decide(d[0] & 0x1, gem,
 						 o->omcc_installed,
@@ -575,8 +548,7 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 		break;
 
 	case PLM_DS_ASSIGN_ALLOC_ID:
-		/* Assign_Alloc-ID: alloc = (d[0]<<4)|(d[1]>>4); d[2] 0x01 = ...
-		 * dev/MEASURED-gpon_ploam.c.md sec 23. */
+		/* Assign_Alloc-ID: alloc = (d[0]<<4)|(d[1]>>4) */
 		if (addressed(o, onu_id, false)) {
 			u16 alloc = ((u16)d[0] << 4) | (d[1] >> 4);
 
@@ -632,8 +604,7 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 		break;
 
 	case PLM_DS_KEY_SWITCH:
-		/* Key_Switching_Time: the OLT supplies the 30-bit superframe ...
-		 * dev/MEASURED-gpon_ploam.c.md sec 24. */
+		/* Key_Switching_Time */
 		if (addressed(o, onu_id, true)) {
 			u32 fc = ((u32)(d[0] & 0x3f) << 24) | ((u32)d[1] << 16) |
 				 ((u32)d[2] << 8) | d[3];
@@ -685,8 +656,7 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 		break;
 
 	case PLM_DS_BER_INTERVAL:
-		/* BER_interval: the OLT configures the upstream BER reporting ...
-		 * dev/MEASURED-gpon_ploam.c.md sec 44. */
+		/* BER_interval */
 		if (addressed(o, onu_id, true)) {
 			u32 frames = ((u32)d[0] << 24) | ((u32)d[1] << 16) |
 				     ((u32)d[2] << 8) | d[3];
@@ -744,12 +714,10 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 		break;
 
 	default:
-		/* Anything addressed to us that we do not model: report it so ...
-		 * dev/MEASURED-gpon_ploam.c.md sec 45. */
+		/* Anything addressed to us that we do not model */
 		if (onu_id == o->onu_id || onu_id == 0xff) {
 			ev(o, GPON_PLOAM_EV_UNHANDLED, type, onu_id);
-			/* and say WHAT it was. GPON_PLOAM_EV_UNHANDLED carries the ...
-			 * dev/MEASURED-gpon_ploam.c.md sec 25. */
+			/* and say WHAT it was. */
 			unsup(o, "ds_ploam_type", GPON_UNSUP_UNKNOWN, type,
 			      "G.984.3-DS-type-this-ONU-models",
 			      m, GPON_PLOAM_DS_LEN);
@@ -761,16 +729,14 @@ int gpon_ploam_ds(struct gpon_ploam *o, const u8 *m, unsigned int len, u32 now_m
 	return (int)(o->tx_total - tx0);
 }
 
-/* Poll islands. Called by the shell at exactly the points the ...
- * dev/MEASURED-gpon_ploam.c.md sec 26. */
+/* Poll islands. */
 u32 gpon_ploam_tick(struct gpon_ploam *o)
 {
 	o->ticks++;
 	return o->ticks;
 }
 
-/* 6564-6579 — the serial number was (re)provisioned after ...
- * dev/MEASURED-gpon_ploam.c.md sec 27. */
+/* 6564-6579 — the serial number was (re)provisioned */
 int gpon_ploam_sn_changed(struct gpon_ploam *o, u32 now_ms)
 {
 	u32 tx0 = o->tx_total;
@@ -797,8 +763,7 @@ int gpon_ploam_sn_changed(struct gpon_ploam *o, u32 now_ms)
 	return (int)(o->tx_total - tx0);
 }
 
-/* 6604-6613 — two O5 gates that must stay adjacent and in ...
- * dev/MEASURED-gpon_ploam.c.md sec 28. */
+/* 6604-6613 — two O5 gates that must stay adjacent and */
 int gpon_ploam_poll_provision(struct gpon_ploam *o, u32 now_ms)
 {
 	(void)now_ms;
@@ -817,8 +782,7 @@ int gpon_ploam_poll_provision(struct gpon_ploam *o, u32 now_ms)
 	return 0;		/* emits no upstream PLOAM */
 }
 
-/* 6650-6671 — O5 provisioning watchdog. A boot that reached ...
- * dev/MEASURED-gpon_ploam.c.md sec 29. */
+/* 6650-6671 — O5 provisioning watchdog. */
 /* Forget the activation and re-enter O1 (the O5 watchdogs' common exit). */
 static void leave_o5(struct gpon_ploam *o, u32 now_ms)
 {
@@ -841,11 +805,9 @@ int gpon_ploam_poll_watchdog(struct gpon_ploam *o, bool wan_rx_zero, u32 now_ms)
 {
 	u32 tx0 = o->tx_total;
 
-	/* ★★★ THE EARLY DWELL REPORT, AND IT ACTS ON NOTHING ...
-	 * dev/MEASURED-gpon_ploam.c.md sec 30. */
+	/* THE EARLY DWELL REPORT, AND IT ACTS ON */
 	if (o->cfg->early_dwell_report_ticks && o->state <= GPON_O3_SERIAL) {
-		/* ⚠ DEFENSIVE, AND SAID PLAINLY. set_state() stamps the entry ...
-		 * dev/MEASURED-gpon_ploam.c.md sec 31. */
+		/* ⚠ DEFENSIVE, AND SAID PLAINLY. */
 		u32 held = o->ticks >= o->early_entry_tick
 			 ? o->ticks - o->early_entry_tick : 0;
 		u32 since = o->ticks >= o->early_report_tick
@@ -870,8 +832,7 @@ int gpon_ploam_poll_watchdog(struct gpon_ploam *o, bool wan_rx_zero, u32 now_ms)
 		return (int)(o->tx_total - tx0);
 	}
 
-	/* An SN nobody hears is never assigned nor deactivated: leave O3 so the next
-	 * entry relocks.  dev/MEASURED-gpon_ploam.c.md sec 47. */
+	/* An SN nobody hears is never assigned nor deactivated: leave O3 so the next * entry relocks. */
 	if (o->state == GPON_O3_SERIAL && o->early_entry_tick &&
 	    gpon_dwell_expired(o->state, o->ticks - o->early_entry_tick, 0)) {
 		ev(o, GPON_PLOAM_EV_O3_UNHEARD, o->ticks - o->early_entry_tick, o->sn_tx);
@@ -879,8 +840,7 @@ int gpon_ploam_poll_watchdog(struct gpon_ploam *o, bool wan_rx_zero, u32 now_ms)
 		return (int)(o->tx_total - tx0);
 	}
 
-	/* ★★ THE RANGING TIMER (G.984.3). An ONU-ID has been assigned ...
-	 * dev/MEASURED-gpon_ploam.c.md sec 46. */
+	/* THE RANGING TIMER (G.984.3). */
 	if (o->state == GPON_O4_RANGING && o->o4_entry_tick &&
 	    gpon_dwell_expired(o->state, o->ticks - o->o4_entry_tick,
 			       o->cfg->o4_ranging_timeout_ticks)) {
@@ -938,8 +898,7 @@ int gpon_ploam_poll_grants(struct gpon_ploam *o, u32 grants, u32 now_ms)
 	return 1;
 }
 
-/* 6680-6724 — autonomous downstream-LOS recovery (fibre pull ...
- * dev/MEASURED-gpon_ploam.c.md sec 32. */
+/* 6680-6724 — autonomous downstream-LOS recovery */
 int gpon_ploam_poll_los(struct gpon_ploam *o, bool optic_los, bool sds_dark,
 			u32 now_ms)
 {
@@ -960,8 +919,7 @@ int gpon_ploam_poll_los(struct gpon_ploam *o, bool optic_los, bool sds_dark,
 				 * session state and goes with the rest. */
 				o->data_tcont_installed = false;
 				o->data_alloc = 0;
-				/* ★2026-07-05: do NOT clear data_gem_solicited on a fibre-LOS ...
-				 * dev/MEASURED-gpon_ploam.c.md sec 33. */
+				/* 2026-07-05: do NOT clear data_gem_solicited on a */
 				o->aes_switch_time = 0xffffffff;
 				o->key_staged = false;
 				o->ops->set_hw_onu_id(o->sh, 0xff);
@@ -991,8 +949,7 @@ int gpon_ploam_poll_sn_reoffer(struct gpon_ploam *o, u32 now_ms)
 	return (int)(o->tx_total - tx0);
 }
 
-/* 6845-6854 — periodic O5 upstream-PLOAM keepalive. Once ...
- * dev/MEASURED-gpon_ploam.c.md sec 34. */
+/* 6845-6854 — periodic O5 upstream-PLOAM keepalive. */
 int gpon_ploam_poll_keepalive(struct gpon_ploam *o, u32 now_ms)
 {
 	u32 tx0 = o->tx_total;
@@ -1035,8 +992,7 @@ int gpon_ploam_poll_rei(struct gpon_ploam *o, u32 now_ms)
 	return 1;
 }
 
-/* Identity and lifecycle. ★★ THE SERIAL-NUMBER CODEC IS NOT ...
- * dev/MEASURED-gpon_ploam.c.md sec 35. */
+/* Identity and lifecycle. */
 
 /* Up to 10 printable octets, or exactly 20 hex digits -- the form some vendor
  * MIBs store (the X100DG's GPON_PLOAM_PASSWD "31323334353637383930"); a 20-char
@@ -1087,8 +1043,7 @@ void gpon_ploam_set_data_gem_solicited(struct gpon_ploam *o, bool solicited,
 	o->data_gem_solicited = solicited;
 	if (!solicited)
 		return;
-	/* ★★ THE MULTICAST GEM IS NOT THE WAN DATA GEM (G.988). The ...
-	 * dev/MEASURED-gpon_ploam.c.md sec 36. */
+	/* THE MULTICAST GEM IS NOT THE WAN DATA GEM (G.988). */
 	if ((port_id & GPON_GEM_US_PORT_MASK) == GPON_MCAST_GEM_PORT) {
 		o->data_gem_solicited = false;
 		return;
@@ -1107,8 +1062,7 @@ void gpon_ploam_set_data_installed(struct gpon_ploam *o, bool installed)
 	o->data_installed = installed;
 }
 
-/* ★★★ THE PURE-VIRTUAL ANALOGUE. C cannot make a missing ...
- * dev/MEASURED-gpon_ploam.c.md sec 37. */
+/* THE PURE-VIRTUAL ANALOGUE. */
 const char *gpon_ploam_ops_missing(const struct gpon_ploam_ops *ops)
 {
 	if (!ops)
@@ -1129,8 +1083,7 @@ const char *gpon_ploam_init(struct gpon_ploam *o,
 	static const u8 delim_default[3] = GPON_PLOAM_BOH_DELIM_DEFAULT;
 	const char *missing = gpon_ploam_ops_missing(ops);
 
-	/* ★ REFUSE BEFORE INSTALLING ANYTHING. The context is left ...
-	 * dev/MEASURED-gpon_ploam.c.md sec 38. */
+	/* REFUSE BEFORE INSTALLING ANYTHING. */
 	memset(o, 0, sizeof(*o));
 	if (missing)
 		return missing;

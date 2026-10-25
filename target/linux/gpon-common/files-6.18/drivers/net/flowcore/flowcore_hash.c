@@ -37,8 +37,7 @@ void flowcore_key_bitrev(u32 *w, int n_words)
 		w[i] = flowcore_bitrev32(w[n_words - 1 - i]);
 		w[n_words - 1 - i] = flowcore_bitrev32(t);
 	}
-	/* ★ THE ODD MIDDLE WORD IS NOT A CORNER CASE, IT IS HALF THE ...
-	 * dev/MEASURED-flowcore_hash.c.md sec 2. */
+	/* THE ODD MIDDLE WORD IS NOT A CORNER CASE, IT IS HALF */
 	if (n_words & 1)
 		w[i] = flowcore_bitrev32(w[i]);
 }
@@ -79,7 +78,7 @@ u16 flowcore_crc16_ccitt_reflected(const u8 *p, u32 len)
 		     flowcore_bitrev8((u8)(crc >> 8)));
 }
 
-/* ===== packed-array slot addressing (moved from ... -- dev/MEASURED-flowcore_hash.c.md sec 1. */
+/* ===== packed-array slot addressing */
 struct pi_packed_slot pi_packed_locate(u32 base, unsigned int idx,
 				       unsigned int bits)
 {

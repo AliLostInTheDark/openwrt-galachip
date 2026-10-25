@@ -7,16 +7,14 @@
 
 #include "gpon_regseq.h"
 
-/* Read-modify-write bits [msb:lsb]. Exported because a caller ...
- * dev/MEASURED-gpon_regseq.c.md sec 1. */
+/* Read-modify-write bits [msb:lsb]. */
 void gpon_regseq_fld(const struct gpon_regseq_io *io, u32 addr,
 		     u8 msb, u8 lsb, u32 val)
 {
 	io->wr(addr, gpon_field_set(io->rd(addr), msb, lsb, val));
 }
 
-/* Run one sequence. -> 0, or -ETIMEDOUT naming nothing: the ...
- * dev/MEASURED-gpon_regseq.c.md sec 2. */
+/* Run one sequence. -> 0, or -ETIMEDOUT naming nothing */
 int gpon_regseq_run(const struct gpon_regseq_io *io,
 		    const struct gpon_regseq_op *seq, unsigned int n)
 {

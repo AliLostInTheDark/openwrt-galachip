@@ -44,8 +44,7 @@
  * body can), and the other six decode straight out of their dense bodies. */
 #include "gpon_omci_vlan.h"
 
-/* ★★ A CAPACITY IS A PER-BOARD VALUE, THE LOGIC IS COMMON ...
- * dev/MEASURED-gpon_omci_me.h.md sec 1.
+/* A capacity is a per-board value; the logic is common.
  * ★★ 64 WAS TOO SMALL AND IT COST THE X400AXF ITS WAN (MEASURED 2026-09-15).
  * The lab OLT's script creates 54 instances, SEVEN of them MAC bridge ports, and
  * a bridge port costs FOUR slots (ME 47 + its ME 50/79/49 companions) -- 75,
@@ -62,8 +61,7 @@
 #define OMCI_STORE_MAX 128
 #endif
 
-/* A dynamic ME instance the OLT provisioned (Create). Stored ...
- * dev/MEASURED-gpon_omci_me.h.md sec 2. */
+/* A dynamic ME instance the OLT provisioned (Create). */
 #define OMCI_STORE_BODY 26
 
 struct omci_me_inst {
@@ -193,8 +191,7 @@ enum omci_id_field {
  * rows on the G24W and 4 on the X400AXF, ME 264 has 6 and 5. */
 #define OMCI_UNI_MAX 8
 
-/* The instances of ONE UNI class the ONU presents, and the ...
- * dev/MEASURED-gpon_omci_me.h.md sec 3. */
+/* The instances of ONE UNI class the ONU presents, and */
 struct omci_uni_inv {
 	u16	inst[OMCI_UNI_MAX];	/* instance ids, [0, n) valid */
 	u8	admin[OMCI_UNI_MAX];	/* G.988: 0 unlocked, 1 locked */
@@ -210,15 +207,12 @@ struct omci_onu {
 	u8	sn[8];			/* PLOAM serial number (vendor+VSSN) */
 	struct omci_identity	id;	/* survives omci_onu_reinit() */
 	u8	mds;			/* ME 2 attr 1: MIB-Data-Sync */
-	/* The two UNI inventories. ⚠ EACH WAS A SINGLE u8 FOR ONE ...
-	 * dev/MEASURED-gpon_omci_me.h.md sec 4. */
+	/* The two UNI inventories. */
 	struct omci_uni_inv	pptp_eth_uni;	/* ME 11, attribute 5 */
 	struct omci_uni_inv	uni_g;		/* ME 264, attribute 2 */
-	/* ME 264 #3 management capability, per uni_g slot. ⚠ IT WAS ...
-	 * dev/MEASURED-gpon_omci_me.h.md sec 5. */
+	/* ME 264 #3 management capability, per uni_g slot. */
 	u8	uni_g_mgmt_cap[OMCI_UNI_MAX];
-	/* ★ ME 11 #1/#2, PER INSTANCE. Expected and Sensed type are ...
-	 * dev/MEASURED-gpon_omci_me.h.md sec 6. */
+	/* ME 11 #1/#2, PER INSTANCE. */
 	u8	uni_type[OMCI_UNI_MAX];
 	/* ME 11 #1/#8/#10 as the OLT last wrote them, per instance; a MIB reset
 	 * restores expected = sensed, 1518 and 0xffff. */
@@ -302,8 +296,7 @@ struct omci_onu {
 	u16	alarm_snapshot_class;
 	u16	alarm_snapshot_inst;
 	u16	alarm_snapshot_bits;
-	/* ME 263 ANI-G #10 RX / #14 TX optical level in the G.988 ...
-	 * dev/MEASURED-gpon_omci_me.h.md sec 7. */
+	/* ME 263 ANI-G #10 RX / #14 TX optical level in the */
 	u16	anig_rx_level;
 	u16	anig_tx_level;
 	bool	anig_live;
@@ -333,8 +326,7 @@ void omci_onu_set_optical(struct omci_onu *o, u16 rx_level, u16 tx_level);
 #define OMCI_ANIG_TX_LOW		0x0800u
 #define OMCI_ANIG_TX_HIGH		0x0400u
 
-/* Re-provision the G.984.3 ONU serial after init. ★ A SETTER ...
- * dev/MEASURED-gpon_omci_me.h.md sec 8. */
+/* Re-provision the G.984.3 ONU serial after init. */
 static inline void omci_onu_set_sn(struct omci_onu *o, const u8 sn[8])
 {
 	unsigned int i;	/* a loop, not memcpy(): this header includes only
@@ -386,8 +378,7 @@ enum omci_id_field omci_id_set_named(struct omci_identity *id, const char *name,
 /* Each field's name, the rtk_factory verb that reads it from the MIB. */
 extern const char *const omci_id_names[OMCI_ID_FIELDS];
 
-/* ME class IDs presented in the MIB upload (G.988 + the HSGQ ...
- * dev/MEASURED-gpon_omci_me.h.md sec 24. */
+/* ME class IDs presented in the MIB upload */
 #define OMCI_ME_ONU_DATA	2
 #define OMCI_ME_CARDHOLDER	5
 #define OMCI_ME_CIRCUIT_PACK	6
@@ -465,12 +456,10 @@ extern const char *const omci_id_names[OMCI_ID_FIELDS];
 #define OMCI_ME_VEIP		329
 #define OMCI_ME_CTC_LOID_AUTH	65530	/* 0xFFFA — CTC extension the OLT audits */
 
-/* ★★ THE MIB-DATA-SYNC POISON SEED IS PROTOCOL POLICY, AND IT ...
- * dev/MEASURED-gpon_omci_me.h.md sec 9. */
+/* THE MIB-DATA-SYNC POISON SEED IS PROTOCOL POLICY, AND */
 #define OMCI_MDS_POISON_SEED	7
 
-/* ★★ THE WALK: WHAT TO DO WHEN THE SEED IS NOT ENOUGH. The ...
- * dev/MEASURED-gpon_omci_me.h.md sec 10. */
+/* THE WALK: WHAT TO DO WHEN THE SEED IS NOT ENOUGH. */
 #define OMCI_MDS_WALK_STEP	37	/* coprime with 255: enumerates 1..255 */
 #define OMCI_MDS_ADAPT_READS	12	/* reads with no provisioning before a step */
 
@@ -487,12 +476,10 @@ bool omci_mic_ok(const u8 *msg, unsigned int len);
  * it before the memset.  A shell declares its UNI inventory straight after. */
 void omci_onu_init(struct omci_onu *o, const u8 sn[8], u8 mds_seed);
 
-/* Re-init a LIVE model for a new identity, carrying its ...
- * dev/MEASURED-gpon_omci_me.h.md sec 11. */
+/* Re-init a LIVE model for a new identity, carrying */
 void omci_onu_reinit(struct omci_onu *o, const u8 sn[8], u8 mds_seed);
 
-/* Declare which instances of ME 11 and ME 264 this board ...
- * dev/MEASURED-gpon_omci_me.h.md sec 12. */
+/* Declare which instances of ME 11 and ME 264 this */
 bool omci_onu_declare_unis(struct omci_onu *o,
 			   const u16 *pptp_inst, const u8 *pptp_type, u8 pptp_n,
 			   const u16 *unig_inst, const u8 *unig_mgmt_cap,
@@ -516,8 +503,7 @@ enum omci_uni_decl {
 				 * states and pending obligations included */
 };
 
-/* Decode a board's panel out of the RAW BYTES of its ...
- * dev/MEASURED-gpon_omci_me.h.md sec 13. */
+/* Decode a board's panel out of the RAW BYTES of */
 enum omci_uni_decl omci_onu_declare_unis_be(struct omci_onu *o,
 					    const void *pptp_be, int pptp_len,
 					    const void *type, int type_len,
@@ -629,16 +615,13 @@ void omci_onu_set_wan_mac(struct omci_onu *o, const u8 mac[6]);
  * instance.  Answers on the FULL u16. */
 int omci_uni_slot(const struct omci_uni_inv *inv, u16 inst);
 
-/* Take the set of slots whose administrative state moved ...
- * dev/MEASURED-gpon_omci_me.h.md sec 14. */
+/* Take the set of slots whose administrative state */
 u8 omci_uni_take_changed(struct omci_uni_inv *inv);
 
-/* Put a drained obligation BACK, because the family could not ...
- * dev/MEASURED-gpon_omci_me.h.md sec 15. */
+/* Put a drained obligation BACK, because the family could */
 void omci_uni_mark_changed(struct omci_uni_inv *inv, u8 slot);
 
-/* ★★★ DRAINING THE OBLIGATION IS G.988 WORK, AND IT WAS ...
- * dev/MEASURED-gpon_omci_me.h.md sec 16. */
+/* DRAINING THE OBLIGATION IS G.988 WORK, AND IT */
 enum omci_uni_apply_rc {
 	/* the port took the administrative state: the obligation is discharged */
 	OMCI_UNI_APPLIED = 0,
@@ -650,20 +633,17 @@ enum omci_uni_apply_rc {
 	OMCI_UNI_TRANSIENT,
 };
 
-/* struct omci_uni_apply_ops - the two doors the drain needs ...
- * dev/MEASURED-gpon_omci_me.h.md sec 17. */
+/* struct omci_uni_apply_ops - the two doors the drain */
 struct omci_uni_apply_ops {
 	enum omci_uni_apply_rc (*apply)(void *sh, u8 slot, bool locked);
 	void (*rearm)(void *sh, u8 slot);
 };
 
-/* omci_uni_apply_run() - drive one drained changed-mask onto ...
- * dev/MEASURED-gpon_omci_me.h.md sec 18. */
+/* omci_uni_apply_run() - drive one drained changed-mask */
 bool omci_uni_apply_run(const struct omci_uni_apply_ops *ops, void *sh,
 			u8 changed, u8 n, const u8 *admin);
 
-/* The ME-model API the MESSAGE layer calls. These nine were ...
- * dev/MEASURED-gpon_omci_me.h.md sec 19. */
+/* The ME-model API the MESSAGE layer calls. */
 struct omci_me_inst *omci_store_find(struct omci_onu *o, u16 class_id, u16 inst);
 bool omci_store_has_class(struct omci_onu *o, u16 class_id);
 struct omci_me_inst *omci_store_nth(struct omci_onu *o, u16 idx);
@@ -701,8 +681,7 @@ bool omci_vendor_absent(const struct omci_onu *o, u16 class_id, u16 inst);
 bool omci_inst_exists(struct omci_onu *o, u16 class_id, u16 inst);
 bool omci_mib_has_class(struct omci_onu *o, u16 class_id);
 
-/* ★★★ THE WAN SERVICE SPINE — where the OLT said a GEM port ...
- * dev/MEASURED-gpon_omci_me.h.md sec 20. */
+/* THE WAN SERVICE SPINE */
 #define OMCI_SVC_GEM_CTP	0x01	/* an ME 268 carries this Port-ID */
 #define OMCI_SVC_IW_TP		0x02	/* an ME 266 interworks that CTP */
 #define OMCI_SVC_BRIDGE_PORT	0x04	/* an ME 47 points at that ME 266 */
@@ -736,8 +715,7 @@ u8 omci_service_resolve(struct omci_onu *o, u16 gem_port,
  * reach one.  The flat form, for callers that cannot take the struct. */
 u16 omci_service_bridge_of_gem(struct omci_onu *o, u16 gem_port);
 
-/* ★★★ WHICH ME 268 IS THE WAN DATA GEM — a decision, in the ...
- * dev/MEASURED-gpon_omci_me.h.md sec 21. */
+/* WHICH ME 268 IS THE WAN DATA GEM */
 enum omci_dgem {
 	OMCI_DGEM_YES = 0,	/* adopt: bidirectional, and nobody else's */
 	OMCI_DGEM_RUNT,		/* Create body too short to carry attr 1..3 */
@@ -749,8 +727,7 @@ enum omci_dgem {
 	OMCI_DGEM_NOT_BIDIR,	/* a uni-directional CTP: G.988 direction != 3 */
 };
 
-/* Classify ONE stored ME 268 Set-by-Create body. @body/@blen ...
- * dev/MEASURED-gpon_omci_me.h.md sec 22. */
+/* Classify ONE stored ME 268 Set-by-Create body. */
 enum omci_dgem omci_dgem_classify(const u8 *body, u8 blen,
 				  u16 omcc_gem, u16 mcast_gem, u16 *port_id);
 
@@ -781,8 +758,7 @@ void omci_data_binding_snapshot(const struct omci_onu *o, u16 omcc_gem,
 bool omci_data_gem_port(struct omci_onu *o, u16 omcc_gem, u16 mcast_gem,
 			u16 *port_id);
 
-/* ★ THE DATA-PATH SNOOP'S OTHER TWO DECISIONS — core, once ...
- * dev/MEASURED-gpon_omci_me.h.md sec 23. */
+/* THE DATA-PATH SNOOP'S OTHER TWO DECISIONS */
 enum omci_tcont_verdict {
 	OMCI_TCONT_NONE = 0,	/* nothing actionable: not a Create/Set, runt
 				 * body, attr 1 absent from the Set mask,

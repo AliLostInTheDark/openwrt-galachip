@@ -98,8 +98,7 @@
 #define LUNA_INTC_GIMR(w)	(0x00 + (w) * 4)
 #define LUNA_INTC_GISR(w)	(0x08 + (w) * 4)
 #define LUNA_INTC_IRR(i)	(0x10 + (i) * 4)
-/* ⚠ SEVEN, AND IT IS COUNTED FROM THE HARDWARE, NOT DERIVED ...
- * dev/MEASURED-irq-luna.c.md sec 1. */
+/* ⚠ SEVEN, AND IT IS COUNTED FROM THE HARDWARE, NOT */
 #define LUNA_INTC_IRR_WORDS	7
 #define LUNA_INTC_TIMER_IRR	4
 #define LUNA_INTC_PERIPH_EN	12	/* GIMR0 bit12 = master peripheral enable */
@@ -119,8 +118,7 @@ struct luna_intc_chip {
 
 static const struct luna_intc_chip rtl9602c_intc_chip = {
 	.name	= "RTL9602C",
-	/* ⚠ TWO WORDS DIFFER FROM THE SIBLING'S, AND THEY ARE THIS ...
-	 * dev/MEASURED-irq-luna.c.md sec 2. */
+	/* ⚠ TWO WORDS DIFFER FROM THE SIBLING'S, AND THEY ARE */
 	.irr	= { 0x03333330, 0x30302222, 0x00020226, 0x22020333,
 		    0x63333063, 0x32322022, 0x00333000 },
 	.cpu_stride = 0,	/* this driver arranges one block here */

@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* TIER: CORE (drivers/net/gpon) -- HW-DECOUPLED. Builds on ...
- * dev/MEASURED-gpon_regseq.h.md sec 1. */
+
 #ifndef GPON_REGSEQ_H
 #define GPON_REGSEQ_H
 
@@ -23,8 +22,7 @@ struct gpon_regseq_op {
 	u32 val;
 };
 
-/* The shell's whole contract: four function pointers, no ...
- * dev/MEASURED-gpon_regseq.h.md sec 2. */
+/* The shell's whole contract */
 static inline u32 gpon_field_mask(u8 msb, u8 lsb)
 {
 	return (msb == 31 && lsb == 0)

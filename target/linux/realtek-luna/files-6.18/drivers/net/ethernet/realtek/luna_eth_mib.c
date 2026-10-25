@@ -20,7 +20,7 @@ struct luna_mib_field {
 	bool		wide;
 };
 
-/* ── STAT_PORT_RX_MIB, one 0x80 window per port ... -- dev/MEASURED-luna_eth_mib.c.md sec 2. */
+/* ── STAT_PORT_RX_MIB, one 0x80 window per */
 static const struct luna_mib_field luna_mib_rx[] = {
 	{ "rx_octets",		0x00, true },	/* ifInOctets, 64-bit pair	*/
 	{ "rx_crc_align_err",	0x08 },		/* etherStatsCRCAlignErrors	*/
@@ -44,8 +44,7 @@ static const struct luna_mib_field luna_mib_rx[] = {
 	{ "rx_1024_to_1518_frames", 0x54 },
 };
 
-/* ── STAT_PORT_TX_MIB, base 0x32000 on every Luna die ...
- * dev/MEASURED-luna_eth_mib.c.md sec 3. */
+/* ── STAT_PORT_TX_MIB, base 0x32000 on every Luna */
 static const struct luna_mib_field luna_mib_tx[] = {
 	{ "tx_multicast_ethstat", 0x00 },	/* etherStatsMulticastPkts	*/
 	{ "tx_broadcast_ethstat", 0x04 },	/* etherStatsBroadcastPkts	*/
@@ -103,8 +102,7 @@ static int luna_mib_count(const struct luna_mib_state *s)
 	return luna_mib_ports(s) * luna_mib_per_port(s);
 }
 
-/* One 32-bit or 64-bit counter out of a per-port window. The ...
- * dev/MEASURED-luna_eth_mib.c.md sec 7. */
+/* One 32-bit or 64-bit counter out of a per-port window. */
 static u64 luna_mib_read(void __iomem *sw, u32 base, unsigned int port,
 			 const struct luna_mib_field *f)
 {
@@ -182,8 +180,7 @@ static const struct ethtool_ops luna_mib_ethtool_ops = {
 	.get_ethtool_stats	= luna_mib_get_stats,
 };
 
-/* ★ THE NAME-LENGTH CHECK IS HERE AND NOT IN A COMMENT, ...
- * dev/MEASURED-luna_eth_mib.c.md sec 8. */
+/* THE NAME-LENGTH CHECK IS HERE AND NOT IN A */
 static void luna_mib_check_names(struct device *dev, unsigned int ports)
 {
 	char buf[ETH_GSTRING_LEN * 2];

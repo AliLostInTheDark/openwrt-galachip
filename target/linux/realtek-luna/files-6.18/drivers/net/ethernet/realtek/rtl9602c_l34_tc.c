@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* RTL9602C L34 -> the COMMON TC hardware-offload lifecycle. ...
- * dev/MEASURED-rtl9602c_l34_tc.c.md sec 1. */
+/* RTL9602C L34 -> the COMMON TC hardware-offload lifecycle. */
 
 #include <linux/if_vlan.h>
 #include <linux/inetdevice.h>	/* in_ifaddr, the WAN address notifier */
@@ -8,12 +7,10 @@
 #include <net/pkt_cls.h>	/* FLOW_CLS_*, FLOW_BLOCK_*, flow_block_cb_*   */
 #include "gpon_flow_block.h"
 
-/* ★ THE INSTALL REFUSED UNCONDITIONALLY UNTIL 2026-09-11, AND ...
- * dev/MEASURED-rtl9602c_l34_tc.c.md sec 2. */
+/* THE INSTALL REFUSED UNCONDITIONALLY UNTIL 2026-09-11 */
 static const struct net_device_ops rtl9602c_eth_netdev_ops;
 
-/* The driver behind a netdev. ⚠ THE TWO NETDEVS DO NOT STORE ...
- * dev/MEASURED-rtl9602c_l34_tc.c.md sec 3. */
+/* The driver behind a netdev. */
 static struct rtl9602c_eth *rtl9602c_eth_of(struct net_device *dev)
 {
 	if (!dev)
@@ -32,8 +29,7 @@ struct rtl9602c_l34_priv {
 
 static bool rtl9602c_l34_is_lan_side(void *sh, struct net_device *dev)
 {
-	/* ★ STRUCTURAL, never a name. This driver registers two ...
-	 * dev/MEASURED-rtl9602c_l34_tc.c.md sec 4.
+	/* Structural, never a name.
 	 * A VLAN upper is on its real device's side: the flowtable offers a tagged
 	 * WAN->LAN leg from gpon0.<vid> when gpon0 itself is not a flowtable device
 	 * (X100DG, 2026-10-05: every such leg was decoded as upstream and refused). */
@@ -123,8 +119,7 @@ static int rtl9602c_l34_op_install(void *sh, const struct gpon_flow_key *k,
 		return ret;
 	}
 
-	/* ★ THE VALUES FIRST, THE FLOW SECOND. The interface tables ...
-	 * dev/MEASURED-rtl9602c_l34_tc.c.md sec 7. */
+	/* THE VALUES FIRST, THE FLOW SECOND. */
 	/* ★ TELL IT WHAT THE FLOWTABLE ALREADY RESOLVED. `ctx->odev` is the egress
 	 * the infrastructure picked (FLOW_ACTION_REDIRECT) after walking past any
 	 * VLAN or PPPoE device, and `a->gw_dmac` is the L2 destination this flow
@@ -149,8 +144,7 @@ static int rtl9602c_l34_op_install(void *sh, const struct gpon_flow_key *k,
 				  "the rule's VLAN push disagrees with the WAN "
 				  "device's own tag");
 
-	/* The rule's own next hop and NAT address must be the ones ...
-	 * dev/MEASURED-rtl9602c_l34_tc.c.md sec 8. */
+	/* The rule's own next hop and NAT address must be the */
 	if (a->dmac_valid && !ether_addr_equal(a->gw_dmac, edge.gw_mac))
 		return l34_refuse(&ep->l34,
 				  "the rule's next hop is not the WAN gateway "
@@ -161,8 +155,7 @@ static int rtl9602c_l34_op_install(void *sh, const struct gpon_flow_key *k,
 				  "interface does not hold");
 
 	if (!ep->l34.provisioned || !gpon_edge_same(&edge, &ep->l34.edge)) {
-		/* ⚠ THE INSTALLED FLOWS BELONG TO THE OLD EDGE. A NAPTR's ...
-		 * dev/MEASURED-rtl9602c_l34_tc.c.md sec 9. */
+		/* ⚠ THE INSTALLED FLOWS BELONG TO THE OLD EDGE. */
 		/* ⚠⚠ ONE NEXT HOP, AND AN ON-LINK PEER WANTS ITS OWN.  Since the
 		 * core started serving on-link destinations (the next hop IS
 		 * the peer), a second WAN-subnet peer produces an edge that
@@ -204,8 +197,7 @@ static int rtl9602c_l34_op_install(void *sh, const struct gpon_flow_key *k,
 		}
 	}
 
-	/* Everything the engine needs about the FLOW is already ...
-	 * dev/MEASURED-rtl9602c_l34_tc.c.md sec 10. */
+	/* Everything the engine needs about the FLOW is */
 	f->l4proto    = k->ip_protocol;
 	f->orig_sip   = k->ip_sa;
 	f->orig_dip   = k->ip_da;
@@ -275,16 +267,14 @@ static int rtl9602c_l34_op_stats(void *sh, u32 idx, void *priv,
 		*lastused = p->last_hit;
 		return 0;
 	}
-	/* The engine reports LIVENESS, not counters -- the same shape ...
-	 * dev/MEASURED-rtl9602c_l34_tc.c.md sec 11. */
+	/* The engine reports LIVENESS, not counters */
 	if (!rtl9602c_l34_flow_hit(&ep->l34, (u16)idx, &active) && active)
 		p->last_hit = jiffies;
 	*lastused = p->last_hit;
 	return 0;
 }
 
-/* devm release: pull every installed flow out of the ...
- * dev/MEASURED-rtl9602c_l34_tc.c.md sec 12. */
+/* devm release */
 static void rtl9602c_l34_fo_release(void *data)
 {
 	struct rtl9602c_eth *ep = data;
@@ -294,8 +284,7 @@ static void rtl9602c_l34_fo_release(void *data)
 	ep->fo = NULL;
 }
 
-/* ★★ THE CORE OFFERS THIS ATTRIBUTION AND THIS FAMILY THREW ...
- * dev/MEASURED-rtl9602c_l34_tc.c.md sec 13. */
+/* THE CORE OFFERS THIS ATTRIBUTION AND THIS FAMILY */
 static void rtl9602c_l34_op_note_vlan(void *sh, bool ds_leg, u16 vid)
 {
 	struct rtl9602c_eth *ep = sh;
@@ -317,8 +306,7 @@ static const struct gpon_flow_ops rtl9602c_l34_flow_ops = {
 	.priv_size	= sizeof(struct rtl9602c_l34_priv),
 };
 
-/* ── the TC block, same shape as the Cortina family's ...
- * dev/MEASURED-rtl9602c_l34_tc.c.md sec 14. */
+/* ── the TC block, same shape as the Cortina */
 static DEFINE_MUTEX(rtl9602c_l34_tc_mutex);
 static LIST_HEAD(rtl9602c_l34_block_cb_list);
 
@@ -379,8 +367,7 @@ static int rtl9602c_l34_setup_block(struct net_device *dev,
 {
 	struct rtl9602c_eth *ep = rtl9602c_eth_of(dev);
 
-	/* ★ DO NOT CLAIM A BLOCK WE CANNOT HONOUR. `hw_nat` defaults ...
-	 * dev/MEASURED-rtl9602c_l34_tc.c.md sec 16. */
+	/* DO NOT CLAIM A BLOCK WE CANNOT HONOUR. */
 	if (!ep || !ep->fo)
 		return -EOPNOTSUPP;
 

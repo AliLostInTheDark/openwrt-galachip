@@ -1,25 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* GN25L95 per-unit calibration, expressed as an ordered ...
- * dev/MEASURED-gn25l95_cal_logic.c.md sec 1. */
+/* GN25L95 per-unit calibration, expressed as an */
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include "gn25l95_cal_logic.h"
 
-/* CONFIRMED at G24W rtkbosa 0x40471c/20/28: the MCU loader ...
- * dev/MEASURED-gn25l95_cal_logic.c.md sec 2. */
+/* CONFIRMED at G24W rtkbosa 0x40471c/20/28 */
 #define SLAVE_CAL	0x51		/* the loader's slave                */
 #define SLAVE_SFF	0x50		/* SFF-8472, used only by the G24 tail */
 #define REG_PAGE	0x7f		/* page/table selector               */
 
-/* The calibration file is eight 0x80-byte slots, and which ...
- * dev/MEASURED-gn25l95_cal_logic.c.md sec 3. */
+/* The calibration file is eight 0x80-byte slots, and */
 #define CAL_PAGE2_HIGH	0x200u			/* page 2, registers 0x80..0xff */
 #define CAL_P2(reg)	(CAL_PAGE2_HIGH + (reg) - 0x80u)
 #define REG_BB		0xbbu			/* the one register read back   */
 
-/* ★★★ THE SEQUENCE, AGAINST AN ACTUAL REPLAY OF BOTH STOCK ...
- * dev/MEASURED-gn25l95_cal_logic.c.md sec 4. */
+/* THE SEQUENCE, AGAINST AN ACTUAL REPLAY OF BOTH */
 static int emit(struct gn_op *o, u32 *n, u32 max, u8 kind, u8 slave,
 		u16 reg, u8 val, u8 mask)
 {

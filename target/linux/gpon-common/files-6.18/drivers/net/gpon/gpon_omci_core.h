@@ -74,8 +74,7 @@
 /* Attribute-mask bit: attr #n is bit (16-n), so bit15 = attr 1. */
 #define OMCI_ATTR_BIT(n)	(1u << (16 - (n)))
 
-/* The two ME class IDs the MESSAGE layer itself reasons ...
- * dev/MEASURED-gpon_omci_core.h.md sec 4. */
+/* The two ME class IDs the MESSAGE layer itself */
 #define OMCI_ME_ONU_DATA	2
 #define OMCI_ME_VEIP		329
 
@@ -112,8 +111,7 @@ int omci_resp_fmt(const struct omci_onu *o, bool armed, u32 tx, u32 tx_fail,
 int omci_onu_input_ex(struct omci_onu *o, const u8 *req, unsigned int len,
 		      u8 *resp, struct omci_accepted *accepted);
 
-/* Process one DS baseline PDU -> fill @resp (48 bytes, ...
- * dev/MEASURED-gpon_omci_core.h.md sec 1. */
+/* Process one DS baseline PDU -> fill @resp */
 int omci_onu_input(struct omci_onu *o, const u8 *req, unsigned int len, u8 *resp);
 
 /* The AAL5-BE MIC over bytes 0..43 as a VALUE, and the stamper into bytes
@@ -134,13 +132,11 @@ void omci_finalize(u8 *msg);
  * report.  Fills @out (48 bytes, trailer + MIC done); returns OMCI_LEN. */
 int omci_onu_emit_veip_up_avc(struct omci_onu *o, u8 *out);
 
-/* ★★★ THE ALARM SURFACE (G.988 clause 11.2.2), in the core, ...
- * dev/MEASURED-gpon_omci_core.h.md sec 2. */
+/* THE ALARM SURFACE (G.988 clause 11.2.2), in the */
 void omci_onu_set_alarms(struct omci_onu *o, u16 class_id, u16 inst,
 			 u16 bitmap);
 
-/* Build the ONU-autonomous alarm (MT 0x10) for a CHANGE, if ...
- * dev/MEASURED-gpon_omci_core.h.md sec 3. */
+/* Build the ONU-autonomous alarm (MT 0x10) for a CHANGE */
 int omci_onu_emit_alarm(struct omci_onu *o, u8 *out);
 
 /* Serialized by the caller; commit only after successful TX submission. */

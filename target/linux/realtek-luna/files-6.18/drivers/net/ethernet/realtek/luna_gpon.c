@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* TIER: FAMILY -- the Luna GPON MAC shell: registers, DMA, ...
- * dev/MEASURED-luna_gpon.c.md sec 1. */
+
 
 #include <linux/delay.h>
 #include <linux/leds.h>
@@ -87,8 +86,7 @@ static __printf(1, 2) void luna_log_raw(const char *fmt, ...)
 #define luna_log(fmt, ...)	luna_log_raw("luna-gpon: " fmt, ##__VA_ARGS__)
 #define GPON_UNSUP_LOG		luna_log_raw
 
-/* Anything this driver receives and cannot place leaves ...
- * dev/MEASURED-luna_gpon.c.md sec 2. */
+/* Anything this driver receives and cannot place */
 #define GPON_UNSUP_SUBSYS	"luna-gpon"
 #include "gpon_unsup.h"		/* shared: the UNSUP report + its rate limit */
 
@@ -138,19 +136,17 @@ static_assert(GEM_US_PORT_MAP_STRIDE == 4u,
 /* The live one, from the selected chip's table. `swc` is assigned before any GPON
  * register is touched, and every use of this macro sits after that. */
 #define GPON_OMCC_FLOW		((unsigned int)swc->omcc_flow)
-/* The OMCC's PHYSICAL queue id, and it is PER CHIP: 64 / 127 ...
- * dev/MEASURED-luna_gpon.c.md sec 3. */
+/* The OMCC's PHYSICAL queue id, and it is PER CHIP */
 #define GPON_OMCC_PHYS_QID	((unsigned int)swc->omcc_phys_qid)
 #define GPON_OMCC_TCONT		16	/* the OMCC's T-CONT index; same on both dies */
 #define GPON_DATA_TCONT		8	/* the WAN data GEM's own T-CONT; see GPON_DATA_ALLOC */
 
-/* PLOAM message path (G.984.3 management channel driving the ...
- * dev/MEASURED-luna_gpon.c.md sec 4. */
+/* PLOAM message path */
 #define GPON_GTC_US_ONU_ID_SHIFT 8		/* [15:8] OLT-assigned ONU-ID  */
 
-/* SoC hardware I2C master (SWCORE register file). The ... -- dev/MEASURED-luna_gpon.c.md sec 5. */
+/* SoC hardware I2C master (SWCORE register file). */
 
-/* SoC GPIO controller (its own register page at phys ... -- dev/MEASURED-luna_gpon.c.md sec 6. */
+/* SoC GPIO controller */
 #define PI_US_SRAM_NO		127u		/* 128 pages - 1               */
 #define PI_DS_SRAM_NO		31u		/* 32 pages - 1                */
 #define PI_US_SRAM_RUNOUT	126u		/* SRAM_NO - 1                 */
@@ -172,8 +168,7 @@ static void __iomem *ponip_base;
  * FSM re-reads the parsed serial for each Serial_Number_ONU. */
 static void gpon_parse_sn(const char *s);	/* defined below; re-parses onu_sn */
 static bool gpon_sn_differs(const char *s);	/* defined below; parsed-byte compare */
-/* NO COMPILED-IN SERIAL. This defaulted to "XPON39013867", ...
- * dev/MEASURED-luna_gpon.c.md sec 271. */
+/* NO COMPILED-IN SERIAL. */
 static char *onu_sn = "";
 static DEFINE_MUTEX(bosa_lock);
 static bool luna_driver_ready, luna_activation_ready, luna_stopping;
@@ -197,8 +192,7 @@ MODULE_PARM_DESC(ctrl_queue, "CPU WAN control frames (PPP LCP/auth/IPCP, PPPoE d
 static u8 luna_data_qid;
 static bool gpon_sn_changed;		/* SN (re)provisioned -> FSM must re-range */
 
-/* Forward declaration: the core FSM object is defined with ...
- * dev/MEASURED-luna_gpon.c.md sec 272. */
+/* Forward declaration */
 static struct gpon_ploam luna_ploam;
 static u8 gpon_sn_bytes[8];		/* defined here for the same reason */
 
@@ -422,46 +416,34 @@ struct luna_led_regs {
 	u8  indices;
 };
 
-/* The SWCORE offsets that move between family members. The ...
- * dev/MEASURED-luna_gpon.c.md sec 7. */
+/* The SWCORE offsets that move between family members. */
 struct gpon_swc_map {
 	const char *chip;
-	/* ★ THE OMCI FLOW/SID INDEX IS A PER-CHIP FACT, AND IT IS NOT ...
-	 * dev/MEASURED-luna_gpon.c.md sec 8. */
+	/* THE OMCI FLOW/SID INDEX IS A PER-CHIP FACT, AND IT IS */
 	u8  omcc_flow;		/* GPON_OMCI_FLOW_ID -- per-chip, never shared */
-	/* ★ PON_SCH_QMAP's ENTRY WIDTH, and it is a WIDTH, not an ...
-	 * dev/MEASURED-luna_gpon.c.md sec 9. */
+	/* PON_SCH_QMAP's ENTRY WIDTH, and it is a WIDTH, not */
 	u8  sch_qmap_bits;	/* PON_SCH_QMAP array-offset (bits per T-CONT entry) */
-	/* ★ PON_SID_RPV_TH's ENTRY COUNT, and it is an ARRAY BOUND, ...
-	 * dev/MEASURED-luna_gpon.c.md sec 10. */
+	/* PON_SID_RPV_TH's ENTRY COUNT, and it is an ARRAY */
 	u16 sid_rpv_entries;	/* PON_SID_RPV_TH declared entries, per chipdef */
-	/* ★ THE US CLASSIFY INDEX SPACE, WHICH IS A DIFFERENT NUMBER ...
-	 * dev/MEASURED-luna_gpon.c.md sec 11. */
+	/* THE US CLASSIFY INDEX SPACE, WHICH IS A DIFFERENT */
 	u16 classify_sid_num;	/* US classify SIDs to invalidate, per chipdef */
-	/* ★ A POINTER, NOT A SECOND COPY. This file needs two ...
-	 * dev/MEASURED-luna_gpon.c.md sec 12. */
+	/* A POINTER, NOT A SECOND COPY. */
 	const struct luna_sw_map *sw;
 	/* The OMCC's PHYSICAL queue id -- 64 / 127 / 120, see GPON_OMCC_PHYS_QID. */
 	u8  omcc_phys_qid;
-	/* ★★★ THE QUEUE THE INVALIDATION PRE-PASS PARKS EVERY OTHER ...
-	 * dev/MEASURED-luna_gpon.c.md sec 13. */
+	/* THE QUEUE THE INVALIDATION PRE-PASS PARKS EVERY */
 	u8  scratch_phys_qid;
-	/* ★★★ THE T-CONT -> PHYSICAL QUEUE FORMULA, PER CHIP -- ...
-	 * dev/MEASURED-luna_gpon.c.md sec 14. */
+	/* THE T-CONT -> PHYSICAL QUEUE FORMULA, PER CHIP */
 	u8  tcont_queue_max;
 	u8  tcont_group;
-	/* ★★★ ACCEPT_MAX_LEN_CTRL IS NOT THE SAME FIELD ON THESE ...
-	 * dev/MEASURED-luna_gpon.c.md sec 15. */
+	/* ACCEPT_MAX_LEN_CTRL IS NOT THE SAME FIELD ON */
 	u8  amax_msb;
 	u16 amax_val;
-	/* ★★★ HOW FAR THE LOOP GOES, PER DIE AND PER EVIDENCE ...
-	 * dev/MEASURED-luna_gpon.c.md sec 16. */
+	/* HOW FAR THE LOOP GOES, PER DIE AND PER */
 	u8  amax_last_port;
-	/* ★★★ AND THE PON PORT TAKES IT TOO -- on the dies where it ...
-	 * dev/MEASURED-luna_gpon.c.md sec 17. */
+	/* AND THE PON PORT TAKES IT TOO */
 	u16 amax_pon_val;
-	/* ★ THE DOWNSTREAM PBO's PAGE POOL, per chip. 0 = SRAM-only, ...
-	 * dev/MEASURED-luna_gpon.c.md sec 18. */
+	/* THE DOWNSTREAM PBO's PAGE POOL, per chip. */
 	u8  ds_dram_order;	/* pool order; 0 = keep the SRAM-only DS path       */
 	u32 ds_dsc_cfg;		/* PON_DSC_CFG_DS   word, from that chip's stock     */
 	u32 ds_dscrunout;	/* DSCRUNOUT_DS     word                            */
@@ -475,22 +457,19 @@ struct gpon_swc_map {
 	u32 fib_reg16;		/* FIB_REG16   [10] FRC_SD [2] SEL_RX_SD       */
 	u32 fib_ext_reg21;	/* FIB_EXT_REG21 [13] analog-ready             */
 	u32 wsds_dig_18;	/* WSDS_DIG_18 [15:12] optic-LOS force + BEN_OE */
-	/* The indirect I2C master, whose whole block sits +4 on the ...
-	 * dev/MEASURED-luna_gpon.c.md sec 19. */
+	/* The indirect I2C master, whose whole block sits +4 on */
 	u32 i2c_ind_wd;		/* I2C_IND_WD  [31:0] write data               */
 	u32 i2c_ind_adr;	/* I2C_IND_ADR [31:0] target reg offset        */
 	u32 i2c_ind_cmd;	/* I2C_IND_CMD [0]CMD_EN [1]RW_EN [2]BUSY [3]NACK */
 	u32 i2c_ind_rd;		/* I2C_IND_RD  [31:0] read data                */
-	/* The SerDes window base. MEASURED from the three chipdefs ...
-	 * dev/MEASURED-luna_gpon.c.md sec 273. */
+	/* The SerDes window base. */
 	u32 sds_win;		/* base of the SDS_ANA_* / WSDS_DIG_* window   */
 	/* SDS_CFG is NOT in that window and does NOT follow it: it is 0x1d0 /
 	 * 0x200 / 0x270 on the three chips, so it gets its own field. */
 	u32 sds_cfg;		/* SDS_CFG [4:0] SDS_MODE                      */
-	/* Base of the six contiguous OMCI packet counters. ⚠ AND IT ...
-	 * dev/MEASURED-luna_gpon.c.md sec 20. */
+	/* Base of the six contiguous OMCI packet counters. */
 	u32 omci_cnt;		/* OMCI_DROP_PKT_CNT, the first of six         */
-	/* ── the IRREGULAR movers ... -- dev/MEASURED-luna_gpon.c.md sec 21. */
+	/* ── the IRREGULAR */
 	u32 sc_ind_wd;               /* SC_IND_WD */
 	u32 wrap_gphy_misc;          /* WRAP_GPHY_MISC */
 	u32 thermal_ctrl_0;          /* THERMAL_CTRL_0 */
@@ -531,8 +510,7 @@ static const struct luna_led_regs luna_led_9602c = {
 static const struct gpon_swc_map gpon_swc_9602c = {
 	.chip = "RTL9602C",
 	.led = &luna_led_9602c,
-	/* ★ REGISTERED, NOT LEFT TO THE COMPILER (2026-09-14, ...
-	 * dev/MEASURED-luna_gpon.c.md sec 274. */
+	/* REGISTERED, NOT LEFT TO THE COMPILER */
 	/* The DS DRAM-pool words both 9602C-family stocks run (X111W and X100DG,
 	 * read 2026-09-30); written only for a board whose DT reserves a DS pool. */
 	.ds_dsc_cfg = 0x1fff001fu, .ds_dscrunout = 0x1fb8001eu,
@@ -544,8 +522,7 @@ static const struct gpon_swc_map gpon_swc_9602c = {
 	.classify_sid_num = 65,	/* CLASSIFY_SID_MAX 65 == PON_SID2QID's 65 entries */
 	.sw = &rtl9602c_sw_map,
 	.omcc_phys_qid = 64,	/* TCONT_QUEUE_MAX(32)*(16/8)+0 */
-	/* ⚠ THE SAME QUEUE AS THE OMCC, AND DELIBERATELY UNCHANGED. ...
-	 * dev/MEASURED-luna_gpon.c.md sec 22. */
+	/* ⚠ THE SAME QUEUE AS THE OMCC, AND DELIBERATELY UNCHANGED. */
 	.scratch_phys_qid = 64,
 	.tcont_queue_max = 32, .tcont_group = 8,	/* data T-CONT 8 -> qid 32 */
 	/* four ports (PON=2, CPU=3): 0..3 already covers every one of them,
@@ -592,8 +569,7 @@ static const struct gpon_swc_map gpon_swc_9602c = {
  * behaves exactly as this driver did before the table existed. */
 static const struct gpon_swc_map *swc = &gpon_swc_9602c;
 
-/* The physical queue a T-CONT drains its logical queue 0 on. ...
- * dev/MEASURED-luna_gpon.c.md sec 24. */
+/* The physical queue a T-CONT drains its logical queue 0 on. */
 static u8 luna_tcont_phys_qid(u8 tcont)
 {
 	if (tcont == GPON_OMCC_TCONT)
@@ -601,8 +577,7 @@ static u8 luna_tcont_phys_qid(u8 tcont)
 	return (u8)(swc->tcont_queue_max * (tcont / swc->tcont_group));
 }
 
-/* ★ THE UPSTREAM-OPTICS OPERATING VALUES ARE A PER-CHIP ...
- * dev/MEASURED-luna_gpon.c.md sec 25. */
+/* THE UPSTREAM-OPTICS OPERATING VALUES ARE A */
 struct luna_gtc_tune {
 	const char *chip;
 	u32 us_laser;
@@ -648,7 +623,7 @@ static const struct luna_gtc_tune *gtune = &luna_gtc_tune_9602c;
 
 #define PI_X(a9602c)		(a9602c)
 
-/* ★ THE 9602C ADDRESS IS WRITTEN ONCE, IN THE HEADER ... -- dev/MEASURED-luna_gpon.c.md sec 27. */
+/* THE 9602C ADDRESS IS WRITTEN ONCE, IN THE */
 enum {
 	PI_A_DSCRUNOUT_DS = PI_DSCRUNOUT_DS,
 	PI_A_DSCRUNOUT_US = PI_DSCRUNOUT_US,
@@ -831,8 +806,7 @@ enum {
 #define WSDS_DIG_1D            SDS(0x220a4)
 #undef  SDS_CFG
 #define SDS_CFG			(swc->sds_cfg)
-/* The six OMCI packet counters, contiguous from the per-chip ...
- * dev/MEASURED-luna_gpon.c.md sec 276. */
+/* The six OMCI packet counters, contiguous from the */
 #define OMCI_DROP_PKT_CNT	(swc->omci_cnt + 0x00)
 #define OMCI_TX_PKT_CNT		(swc->omci_cnt + 0x04)
 #define OMCI_RX_PKT_CNT		(swc->omci_cnt + 0x08)
@@ -865,12 +839,11 @@ enum {
 #define OAM_CTRL_0              (swc->oam_ctrl_0)
 #define CFG_UNHIOL              (swc->cfg_unhiol)
 #define PISO_EXT                (swc->piso_ext)
-/* Open the DS GEM unicast/broadcast pass gate ... -- dev/MEASURED-luna_gpon.c.md sec 28. */
+/* Open the DS GEM unicast/broadcast pass */
 static bool gem_gate_open;
 module_param(gem_gate_open, bool, 0444);
 MODULE_PARM_DESC(gem_gate_open, "open DS GEM pass gate (needs the PON-IP->host OMCI drain; default off = stable online)");
-/* Install the WAN data-GEM datapath. CONFIRMED (stability ...
- * dev/MEASURED-luna_gpon.c.md sec 29. */
+/* Install the WAN data-GEM datapath. */
 static bool data_gem_en = true;
 module_param(data_gem_en, bool, 0644);
 MODULE_PARM_DESC(data_gem_en, "install the WAN data GEM datapath during config (default on)");
@@ -916,8 +889,7 @@ static uint o5_ploam_keepalive_ticks;	/* default OFF (match stock: zero unsolici
 module_param(o5_ploam_keepalive_ticks, uint, 0644);
 MODULE_PARM_DESC(o5_ploam_keepalive_ticks, "emit No_message US-PLOAM every N 10ms ticks at O5 (0=off, default 0 -- stock emits no unsolicited US-PLOAM at O5)");
 
-/* o5_provision_watchdog_ticks: a "Laser out" boot reaches O5 ...
- * dev/MEASURED-luna_gpon.c.md sec 30. */
+/* o5_provision_watchdog_ticks */
 static uint o5_provision_watchdog_ticks;	/* default 0 = off (proven ineffective, see above) */
 module_param(o5_provision_watchdog_ticks, uint, 0644);
 MODULE_PARM_DESC(o5_provision_watchdog_ticks, "re-range if at O5 this many ticks with gpon0 RX=0 (0=off default; PROVEN INEFFECTIVE: re-range does not re-roll the cold-start serializer lock)");
@@ -928,8 +900,7 @@ static uint o5_ungranted_ticks = 1000;
 module_param(o5_ungranted_ticks, uint, 0644);
 MODULE_PARM_DESC(o5_ungranted_ticks, "re-activate after this many 10 ms ticks at O5 with no grant to our ONU-ID, doubling per miss up to 32x (0=off, default 1000)");
 
-/* los_rerange_ticks: autonomous downstream-LOS recovery. With ...
- * dev/MEASURED-luna_gpon.c.md sec 31. */
+/* los_rerange_ticks: autonomous downstream-LOS recovery. */
 static uint los_rerange_ticks = 30;		/* ~300ms of (optic_los & !sds_sdet): catches a real
 						 * 2-4s fiber pull, ~3x stock's 100ms TO2; a sub-second
 						 * pad-steal can neither reach it nor (lacking
@@ -945,14 +916,12 @@ static uint o4_ranging_timeout_ticks = GPON_DWELL_TO1_TICKS;
 module_param(o4_ranging_timeout_ticks, uint, 0644);
 MODULE_PARM_DESC(o4_ranging_timeout_ticks, "G.984.3 TO1: back to O1 when no Ranging_Time follows the ONU-ID within this many ~10ms ticks (0=off, default 1000 = stock's 10 s)");
 
-/* The O1/O2/O3 dwell report -- the half the activation ...
- * dev/MEASURED-luna_gpon.c.md sec 32. */
+/* The O1/O2/O3 dwell report */
 static uint early_dwell_report_ticks = 500;	/* ~5 s at the ~10ms tick */
 module_param(early_dwell_report_ticks, uint, 0644);
 MODULE_PARM_DESC(early_dwell_report_ticks, "report the PLOAM dwell at O1/O2/O3 every this many ~10ms ticks, with the GTC's serial-number and ranging request counters (0=silent, default 500 ~5s). Reports only; it never changes the FSM");
 
-/* Fiber-pull / re-range diagnostic (event-driven, NO per-tick ...
- * dev/MEASURED-luna_gpon.c.md sec 33. */
+/* Fiber-pull / re-range diagnostic */
 static u32 gpon_rerange_cnt;
 static u32 gpon_last_outage_ms;
 static unsigned long gpon_rerange_start_j;
@@ -966,8 +935,7 @@ static u8 gpon_last_ds_type;
 static bool force_laser;
 module_param(force_laser, bool, 0444);
 MODULE_PARM_DESC(force_laser, "force US laser CW on (US_CFG FS_LON) — SerDes-TX emission diagnostic");
-/* rev-A bring-up US-TX SerDes CMU/PLL + TX-LA-LDO writes ...
- * dev/MEASURED-luna_gpon.c.md sec 35. */
+/* rev-A bring-up US-TX SerDes CMU/PLL + TX-LA-LDO */
 static unsigned int serdes_modev1_tx;	/* default 0: TESTED (COM_REG02/03/08/24/25 applied+readback-confirmed) =
 					 * NO effect on US-TX burst (OLT still "Laser out", rxsid=0) and slightly
 					 * degraded DS (CMU shared) -> the omitted ModeV1 TX SerDes regs are NOT the
@@ -981,13 +949,11 @@ MODULE_PARM_DESC(serdes_modev1_tx, "1=apply the rev-A bring-up US-TX SerDes CMU/
 static unsigned int serdes_tx_xtra;
 module_param(serdes_tx_xtra, uint, 0644);
 MODULE_PARM_DESC(serdes_tx_xtra, "1=set legacy SerDes-TX D2A/clk-edge bits (stock=0; default 0=match stock)");
-/* serdes_cdr_reset: replicate the stock SerDes CDR-reset ...
- * dev/MEASURED-luna_gpon.c.md sec 36. */
+/* serdes_cdr_reset */
 static bool serdes_cdr_reset = true;
 module_param(serdes_cdr_reset, bool, 0644);
 MODULE_PARM_DESC(serdes_cdr_reset, "pulse SDS_ANA_COM_REG12 (0x225b0) bit15 10ms (stock serdesCdr_reset RX_SD_POR_SEL) (stock ponmac step; default on)");
-/* usnic_initrdy_poll: stock-aligned US-NIC readiness gate. ...
- * dev/MEASURED-luna_gpon.c.md sec 37. */
+/* usnic_initrdy_poll: stock-aligned US-NIC readiness gate. */
 static bool usnic_initrdy_poll = true;
 module_param(usnic_initrdy_poll, bool, 0644);
 MODULE_PARM_DESC(usnic_initrdy_poll, "wait PON_IPSTS_US.PONIC_INITRDY (0x1bf020f4 bit0)==1 before US GMII latch (default on; bounded 200ms, read-only)");
@@ -997,12 +963,12 @@ MODULE_PARM_DESC(usnic_initrdy_poll, "wait PON_IPSTS_US.PONIC_INITRDY (0x1bf020f
 static bool usnic_initrdy_repulse;
 module_param(usnic_initrdy_repulse, bool, 0644);
 MODULE_PARM_DESC(usnic_initrdy_repulse, "on PONIC_INITRDY timeout, re-pulse CDR (COM_REG12 bit15) + re-poll once (default 0)");
-/* cdr_stuck_recover: replica of the stock runtime ... -- dev/MEASURED-luna_gpon.c.md sec 38. */
+/* cdr_stuck_recover */
 static bool cdr_stuck_recover = true;
 module_param(cdr_stuck_recover, bool, 0644);
 MODULE_PARM_DESC(cdr_stuck_recover, "recover a wedged DS CDR (GTC_DS_STS==0xca0eca0f) by toggling SP_SDS_EN_RX, like stock (default on)");
 
-/* Periodic DS multiframe/BWmap ESD-recover (stock ... -- dev/MEASURED-luna_gpon.c.md sec 39. */
+/* Periodic DS multiframe/BWmap ESD-recover */
 #define GTC_DS_STS_LOF		BIT(1)		/* loss-of-frame; clear = framer byte-locked */
 #define GPON_ESD_INTERVAL_MS	5000		/* stock gpon_esdRecover_interval */
 #define GPON_ESD_THRESHOLD	20		/* stock gpon_esdRecover_threshold */
@@ -1010,20 +976,18 @@ static bool gpon_esd_recover = true;
 module_param(gpon_esd_recover, bool, 0644);
 MODULE_PARM_DESC(gpon_esd_recover, "periodic RX-CDR re-lock when the DS PLEND/LOM parse fails while byte-locked (stock gpon_esdRecover; fixes the ~1/4 grant-deaf churn; default on)");
 #define GPON_CDR_STUCK_MAX	8	/* FAST re-acquire attempts before backing off */
-/* RATE-BOUNDED, NEVER COUNT-CAPPED -- the standing rule, and ...
- * dev/MEASURED-luna_gpon.c.md sec 40. */
+/* RATE-BOUNDED, NEVER COUNT-CAPPED */
 #define GPON_CDR_STUCK_SLOW_TICKS	6000	/* ~60 s at the 10 ms poll */
 static unsigned int gpon_cdr_stuck_tries;	/* consecutive attempts THIS episode */
 static unsigned int gpon_cdr_stuck_count;	/* diag: total wedges detected */
 static unsigned int gpon_cdr_stuck_fixed;	/* diag: wedges cleared by the toggle */
 static u32 gpon_gtc_ds_sts_last;		/* diag: last raw GTC DS status seen */
-/* serdes_stock_seq: 1 = the EXACT stock rev-A bring-up ORDER ...
- * dev/MEASURED-luna_gpon.c.md sec 41. */
+/* serdes_stock_seq */
 static bool serdes_stock_seq;	/* default 0 = our gpon_serdes_init (stock order tested = no improvement) */
 module_param(serdes_stock_seq, bool, 0644);
 MODULE_PARM_DESC(serdes_stock_seq, "1=stock rev-A SerDes bring-up order (gpon_serdes_init_stock); 0=our gpon_serdes_init");
 
-/* family_lib: bring the SerDes up via the clean-room ... -- dev/MEASURED-luna_gpon.c.md sec 277. */
+/* family_lib: bring the SerDes up via the */
 static bool family_lib = true;	/* default ON: the clean-room luna_ponmac family lib is the
 				 * 9602C SerDes boot bring-up. HW-validated (O5 10/10 over two 5-boot
 				 * runs, LAN ok, WAN leases at the analog rate) = equivalent to the
@@ -1031,22 +995,19 @@ static bool family_lib = true;	/* default ON: the clean-room luna_ponmac family 
 				 * translation of gpon_serdes_init). luna_gpon.family_lib=0 = legacy inline. */
 module_param(family_lib, bool, 0644);
 MODULE_PARM_DESC(family_lib, "1=bring up SerDes via luna_ponmac family lib (9602C path, default); 0=inline gpon_serdes_init");
-/* serdes_postmode_perturb: the family-lib path performs TWO ...
- * dev/MEASURED-luna_gpon.c.md sec 42. */
+/* serdes_postmode_perturb */
 static bool serdes_postmode_perturb;	/* default false: skip post-mode perturbations (stock rev-A) */
 module_param(serdes_postmode_perturb, bool, 0644);
 MODULE_PARM_DESC(serdes_postmode_perturb, "1=do post-GPON-mode DIG_1D resync + serdesCdr_reset (legacy); 0=skip (stock rev-A, default)");
-/* serdes_sds_cfgrst: the family-lib SerDes reset pulse used ...
- * dev/MEASURED-luna_gpon.c.md sec 43. */
+/* serdes_sds_cfgrst */
 static bool serdes_sds_cfgrst;	/* default false = stock bit0-only SDS reset */
 module_param(serdes_sds_cfgrst, bool, 0644);
 MODULE_PARM_DESC(serdes_sds_cfgrst, "1=legacy: also pulse CMD_SDS_CFG_RST_PS bit7 in the SDS reset; 0=stock bit0-only (default, the cold-start fix)");
-/* serdes_stock_analog: drive SDS_ANA_COM REG01 ... -- dev/MEASURED-luna_gpon.c.md sec 44. */
+/* serdes_stock_analog */
 static bool serdes_stock_analog = true;
 module_param(serdes_stock_analog, bool, 0644);
 MODULE_PARM_DESC(serdes_stock_analog, "1=match live-stock SDS REG01=0x73a4 + REG11 RX_FILT=0 post-reset (default, the cold-start fix); 0=legacy");
-/* serdes_analog_postreset: program the FULL analog CMU/CDR ...
- * dev/MEASURED-luna_gpon.c.md sec 45. */
+/* serdes_analog_postreset */
 static bool serdes_analog_postreset = true;
 module_param(serdes_analog_postreset, bool, 0644);
 MODULE_PARM_DESC(serdes_analog_postreset, "1=program full analog CMU/CDR table AFTER the SDS reset (stock rev-A, default, the cold-start determinism fix); 0=legacy pre-reset");
@@ -1056,36 +1017,30 @@ MODULE_PARM_DESC(serdes_analog_postreset, "1=program full analog CMU/CDR table A
 static unsigned int serdes_cmu_settle_ms;
 module_param(serdes_cmu_settle_ms, uint, 0644);
 MODULE_PARM_DESC(serdes_cmu_settle_ms, "ms TX-CMU-lock settle between 125M ref force and reset-B release (0=legacy default)");
-/* serdes_txpll_relock: at the O1/O2->O3 edge, re-lock the TX ...
- * dev/MEASURED-luna_gpon.c.md sec 46. */
+/* serdes_txpll_relock */
 static bool serdes_txpll_relock = true;
 module_param(serdes_txpll_relock, bool, 0644);
 MODULE_PARM_DESC(serdes_txpll_relock, "1=re-lock the TX CMU PLL (toggle CMU enable + FIFO re-sync) at O3 entry before the first US burst — fixes the ~50% cold-start lock-to-wrong-rate (default on); 0=skip");
-/* The periodic US-TX interface reset-B pulse while un-ranged ...
- * dev/MEASURED-luna_gpon.c.md sec 47. */
+/* The periodic US-TX interface reset-B pulse while */
 static bool unranged_reseat = true;
 module_param(unranged_reseat, bool, 0644);
 MODULE_PARM_DESC(unranged_reseat, "pulse the US-TX SerDes interface reset-B every ~200 ticks while un-ranged (default 1 = as shipped; 0 = the O4-wall A/B)");
-/* optical_poll: periodic ANI-G DDM optical read. DEFAULT OFF ...
- * dev/MEASURED-luna_gpon.c.md sec 278. */
+/* optical_poll: periodic ANI-G DDM optical read. */
 static bool optical_poll;
 module_param(optical_poll, bool, 0644);
 MODULE_PARM_DESC(optical_poll, "1=periodic ANI-G DDM optical poll; 0=off default (the live /proc read + LuCI refresh already show current dBm without periodic BOSA I2C, which historically churned the OLT)");
-/* bosa_i2c_restore_pad: optional cleanup — return bus-0's SoC ...
- * dev/MEASURED-luna_gpon.c.md sec 48. */
+/* bosa_i2c_restore_pad: optional cleanup */
 static bool bosa_i2c_restore_pad;
 /* The I2C bus the BOSA hangs on, from DT (/pon-optics realtek,i2c-bus): 1 on
  * the X100DG, whose stock loads its BOSA driver with I2C_PORT=1. */
 static unsigned int bosa_i2c_bus;
 module_param(bosa_i2c_restore_pad, bool, 0644);
 MODULE_PARM_DESC(bosa_i2c_restore_pad, "restore SOC_IO_MODE_EN[13]=0 (optical-SD pad) after each BOSA I2C transaction (default 0; optic_los works without it)");
-/* lan_keep_open: LAN management must be reachable INDEPENDENT ...
- * dev/MEASURED-luna_gpon.c.md sec 49. */
+/* lan_keep_open */
 static bool lan_keep_open = true;
 module_param(lan_keep_open, bool, 0644);
 MODULE_PARM_DESC(lan_keep_open, "keep LAN open from boot independent of GPON/WAN state (default 1); 0=legacy O5-gated");
-/* force_soc_clk: before the SerDes bring-up, write the 3 SoC ...
- * dev/MEASURED-luna_gpon.c.md sec 50. */
+/* force_soc_clk */
 static bool force_soc_clk;
 module_param(force_soc_clk, bool, 0644);
 MODULE_PARM_DESC(force_soc_clk, "1=write live-stock SoC clock regs 0x18000100/12c/140 before SerDes bring-up (cold-start fix candidate); 0=legacy");
@@ -1096,18 +1051,15 @@ MODULE_PARM_DESC(force_soc_clk, "1=write live-stock SoC clock regs 0x18000100/12
 static bool serdes_clkgate_rstb;
 module_param(serdes_clkgate_rstb, bool, 0644);
 MODULE_PARM_DESC(serdes_clkgate_rstb, "1=clock-gated (STOP_CLK) SerDes reset-B release, un-gate last (cold-start metastability fix candidate); 0=legacy free-running");
-/* serdes_skip_rstb_dance: Live debug confirmed WSDS_DIG_1D is ...
- * dev/MEASURED-luna_gpon.c.md sec 51. */
+/* serdes_skip_rstb_dance */
 static bool serdes_skip_rstb_dance;
 module_param(serdes_skip_rstb_dance, bool, 0644);
 MODULE_PARM_DESC(serdes_skip_rstb_dance, "1=skip the c2_sds_rstb DIG_1D reset-B dance (already-released; gratuitous phase-latching pulse); 0=legacy dance");
-/* serdes_minimal_analog: our golden analog table does ~145 ...
- * dev/MEASURED-luna_gpon.c.md sec 52. */
+/* serdes_minimal_analog */
 static bool serdes_minimal_analog;
 module_param(serdes_minimal_analog, bool, 0644);
 MODULE_PARM_DESC(serdes_minimal_analog, "1=skip the golden-table writes stock omits (dup GPON banks + FIB bodies, ~134 writes) to match stock's minimal SerDes bring-up; 0=full golden table");
-/* sc_ldo_init: stock runs an LDO-init step (early in boot) ...
- * dev/MEASURED-luna_gpon.c.md sec 54. */
+/* sc_ldo_init */
 static bool sc_ldo_init = true;
 module_param(sc_ldo_init, bool, 0644);
 MODULE_PARM_DESC(sc_ldo_init, "run stock rtk_ldo_init (SC-indirect 0xfdca analog LDO + THERMAL_CTRL_0); default on");
@@ -1126,16 +1078,16 @@ static const struct luna_ops rtl9602c_r960_ops = {
 	.rd = r960_phys_rd,
 	.wr = r960_phys_wr,
 };
-/* DIAGNOSTIC: skip BOSA TX power-on + APC ignition (keep RX ...
- * dev/MEASURED-luna_gpon.c.md sec 55. */
+/* DIAGNOSTIC: skip BOSA TX power-on + APC ignition */
 static bool laser_off;		/* default false; set via luna_gpon.laser_off=1 for the isolation test */
 module_param(laser_off, bool, 0444);
 MODULE_PARM_DESC(laser_off, "skip laser TX-enable+APC (DS-RX-vs-laser isolation: laser-on deafens DS RX)");
-/* TEMP default true (LAN+WiFi ACCESS build): hold the ONU FSM ...
- * dev/MEASURED-luna_gpon.c.md sec 279. */
-static bool gpon_hold;	/* default false: range to O5 normally (so the O5 selftest fires) */
+/* Receive-only: the FSM stays at O1 and the laser off. The ONU boots held,
+ * as the GC1601 does, and omci-agent releases it through allow_tx unless
+ * omci.main.transmit is 0. */
+static bool gpon_hold = true;
 module_param(gpon_hold, bool, 0444);
-MODULE_PARM_DESC(gpon_hold, "hold the GPON FSM at O1 (no ranging) -> stable br-lan/WiFi for LAN+WiFi access (GPON/WAN disabled)");
+MODULE_PARM_DESC(gpon_hold, "hold the ONU receive-only at O1 (no ranging)");
 /* gpon_sn_bytes is defined near the top: the onu_sn setter needs it. */
 static struct timer_list gpon_fsm_timer;
 /* The tick and the downstream-PLOAM interrupt both drive the core under it. */
@@ -1143,19 +1095,16 @@ static DEFINE_SPINLOCK(luna_fsm_lock);
 static int luna_gpon_irq;		/* 0: the device tree wires none */
 static u8 gpon_fsm_state = 1;		/* O1 */
 
-/* Deferred US-TX CDR-reset (re-range path). gpon_fsm_handle() ...
- * dev/MEASURED-luna_gpon.c.md sec 58. */
+/* Deferred US-TX CDR-reset (re-range path). */
 static struct work_struct gpon_cdr_reset_work;
 
-/* Last upstream-burst-overhead parameters the OLT dictated. ...
- * dev/MEASURED-luna_gpon.c.md sec 59. */
+/* Last upstream-burst-overhead parameters the OLT dictated. */
 static const u8 gpon_boh_guard;
 static const u8 gpon_boh_ptn = 0xaa;			/* Type-3 preamble pattern */
 static const u8 gpon_boh_delim[3] = { 0xab, 0x59, 0x83 };
 static const u8 gpon_boh_t3pre;				/* Type-3 pre-ranged length */
 static const u8 gpon_boh_t3ranged;			/* Type-3 ranged length */
-/* THE TICK PERIOD IS DEFINED ONCE, AND THE TWO HALVES ARE NOT ...
- * dev/MEASURED-luna_gpon.c.md sec 60. */
+/* THE TICK PERIOD IS DEFINED ONCE, AND THE TWO HALVES ARE */
 static uint gpon_fsm_tick_req_ms = 10;
 module_param(gpon_fsm_tick_req_ms, uint, 0644);
 MODULE_PARM_DESC(gpon_fsm_tick_req_ms,
@@ -1215,8 +1164,7 @@ static u16 gpon_omcc_alloc;	/* OMCC Alloc-ID override; 0 (default) = bind the LI
 module_param(gpon_omcc_alloc, ushort, 0644);
 MODULE_PARM_DESC(gpon_omcc_alloc, "OMCC Alloc-ID override (0=auto, 1=ONU-ID+1 for OLTs that grant T-CONT 1 not 0)");
 static u16 gpon_data_alloc;		/* the OLT's data Alloc-ID, on T-CONT 8 */
-/* data_tcont: route the WAN data GEM's upstream to the DATA ...
- * dev/MEASURED-luna_gpon.c.md sec 61. */
+/* data_tcont: route the WAN data GEM's upstream to the */
 static bool data_tcont = true;	/* default ON: data US rides the DATA T-CONT 8's grants */
 module_param(data_tcont, bool, 0644);
 MODULE_PARM_DESC(data_tcont, "route the WAN data GEM US to the data T-CONT 8 queue 32 (default ON: measured 0.2 -> 106 Mbps upstream on HSGQ-G008; =0 rides the OMCC T-CONT 16 for an OLT that grants one Alloc-ID for both)");
@@ -1253,8 +1201,7 @@ static void sw_wr(u32 off, u32 v)
 static inline u32 pi_rd(u32 off) { return ioread32(ponip_base + off); }
 static inline void pi_wr(u32 off, u32 v) { iowrite32(v, ponip_base + off); }
 
-/* The three register blocks as flowcore `struct hwio`, so the ...
- * dev/MEASURED-luna_gpon.c.md sec 64. */
+/* The three register blocks as flowcore `struct hwio`, so */
 static u32  sw_hwio_rd(void *ctx, u32 off)		{ return sw_rd(off); }
 static void sw_hwio_wr(void *ctx, u32 off, u32 v)	{ sw_wr(off, v); }
 static const struct hwio sw_io = { .rd = sw_hwio_rd, .wr = sw_hwio_wr };
@@ -1274,8 +1221,7 @@ static void gpon_cam_delay_us(unsigned int us)
 	udelay(us);
 }
 
-/* gpon_ind_poll()/gpon_ind_go() (flowcore/regtable.h) take ...
- * dev/MEASURED-luna_gpon.c.md sec 65. */
+/* gpon_ind_poll()/gpon_ind_go() (flowcore/regtable.h) */
 static void pi_pause_1us(void)
 {
 	udelay(1);
@@ -1300,8 +1246,7 @@ static void pi_field(u32 off, unsigned int msb, unsigned int lsb, u32 val)
 static void pi_packed_set(u32 base, unsigned int idx, unsigned int bits, u32 val);
 static u32 pi_packed_get(u32 base, unsigned int idx, unsigned int bits);
 
-/* Front-panel PON/LOS LEDs. The stock unit lights the green ...
- * dev/MEASURED-luna_gpon.c.md sec 67. */
+/* Front-panel PON/LOS LEDs. */
 static bool gpon_leds = true;
 module_param(gpon_leds, bool, 0644);
 MODULE_PARM_DESC(gpon_leds, "drive the front-panel PON/LOS LEDs from GPON state (default on)");
@@ -1547,8 +1492,7 @@ static void gpon_field(u32 off, unsigned int msb, unsigned int lsb, u32 val)
 	hwio_rmw(&gpon_io, off, msb, lsb, val);
 }
 
-/* DEV live register poke (uses the driver's own ioremap — no ...
- * dev/MEASURED-luna_gpon.c.md sec 280. */
+/* DEV live register poke */
 static char poke_buf[8];
 static int poke_set_locked(const char *val, const struct kernel_param *kp);
 static int poke_set(const char *val, const struct kernel_param *kp)
@@ -1610,11 +1554,9 @@ static const struct kernel_param_ops poke_ops = { .set = poke_set };
 module_param_cb(poke, &poke_ops, poke_buf, 0644);
 MODULE_PARM_DESC(poke, "DEV: <g|G|p|P> <hexoff> [hexval] live GTC/PON-IP reg read/write");
 
-/* Read one 8-bit register from an I2C slave via the SoC ...
- * dev/MEASURED-luna_gpon.c.md sec 71. */
+/* Read one 8-bit register from an I2C slave via the */
 #define I2C_XACT_SETTLE_US	600u
-/* ⚠ THE NACK IS LATCHED ACROSS THE WHOLE TRANSACTION, not ...
- * dev/MEASURED-luna_gpon.c.md sec 72. */
+/* ⚠ THE NACK IS LATCHED ACROSS THE WHOLE TRANSACTION */
 static int i2c_wait_done(u32 ind_cmd, u32 *cmd_out)
 {
 	bool nacked = false;
@@ -1678,7 +1620,7 @@ static int bosa_i2c_read8(u8 slave, u8 reg)
 	return ret;
 }
 
-/* ANI-G (ME 263) live optical levels -- dev/MEASURED-luna_gpon.c.md sec 78. */
+/* ANI-G (ME 263) live optical */
 static s16 anig_rx_level = (s16)0xeedc;		/* #10 Optical signal level (DS RX) */
 static s16 anig_tx_level = (s16)0x04d7;		/* #14 Transmit optical level (TX)  */
 
@@ -1751,8 +1693,7 @@ static bool gpon_optical_cache_poll(void)
 static struct delayed_work gpon_optical_work;
 static void gpon_optical_work_fn(struct work_struct *w);
 
-/* Write one 8-bit register to an I2C slave via the SoC HW I2C ...
- * dev/MEASURED-luna_gpon.c.md sec 79. */
+/* Write one 8-bit register to an I2C slave via the SoC HW */
 static int bosa_i2c_write_raw(u8 slave, u8 reg, u8 val)
 {
 	u32 cfg, bus_off = bosa_i2c_bus * I2C_BUS_STRIDE;
@@ -1886,8 +1827,7 @@ static void luna_selftest_read(struct gpon_optic_reading *v)
 		gpon_optic_from_a2h(v, &d);
 }
 
-/* One per-rate/lane analog bank of the table below: 22 ...
- * dev/MEASURED-luna_gpon.c.md sec 112. */
+/* One per-rate/lane analog bank of the table below */
 #define SDS_ANA_RATE_BANK(base, v24, v28, v2c, v30, v38, v3c, v40, v48, v4c, v50)	\
 	{ (base) + 0x00, 0x00000f00 }, { (base) + 0x04, 0x0000b8c6 },	\
 	{ (base) + 0x08, 0x0000a112 }, { (base) + 0x0c, 0x00004280 },	\
@@ -1901,8 +1841,7 @@ static void luna_selftest_read(struct gpon_optic_reading *v)
 	{ (base) + 0x48, (v48) }, { (base) + 0x4c, (v4c) },	\
 	{ (base) + 0x50, (v50) }, { (base) + 0x54, 0x0000f000 }
 
-/* One FIB (fiber optical front-end) bank: the same 17 { off, ...
- * dev/MEASURED-luna_gpon.c.md sec 113. */
+/* One FIB (fiber optical front-end) bank */
 #define SDS_FIB_BANK(base)							\
 	{ (base) + 0x00, 0x00001940 }, { (base) + 0x04, 0x00006109 },	\
 	{ (base) + 0x08, 0x0000e001 }, { (base) + 0x0c, 0x00003290 },	\
@@ -1914,8 +1853,7 @@ static void luna_selftest_read(struct gpon_optic_reading *v)
 	{ (base) + 0x70, 0x000033fa }, { (base) + 0x74, 0x0000e46a },	\
 	{ (base) + 0x78, 0x0000071e }
 
-/* Full SerDes analog + WSDS configuration -- the operating ...
- * dev/MEASURED-luna_gpon.c.md sec 114. */
+/* Full SerDes analog + WSDS configuration */
 static const struct { u32 off; u32 val; } sds_analog_golden[] __initconst = {
 	/* WSDS analog front + digital RX-path config */
 	{ 0x22000, 0x00000805 }, { 0x22008, 0x0000ffff }, { 0x2201c, 0x0000ffff },
@@ -1987,28 +1925,24 @@ static const u32 fib_reg0_banks[] __initconst = {
 	0x22c00, 0x22c80, 0x22d00, 0x22d80,
 };
 
-/* Bring up the PON SerDes so the GPON MAC core gets its line ...
- * dev/MEASURED-luna_gpon.c.md sec 115. */
+/* Bring up the PON SerDes so the GPON MAC core gets its */
 static int gpon_serdes_init(void)	/* not __init: re-run on re-range from gpon_cdr_reset_worker */
 {
 	int i;
 
-	/* 1. Park CFG_SDS_MODE at the illegal/off value (0x1f) while ...
-	 * dev/MEASURED-luna_gpon.c.md sec 286. */
+	/* 1. Park CFG_SDS_MODE at the illegal/off value (0x1f) */
 	sw_field(SDS_CFG, 4, 0, SDS_MODE_OFF);
 	sw_wr(WSDS_DIG_01, 0);				/* clear force-SDS dummy   */
 	sw_field(WSDS_DIG_00, 0, 0, 0);			/* STOP_CLK = 0            */
 
-	/* 2. Program the FULL analog block to the operational values ...
-	 * dev/MEASURED-luna_gpon.c.md sec 116. */
+	/* 2. Program the FULL analog block to the operational */
 	for (i = 0; i < ARRAY_SIZE(sds_analog_golden); i++)
 		sw_wr(SDS(sds_analog_golden[i].off), sds_analog_golden[i].val);
 	for (i = 0; i < ARRAY_SIZE(fib_reg0_banks); i++)
 		sw_wr(SDS(fib_reg0_banks[i]),
 		      sw_rd(SDS(fib_reg0_banks[i])) & ~FIB_REG0_PDOWN);
 
-	/* 3. Pulse the SDS reset to latch the analog config. Stock ...
-	 * dev/MEASURED-luna_gpon.c.md sec 287. */
+	/* 3. Pulse the SDS reset to latch the analog config. */
 	if (serdes_sds_cfgrst)
 		sw_field(SW_SOFTWARE_RST, 7, 7, 1);	/* legacy CMD_SDS_CFG_RST_PS */
 	sw_field(SW_SOFTWARE_RST, 0, 0, 1);		/* CMD_SDS_RST_PS          */
@@ -2025,8 +1959,7 @@ static int gpon_serdes_init(void)	/* not __init: re-run on re-range from gpon_cd
 	sw_field(WSDS_DIG_1D, 15, 15, 1);		/* RX interface reset-B 1  */
 	sw_field(WSDS_DIG_1D, 16, 16, 1);		/* TX interface reset-B 1  */
 	mdelay(10);
-	/* ★ AND THIS RE-CLEAR TOO -- it is the one that UNDOES what ...
-	 * dev/MEASURED-luna_gpon.c.md sec 288. */
+	/* AND THIS RE-CLEAR TOO */
 	for (i = 0; i < ARRAY_SIZE(fib_reg0_banks); i++)
 		sw_wr(SDS(fib_reg0_banks[i]),
 		      sw_rd(SDS(fib_reg0_banks[i])) & ~FIB_REG0_PDOWN);
@@ -2035,13 +1968,11 @@ static int gpon_serdes_init(void)	/* not __init: re-run on re-range from gpon_cd
 	 *    end drives it (a working unit reaches O5 with FRC_OPTIC_LOS=0). */
 	sw_field(WSDS_DIG_18, 12, 12, 1);		/* BEN_OE = 1              */
 	sw_field(WSDS_DIG_18, 15, 15, 0);		/* OPTIC_LOS_SEL_EPON = 0  */
-	/* Do NOT force optic_los. At O5 WSDS_DIG_18 = 0x1000 (no ...
-	 * dev/MEASURED-luna_gpon.c.md sec 289. */
+	/* Do NOT force optic_los. */
 	sw_field(WSDS_DIG_18, 14, 14, 0);		/* CFG_FRC_OPTIC_LOS = 0   */
 	sw_field(WSDS_DIG_18, 13, 13, 0);		/* CFG_FRCV_OPTIC_LOS = 0  */
 
-	/* 6. Arm the RX in the required order: enable the RX-CDR ...
-	 * dev/MEASURED-luna_gpon.c.md sec 290. */
+	/* 6. Arm the RX in the required order */
 	sw_field(SDS_ANA_COM_REG12, 14, 14, 0x1);	/* RX_SEL_CDR_AFEN = 1     */
 	mdelay(10);
 	sw_field(SDS_ANA_MISC_REG01, 7, 5, 0x1);	/* SPDSEL_VAL = GPON rate  */
@@ -2056,12 +1987,10 @@ static int gpon_serdes_init(void)	/* not __init: re-run on re-range from gpon_cd
 							 * 0; 0x2 mis-times the burst TX-disable
 							 * -> "Laser out". */
 	sw_field(WSDS_DIG_03, 3, 0, 0x0);		/* CFG_D2ANLOG_SEL = 0 (TX data path) */
-	/* FORCE_BEN (SDS 0x220e4) BEN_FORCE_MODE[0]=0: let the GTC ...
-	 * dev/MEASURED-luna_gpon.c.md sec 291. */
+	/* FORCE_BEN (SDS 0x220e4) BEN_FORCE_MODE[0]=0 */
 	sw_field(SDS(0x220e4), 0, 0, 0x0);
 
-	/* 6a-ModeV1. US-TX SerDes CMU/PLL and TX-LA-LDO -- the rev-A ...
-	 * dev/MEASURED-luna_gpon.c.md sec 117. */
+	/* 6a-ModeV1. US-TX SerDes CMU/PLL and TX-LA-LDO */
 	if (serdes_modev1_tx) {
 		sw_wr(SDS(0x22588), 0x6df8);		/* SDS_ANA_COM_REG02 TX CMU/PLL */
 		sw_wr(SDS_ANA_COM_REG03, 0x8941);	/* SDS_ANA_COM_REG03 TX CMU (0x2258c) */
@@ -2073,19 +2002,16 @@ static int gpon_serdes_init(void)	/* not __init: re-run on re-range from gpon_cd
 			sw_rd(SDS_ANA_COM_REG08) & 0xffff, sw_rd(SDS(0x225e0)) & 0xffff, sw_rd(SDS(0x225e4)) & 0xffff);
 	}
 
-	/* 6b. TX DATA PATH -- route the digital US-framer data into ...
-	 * dev/MEASURED-luna_gpon.c.md sec 118. */
+	/* 6b. TX DATA PATH */
 	sw_field(SDS(0x220a8), 5, 4, serdes_tx_xtra ? 0x3 : 0x0);	/* WSDS_DIG_1E D2A interconnect (stock=0) */
 	sw_field(SDS(0x2281c), 14, 14, serdes_tx_xtra ? 0x1 : 0x0);	/* SDS_REG7 SP_CFG_NEG_CLKWR_A2D (stock=0) */
 	sw_field(SDS(0x22a30), 8, 8, serdes_tx_xtra ? 0x1 : 0x0);	/* SDS_EXT_REG12 SEP_CFG_NEG_CLKRD_D2A (stock=0) */
 
-	/* TX drive level: REG_TX_AMP=0x5, REG_TX_EMP=0x1, the rev-A ...
-	 * dev/MEASURED-luna_gpon.c.md sec 119. */
+	/* TX drive level */
 	sw_field(SDS(0x225d8), 5, 3, 0x5);			/* SDS_ANA_COM_REG22 REG_TX_AMP = 0x5 */
 	sw_field(SDS(0x225d8), 2, 0, 0x1);			/* SDS_ANA_COM_REG22 REG_TX_EMP = 0x1 */
 
-	/* 7a. Force signal-detect on. RST_DONE is gated by ...
-	 * dev/MEASURED-luna_gpon.c.md sec 120. */
+	/* 7a. Force signal-detect on. */
 	sw_field(SDS_ANA_MISC_REG02, 13, 13, 0x1);	/* signal-detect value=1   */
 	sw_field(SDS_ANA_MISC_REG02, 12, 12, 0x1);	/* force signal-detect     */
 	mdelay(10);
@@ -2095,23 +2021,20 @@ static int gpon_serdes_init(void)	/* not __init: re-run on re-range from gpon_cd
 	sw_field(SDS_CFG, 4, 0, SDS_MODE_GPON);
 	mdelay(50);
 
-	/* TX-interface reset-B re-sync: with the D2A mux + sample ...
-	 * dev/MEASURED-luna_gpon.c.md sec 121. */
+	/* TX-interface reset-B re-sync */
 	sw_field(WSDS_DIG_1D, 16, 16, 0);
 	mdelay(2);
 	sw_field(WSDS_DIG_1D, 16, 16, 1);
 	mdelay(10);
 
-	/* SerDes CDR-lock pulse -- the stock CDR-reset our init ...
-	 * dev/MEASURED-luna_gpon.c.md sec 122. */
+	/* SerDes CDR-lock pulse */
 	if (serdes_cdr_reset) {
 		u32 cdr = sw_rd(SDS_ANA_COM_REG12);
 
 		sw_wr(SDS_ANA_COM_REG12, cdr ^ BIT(15));
 		mdelay(10);
 		sw_wr(SDS_ANA_COM_REG12, cdr);
-		/* ★★ PRINT THE ADDRESS THAT WAS WRITTEN, NOT THE ONE THE 9602C
-		 * dev/MEASURED-luna_gpon.c.md sec 123. */
+		/* PRINT THE ADDRESS THAT WAS WRITTEN, NOT THE ONE THE */
 		pr_info("luna-gpon: serdesCdr_reset pulse (COM_REG12 @ 0x%05x bit15), restored=0x%08x\n",
 			SDS_ANA_COM_REG12, cdr);
 	}
@@ -2130,8 +2053,7 @@ static int gpon_serdes_init(void)	/* not __init: re-run on re-range from gpon_cd
 	return -ETIMEDOUT;
 }
 
-/* Stock rev-A GPON SerDes bring-up ORDER as observed from the ...
- * dev/MEASURED-luna_gpon.c.md sec 124. */
+/* Stock rev-A GPON SerDes bring-up ORDER as observed from */
 static int __init gpon_serdes_init_stock(void)
 {
 	/* offsets absent from our #define block - all confirmed via the chip register map */
@@ -2165,16 +2087,14 @@ static int __init gpon_serdes_init_stock(void)
 	sw_field(WSDS_DIG_03, 6, 4, 0x0);		/* CFG_TXDIS_SEL_DLY = 0   */
 	sw_field(WSDS_DIG_03, 3, 0, 0x0);		/* CFG_D2ANLOG_SEL   = 0   */
 
-	/* OUR golden analog overlay + fiber power-on, applied AFTER ...
-	 * dev/MEASURED-luna_gpon.c.md sec 125. */
+	/* OUR golden analog overlay + fiber power-on, applied */
 	for (i = 0; i < ARRAY_SIZE(sds_analog_golden); i++)
 		sw_wr(SDS(sds_analog_golden[i].off), sds_analog_golden[i].val);
 	for (i = 0; i < ARRAY_SIZE(fib_reg0_banks); i++)
 		sw_wr(SDS(fib_reg0_banks[i]),
 		      sw_rd(SDS(fib_reg0_banks[i])) & ~FIB_REG0_PDOWN);	/* fiber on */
 
-	/* stock step 6: the inlined rev-A bring-up analog config. --- ...
-	 * dev/MEASURED-luna_gpon.c.md sec 292. */
+	/* stock step 6: the inlined rev-A bring-up analog config. */
 	sw_wr(SDS_ANA_COM_REG02o, 0x6df8);	/* COM_REG02 (CMU/LDO/ISTANK) */
 	sw_wr(SDS_ANA_COM_REG03, 0x8941);	/* COM_REG03 (0x2258c)        */
 	sw_wr(SDS_ANA_COM_REG08, 0x0713);	/* COM_REG08 (0x225a0)        */
@@ -2246,23 +2166,20 @@ static int __init gpon_wait_rst_done(void)
 	return -ETIMEDOUT;
 }
 
-/* Faithful port of the stock all-module GPON datapath ...
- * dev/MEASURED-luna_gpon.c.md sec 126. */
+/* Faithful port of the stock all-module GPON */
 static unsigned int full_datapath_init = 1;
 module_param(full_datapath_init, uint, 0644);
 MODULE_PARM_DESC(full_datapath_init, "1=run the full datapath init on the quiescent switch (default), 0=legacy minimal init");
 static unsigned int table_engine_ok;	/* 0: the operational VLAN setup (our Ethernet driver) owns the VLAN table now; isolate the VLAN_CTRL=0x19 enable test */
 module_param(table_engine_ok, uint, 0644);
 MODULE_PARM_DESC(table_engine_ok, "1=also run the L2 LUT clear + VLAN-enable table-engine steps (risky), 0=field-writes only");
-/* "harmful write" hypothesis: stock NEVER writes the US-NIC ...
- * dev/MEASURED-luna_gpon.c.md sec 127. */
+/* "harmful write" hypothesis */
 static unsigned int usnic_strip;	/* 0 = KEEP the US-NIC writes: live-stock same-board diff shows stock HAS
 					 * MOCIR 0x2170/0x2174=0x1ffff etc. set, so stripping them DIVERGED from
 					 * stock (the "stock never writes these" hypothesis was wrong; live = truth). */
 module_param(usnic_strip, uint, 0644);
 MODULE_PARM_DESC(usnic_strip, "1=skip the speculative non-stock US-NIC writes (strip test), 0=keep them (match stock)");
-/* Faithful port of the stock PON-MAC GPON mode-set branch as ...
- * dev/MEASURED-luna_gpon.c.md sec 293. */
+/* Faithful port of the stock PON-MAC GPON mode-set branch */
 static unsigned int ponmac_modeset = 1;	/* MUST be 1: the classify block and GMII
 					 * re-latch at O5 are what make the GEM-US engine latch
 					 * the GEM_US_PORT_MAP write. Without it the engine latches
@@ -2271,22 +2188,19 @@ static unsigned int ponmac_modeset = 1;	/* MUST be 1: the classify block and GMI
 module_param(ponmac_modeset, uint, 0644);
 MODULE_PARM_DESC(ponmac_modeset, "1=stock-ordered GPON mode_set classify block + GMII re-latch at O5");
 
-/* finding 3 (2026-06-13): stock fires the US-NIC GMII_RX_EN ...
- * dev/MEASURED-luna_gpon.c.md sec 128. */
+/* finding 3 (2026-06-13) */
 static unsigned int relatch_us = 1;
 module_param(relatch_us, uint, 0644);
 MODULE_PARM_DESC(relatch_us, "1=re-pulse US-NIC GMII_RX_EN edge after the scheduler binding (finding 3)");
 static unsigned int serdes_recommit;	/* 0 = OFF: a full SDS re-commit (CMD_SDS_RST_PS) at O5 DROPS the locked DS framer (omcirx->0, DS dead) — DISPROVEN destructive. */
 module_param(serdes_recommit, uint, 0644);
 MODULE_PARM_DESC(serdes_recommit, "1=also re-commit SerDes inside the O5 mode_set block (risky; gate separately)");
-/* PON_GEN_PIR_DROP (bit18 of PON_SCH_CTRL 0x2194). Default 0 ...
- * dev/MEASURED-luna_gpon.c.md sec 129. */
+/* PON_GEN_PIR_DROP (bit18 of PON_SCH_CTRL 0x2194). */
 static unsigned int pir_drop;
 module_param(pir_drop, uint, 0644);
 MODULE_PARM_DESC(pir_drop, "PON_GEN_PIR_DROP bit18@0x2194: 0=rev-A erratum clear (default, drains T-CONT16), 1=set");
 
-/* sch_ctrl_stock: write PON_SCH_CTRL to the EXACT value ...
- * dev/MEASURED-luna_gpon.c.md sec 130. */
+/* sch_ctrl_stock */
 static bool sch_ctrl_stock = true;
 module_param(sch_ctrl_stock, bool, 0644);
 MODULE_PARM_DESC(sch_ctrl_stock, "1=write PON_SCH_CTRL 0x2194=0x66000 verbatim from live stock (PIR_DROP+METER_OP+WFQ_BURSTSIZE); 0=legacy bit18-only (default on)");
@@ -2297,26 +2211,23 @@ MODULE_PARM_DESC(sch_ctrl_stock, "1=write PON_SCH_CTRL 0x2194=0x66000 verbatim f
 static bool dbru_blksize = true;
 module_param(dbru_blksize, bool, 0644);
 MODULE_PARM_DESC(dbru_blksize, "1=write DPRU_RPT_PRD 0x2568=0x3002 (DBA_BLKSIZE=48, DBRu report divisor; default on)");
-/* Re-issue SIDVALID after the T-CONT queue-add arm -- the ...
- * dev/MEASURED-luna_gpon.c.md sec 131. */
+/* Re-issue SIDVALID after the T-CONT queue-add arm */
 static bool sidvalid_last = true;
 module_param(sidvalid_last, bool, 0644);
 MODULE_PARM_DESC(sidvalid_last, "1=re-issue SIDVALID[64] after the T-CONT-16 arm (stock queue_add tail does this; we had omitted it) (default on)");
-/* Bind the OMCC Alloc-ID to a SECOND T-CONT as well. ... -- dev/MEASURED-luna_gpon.c.md sec 294. */
+/* Bind the OMCC Alloc-ID to a SECOND T-CONT as well. */
 static bool omcc_alt_bind;
 module_param(omcc_alt_bind, bool, 0644);
 MODULE_PARM_DESC(omcc_alt_bind, "1=also bind the OMCC alloc to T-CONT 1 (non-stock double-bind that makes the DBRu report the empty T-CONT; default off = stock one-T-CONT-per-alloc)");
-/* Re-assert AUTO_PROC_SSTART (US_PROC_MODE 0x5200 bit0) at ...
- * dev/MEASURED-luna_gpon.c.md sec 132. */
+/* Re-assert AUTO_PROC_SSTART (US_PROC_MODE 0x5200 bit0) */
 static bool o5_sstart = true;
 module_param(o5_sstart, bool, 0644);
 MODULE_PARM_DESC(o5_sstart, "1=re-assert AUTO_PROC_SSTART (0x5200 bit0) at O5 so the HW starts the US burst on each grant (default on)");
-/* Re-arm the GEM-US US-feed run-state with the FULL WSDS ...
- * dev/MEASURED-luna_gpon.c.md sec 295. */
+/* Re-arm the GEM-US US-feed run-state with the FULL */
 static bool o3_feed_reset;
 module_param(o3_feed_reset, bool, 0644);
 MODULE_PARM_DESC(o3_feed_reset, "1=pulse WSDS GPON datapath reset-B + light feed re-arm after the O3 TX-PLL relock to un-park the GEM-US framer (default off; risks DS lock)");
-/* Per-tick US-feed re-arm at O5. DEFAULT OFF since ... -- dev/MEASURED-luna_gpon.c.md sec 133. */
+/* Per-tick US-feed re-arm at O5. */
 static bool feed_rekick;
 module_param(feed_rekick, bool, 0644);
 MODULE_PARM_DESC(feed_rekick, "1=per-tick US-feed FIFO re-arm at O5 (DEFAULT OFF: the per-tick GMII edge truncates in-flight US bursts + kills sustained WAN data; opt-in diagnostic only)");
@@ -2328,8 +2239,7 @@ static bool force_idle;
 module_param(force_idle, bool, 0644);
 MODULE_PARM_DESC(force_idle, "1=set FS_GEM_IDLE (0x6020 bit31) to force idle-GEM on grants -- bisection diagnostic (default off, stock=0)");
 
-/* us_intr_svc: service (read-to-clear) the upstream GPON ...
- * dev/MEASURED-luna_gpon.c.md sec 134. */
+/* us_intr_svc */
 static bool us_intr_svc;
 module_param(us_intr_svc, bool, 0644);
 MODULE_PARM_DESC(us_intr_svc, "1=read-to-clear the US GPON interrupt deltas (0x5000/0x5008/0x6000/0x6008) each O5 tick (default off)");
@@ -2343,8 +2253,7 @@ MODULE_PARM_DESC(us_intr_svc, "1=read-to-clear the US GPON interrupt deltas (0x5
 
 static bool tbl_ok = true;
 
-/* The SWCORE table engine's pace for gpon_ind_poll(). 1 us ...
- * dev/MEASURED-luna_gpon.c.md sec 135. */
+/* The SWCORE table engine's pace for gpon_ind_poll(). */
 static void tbl_pause(void)
 {
 	static unsigned int spins;
@@ -2356,8 +2265,7 @@ static void tbl_pause(void)
 
 static void tbl_wait(void)
 {
-	/* The budget is 2 ms, not 16 ms, and it cost this board every ...
-	 * dev/MEASURED-luna_gpon.c.md sec 136. */
+	/* The budget is 2 ms, not 16 ms, and it cost this board */
 	if (gpon_ind_poll(&sw_io, reg_make(TBL_STS_OFF), TBL_BUSY_BIT,
 			  TBL_WAIT_TRIES, tbl_pause) < 0)
 		tbl_ok = false;		/* engine wedged / wrong encoding: stop */
@@ -2389,8 +2297,7 @@ void rtl9602c_datapath_tables_init(void)
 	void __iomem *sw_en = SOC_SW_ENABLE;
 	int port, idx;
 
-	/* This is EXPORTED and the caller is another driver, so it ...
-	 * dev/MEASURED-luna_gpon.c.md sec 137. */
+	/* This is EXPORTED and the caller is another driver, so */
 	if (!swcore_base) {
 		pr_warn_once("luna-gpon: datapath_tables_init called before this driver probed (swcore_base is NULL) -- skipped; the switch fabric is NOT initialised\n");
 		return;
@@ -2421,8 +2328,7 @@ void rtl9602c_datapath_tables_init(void)
 	sw_field(WRAP_GPHY_MISC, 0, 0, 1);			/* PATCH_PHY_DONE        */
 	sw_field(CFG_UNHIOL, 0, 0, 1);			/* CFG_UNHIOL IPG_COMP   */
 	sw_field(SW_P_MISC_PORT(swc->sw, swc->sw->cpu_port), 2, 2, 1);	/* P_MISC[CPU] RX_SPC */
-	/* The ACCEPT_MAX_LEN half is closed, and only on the die that ...
-	 * dev/MEASURED-luna_gpon.c.md sec 138. */
+	/* The ACCEPT_MAX_LEN half is closed, and only on the die */
 	for (port = 0; port <= swc->amax_last_port; port++)
 		sw_field(ACCEPT_MAX_LEN_CTRL + port * 4, swc->amax_msb, 0,
 			 (swc->amax_pon_val && port == swc->sw->pon_port)
@@ -2433,8 +2339,7 @@ void rtl9602c_datapath_tables_init(void)
 		sw_field(ACCEPT_MAX_LEN_CTRL + swc->sw->pon_port * 4,
 			 swc->amax_msb, 0, swc->amax_pon_val);
 
-	/* 2) l2_init: per-port action defaults (FORWARD). NOTE: a ...
-	 * dev/MEASURED-luna_gpon.c.md sec 296. */
+	/* 2) l2_init: per-port action defaults (FORWARD). NOTE */
 	sw_field(SW_LUT_CFG, 22, 22, 1);			/* LUT LINKDOWN_AGEOUT   */
 	/* ★★★ THE BINARY CAM, WHICH WE WERE LEAVING DISABLED BY INHERITANCE.
 	 * sw_field() is a read-modify-write that names ONE bit, so every bit this
@@ -2508,11 +2413,9 @@ void rtl9602c_datapath_tables_init(void)
 	sw_field(OAM_CTRL_0, 2, 0, 0);
 	sw_field(QOS_UNI_TRAP_PRI_CTRL, 0, 0, 0);
 
-	/* 7) classification setup: CF_CFG = the EXACT ...
-	 * dev/MEASURED-luna_gpon.c.md sec 139. */
+	/* 7) classification setup */
 	sw_wr(CF_CFG, 0x0001d009u);
-	/* Port isolation + BUM-flood masks to the live-stock values ...
-	 * dev/MEASURED-luna_gpon.c.md sec 140. */
+	/* Port isolation + BUM-flood masks to the live-stock */
 	sw_wr(SW_PISO_PORT + 0 * SW_PISO_PORT_STRIDE, 0x000ff9ffu);
 	sw_wr(SW_PISO_PORT + 1 * SW_PISO_PORT_STRIDE, 0x000ff9ffu);
 	sw_wr(SW_PISO_PORT + 2 * SW_PISO_PORT_STRIDE, 0x000ff9ffu);
@@ -2522,8 +2425,7 @@ void rtl9602c_datapath_tables_init(void)
 	/* 8) ponmac_init: PON-IP scheduler + OMCI egress steering */
 	sw_field(DYNGASP_CTRL, 3, 3, 1);			/* DYNGASP_CMP_INV, bit 3 on all three dies */
 	if (serdes_stock_analog) {
-		/* Match live-stock post-reset SDS_ANA: REG01 (0x22584)=0x73a4 ...
-		 * dev/MEASURED-luna_gpon.c.md sec 141. */
+		/* Match live-stock post-reset SDS_ANA */
 		sw_field(SDS(0x22584), 14, 14, 1);		/* REG01 REG_BEN_TTL_OUT = 1 (stock 0x73a4) */
 		sw_field(SDS(0x22584),  0,  0, 0);		/* REG01 BENLA_LDOVREF[0] = 0 (stock) */
 		sw_field(SDS(0x225ac),  7,  0, 0);		/* REG11 RX_FILT_CONFIG = 0 (stock)   */
@@ -2543,8 +2445,7 @@ void rtl9602c_datapath_tables_init(void)
 		pi_field(PI_PON_QID_CIR_RATE + idx * PI_QID_RATE_STRIDE, 31, 0, 0);	/* QID_CIR_RATE = 0      */
 	}
 	sw_field(PON_TRAP_CFG, 2, 0, 7);			/* PON_TRAP_CFG OMCI_MPCP_PRIORITY=7 -> steer OMCI egress to PON queue 7 */
-	/* PIR_DROP (0x2194 bit18) is cleared for rev-A above ...
-	 * dev/MEASURED-luna_gpon.c.md sec 297. */
+	/* PIR_DROP (0x2194 bit18) is cleared for rev-A */
 	sw_field(SW_P_MISC_PORT(swc->sw, swc->sw->pon_port), 2, 2, 1);	/* P_MISC[PON] RX_SPC */
 	sw_field(SW_P_MISC_PORT(swc->sw, swc->sw->cpu_port), 2, 2, 1);	/* P_MISC[CPU] RX_SPC */
 
@@ -2552,8 +2453,7 @@ void rtl9602c_datapath_tables_init(void)
 }
 EXPORT_SYMBOL(rtl9602c_datapath_tables_init);
 
-/* Configure the PON packet datapath (PON-IP) for GPON before ...
- * dev/MEASURED-luna_gpon.c.md sec 142. */
+/* Configure the PON packet datapath (PON-IP) for GPON */
 /* The US and DS packet pools may be RESERVED by the board (DT memory-region,
  * US then DS) instead of allocated: the 32 MB X100DG's stock keeps both at the
  * two holes of its memory map (MSTBASE_US 0x01eff000, MSTBASE_DS 0x016ff000,
@@ -2602,8 +2502,7 @@ void gpon_pbo_init(void)
 		pi_field(PI_PONIP_CTL_US, 0, 0, 0);		/* CFG_PBUF_EN = 0        */
 		pi_field(PI_PONIP_CTL_DS, 0, 0, 0);
 
-		/* 2. Descriptor accounting (128B pages). US uses a DRAM ...
-		 * dev/MEASURED-luna_gpon.c.md sec 144. */
+		/* 2. Descriptor accounting (128B pages). */
 		{
 			static unsigned long us_pool;
 
@@ -2651,8 +2550,7 @@ void gpon_pbo_init(void)
 		}
 	}
 
-	/* PBO backpressure thresholds (SRAM-only, 128B pages). ...
-	 * dev/MEASURED-luna_gpon.c.md sec 145. */
+	/* PBO backpressure thresholds (SRAM-only, 128B pages). */
 	pi_field(PI_PON_SID_STOP_TH, 12, 0, 0x1f30);
 	pi_field(PI_PON_SID_GLB_TH, 28, 16, 0x1ee0);
 	pi_field(PI_PON_SID_GLB_TH, 12, 0, 0x1e40);
@@ -2698,8 +2596,7 @@ void gpon_pbo_init(void)
 	pi_field(PI_IO_CMD_1_DS, 1, 0, 0);
 	pi_field(PI_IO_CMD_1_DS, 27, 27, 1);		/* PRECISE_DMA_EN — DS precise/aligned DMA transfers; the O5 DS IO_CMD_1 value is 0x08000000. Without it the DS RX DMA never lands a frame, so filled stays 0. */
 
-	/* 5. PONNIC datapath: almost-full RX backpressure + TX ...
-	 * dev/MEASURED-luna_gpon.c.md sec 146. */
+	/* 5. PONNIC datapath */
 	pi_field(PI_PROBE_SELECT_US, 7, 5, 2);		/* R_DBG_FUNC_SEL=010b => reg 0x40 */
 	pi_field(PI_CFG_US, 26, 26, 1);			/* E_EN_RFF_AFULL         */
 	pi_field(PI_CFG_US, 17, 17, 1);			/* EN_TX_STOP             */
@@ -2714,8 +2611,7 @@ void gpon_pbo_init(void)
 	 * fires (and the GMAC only accepts the on-wire cpu-tag) when this SID = 64. Reset
 	 * default is 0x40 but the pbo MAC reset can clear it; set it explicitly. */
 	pi_field(PI_CFG_DS, 6, 0, GPON_OMCC_FLOW);	/* RX_SID = this chip's OMCC SID */
-	/* CFG_US[6:0] = RX_SID for the US-NIC, symmetric to the DS ...
-	 * dev/MEASURED-luna_gpon.c.md sec 147. */
+	/* CFG_US[6:0] = RX_SID for the US-NIC, symmetric to the */
 	pi_field(PI_CFG_US, 6, 0, GPON_OMCC_FLOW);	/* US-NIC RX_SID = this chip's OMCC SID */
 
 	/* 6. PONNIC TX framing (IFG, preamble, padding) + RX accept-CRC-error. */
@@ -2728,32 +2624,27 @@ void gpon_pbo_init(void)
 	pi_field(PI_TX_CFG_DS, 0, 0, 1);
 	pi_field(PI_RX_CFG_DS, 5, 5, 1);
 
-	/* 7. Enable upstream and downstream packet buffers. (The O5 ...
-	 * dev/MEASURED-luna_gpon.c.md sec 148. */
+	/* 7. Enable upstream and downstream packet buffers. */
 	if (!keep_pool) {
 		pi_field(PI_PONIP_CTL_US, 0, 0, READ_ONCE(luna_activation_ready));
 		pi_field(PI_PONIP_CTL_DS, 0, 0, 1);
 	}
 	pi_field(PI_PONIP_CTL_DS, 7, 7, 1);		/* CFG_TX_PAUSE low bit -> O5 value 0x81 (DS buffer release; safe now thresholds bound the buffer) */
 
-	/* 8. Enable the full downstream PONNIC DMA drain (LAST — ...
-	 * dev/MEASURED-luna_gpon.c.md sec 149. */
+	/* 8. Enable the full downstream PONNIC DMA drain */
 	pi_wr(PI_MEDIA_STS_DS, 0x106e8400u);
 	pi_wr(PI_IO_CMD_0_DS, 0x90081070u);
 
-	/* PON-IP DS-NIC drain config. A live stock ONU online and ...
-	 * dev/MEASURED-luna_gpon.c.md sec 150. */
+	/* PON-IP DS-NIC drain config. */
 	pi_wr(PI_PROBE_SELECT_DS, 0x00000040u);
 	pi_wr(PI_DS_NIC_CFG_D404, 0x11100348u);
 	pi_wr(PI_CONFIG_CLK_DS, 0x00000040u);
 
-	/* 9. US-NIC GMII enable — the VERY LAST write, after the ...
-	 * dev/MEASURED-luna_gpon.c.md sec 151. */
+	/* 9. US-NIC GMII enable */
 	if (!usnic_strip)
 		pi_wr(PI_MEDIA_STS_US, 0x106e8400u);	/* stock NEVER writes 0x1bf04058 */
 
-	/* Pre-arm the OMCC classification BEFORE the GMII_RX_EN latch ...
-	 * dev/MEASURED-luna_gpon.c.md sec 152. */
+	/* Pre-arm the OMCC classification BEFORE the GMII_RX_EN */
 	{
 		unsigned int f = GPON_OMCC_FLOW;
 		unsigned int q2_lsb = (f % 4u) * 7u;	/* SID2QID: 7 bits, 4/word  */
@@ -2763,28 +2654,24 @@ void gpon_pbo_init(void)
 			 q2_lsb + 6u, q2_lsb, GPON_OMCC_PHYS_QID & 0x7f);
 		pi_field(PI_PON_SIDVALID + (f / 32u) * 4u, v_bit, v_bit, 1);
 	}
-	/* PON_OMCI_CFG[6:0] = OMCC SID 64 — the THIRD member of the ...
-	 * dev/MEASURED-luna_gpon.c.md sec 153. */
+	/* PON_OMCI_CFG[6:0] = OMCC SID 64 */
 	pi_field(PI_PON_OMCI_CFG, 6, 0, GPON_OMCC_FLOW);	/* [6:0] = this chip's OMCC SID */
 
 	/* Data remains inhibited after a global NIC/PBO reset. The accepted OMCI
 	 * owner retires any old queue and applies its selected qid on the timer. */
 	pi_field(PI_PON_SIDVALID, GPON_DATA_FLOW, GPON_DATA_FLOW, 0);
 
-	/* MOCIR force-mode (stock QoS init): PON-IP 0x2170 ...
-	 * dev/MEASURED-luna_gpon.c.md sec 298. */
+	/* MOCIR force-mode (stock QoS init) */
 	if (!usnic_strip) {
 		pi_wr(PI_MOCIR_FRC_MD, 0x0001ffffu);	/* MOCIR_FRC_MD  = 0x1FFFF (all flows forced)   */
 		pi_wr(PI_MOCIR_FRC_VAL, 0x0001ffffu);	/* MOCIR_FRC_VAL = 0x1FFFF (forced CIR = max)   */
 	}
 
-	/* Stock PON-MAC US-NIC datapath credit/threshold cluster, ...
-	 * dev/MEASURED-luna_gpon.c.md sec 154. */
+	/* Stock PON-MAC US-NIC datapath credit/threshold */
 	if (!usnic_strip) {
 		pi_wr(PI_PON_BW_THRES, 0x00050005u);	/* PON US-NIC IP-status/BW threshold (reg924, 5+5)  */
 		pi_wr(PI_PON_US_FIFO_CTL, 0x00000013u);	/* US-NIC datapath cfg                              */
-		/* PONIP_DBG_CTRL_US MUST be 0x00086000 to match live stock: ...
-		 * dev/MEASURED-luna_gpon.c.md sec 155. */
+		/* PONIP_DBG_CTRL_US MUST be 0x00086000 to match live stock */
 		pi_wr(PI_PONIP_DBG_CTRL_US, 0x00086000u);	/* stock value (DBG_IGNORE_TAG=1) */
 		if (dbru_blksize)
 			pi_wr(PI_GPON_DPRU_RPT_PRD, 0x00003002u);	/* DPRU_RPT_PRD: DBA_BLKSIZE=48 plus report period 2,
@@ -2877,8 +2764,7 @@ MODULE_PARM_DESC(o5_feed_rearm,
 static u32 gpon_us_feed_rearm_cnt;	/* count of US-feed re-arms (pre-FSM + O5), shown in /proc/gpon */
 static u32 gpon_us_intr_svc_cnt;	/* count of US-intr delta reads that found a latched event (us_intr_svc) */
 
-/* Faithful re-express of the working firmware's GPON datapath ...
- * dev/MEASURED-luna_gpon.c.md sec 156. */
+/* Faithful re-express of the working firmware's GPON */
 static void gpon_us_feed_rearm(void)
 {
 	if (!READ_ONCE(luna_activation_ready))
@@ -2891,8 +2777,7 @@ static void gpon_us_feed_rearm(void)
 		gpon_us_feed_rearm_cnt);
 }
 
-/* Softirq-safe US-feed FIFO re-arm: the pi_* feed writes of ...
- * dev/MEASURED-luna_gpon.c.md sec 157. */
+/* Softirq-safe US-feed FIFO re-arm */
 static void gpon_us_feed_rearm_light(void)
 {
 	if (!READ_ONCE(luna_activation_ready))
@@ -2912,8 +2797,7 @@ static void gpon_us_feed_rearm_light(void)
 			gpon_us_feed_rearm_cnt);
 }
 
-/* The O3 post-relock feed un-park, in ONE place. The TX-CMU ...
- * dev/MEASURED-luna_gpon.c.md sec 158. */
+/* The O3 post-relock feed un-park, in ONE place. */
 static void gpon_o3_feed_unpark(void)
 {
 	sw_field(WSDS_DIG_00, 10, 10, 0);
@@ -2950,13 +2834,11 @@ static int swdump_proc_show(struct seq_file *s, void *v)
 {
 	static const u32 sw[][2] = {		/* offsets into swcore_base (phys 0x1b000000) */
 		{0x00000, 0x000fc},
-		/* ★ 0x00100..0x002fc: the three per-port ABILITY arrays ...
-		 * dev/MEASURED-luna_gpon.c.md sec 159. */
+		/* 0x00100..0x002fc */
 		{0x00100, 0x002fc},
 		{0x1c000, 0x1c0fc}, {0x20800, 0x2083c},
 		{0x20c00, 0x20c3c}, {0x23000, 0x230fc}, {0x27000, 0x2703c},
-		/* The registers this driver writes and COULD NOT READ BACK. ...
-		 * dev/MEASURED-luna_gpon.c.md sec 160. */
+		/* The registers this driver writes and COULD NOT READ BACK. */
 		{0x11000, 0x1104c},	/* ACCEPT_MAX_LEN_CTRL, every die + its ports  */
 		{0x110e0, 0x111fc},	/* PON_TRAP_CFG: 0x110ec / 0x111f8 / 0x11144   */
 		{0x12000, 0x1200c},	/* TBL_CTRL_OFF / TBL_WRDATA_OFF               */
@@ -2965,8 +2847,7 @@ static int swdump_proc_show(struct seq_file *s, void *v)
 		{0x1e000, 0x1e05c},	/* LED_MODE_SEL .. LED_PARA_EN + LED_DATA_CFG  */
 		{0x23100, 0x2311c},	/* CFG_UNHIOL on the 9607C                     */
 		{0x2d890, 0x2d8bc},	/* SW_SCH_WFQ_TKN_CTRL, SW_LINE_RATE_2500M     */
-		/* SW_P_MISC_PORT is base 0x20004 + port * macpp_stride and ...
-		 * dev/MEASURED-luna_gpon.c.md sec 161. */
+		/* SW_P_MISC_PORT is base 0x20004 + port * macpp_stride */
 		{0x13000, 0x1300c},	/* VLAN_PORT_ACCEPT_FRAME_TYPE/INGRESS/CTRL   */
 		{0x17000, 0x1700c},	/* SW_LUT_CFG, SW_LUT_AGEOUT_CTRL             */
 		{0x20400, 0x20430},	/* P_MISC[4] -- the RTL9603CVD's PON          */
@@ -2974,18 +2855,15 @@ static int swdump_proc_show(struct seq_file *s, void *v)
 		{0x20900, 0x20930},	/* P_MISC[9] -- the RTL9607C's CPU            */
 		{0x25000, 0x2500c},	/* SW_METER_TB_CTRL                           */
 		{0x2a000, 0x2a024},	/* SW_VLAN_EGRESS_TAG + 4*port, ports 0..9    */
-		/* The RTL9603CVD PON SerDes page: 0x022xxx on the RTL9602C, ...
-		 * dev/MEASURED-luna_gpon.c.md sec 162. */
+		/* The RTL9603CVD PON SerDes page */
 	};
-	/* The GPON MAC / GTC block, through its OWN accessor. A range ...
-	 * dev/MEASURED-luna_gpon.c.md sec 163. */
+	/* The GPON MAC / GTC block, through its OWN accessor. */
 	static const u32 gt[][2] = {		/* offsets into gpon_base (phys 0x1b700000) */
 		{0x010a0, 0x010c4}, {0x01180, 0x011c8},
 		{0x01400, 0x015fc}, {0x02400, 0x027fc},
 		{0x04280, 0x042a8}, {0x05080, 0x050ac},
 		{0x050e0, 0x05100}, {0x06400, 0x065fc},
-		/* swdump_readback_guard.py scanned only sw_field/sw_wr while ...
-		 * dev/MEASURED-luna_gpon.c.md sec 164. */
+		/* swdump_readback_guard.py scanned only sw_field/sw_wr */
 		{0x0000c, 0x00014}, {0x01004, 0x01080}, {0x01200, 0x01208},
 		{0x0200c, 0x0200c}, {0x03010, 0x03024}, {0x04064, 0x04098},
 		{0x05010, 0x05054}, {0x050c0, 0x050c0}, {0x05140, 0x05140},
@@ -3013,8 +2891,7 @@ static int swdump_proc_show(struct seq_file *s, void *v)
 	u32 off, a, val;
 	int r;
 
-	/* The dump declares its own COVERAGE first. Words are ...
-	 * dev/MEASURED-luna_gpon.c.md sec 167. */
+	/* The dump declares its own COVERAGE first. */
 	for (r = 0; r < (int)ARRAY_SIZE(sw); r++)
 		seq_printf(s, "#cover 0x%08x 0x%08x\n",
 			   0x1b000000u + sw[r][0], 0x1b000000u + sw[r][1]);
@@ -3026,8 +2903,7 @@ static int swdump_proc_show(struct seq_file *s, void *v)
 	seq_printf(s, "#cover 0x%08x 0x%08x\n",
 		   0x1b000000u + SDS(0x22000), 0x1b000000u + SDS(0x22ffc));
 
-	/* The SerDes page is per chip, so its range must be DERIVED. ...
-	 * dev/MEASURED-luna_gpon.c.md sec 168. */
+	/* The SerDes page is per chip, so its range must be DERIVED. */
 	for (off = SDS(0x22000); off <= SDS(0x22ffc); off += 4)
 		seq_printf(s, "0x%08x %08x\n", 0x1b000000u + off, sw_rd(off));
 
@@ -3105,7 +2981,7 @@ static int luna_alloc_cam_write(u32 tcont, u16 alloc)
 	return luna_cam_xact(true, GPON_GTC_CAM_OP_WRITE, tcont, &alloc, NULL);
 }
 
-/* Per-flow downstream GEM Ethernet RX packet count ... -- dev/MEASURED-luna_gpon.c.md sec 169. */
+/* Per-flow downstream GEM Ethernet RX packet */
 static u32 gpon_gem_ds_rx_cnt(u8 flow)
 {
 	u32 cnt;
@@ -3119,8 +2995,7 @@ static u32 gpon_gem_ds_rx_cnt(u8 flow)
 	return rc < 0 ? 0xffffffffu : cnt;
 }
 
-/* Invalidate non-management DS GEM-port CAM entries (CLEAN op ...
- * dev/MEASURED-luna_gpon.c.md sec 171. */
+/* Invalidate non-management DS GEM-port CAM entries */
 static int gpon_ds_cam_clean(unsigned int f)
 {
 	int rc = luna_cam_xact(false, GPON_GTC_CAM_OP_CLEAN, f, NULL, NULL);
@@ -3148,8 +3023,7 @@ static int gpon_ds_cam_clear_all(void)
  * the RLX) between the request and its Acknowledge. */
 static bool luna_ds_cam_scrubbed;
 
-/* GTC US MISC PM counter (GPON_GTC_US_MISC_CNTR_IDX 0x5140 ...
- * dev/MEASURED-luna_gpon.c.md sec 172. */
+/* GTC US MISC PM counter */
 static u32 gpon_us_misc_cnt(u8 idx)
 {
 	unsigned long flags;
@@ -3162,8 +3036,7 @@ static u32 gpon_us_misc_cnt(u8 idx)
 	return value;
 }
 
-/* Read back the GTC alloc CAM entry for a T-CONT (READ op, ...
- * dev/MEASURED-luna_gpon.c.md sec 174. */
+/* Read back the GTC alloc CAM entry for a T-CONT */
 static int gpon_alloc_cam_read(u8 tcont)
 {
 	u16 alloc;
@@ -3211,8 +3084,7 @@ static int gpon_alloc_cam_clear_others(u8 keep)
 	return 0;
 }
 
-/* DS-pipeline stage A: per-flow de-encapsulated GEM frame ...
- * dev/MEASURED-luna_gpon.c.md sec 175. */
+/* DS-pipeline stage A */
 static u32 gpon_gem_flow_cnt(u32 idx, int rsel)
 {
 	u32 cnt;
@@ -3259,8 +3131,7 @@ static int gpon_proc_show(struct seq_file *s, void *v)
 	return ret;
 }
 
-/* FSM state exposed to /proc (defined with the FSM below). ...
- * dev/MEASURED-luna_gpon.c.md sec 190. */
+/* FSM state exposed to /proc (defined with the FSM below). */
 static void gpon_parse_sn_into(u8 *out, const char *s)
 {
 	if (!s || !*s)
@@ -3290,8 +3161,7 @@ static bool gpon_sn_differs(const char *s)
 	return memcmp(want, gpon_sn_bytes, sizeof(want)) != 0;
 }
 
-/* Compose and transmit a 12-byte upstream PLOAM on the given ...
- * dev/MEASURED-luna_gpon.c.md sec 191. */
+/* Compose and transmit a 12-byte upstream PLOAM on the */
 static void gpon_send_cpu_ploam(u8 queue, const u8 m[12])
 {
 	u32 ind, full = queue == PLM_US_QUEUE_URG ? GPON_US_PLM_URG_FULL : 0;
@@ -3300,8 +3170,7 @@ static void gpon_send_cpu_ploam(u8 queue, const u8 m[12])
 	if (!READ_ONCE(luna_activation_ready))
 		return;
 
-	/* The CPU US-PLOAM path has a SINGLE transmit buffer and a ...
-	 * dev/MEASURED-luna_gpon.c.md sec 314. */
+	/* The CPU US-PLOAM path has a SINGLE transmit buffer and */
 	for (i = 0; i < 1000; i++) {
 		if (!(gpon_rd(GPON_GTC_US_PLOAM_IND) & GPON_US_PLM_ENQ))
 			break;
@@ -3328,8 +3197,7 @@ static void gpon_send_cpu_ploam(u8 queue, const u8 m[12])
 	for (i = 0; i < 6; i++)
 		gpon_wr(GPON_GTC_US_PLOAM_DATA + i * 4,
 			((u32)m[2 * i] << 8) | m[2 * i + 1]);
-	/* The comment said 0x13 and the expression made 0x03 (fixed ...
-	 * dev/MEASURED-luna_gpon.c.md sec 192. */
+	/* The comment said 0x13 and the expression made 0x03 */
 	gpon_wr(GPON_GTC_US_PLOAM_CFG, GPON_US_PLM_CFG_REST);	/* 0x13, as stock rests */
 
 	ind |= GPON_US_PLM_ENQ;			/* ENQ 0->1 edge: transmit */
@@ -3337,8 +3205,7 @@ static void gpon_send_cpu_ploam(u8 queue, const u8 m[12])
 	if (queue != PLM_US_QUEUE_DYING_GASP && !gpon_ploam_us_repetitive(m[1]))
 		luna_ploam_capture(GPON_OLT_US, m, GPON_PLOAM_US_LEN);
 
-	/* DBG (ploam_tx_dbg): did the HW actually TRANSMIT this CPU ...
-	 * dev/MEASURED-luna_gpon.c.md sec 315. */
+	/* DBG (ploam_tx_dbg) */
 	if (ploam_tx_dbg) {
 		static int dbgn;
 		int j, cleared = 0;
@@ -3359,8 +3226,7 @@ static void gpon_send_cpu_ploam(u8 queue, const u8 m[12])
 }
 
 
-/* Respond to a downstream Request_Password (0x09) with the US ...
- * dev/MEASURED-luna_gpon.c.md sec 193. */
+/* Respond to a downstream Request_Password (0x09) with the */
 static void gpon_aes_stage_key(const u8 *key)
 {
 	int idx, i;
@@ -3380,8 +3246,7 @@ static void gpon_aes_stage_key(const u8 *key)
 }
 
 
-/* OMCI channel (OMCC) GEM datapath. After ranging the OLT ...
- * dev/MEASURED-luna_gpon.c.md sec 194. */
+/* OMCI channel (OMCC) GEM datapath. */
 static_assert(GPON_GEM_US_RANGE_OK(GPON_OMCC_FLOW_9602C, 1u, GEM_US_PORT_MAP_IDX_MAX),
 	      "the RTL9602C OMCC flow index runs past the US port-map array");
 static_assert(GPON_GEM_US_RANGE_OK(GPON_DATA_FLOW, 1u, GEM_US_PORT_MAP_IDX_MAX),
@@ -3390,12 +3255,10 @@ static_assert(GPON_GEM_US_RANGE_OK(GPON_DATA_FLOW, 1u, GEM_US_PORT_MAP_IDX_MAX),
  * are defined in luna_gpon_nic.h (shared with the eth driver's gpon0 TX descriptor). */
 #define GPON_OMCC_DSQ_HIGH	2
 
-/* Dedicated DATA T-CONT for the WAN data GEM. Stock rides it ...
- * dev/MEASURED-luna_gpon.c.md sec 316. */
+/* Dedicated DATA T-CONT for the WAN data GEM. */
 #define GPON_DATA_ALLOC		256u	/* OLT data Alloc-ID for THIS OLT (consistent; from ME262) */
 static int gpon_install_tcont(u8 tcont, u16 alloc);	/* fwd: data-GEM install binds the data T-CONT */
-/* fwd: the Assign_Alloc-ID handler binds the data T-CONT ...
- * dev/MEASURED-luna_gpon.c.md sec 195. */
+/* fwd: the Assign_Alloc-ID handler binds the data */
 static int gpon_omci_rx_cnt(void)
 {
 	u32 v = rtl9602c_eth_omci_rx_count();
@@ -3403,8 +3266,7 @@ static int gpon_omci_rx_cnt(void)
 	return v == GPON_OMCI_RX_UNAVAIL ? -1 : (int)v;
 }
 
-/* Set a `bits`-wide entry at index `idx` in the packed ...
- * dev/MEASURED-luna_gpon.c.md sec 196. */
+/* Set a `bits`-wide entry at index `idx` in the */
 static void pi_packed_set(u32 base, unsigned int idx, unsigned int bits, u32 val)
 {
 	struct pi_packed_slot slot = pi_packed_locate(base, idx, bits);
@@ -3441,8 +3303,7 @@ static u32 pi_packed_get(u32 base, unsigned int idx, unsigned int bits)
 	return pi_packed_extract(pi_rd(slot.reg), &slot);
 }
 
-/* Faithful port of the stock PON-MAC GPON mode-set branch, ...
- * dev/MEASURED-luna_gpon.c.md sec 197. */
+/* Faithful port of the stock PON-MAC GPON mode-set */
 static void rtl9602c_ponmac_modeset_gpon(bool keep_data)
 {
 	DECLARE_BITMAP(keep, LUNA_CLASSIFY_SID_MAX) = { 0 };
@@ -3556,8 +3417,7 @@ static int gpon_install_omcc(u16 gem)
 	gpon_wr(GPON_GTC_DS_TDM_PTI, DS_OMCI_PTI_VAL);	/* stock O5 = 0x11 */
 	gpon_wr(GPON_GTC_DS_ETH_PTI, DS_OMCI_PTI_VAL);	/* stock O5 = 0x11 */
 
-	/* GEM DS pass config: WITHOUT NON_MULTICAST_PASS the GTC ...
-	 * dev/MEASURED-luna_gpon.c.md sec 198. */
+	/* GEM DS pass config */
 	gpon_wr(GPON_GEM_DS_MC_CFG, GEM_DS_MC_CFG_VAL);
 
 	/* GEM-DS reassembly flush/forward timer. The RESET default has OMCI_TR_MODE=1
@@ -3567,8 +3427,7 @@ static int gpon_install_omcc(u16 gem)
 	gpon_field(GPON_GEM_DS_FRM_TIMEOUT, 8, 8, 1);	/* OMCI_TR_MODE = 1 (stock reset default) */
 	gpon_field(GPON_GEM_DS_FRM_TIMEOUT, 4, 0, 16);	/* ASSM_TIMEOUT_FRM = 16 frames */
 
-	/* US GEM-port map for the OMCC flow: stamp the OLT-assigned ...
-	 * dev/MEASURED-luna_gpon.c.md sec 199. */
+	/* US GEM-port map for the OMCC flow */
 	if (!gpon_gtc_us_gem_stamp(&gpon_io, &luna_gpon_chip.gtc,
 				   GPON_OMCC_FLOW, gpon_gem_us_port_id(gem)))
 		pr_err("luna-gpon: gpon_chip table declares no US port map -- OMCC gem %u not stamped\n",
@@ -3587,8 +3446,7 @@ static int gpon_install_omcc(u16 gem)
 	pi_packed_set(PI_PON_SIDVALID, GPON_OMCC_FLOW, 1, 1);
 	pi_field(PI_PON_OMCI_CFG, 6, 0, GPON_OMCC_FLOW);
 	pi_packed_set(PI_PON_SID_Q_MAP_DS, GPON_OMCC_FLOW, 2, 0);
-	/* Enrol THIS CHIP's OMCC SID in US counter-mask group 0: ...
-	 * dev/MEASURED-luna_gpon.c.md sec 200. */
+	/* Enrol THIS CHIP's OMCC SID in US counter-mask group 0 */
 	{
 		u32 mask_w = PI_CNT_MASK_US_WORD(0, GPON_OMCC_FLOW);
 
@@ -3613,8 +3471,7 @@ static int gpon_install_omcc(u16 gem)
 	 * be re-pulsed or the US-NIC never latches the classification. */
 	rtl9602c_ponmac_modeset_gpon(gpon_data_installed);
 
-	/* GMII re-latch AFTER ALL US-NIC config is written (GEM port ...
-	 * dev/MEASURED-luna_gpon.c.md sec 317. */
+	/* GMII re-latch AFTER ALL US-NIC config is written */
 	if (relatch_us) {
 		pi_wr(PI_IO_CMD_0_US, 0x90101050u);	/* GMII RX OFF */
 		pi_wr(PI_IO_CMD_0_US, 0x90101070u);	/* GMII RX ON -> re-latch */
@@ -3622,8 +3479,7 @@ static int gpon_install_omcc(u16 gem)
 			pi_rd(PI_IO_CMD_0_US));
 	}
 
-	/* Full US-feed FIFO re-arm at O5. The O3 TX-PLL relock is a ...
-	 * dev/MEASURED-luna_gpon.c.md sec 201. */
+	/* Full US-feed FIFO re-arm at O5. */
 	if (o5_feed_rearm)
 		gpon_us_feed_rearm_light();
 
@@ -3647,8 +3503,7 @@ static int gpon_install_omcc(u16 gem)
 	return 0;
 }
 
-/* Install the WAN data GEM (the OLT's wire gem-port-id) on ...
- * dev/MEASURED-luna_gpon.c.md sec 202. */
+/* Install the WAN data GEM (the OLT's wire gem-port-id) */
 /* The activation timeline of this boot, ms since boot, 0 = not yet: the first O5,
  * the first OMCI request, the data GEM installed. Benchmarks read it from
  * /proc/gpon_timing; a re-range keeps the first values. */
@@ -3748,18 +3603,15 @@ void luna_gpon_nic_reset_end(void)
 EXPORT_SYMBOL(luna_gpon_nic_reset_end);
 
 
-/* The board's UNI panel, read from its own device tree. ★ IT ...
- * dev/MEASURED-luna_gpon.c.md sec 203. */
+/* The board's UNI panel, read from its own device tree. */
 static u8 luna_uni_port[OMCI_UNI_MAX];
 static u8 luna_uni_port_n;
 
-/* The COMMON pending/apply owner for both Luna boards. ★ IT ...
- * dev/MEASURED-luna_gpon.c.md sec 204. */
+/* The COMMON pending/apply owner for both Luna boards. */
 static void luna_uni_apply_work_fn(struct work_struct *w);
 static DECLARE_DELAYED_WORK(luna_uni_apply_work, luna_uni_apply_work_fn);
 
-/* The enqueue gate. Read and written under the model spinlock ...
- * dev/MEASURED-luna_gpon.c.md sec 205. */
+/* The enqueue gate. */
 static bool luna_uni_closing;
 
 static void luna_uni_apply_queue(unsigned long delay)
@@ -3767,15 +3619,13 @@ static void luna_uni_apply_queue(unsigned long delay)
 	unsigned long flags;
 
 	spin_lock_irqsave(&luna_omci_lock, flags);
-	/* ★★★ AND NOT BEFORE THE DRIVER IS READY. A module parameter ...
-	 * dev/MEASURED-luna_gpon.c.md sec 206. */
+	/* AND NOT BEFORE THE DRIVER IS READY. */
 	if (!luna_uni_closing && luna_driver_ready)
 		schedule_delayed_work(&luna_uni_apply_work, delay);
 	spin_unlock_irqrestore(&luna_omci_lock, flags);
 }
 
-/* ★★ bosa_lock IS THE LIFETIME OWNER, HELD ACROSS THE WHOLE ...
- * dev/MEASURED-luna_gpon.c.md sec 207. */
+/* bosa_lock IS THE LIFETIME OWNER, HELD ACROSS THE */
 struct luna_uni_apply_ctx {
 	struct omci_onu *onu;
 	void *cookie;
@@ -3867,12 +3717,10 @@ static void luna_uni_apply_close(void)
 }
 
 #ifdef CONFIG_GPON_OMCI_DIAG
-/* ★★★ A TEMPORARY DIAGNOSTIC INGRESS, AND IT COMES BACK OUT ...
- * dev/MEASURED-luna_gpon.c.md sec 208. */
+/* A TEMPORARY DIAGNOSTIC INGRESS, AND IT COMES BACK */
 static u16 luna_uni_test_tci = 0xd100;
 
-/* The inventory a board run needs to RESTORE what it found. ★ ...
- * dev/MEASURED-luna_gpon.c.md sec 209. */
+/* The inventory a board run needs to RESTORE what it found. */
 static void luna_uni_test_show(void)
 {
 	u8 admin[OMCI_UNI_MAX] = { 0 }, port[OMCI_UNI_MAX] = { 0 };
@@ -3892,8 +3740,7 @@ static void luna_uni_test_show(void)
 			admin[i] = onu->pptp_eth_uni.admin[i];
 		}
 	}
-	/* ★ THE PORT MAP IS COPIED IN THE SAME CRITICAL SECTION as the
-	 * dev/MEASURED-luna_gpon.c.md sec 318. */
+	/* THE PORT MAP IS COPIED IN THE SAME CRITICAL SECTION as */
 	port_n = luna_uni_port_n;
 	memcpy(port, luna_uni_port, sizeof(port));
 	spin_unlock_irqrestore(&luna_omci_lock, flags);
@@ -4288,13 +4135,11 @@ static void luna_omci_identity_reset(const u8 sn[8])
 
 
 
-/* ⚠ DEFINED HERE BECAUSE IT IS USED HERE FIRST. It sat ~600 ...
- * dev/MEASURED-luna_gpon.c.md sec 211. */
+/* ⚠ DEFINED HERE BECAUSE IT IS USED HERE FIRST. */
 
 static int gpon_avc_sent;	/* OMCI oper-state AVCs emitted this O5 (reset on re-range) */
 
-/* ★★★ THE ALLOC-ID -> T-CONT BIND BELONGS TO Assign_Alloc-ID. ...
- * dev/MEASURED-luna_gpon.c.md sec 212. */
+/* THE ALLOC-ID -> T-CONT BIND BELONGS TO Assign_Alloc-ID. */
 static void luna_data_tcont_from_assign(u16 alloc, bool assigned)
 {
 	enum gpon_gem_us_bind bind;
@@ -4311,8 +4156,7 @@ static void luna_data_tcont_from_assign(u16 alloc, bool assigned)
 		alloc, gpon_gem_us_bind_name(bind));
 }
 
-/* ★★★ THE OWNERSHIP CONSUMER OWNS THE BIND, AND THIS OP *IS* ...
- * dev/MEASURED-luna_gpon.c.md sec 213. */
+/* THE OWNERSHIP CONSUMER OWNS THE BIND, AND THIS OP */
 static void luna_data_alloc_changed(void *sh, u16 alloc, bool assigned)
 {
 	(void)sh;
@@ -4453,8 +4297,7 @@ static void luna_omci_poll(void)
 		 * replace the snapshot. In particular Reset must not collapse into a
 		 * following Create/Set that happens to recreate the same effective pair. */
 		if (accepted.kind != OMCI_ACCEPT_NONE) {
-			/* A Set the model accepted and a MIB Reset that unlocked ...
-			 * dev/MEASURED-luna_gpon.c.md sec 320. */
+			/* A Set the model accepted and a MIB Reset that */
 			luna_uni_apply_kick();
 			break;
 		}
@@ -4478,8 +4321,7 @@ int gpon_install_data_gem(void)
 		pr_err("luna-gpon: DATA GEM DS install timeout\n");
 		return rc;
 	}
-	/* DATA flow DS routing = 0x2 (BIT1). Oracle-confirmed ...
-	 * dev/MEASURED-luna_gpon.c.md sec 214. */
+	/* DATA flow DS routing = 0x2 (BIT1). */
 	gpon_wr(GPON_GTC_DS_TRAFFIC_CFG + GPON_DATA_FLOW * DS_TRAFFIC_CFG_STRIDE, 0x2);
 
 	/* US GEM-port map: the data flow -> the OLT's gem, the gem-id stamped on US
@@ -4509,8 +4351,7 @@ int gpon_install_data_gem(void)
 		pi_packed_set(PI_PON_SID_Q_MAP_DS, GPON_CTRL_FLOW, 2, 0);
 	}
 
-	/* Multicast/broadcast GEM -> its own flow, BRIDGED and ...
-	 * dev/MEASURED-luna_gpon.c.md sec 215. */
+	/* Multicast/broadcast GEM -> its own flow, BRIDGED */
 	rc = luna_port_cam_write(GPON_MCAST_FLOW, GPON_MCAST_GEM);
 	if (rc < 0) {
 		pr_err("luna-gpon: MCAST GEM DS install timeout\n");
@@ -4520,8 +4361,7 @@ int gpon_install_data_gem(void)
 	 * variant, so DHCP-broadcast and ARP DS also drain to the NIC. */
 	gpon_wr(GPON_GTC_DS_TRAFFIC_CFG + GPON_MCAST_FLOW * DS_TRAFFIC_CFG_STRIDE, 0x3);
 
-	/* Data-flow SID classify commit -- the flow-1 US half-boot fix
-	 * dev/MEASURED-luna_gpon.c.md sec 216. */
+	/* Data-flow SID classify commit */
 	if (relatch_us) {
 		int tries;
 
@@ -4695,8 +4535,7 @@ MODULE_PARM_DESC(onu_capacity, "this unit's stock T-CONTs,priority queues,schedu
 		 "(unset = the board's onu-capacity)");
 
 
-/* Bind an OLT-assigned Alloc-ID to a T-CONT in the GTC alloc ...
- * dev/MEASURED-luna_gpon.c.md sec 217. */
+/* Bind an OLT-assigned Alloc-ID to a T-CONT in the GTC */
 static int luna_queue_drain(u8 qid)
 {
 	int rc;
@@ -4729,18 +4568,15 @@ static int gpon_install_tcont(u8 tcont, u16 alloc)
 		return rc;
 	}
 
-	/* PON-MAC US scheduler activation. The GTC alloc CAM above ...
-	 * dev/MEASURED-luna_gpon.c.md sec 218. */
+	/* PON-MAC US scheduler activation. */
 	{
-		/* The queue comes from the PER-CHIP resolver, not a formula ...
-		 * dev/MEASURED-luna_gpon.c.md sec 219. */
+		/* The queue comes from the PER-CHIP resolver, not a */
 		u8 qid = (tcont == GPON_OMCC_TCONT_ALT) ? swc->omcc_phys_qid
 						       : luna_tcont_phys_qid(tcont);
 		int drain_rc;
 
 		pi_packed_set(PI_PON_TCONT_EN, tcont, 1, 1);	/* PON_TCONT_EN[tcont] (1b packed) */
-		/* Drain out the physical queue BEFORE binding it into the ...
-		 * dev/MEASURED-luna_gpon.c.md sec 220. */
+		/* Drain out the physical queue BEFORE binding it into */
 		drain_rc = luna_queue_drain(qid);
 		if (drain_rc < 0) {
 			pr_err("luna-gpon: qid %u drain-out failed (%d)\n", qid, drain_rc);
@@ -4772,11 +4608,9 @@ static int gpon_install_tcont(u8 tcont, u16 alloc)
 			pi_packed_set(PI_PON_WFQ_TYPE, qid + 1, 1, 0);
 			pi_packed_set(PI_PON_WFQ_WEIGHT, qid + 1, 10, 1);
 		}
-		/* Re-issue the OMCC classifier's SID-valid bit NOW, after the ...
-		 * dev/MEASURED-luna_gpon.c.md sec 221. */
+		/* Re-issue the OMCC classifier's SID-valid bit NOW, after */
 		if (sidvalid_last && qid == GPON_OMCC_PHYS_QID) {
-			/* arm_ctx witness: sample the queue's arm state at the ...
-			 * dev/MEASURED-luna_gpon.c.md sec 222. */
+			/* arm_ctx witness */
 			u32 en   = pi_packed_get(PI_PON_TCONT_EN, tcont, 1);
 			u32 qmap = pi_packed_get(PI_PON_SCH_QMAP, tcont, swc->sch_qmap_bits) & 0x3u;
 			u32 pir  = pi_rd(PI_PON_QID_PIR_RATE + qid * PI_QID_RATE_STRIDE) & 0x3ffffu;
@@ -4798,8 +4632,7 @@ static int gpon_install_tcont(u8 tcont, u16 alloc)
 		 * confirms rev-A clears it "due to the tcont 16". */
 	}
 
-	/* The GMII re-latch used to be here, at Assign_ONU-ID time, ...
-	 * dev/MEASURED-luna_gpon.c.md sec 321. */
+	/* The GMII re-latch used to be here, at Assign_ONU-ID */
 
 	luna_log("T-CONT %u <- alloc 0x%x bound (compl %d)\n",
 		tcont, alloc, rc);
@@ -4902,8 +4735,7 @@ static int luna_data_retire(void)
 }
 
 #ifdef CONFIG_GPON_GEM_DIAG
-/* The FAMILY's half of CONFIG_GPON_GEM_DIAG. ★★ IT PRINTS ...
- * dev/MEASURED-luna_gpon.c.md sec 223. */
+/* The FAMILY's half of CONFIG_GPON_GEM_DIAG. */
 static void luna_gem_diag_report(const struct gpon_data_armed *armed,
 				 const struct gpon_data_want *want,
 				 const struct omci_data_binding *binding)
@@ -5055,8 +4887,7 @@ static const struct gpon_vlan_ops luna_vlan_ops = {
 
 
 
-/* Several upstream-config registers (US_CFG, US_LASER, ...
- * dev/MEASURED-luna_gpon.c.md sec 224. */
+/* Several upstream-config registers */
 static void gpon_wr_us_protected(u32 off, u32 val)
 {
 	gpon_wr(GPON_GTC_US_WRITE_PROTECT, GPON_US_WP_UNLOCK);
@@ -5064,8 +4895,7 @@ static void gpon_wr_us_protected(u32 off, u32 val)
 	gpon_wr(GPON_GTC_US_WRITE_PROTECT, GPON_US_WP_LOCK);
 }
 
-/* Program the upstream burst-mode overhead (PLOu preamble + ...
- * dev/MEASURED-luna_gpon.c.md sec 225. */
+/* Program the upstream burst-mode overhead */
 static void gpon_apply_boh(bool ranged)
 {
 	u8 oh[GPON_BOH_LEN];
@@ -5073,14 +4903,12 @@ static void gpon_apply_boh(bool ranged)
 	u8 rep, i, boh_len, size;
 	unsigned int want;
 
-	/* Exact port of the stock burst-overhead build. The old code ...
-	 * dev/MEASURED-luna_gpon.c.md sec 322. */
+	/* Exact port of the stock burst-overhead build. */
 	if (guard > 32)
 		guard = 32;
 	rep = guard / 8;			/* boh_repeat = whole guard bytes (fill index) */
 
-	/* WIDEN BEFORE CLAMPING. `rep + t3 + 3` reaches 262 and used ...
-	 * dev/MEASURED-luna_gpon.c.md sec 226. */
+	/* WIDEN BEFORE CLAMPING. */
 	want = t3 ? (unsigned int)rep + t3 + 3 : GPON_BOH_LEN;
 	if (want > GPON_BOH_MAX_LEN) {
 		/* The value came off the wire and the hardware field cannot hold
@@ -5106,8 +4934,7 @@ static void gpon_apply_boh(bool ranged)
 	oh[size - 2] = gpon_boh_delim[1];
 	oh[size - 1] = gpon_boh_delim[2];
 
-	/* BOH_REPEAT is NOT guard/8: it is the stored-byte index of ...
-	 * dev/MEASURED-luna_gpon.c.md sec 227. */
+	/* BOH_REPEAT is NOT guard/8 */
 	gpon_wr(GPON_GTC_US_BOH_CFG,
 		(((size - 4) & 0xf) << 8) | (boh_len & 0xff));	/* REPEAT=size-4, LENGTH=full */
 	for (i = 0; i < size; i++)
@@ -5119,8 +4946,7 @@ static void gpon_apply_boh(bool ranged)
 		t3, boh_len, size, size, oh);
 }
 
-/* Upstream equalization delay. The OLT-visible burst time is ...
- * dev/MEASURED-luna_gpon.c.md sec 228. */
+/* Upstream equalization delay. */
 static void gpon_set_eqd(u32 value)
 {
 	u32 min_delay1 = (gpon_rd(GPON_GTC_US_MIN_DELAY) >> 7) & 0x1ff;
@@ -5136,16 +4962,14 @@ static void gpon_set_eqd(u32 value)
 		(intra & GPON_EQD_INFRAME_MASK));
 }
 
-/* HYBRID LAN/VLAN switch. VLAN filtering must be ON during ...
- * dev/MEASURED-luna_gpon.c.md sec 323. */
+/* HYBRID LAN/VLAN switch. */
 static unsigned int vlan_lan_o5_ticks = 4000;
 module_param(vlan_lan_o5_ticks, uint, 0644);
 MODULE_PARM_DESC(vlan_lan_o5_ticks, "poll ticks held at O5 before clearing VLAN_FILTER for LAN access (0=keep filtering on)");
 static u32 gpon_o5_entry_tick;
 static bool gpon_vlan_lan_open;
 
-/* Re-lock the TX CMU PLL at O3 entry. A fresh power-on under ...
- * dev/MEASURED-luna_gpon.c.md sec 229. */
+/* Re-lock the TX CMU PLL at O3 entry. */
 static void gpon_txpll_relock(void)
 {
 	if (!serdes_txpll_relock)
@@ -5180,8 +5004,7 @@ static void gpon_aes_arm_switch(u32 fc)
 }
 
 
-/* The REGISTER CLUSTER alone, and the split is the core's ...
- * dev/MEASURED-luna_gpon.c.md sec 230. */
+/* The REGISTER CLUSTER alone, and the split is the */
 static void gpon_o5_rearm_burst_regs(void)
 {
 	if (!READ_ONCE(luna_activation_ready))
@@ -5243,8 +5066,7 @@ static void gpon_fsm_set_state(u8 st)
 	/* Hybrid LAN/VLAN bookkeeping: mark O5 entry; on any drop below O5, re-arm VLAN
 	 * filtering for the next config and reset the LAN-open timer. */
 	if (st == 5 && prev != 5) {
-		/* Re-range completion diagnostic: if we had dropped below O5 ...
-		 * dev/MEASURED-luna_gpon.c.md sec 324. */
+		/* Re-range completion diagnostic */
 		if (gpon_rerange_start_j) {
 			gpon_rerange_cnt++;
 			gpon_last_outage_ms = jiffies_to_msecs(jiffies - gpon_rerange_start_j);
@@ -5259,14 +5081,12 @@ static void gpon_fsm_set_state(u8 st)
 		gpon_o5_entry_tick = gpon_fsm_ticks ? gpon_fsm_ticks : 1;
 		luna_mark(&luna_marks.o5_ms);
 		gpon_avc_sent = 0;	/* re-report oper-up to the OLT each online */
-		/* Re-apply the O5 packed-burst gate cluster + re-arm the HW ...
-		 * dev/MEASURED-luna_gpon.c.md sec 231. */
+		/* Re-apply the O5 packed-burst gate cluster + re-arm the */
 	}
 	gpon_led_pon_set(st);
 }
 
-/* Process-context worker for the stock SerDes CDR-reset ...
- * dev/MEASURED-luna_gpon.c.md sec 232. */
+/* Process-context worker for the stock SerDes */
 static bool full_serdes_reinit;	/* default OFF: A/B 2026-06-15 found re-running the full
 				 * gpon_serdes_init on re-range BREAKS the GPON (0/5 boots, link never
 				 * reaches O5 — the CMU/SDS reset races the FSM re-acquisition). Keep the
@@ -5303,8 +5123,7 @@ static void gpon_cdr_reset_worker(struct work_struct *w)
 		SDS_ANA_COM_REG12, cdr);
 }
 
-/* THIS FSM IS THE DUPLICATE. DO NOT EXTEND IT (2026-08-27). ...
- * dev/MEASURED-luna_gpon.c.md sec 233. */
+/* THIS FSM IS THE DUPLICATE. DO NOT EXTEND IT (2026-08-27). */
 static void luna_op_ploam_tx(void *sh, u8 queue, const u8 m[GPON_PLOAM_US_LEN])
 {
 	(void)sh;			/* single-instance driver: state is file-scope */
@@ -5346,7 +5165,7 @@ static void luna_op_set_eqd(void *sh, u32 multiframe, u32 intraframe)
 static void luna_op_us_ploam_flush(void *sh)
 {
 	(void)sh;
-	/* PLM_FLUSH_BUF is edge-triggered, 0 THEN 1, ... -- dev/MEASURED-luna_gpon.c.md sec 234. */
+	/* PLM_FLUSH_BUF is edge-triggered, 0 THEN */
 	gpon_field(GPON_GTC_US_PLOAM_CFG, 4, 4, 0);
 	gpon_field(GPON_GTC_US_PLOAM_CFG, 4, 4, 1);
 }
@@ -5360,8 +5179,7 @@ static void luna_op_set_hw_state(void *sh, enum gpon_ostate st)
 static void luna_op_set_hw_onu_id(void *sh, u8 onu_id)
 {
 	(void)sh;
-	/* BOTH registers. The ONU-ID lives in two places on this GTC
-	 * dev/MEASURED-luna_gpon.c.md sec 235. */
+	/* BOTH registers. */
 	gpon_field(GPON_GTC_DS_ONU_ID_STATUS, 15, 8, onu_id);
 	gpon_field(GPON_GTC_US_ONU_ID, 15, 8, onu_id);
 	luna_xpon_report_onu_id(onu_id);
@@ -5392,8 +5210,7 @@ static void luna_op_install_data_gem(void *sh, u16 gem)
 static void luna_op_cdr_reseat(void *sh)
 {
 	(void)sh;
-	/* BOTH halves: the interface reset-B re-strobe does not ...
-	 * dev/MEASURED-luna_gpon.c.md sec 236. */
+	/* BOTH halves */
 	gpon_cdr_reseat();
 	schedule_work(&gpon_cdr_reset_work);
 }
@@ -5420,10 +5237,77 @@ static void luna_op_omci_report_oper_up(void *sh)
 	rtl9602c_eth_omci_report_oper_up();
 }
 
+/*
+ * The downstream BIP and FEC counters clear on read. REI and the OMCI
+ * telemetry both want them, so every read is folded into totals since boot
+ * and each consumer takes what it needs from those.
+ */
+#define GPON_FEC_CW_PER_FRAME	77	/* RS(255,239) over a 19440-byte frame */
+
+static DEFINE_SPINLOCK(luna_pm_lock);
+static struct luna_xpon_pm luna_pm;
+static u64 luna_pm_rei_last, luna_pm_uncor_seen;
+static u32 luna_pm_superframe;
+static bool luna_pm_superframe_valid;
+
+static void luna_pm_fold_locked(void)
+{
+	luna_pm.bip_errors += gpon_rd(GPON_GTC_DS_MISC_CNTR_BIP_ERR_BLK);
+	luna_pm.fec_corrected_bytes += gpon_rd(GPON_GTC_DS_MISC_CNTR_FEC_CORRECT_BYTE);
+	luna_pm.fec_corrected_codewords += gpon_rd(GPON_GTC_DS_MISC_CNTR_FEC_CORRECT_CW);
+	luna_pm.fec_uncorrectable_codewords += gpon_rd(GPON_GTC_DS_MISC_CNTR_FEC_UNCOR_CW);
+}
+
+/* Once a second: count FEC codewords and FEC seconds while in O5. */
+static void luna_pm_tick(void)
+{
+	unsigned long flags;
+	u32 sf;
+	bool o5 = READ_ONCE(gpon_fsm_state) == 5;
+
+	spin_lock_irqsave(&luna_pm_lock, flags);
+	luna_pm.ds_fec = o5 && (gpon_rd(GPON_GTC_DS_INTR_STS) & GPON_DS_INTR_STS_FEC);
+	luna_pm.us_fec = o5 && (gpon_rd(GPON_GTC_US_INTR_STS) & GPON_US_INTR_STS_FEC);
+	if (!o5) {
+		luna_pm_superframe_valid = false;
+		goto out;
+	}
+	luna_pm_fold_locked();
+	sf = gpon_rd(GPON_GTC_DS_SUPERFRAME_CNT) & GPON_SUPERFRAME_MASK;
+	if (luna_pm_superframe_valid && luna_pm.ds_fec)
+		luna_pm.fec_total_codewords += (u64)((sf - luna_pm_superframe) &
+						     GPON_SUPERFRAME_MASK) *
+					       GPON_FEC_CW_PER_FRAME;
+	luna_pm_superframe = sf;
+	luna_pm_superframe_valid = true;
+	if (luna_pm.fec_uncorrectable_codewords != luna_pm_uncor_seen) {
+		luna_pm_uncor_seen = luna_pm.fec_uncorrectable_codewords;
+		luna_pm.fec_seconds++;
+	}
+out:
+	spin_unlock_irqrestore(&luna_pm_lock, flags);
+}
+
+void luna_xpon_hw_pm(struct luna_xpon_pm *pm)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&luna_pm_lock, flags);
+	luna_pm_fold_locked();
+	*pm = luna_pm;
+	spin_unlock_irqrestore(&luna_pm_lock, flags);
+}
+
 static int luna_op_ds_bip_errors(void *sh, u32 *count)
 {
+	unsigned long flags;
+
 	(void)sh;
-	*count = gpon_rd(GPON_GTC_DS_MISC_CNTR_BIP_ERR_BLK);	/* REI is its one reader */
+	spin_lock_irqsave(&luna_pm_lock, flags);
+	luna_pm_fold_locked();
+	*count = (u32)(luna_pm.bip_errors - luna_pm_rei_last);
+	luna_pm_rei_last = luna_pm.bip_errors;
+	spin_unlock_irqrestore(&luna_pm_lock, flags);
 	return 0;
 }
 
@@ -5457,8 +5341,7 @@ static int luna_op_install_omcc(void *sh, u16 gem)
 static int luna_op_install_tcont(void *sh, u8 tcont, u16 alloc)
 {
 	(void)sh;
-	/* Park the unused CAM entries FIRST, so the entry about to be ...
-	 * dev/MEASURED-luna_gpon.c.md sec 237. */
+	/* Park the unused CAM entries FIRST, so the entry about to */
 	if (alloc_cam_park && tcont == GPON_OMCC_TCONT) {
 		int rc = gpon_alloc_cam_clear_others(GPON_OMCC_TCONT);
 
@@ -5468,8 +5351,7 @@ static int luna_op_install_tcont(void *sh, u8 tcont, u16 alloc)
 	return gpon_install_tcont(tcont, alloc);
 }
 
-/* `trace` is the one op left NULL-able: gpon_ploam.h calls it ...
- * dev/MEASURED-luna_gpon.c.md sec 238. */
+/* `trace` is the one op left NULL-able */
 static struct gpon_ploam_cfg luna_ploam_cfg_live __maybe_unused;
 
 static const struct gpon_ploam_cfg luna_ploam_cfg __maybe_unused = {
@@ -5489,8 +5371,7 @@ static const struct gpon_ploam_cfg luna_ploam_cfg __maybe_unused = {
 	.data_tcont		= GPON_DATA_TCONT,	/* 8 on Luna */
 };
 
-/* The core's events, spoken out loud. `trace` is the ONE ...
- * dev/MEASURED-luna_gpon.c.md sec 239. */
+/* The core's events, spoken out loud. */
 static const char * const luna_ev_name[] = {
 	[GPON_PLOAM_EV_STATE]		= "state",
 	[GPON_PLOAM_EV_RERANGE_DONE]	= "rerange_done",
@@ -5548,8 +5429,7 @@ static bool luna_ev_is_decisive(enum gpon_ploam_ev ev)
 	}
 }
 
-/* The instrument must be REMOVABLE, because it is a SUSPECT. ...
- * dev/MEASURED-luna_gpon.c.md sec 240. */
+/* The instrument must be REMOVABLE, because it is a SUSPECT. */
 #ifdef CONFIG_GPON_PLOAM_DIAG
 static bool core_trace = true;
 module_param(core_trace, bool, 0644);
@@ -5558,19 +5438,16 @@ MODULE_PARM_DESC(core_trace, "1=the core FSM's events are printed (default; need
 static const bool core_trace;
 #endif
 
-/* FAMILY half of the core's gpon_ploam_diag: read THIS ...
- * dev/MEASURED-luna_gpon.c.md sec 241. */
+/* FAMILY half of the core's gpon_ploam_diag */
 static unsigned long luna_poll_prev_jiffies;
 static u32 luna_poll_gap_ms;	/* start of this poll - start of the previous, ms */
 static u8 luna_rx_burst_idx;	/* DS PLOAMs this poll dequeued before the current one */
 
-/* FAMILY half of the core's gpon_bwcap_diag: the GTC's ...
- * dev/MEASURED-luna_gpon.c.md sec 242. */
+/* FAMILY half of the core's gpon_bwcap_diag */
 static struct gpon_bwcap_diag luna_bwcap;
 static bool luna_bwcap_armed;
 
-/* The longest window the 8-bit CAP_FRAME_NUM allows: 255 ...
- * dev/MEASURED-luna_gpon.c.md sec 243. */
+/* The longest window the 8-bit CAP_FRAME_NUM allows */
 #define LUNA_BWCAP_FRAMES	0xffu
 #define LUNA_BWCAP_RAW_N	6	/* raw entries shown per point */
 
@@ -5688,8 +5565,7 @@ static void luna_ploam_diag(enum gpon_ploam_diag_point p)
 	d.bwm_acpt   = gpon_bwm_acpt_since(&gpon_bwm_acpt_diag_last);
 	d.bwm_fail   = gpon_rd(GPON_GTC_DS_MISC_CNTR_BWM_FAIL);
 	d.bwm_inv    = gpon_rd(GPON_GTC_DS_MISC_CNTR_BWM_INV);
-	/* US-GTC misc PM: idx 2 = PLOAM_CPU_TX, idx 3 = ...
-	 * dev/MEASURED-luna_gpon.c.md sec 325. */
+	/* US-GTC misc PM */
 	cpu   = gpon_us_misc_cnt(2);
 	auto_ = gpon_us_misc_cnt(3);
 	d.us_ploam_tx = (cpu & 0xffff) + (cpu >> 16) + (auto_ & 0xffff) + (auto_ >> 16);
@@ -5819,8 +5695,7 @@ static void gpon_fsm_handle(const u8 *m)
 		luna_log("DS PLOAM onu_id=0x%02x type=0x%02x d=%*phN\n",
 				    onu_id, type, 8, d);
 
-	/* Say which FSM is dispatching, once, so a boot log is never ...
-	 * dev/MEASURED-luna_gpon.c.md sec 244. */
+	/* Say which FSM is dispatching, once, so a boot log is */
 	{
 		static bool said;
 
@@ -5833,16 +5708,14 @@ static void gpon_fsm_handle(const u8 *m)
 	if (!READ_ONCE(luna_activation_ready))
 		return;
 
-	/* Ticks x 10, NOT the wall clock, and the more accurate clock ...
-	 * dev/MEASURED-luna_gpon.c.md sec 326. */
+	/* Ticks x 10, NOT the wall clock, and the more accurate */
 	if (!gpon_ploam_ds_repetitive(type))
 		luna_ploam_capture(GPON_OLT_DS, m, GPON_PLOAM_DS_LEN);
 	gpon_ploam_ds(&luna_ploam, m, GPON_PLOAM_DS_LEN,
 		      luna_now_ms());
 }
 
-/* Has the WAN netdev received NOTHING? Both watchdogs below ...
- * dev/MEASURED-luna_gpon.c.md sec 245. */
+/* Has the WAN netdev received NOTHING? Both watchdogs */
 static bool gpon_wan_rx_silent(void)
 {
 	u32 n = rtl9602c_eth_wan_rx_count();
@@ -6039,8 +5912,7 @@ static void gpon_fsm_poll(struct timer_list *t)
 	luna_lan_keep_open_poll();
 	if (!READ_ONCE(luna_activation_ready))
 		goto drain_downstream;
-	/* The PERIODIC half of the FSM is the core's, as the ...
-	 * dev/MEASURED-luna_gpon.c.md sec 246. */
+	/* The PERIODIC half of the FSM is the core's, as */
 	gpon_ploam_tick(&luna_ploam);
 	WRITE_ONCE(luna_health_los,
 		   !!(gpon_rd(GPON_GTC_DS_LOS_CFG_STS) & GPON_OPTIC_LOS_SIG));
@@ -6052,8 +5924,7 @@ drain_downstream:
 	luna_ds_ploam_drain(false);
 	if (!READ_ONCE(luna_activation_ready))
 		goto next_poll;
-	/* Both provisioning follow-ups are one core poll: the WAN ...
-	 * dev/MEASURED-luna_gpon.c.md sec 247. */
+	/* Both provisioning follow-ups are one core poll */
 	gpon_ploam_poll_provision(&luna_ploam, luna_now_ms());
 	luna_omci_service();
 
@@ -6082,16 +5953,14 @@ drain_downstream:
 			gpon_us_intr_svc_cnt++;
 	}
 
-	/* O5 provisioning watchdog. A boot that reached O5 locally ...
-	 * dev/MEASURED-luna_gpon.c.md sec 248. */
+	/* O5 provisioning watchdog. */
 	gpon_ploam_poll_watchdog(&luna_ploam, gpon_wan_rx_silent(),
 				 luna_now_ms());
 	if (!(luna_ploam.ticks % 100))
 		gpon_ploam_poll_grants(&luna_ploam, gpon_bwm_acpt_since(&gpon_bwm_acpt_watch_last),
 				       luna_now_ms());
 
-	/* Autonomous downstream-LOS recovery (fiber pull). The OLT ...
-	 * dev/MEASURED-luna_gpon.c.md sec 327. */
+	/* Autonomous downstream-LOS recovery (fiber pull). */
 	if (los_rerange_ticks && gpon_fsm_state >= 2) {
 		bool optic_los = !!(gpon_rd(GPON_GTC_DS_LOS_CFG_STS) & GPON_OPTIC_LOS_SIG);
 		/* A chip with no declared SDS_FIB_STATUS has no second witness, and an
@@ -6099,14 +5968,12 @@ drain_downstream:
 		bool sds_dark  = SDS_FIB_STATUS &&
 				 !(sw_rd(SDS_FIB_STATUS) & SDS_FIB_SDS_SDET);
 
-		/* Real DS-light loss = the GTC optical-LOS AND the SoC SerDes ...
-		 * dev/MEASURED-luna_gpon.c.md sec 249. */
+		/* Real DS-light loss = the GTC optical-LOS AND the SoC */
 		gpon_ploam_poll_los(&luna_ploam, optic_los, sds_dark,
 				    luna_now_ms());
 	}
 
-	/* Hybrid LAN/VLAN: clear VLAN_FILTER so the LAN ports forward ...
-	 * dev/MEASURED-luna_gpon.c.md sec 250. */
+	/* Hybrid LAN/VLAN */
 	if (!lan_keep_open && gpon_fsm_state == 5 && !gpon_vlan_lan_open && vlan_lan_o5_ticks &&
 		   gpon_o5_entry_tick && (gpon_fsm_ticks - gpon_o5_entry_tick) > vlan_lan_o5_ticks) {
 		/* legacy O5-gated: keep filtering through ranging and config-apply, then
@@ -6133,8 +6000,7 @@ drain_downstream:
 			gpon_us_misc_cnt(2), gpon_us_misc_cnt(4),
 			gpon_rd(GEM_US_STAT(GPON_OMCC_FLOW)), gpon_rd(TCONT_IDLE_STAT(16)),
 			gpon_rd(TCONT_IDLE_STAT(GPON_DATA_TCONT)));
-	/* US-OMCI egress stall localizer, SAFE reads only (no pi_rd, ...
-	 * dev/MEASURED-luna_gpon.c.md sec 251. */
+	/* US-OMCI egress stall localizer, SAFE reads only */
 	if (trace && gpon_fsm_state == 5 && (gpon_fsm_ticks % 150) == 0) {
 		int j;
 		/* OLT-independent US-OMCI datapath self-test: inject synthetic OMCI frames
@@ -6182,13 +6048,11 @@ drain_downstream:
 	/* While unregistered in O3, re-offer our Serial_Number_ONU ~twice a second
 	 * (the OLT grants SN windows intermittently). */
 	gpon_ploam_poll_sn_reoffer(&luna_ploam, luna_now_ms());
-	/* Periodic O5 upstream-PLOAM keepalive. Once ranged the FSM ...
-	 * dev/MEASURED-luna_gpon.c.md sec 252. */
+	/* Periodic O5 upstream-PLOAM keepalive. */
 	gpon_ploam_poll_keepalive(&luna_ploam, luna_now_ms());
 	gpon_ploam_poll_rei(&luna_ploam, luna_now_ms());
 
-	/* Runtime DS-CDR-wedge recovery -- the stock link-state-check ...
-	 * dev/MEASURED-luna_gpon.c.md sec 253. */
+	/* Runtime DS-CDR-wedge recovery */
 	if (cdr_stuck_recover) {
 		static int cdr_pending;
 		u32 sts = gpon_rd(GPON_GTC_DS_INTR_STS);
@@ -6214,8 +6078,7 @@ drain_downstream:
 		}
 	}
 
-	/* Periodic DS multiframe/BWmap ESD-recover (stock ...
-	 * dev/MEASURED-luna_gpon.c.md sec 328. */
+	/* Periodic DS multiframe/BWmap ESD-recover */
 	if (gpon_esd_recover && gpon_fsm_state >= 3) {
 		static unsigned long esd_last_j;
 		static bool esd_init;
@@ -6254,8 +6117,7 @@ next_poll:
 	spin_unlock(&luna_fsm_lock);
 }
 
-/* Stock's omitted LDO init step, byte-exact. SC-indirect ...
- * dev/MEASURED-luna_gpon.c.md sec 254. */
+/* Stock's omitted LDO init step, byte-exact. */
 static void __init rtl9602c_sc_ldo_init(void)
 {
 	u32 fdca, t130 = sw_rd(THERMAL_CTRL_0);
@@ -6278,8 +6140,7 @@ static void __init rtl9602c_sc_ldo_init(void)
 	pr_debug("luna-gpon: sc_ldo_init AFTER: 0x130=0x%08x\n", sw_rd(THERMAL_CTRL_0));
 }
 
-/* The laser's enable pins are SoC GPIOs on some boards, and ...
- * dev/MEASURED-luna_gpon.c.md sec 255. */
+/* The laser's enable pins are SoC GPIOs on some boards */
 static int laser_tx_dis_gpio = -1;	/* from DT; -1 = this board has none */
 static int laser_tx_pwr_gpio = -1;
 /* Board pad routing: IO_GPIO_EN w0 w1, GPIO dir/data ABCD, dir/data EFGH. A board
@@ -6306,8 +6167,13 @@ static int luna_health_show(struct seq_file *s, void *v)
 
 static void gpon_optical_work_fn(struct work_struct *w)
 {
-	static unsigned long optical_next;
+	static unsigned long optical_next, pm_next;
 
+	if (luna_driver_ready && !luna_stopping &&
+	    time_after_eq(jiffies, pm_next)) {
+		luna_pm_tick();
+		pm_next = jiffies + HZ;
+	}
 	mutex_lock(&bosa_lock);
 	if (luna_driver_ready && !luna_stopping) {
 		if (optical_poll && bosa_cal_ready &&
@@ -6629,19 +6495,72 @@ bool luna_xpon_hw_mic_valid(const u8 *msg, unsigned int len)
 int luna_xpon_hw_optics(struct luna_xpon_optics *o)
 {
 	struct gpon_ddm_a2h d;
-	int rc;
+	int rc, hi = -1, lo = -1;
 
 	mutex_lock(&bosa_lock);
+	if (!bosa_cal_ready) {
+		mutex_unlock(&bosa_lock);
+		return -EAGAIN;	/* uncalibrated A2h readings are noise */
+	}
 	rc = bosa_a2h_read(&d);
+	if (rc == GPON_DDM_OK) {
+		hi = bosa_i2c_read8(0x51, 112);
+		lo = bosa_i2c_read8(0x51, 113);
+	}
 	mutex_unlock(&bosa_lock);
 	if (rc != GPON_DDM_OK)
 		return -EIO;
-	o->temp_mc = gpon_ddm_temp_dc(d.temp) * 100;
+	o->alarms = hi < 0 || lo < 0 ? 0 : (hi << 8) | lo;
+	o->temp_mc = (s16)d.temp * 1000 / 256;
 	o->vcc_uv = gpon_ddm_vcc_mv(d.vcc) * 1000;
 	o->bias_ua = gpon_ddm_bias_ua(d.bias);
 	o->tx_nw = (u32)d.tx_pwr * 100;
 	o->rx_nw = (u32)d.rx_pwr * 100;
 	return 0;
+}
+
+/* omci-agent's transmitter permission: 0 holds the ONU receive-only. */
+bool luna_xpon_hw_allow_tx(void)
+{
+	return !READ_ONCE(gpon_hold);
+}
+
+int luna_xpon_hw_set_allow_tx(bool on)
+{
+	int ret = 0;
+
+	mutex_lock(&bosa_lock);
+	if (luna_stopping) {
+		ret = -ESHUTDOWN;
+	} else if (READ_ONCE(gpon_hold) == on) {
+		WRITE_ONCE(gpon_hold, !on);
+		/* An activation that cannot run yet (no serial) retries later. */
+		if (luna_driver_ready)
+			luna_activate_locked(false);
+		luna_resume_poll();
+	}
+	mutex_unlock(&bosa_lock);
+	return ret;
+}
+
+/* Raw SFF-8472 A2h bytes, once the module is calibrated. */
+int luna_xpon_hw_a2h(u8 off, u8 *buf, unsigned int len)
+{
+	unsigned int i;
+	int b, ret = 0;
+
+	mutex_lock(&bosa_lock);
+	if (!bosa_cal_ready)
+		ret = -EAGAIN;
+	for (i = 0; !ret && i < len; i++) {
+		b = bosa_i2c_read8(0x51, off + i);
+		if (b < 0)
+			ret = b;
+		else
+			buf[i] = b;
+	}
+	mutex_unlock(&bosa_lock);
+	return ret;
 }
 
 void luna_xpon_hw_get_identity(u8 sn[8], u8 password[10])
@@ -6690,8 +6609,7 @@ static int __init rtl9602c_gpon_init(void)
 	const char *missing;
 	int ret;
 
-	/* The op table is checked BEFORE any hardware is touched. C ...
-	 * dev/MEASURED-luna_gpon.c.md sec 256. */
+	/* The op table is checked BEFORE any hardware is touched. */
 	missing = gpon_ploam_ops_missing(&luna_ploam_ops);
 	if (missing) {
 		pr_err("luna-gpon: realtek-luna's struct gpon_ploam_ops leaves the MANDATORY op ->%s NULL -- refusing to probe (nothing has been touched)\n",
@@ -6779,8 +6697,7 @@ static int __init rtl9602c_gpon_init(void)
 		pr_warn("luna-gpon: scratch R/W failed — MAC may be gated\n");
 	gpon_wr(GPON_TEST, GPON_TEST_SCRATCH);
 
-	/* The GPIO pad routing is Board C's, and its register MOVED. ...
-	 * dev/MEASURED-luna_gpon.c.md sec 259. */
+	/* The GPIO pad routing is Board C's, and its register MOVED. */
 	if (board_gpio_pads_set && SOC_IO_GPIO_EN) {
 		sw_wr(SOC_IO_GPIO_EN, board_gpio_pads[0]);
 		sw_wr(SOC_IO_GPIO_EN + 4, board_gpio_pads[1]);
@@ -6800,18 +6717,15 @@ static int __init rtl9602c_gpon_init(void)
 			sw_rd(SOC_IO_GPIO_EN), sw_rd(SOC_IO_GPIO_EN + 4));
 	}
 
-	/* The panel-LED block is Board C's and is gated off on the ...
-	 * dev/MEASURED-luna_gpon.c.md sec 261. */
+	/* The panel-LED block is Board C's and is gated off on */
 	gpon_led_init();
 
-	/* Bring up the PON SerDes so the MAC core gets its clock, ...
-	 * dev/MEASURED-luna_gpon.c.md sec 332. */
+	/* Bring up the PON SerDes so the MAC core gets its */
 	{
 		const char *via;
 		int sret;
 
-		/* The SECOND writer of the GPIO pad array: this function ...
-		 * dev/MEASURED-luna_gpon.c.md sec 333. */
+		/* The SECOND writer of the GPIO pad array */
 		rtl9602c_sc_ldo_init();
 		luna_c2_postmode_perturb = serdes_postmode_perturb;	/* A/B: skip the post-GPON-mode US-TX perturbations (default = skip, stock rev-A) */
 		luna_c2_sds_cfgrst = serdes_sds_cfgrst;	/* A/B: SDS reset = stock bit0-only (default) vs legacy bit7+bit0 */
@@ -6822,8 +6736,7 @@ static int __init rtl9602c_gpon_init(void)
 		luna_c2_skip_rstb_dance = serdes_skip_rstb_dance;	/* A/B: skip the gratuitous DIG_1D reset-B pulse (already released) */
 		luna_c2_minimal_analog = serdes_minimal_analog;	/* A/B: skip the over-configure golden-table writes (match stock's minimal set) */
 		if (force_soc_clk) {
-			/* Match the live-stock values of three SoC sysreg words, ...
-			 * dev/MEASURED-luna_gpon.c.md sec 262. */
+			/* Match the live-stock values of three SoC sysreg */
 			static const struct { u32 off, val; } soc_clk[] = {
 				{ 0x18000100u, 0x00440e00u },	/* strap / pin-status word (bit 5 = CKSEL, read by stock _is_CKSEL_25MHz): stock's live value */
 				{ 0x1800012cu, 0x024d024du },	/* DRAM auto-calibration result word A (two identical 16-bit halves), stock stage-1 store @0x9fc14b70: stock's value on the captured boot */
@@ -6911,8 +6824,7 @@ static int __init rtl9602c_gpon_init(void)
 	proc_create_single("ploamcap", 0444, NULL, ploamcap_proc_show);
 #endif
 
-	/* Upstream burst CONFIG + laser-enable timing. The GTC MAC ...
-	 * dev/MEASURED-luna_gpon.c.md sec 264. */
+	/* Upstream burst CONFIG + laser-enable timing. */
 	/* Only the burst-enable polarity now (the rest waits for activation): with
 	 * 0 here BEN idled ACTIVE until activation, and a board that cannot reach
 	 * activation kept its laser on -- the V2801RGW jammed GPON2 in O1. */
@@ -6928,8 +6840,7 @@ static int __init rtl9602c_gpon_init(void)
 	gpon_wr(GPON_GEM_US_PTI_CFG, force_idle ? 0x80001010u : 0x00001010u);	/* FS_GEM_IDLE(bit31)=force_idle: bisection diag (stock=0) */
 	gpon_wr_us_protected(GPON_GTC_US_LASER, gtune->us_laser);	/* per chip: 0x2028 / 0x1820 */
 
-	/* The laser bias is loaded LOW for acquisition (see ...
-	 * dev/MEASURED-luna_gpon.c.md sec 265. */
+	/* The laser bias is loaded LOW for acquisition */
 	gpon_field(GPON_GTC_DS_ONU_ID_STATUS, 15, 8, 0xff);	/* DS ONU-ID = broadcast */
 	gpon_field(GPON_GTC_US_ONU_ID, 15, 8, 0xff);		/* US ONU-ID = broadcast */
 	/* DS_CFG's FEC detection threshold, asserted deliberately (2026-09-08): the
@@ -6957,16 +6868,14 @@ static int __init rtl9602c_gpon_init(void)
 	 * reset clears the register, so it must be re-set here. */
 	gpon_wr(GPON_GTC_DS_INTR_MASK, 0x070f);
 
-	/* Upstream burst TIMING. MIN_DELAY1 = 290 bits, MIN_DELAY2 = ...
-	 * dev/MEASURED-luna_gpon.c.md sec 336. */
+	/* Upstream burst TIMING. */
 	gpon_wr_us_protected(GPON_GTC_US_MIN_DELAY, 0x9132);
 	/* An __init caller of the equalization-delay computation, through the core's
 	 * gpon_ploam_set_eqd(). Do NOT satisfy it by copying the arithmetic back in
 	 * here -- that fork is what killed gpon_proto.c. */
 	gpon_set_eqd(0);			/* pre-ranging EqD = 290*128 = 0x9100 */
 
-	/* O5 grant-burst optical config -- the "Laser out"/LOAi wall ...
-	 * dev/MEASURED-luna_gpon.c.md sec 266. */
+	/* O5 grant-burst optical config */
 	gpon_wr_us_protected(0x5188, gtune->us_optic_sd_th);	/* US_OPTIC_SD_TH: per chip (9602C live 0x00504bfa, 9603CVD live 0x00a07fff) */
 	gpon_field(0x526c, 0, 0, 1);			/* US_PWR_SAV_MODE.PWR_SAV_MODE = 1 (live stock = 1) */
 	if (gtune->us_pwr_sav_dg_tx_opt)
@@ -6974,8 +6883,7 @@ static int __init rtl9602c_gpon_init(void)
 	gpon_wr(GPON_GEM_US_PWR_SAV_CFG, (0x10u << 16) | 0x100u);	/* GEM_US_PWR_SAV_CFG = 0x00100100 (live stock) */
 	gpon_wr(GPON_GEM_US_EOB_MERGE, 0x00000028u);			/* GEM_US_EOB_MERGE = 0x28 (live stock; mine omitted) */
 
-	/* Default upstream burst overhead (G.984.3): 0xAA preamble ...
-	 * dev/MEASURED-luna_gpon.c.md sec 267. */
+	/* Default upstream burst overhead (G.984.3) */
 	gpon_apply_boh(false);
 
 	/* US-FEED RE-ARM (stock dataPath_reset arm order): pbo_init ran early and the
@@ -6984,12 +6892,10 @@ static int __init rtl9602c_gpon_init(void)
 	if (datapath_rearm)
 		gpon_us_feed_rearm();
 
-	/* The SDS upstream-TX serializer registers are deliberately ...
-	 * dev/MEASURED-luna_gpon.c.md sec 268. */
+	/* The SDS upstream-TX serializer registers are */
 	gpon_parse_sn(onu_sn);
 
-	/* Bring the core's FSM object up alongside ours; it does not ...
-	 * dev/MEASURED-luna_gpon.c.md sec 269. */
+	/* Bring the core's FSM object up alongside ours */
 	luna_ploam_cfg_live = luna_ploam_cfg;
 	luna_ploam_cfg_live.hold = gpon_hold;
 	luna_ploam_cfg_live.cdr_reseat_on_reactivate = cdr_reseat_on_reactivate;
@@ -7001,8 +6907,7 @@ static int __init rtl9602c_gpon_init(void)
 	 * so the core must get the same value or the two FSMs bind the OMCC T-CONT
 	 * to different allocs under one module parameter. */
 	luna_ploam_cfg_live.omcc_alloc_override = gpon_omcc_alloc;
-	/* The three tick tunables. Leaving them out was a silent ...
-	 * dev/MEASURED-luna_gpon.c.md sec 270. */
+	/* The three tick tunables. */
 	luna_ploam_cfg_live.trace = trace;
 	luna_ploam_cfg_live.los_rerange_ticks = los_rerange_ticks;
 	luna_ploam_cfg_live.o4_ranging_timeout_ticks = o4_ranging_timeout_ticks;

@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* rtl9602c_l34_logic.h -- logic hoisted out of the ...
- * dev/MEASURED-rtl9602c_l34_logic.h.md sec 1. */
+/* rtl9602c_l34_logic.h */
 #ifndef _RTL9602C_L34_LOGIC_H
 #define _RTL9602C_L34_LOGIC_H
 
@@ -16,7 +15,7 @@ u32 l34_field_get(const u32 *w, unsigned int lsp, unsigned int width);
 u16 l34_hash_out(bool is_tcp, u32 sip, u16 sport, u32 dip, u16 dport);
 u16 l34_hash_in(bool is_tcp, u32 dip, u16 dport);
 
-/* L34/L2 entry LAYOUTS + their encoders -- dev/MEASURED-rtl9602c_l34_logic.h.md sec 2. */
+/* L34/L2 entry LAYOUTS + their */
 #define L34_NAPT_HASHIN_IDX_LSP	0	/* -> NAPTR_IN entry index */
 #define L34_NAPT_HASHIN_IDX_W	12
 #define L34_NAPT_VALID_LSP	12
@@ -199,8 +198,7 @@ void l34_arp_encode(u32 *w, u32 dst_ip, unsigned int l2idx);
 void l34_l2uc_encode(u32 *w, const u8 *mac, u8 port);
 int l34_l2uc_sts_index(u32 sts);
 
-/* blackhole-safety: an interface program is ALL-OR-NOTHING
- * dev/MEASURED-rtl9602c_l34_logic.h.md sec 3. */
+/* blackhole-safety */
 #define L34_WORDS_MAX		4	/* NETIF, the widest entry programmed here */
 
 struct l34_prog_step {
@@ -226,7 +224,7 @@ bool l34_rt_is_cpu_self(const u32 *rt, u32 ip, u8 netif_idx);
 bool l34_iface_blackholes(const u32 *netif, const u32 *cpu_rt, u32 own_ip,
 			  u8 netif_idx);
 
-/* hoisted from rtl9602c_eth.c (same shell TU) -- dev/MEASURED-rtl9602c_l34_logic.h.md sec 4. */
+/* hoisted from rtl9602c_eth.c */
 #define GMAC_PON_PORT		2	/* GMAC tx_portmask PON bit (stock = 1<<2 -> word3 0x02400000) */
 #define TXD2_OMCI_CPUTAG	0x80000000u	/* opts2 bit31 cputag */
 #define TXD2_OMCI_EFID		0x00080000u	/* opts2 bit19 efid (stock word2 = 0x80080000) */

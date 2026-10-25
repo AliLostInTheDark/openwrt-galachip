@@ -33,8 +33,7 @@
 
 #include "luna.h"
 
-/* SoC watchdog timer (KSEG1), TC block. Forcing a WDT timeout ...
- * dev/MEASURED-setup.c.md sec 1. */
+/* SoC watchdog timer (KSEG1), TC block. */
 #define LUNA_RSTWDT_CTRL		((void __iomem *)CKSEG1ADDR(0x18003268))
 #define LUNA_RSTWDT_EN		BIT(31)		/* watchdog enable          */
 #define LUNA_RSTWDT_CLK_SC_SHIFT	29		/* overflow scale           */
@@ -48,8 +47,7 @@ static void luna_machine_restart(char *command)
 {
 	local_irq_disable();
 	pr_emerg("Restarting via SoC watchdog full-chip reset...\n");
-	/* Full-chip reset, fastest scale (2^25 LX clocks ~ 0.17s), ...
-	 * dev/MEASURED-setup.c.md sec 12. */
+	/* Full-chip reset, fastest scale */
 	__raw_writel(LUNA_RSTWDT_EN |
 		     (0u << LUNA_RSTWDT_CLK_SC_SHIFT) |
 		     (1u << LUNA_RSTWDT_PH1_TO_SHIFT) |
@@ -71,8 +69,7 @@ static void luna_machine_halt(void)
 void __init plat_mem_setup(void)
 {
 	luna_mark('M');
-	/* The preloader may arm the SoC hardware watchdog; a minimal ...
-	 * dev/MEASURED-setup.c.md sec 13. */
+	/* The preloader may arm the SoC hardware watchdog */
 	__raw_writel(0, LUNA_RSTWDT_CTRL);
 
 	/* MMIO/peripheral window: SPI-NOR + SoC registers. */
@@ -85,8 +82,7 @@ void __init plat_mem_setup(void)
 	_machine_halt    = luna_machine_halt;
 	pm_power_off     = luna_machine_halt;
 
-	/* The board's bootloader passes no device tree, so the image ...
-	 * dev/MEASURED-setup.c.md sec 14. */
+	/* The board's bootloader passes no device tree, so the */
 	__dt_setup_arch(get_fdt());
 }
 

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* gpon_ind_rmw.h -- write ONE entry of an indirect ... -- dev/MEASURED-gpon_ind_rmw.h.md sec 1. */
+/* gpon_ind_rmw.h */
 #ifndef _GPON_IND_RMW_H
 #define _GPON_IND_RMW_H
 
@@ -7,8 +7,7 @@
 #include <linux/types.h>
 #include "regtable.h"	/* gpon_ind_go(), reg_rc(), struct hwio */
 
-/* struct gpon_ind_tbl - one indirect ACCESS/DATA table, as ...
- * dev/MEASURED-gpon_ind_rmw.h.md sec 2. */
+/* struct gpon_ind_tbl - one indirect ACCESS/DATA table */
 struct gpon_ind_tbl {
 	struct reg	access;
 	struct reg	data;
@@ -17,8 +16,7 @@ struct gpon_ind_tbl {
 	unsigned int	tries;
 };
 
-/* gpon_ind_fetch() - the READ half: load entry @idx into DATA
- * dev/MEASURED-gpon_ind_rmw.h.md sec 3. */
+/* gpon_ind_fetch() - the READ half */
 static inline int gpon_ind_fetch(const struct hwio *io,
 				 const struct gpon_ind_tbl *t, u32 idx,
 				 void (*pause)(void), u32 *stuck)
@@ -51,8 +49,7 @@ static inline int gpon_ind_fetch(const struct hwio *io,
 	return 0;
 }
 
-/* gpon_ind_commit() - the WRITE half: DATA = @word, then the ...
- * dev/MEASURED-gpon_ind_rmw.h.md sec 4. */
+/* gpon_ind_commit() - the WRITE half */
 static inline int gpon_ind_commit(const struct hwio *io,
 				  const struct gpon_ind_tbl *t, u32 idx,
 				  u32 word, void (*pause)(void), u32 *stuck)
@@ -86,8 +83,7 @@ static inline int gpon_ind_commit(const struct hwio *io,
 	return 0;
 }
 
-/* gpon_ind_rmw() - entry @idx: DATA = (DATA & ~@clr) | @set, ...
- * dev/MEASURED-gpon_ind_rmw.h.md sec 5. */
+/* gpon_ind_rmw() - entry @idx */
 static inline int gpon_ind_rmw(const struct hwio *io,
 			       const struct gpon_ind_tbl *t, u32 idx,
 			       u32 clr, u32 set, void (*pause)(void),
@@ -101,8 +97,7 @@ static inline int gpon_ind_rmw(const struct hwio *io,
 			       stuck);
 }
 
-/* gpon_ind_set() - entry @idx: DATA = @word, both halves ...
- * dev/MEASURED-gpon_ind_rmw.h.md sec 6. */
+/* gpon_ind_set() - entry @idx */
 static inline int gpon_ind_set(const struct hwio *io,
 			       const struct gpon_ind_tbl *t, u32 idx,
 			       u32 word, void (*pause)(void), u32 *stuck)

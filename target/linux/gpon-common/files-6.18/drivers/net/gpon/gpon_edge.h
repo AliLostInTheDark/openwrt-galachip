@@ -25,8 +25,7 @@
 
 struct net_device;
 
-/* Addresses are HOST order. Every engine packs its own table ...
- * dev/MEASURED-gpon_edge.h.md sec 2. */
+/* Addresses are HOST order. */
 struct gpon_edge {
 	u32	wan_ip;			/* the address a US frame is NAT'd to	*/
 	u32	gw_ip;			/* the next hop that address egresses to */
@@ -49,8 +48,7 @@ struct gpon_edge {
 	u16	wan_pppoe_sid;
 };
 
-/* Fill *e from the live kernel state. @lan and @wan are the ...
- * dev/MEASURED-gpon_edge.h.md sec 1. */
+/* Fill *e from the live kernel state. */
 int gpon_edge_read(struct net_device *lan, struct net_device *wan,
 		   u32 peer, struct gpon_edge *e, const char **why);
 /* The same read, told what the flowtable already resolved: @odev is the egress

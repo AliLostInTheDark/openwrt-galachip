@@ -3,31 +3,8 @@
 # Makefile for the Linux network device drivers.
 #
 #
-# OpenWrt/realtek GPON ONU port -- WHOLE-FILE OVERLAY, NOT a patch.
-#
-# This is Linux 6.18.31's own file, unmodified, plus the change fenced
-# below as "GPON common layer".  It lives in the SHARED files- tree
-# target/linux/gpon-common/files-6.18/ and is therefore authored ONCE
-# for BOTH GPON targets:
-#   realtek-elnath  RTL9607F (Cortina)  aarch64, little-endian
-#   realtek-luna    RTL960xC (Luna)     MIPS32,  big-endian
-# so the wiring can never drift between them -- which is the whole point
-# of the shared layer.  Operator, 2026-08-05: "la idea es poner en comun
-# el codigo que corresponde para no tener mucho duplicado", and on the
-# two per-target monoliths: "mal, poner en comun".
-#
-# It is an overlay and NOT a patches-6.18/*.patch by hard rule: an
-# AI-authored patch file is un-findable by the next human or LLM, and
-# editing one keeps silently re-breaking the source it applies to.
-#
-# ON A KERNEL BUMP: re-take this file from the new tarball and re-apply
-# only the fenced block.  Do not carry this copy forward blindly -- a
-# stale overlay silently reverts every upstream change to this file.
-# Measured 2026-08-05: no patch under target/linux/{generic,realtek-luna,
-# realtek-elnath} touches drivers/net/Kconfig or drivers/net/Makefile, so
-# this overlay collides with nothing today.
-#
-# ADDED HERE: one obj- line descending into drivers/net/gpon/.
+# Linux 6.18's own file plus one line: obj-$(CONFIG_GPON_CORE) += gpon/.
+# On a kernel bump, take the new file and add that line again.
 #
 
 #

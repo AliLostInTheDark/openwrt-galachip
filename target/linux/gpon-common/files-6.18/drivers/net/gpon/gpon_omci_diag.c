@@ -14,15 +14,12 @@
 #define GET_MASK_END	10
 /* A Create has no mask: its attribute body starts where a Get puts one. */
 #define CREATE_BODY_START	8
-/* One past the last MESSAGE CONTENTS octet of a baseline PDU: [8:39].  What
- * follows is the CPCS trailer and the MIC, which are not attribute data ...
- * dev/MEASURED-gpon_omci_diag.c.md sec 7. */
+/* One past the last MESSAGE CONTENTS octet of a baseline PDU: [8:39]. */
 #define MSG_CONTENTS_END	40
 /* The widest octet run any one field renders: the whole contents area. */
 #define MAX_RENDER_OCTETS	(MSG_CONTENTS_END - CREATE_BODY_START)
 
-/* The detail a Get exchange carries. Appended at `*pos`; the ...
- * dev/MEASURED-gpon_omci_diag.c.md sec 1. */
+/* The detail a Get exchange carries. Appended at `*pos` */
 static void get_detail(char *out, size_t sz, int *pos, const u8 *pdu,
 		       unsigned int len, const u8 *resp, int resp_len)
 {
@@ -36,8 +33,7 @@ static void get_detail(char *out, size_t sz, int *pos, const u8 *pdu,
 		*pos += scnprintf(out + *pos, sz - *pos, " mask=n/a");
 		return;
 	}
-	/* The response is decoded only when it is a WHOLE baseline ...
-	 * dev/MEASURED-gpon_omci_diag.c.md sec 2. */
+	/* The response is decoded only when it is a WHOLE */
 	if (!resp || resp_len < OMCI_LEN) {
 		*pos += scnprintf(out + *pos, sz - *pos, " noresp");
 		return;
@@ -51,8 +47,7 @@ static void get_detail(char *out, size_t sz, int *pos, const u8 *pdu,
 			  resp[8]);
 }
 
-/* The detail a SET exchange carries, and it is DELIBERATELY ...
- * dev/MEASURED-gpon_omci_diag.c.md sec 3. */
+/* The detail a SET exchange carries, and it is */
 static void append_octets(char *out, size_t sz, int *pos, const char *label,
 			  const u8 *pdu, unsigned int len, unsigned int from)
 {
@@ -71,8 +66,7 @@ static void append_octets(char *out, size_t sz, int *pos, const char *label,
 	*pos += scnprintf(out + *pos, sz - *pos, "%s%s", label, hex);
 }
 
-/* THE RESULT CODE, AND EVERY ANSWERED PDU HAS ONE. ★ IT ...
- * dev/MEASURED-gpon_omci_diag.c.md sec 4. */
+/* THE RESULT CODE, AND EVERY ANSWERED PDU HAS ONE. */
 static void result_detail(char *out, size_t sz, int *pos,
 			  const u8 *pdu, unsigned int len,
 			  const u8 *resp, int resp_len)
@@ -92,8 +86,7 @@ static void result_detail(char *out, size_t sz, int *pos,
 	*pos += scnprintf(out + *pos, sz - *pos, " rc=%u", resp[8]);
 }
 
-/* The detail a CREATE carries: its ATTRIBUTE BODY, and our ...
- * dev/MEASURED-gpon_omci_diag.c.md sec 5. */
+/* The detail a CREATE carries */
 static void create_detail(char *out, size_t sz, int *pos, const u8 *pdu,
 			  unsigned int len, const u8 *resp, int resp_len)
 {
@@ -116,8 +109,7 @@ static void set_detail(char *out, size_t sz, int *pos, const u8 *pdu,
 			  ((u16)pdu[8] << 8) | pdu[9]);
 	/* ★ THE WHOLE VALUE AREA, RAW: the mask says WHICH attributes, the
 	 * octets say WHAT -- and [8:15] of a 16-octet ME 171 row is the
-	 * TREATMENT half, which an 8-octet limit hid ...
-	 * dev/MEASURED-gpon_omci_diag.c.md sec 6 and sec 7. */
+	 * TREATMENT half, which an 8-octet limit hid. */
 	append_octets(out, sz, pos, " val=", pdu, len, GET_MASK_END);
 	result_detail(out, sz, pos, pdu, len, resp, resp_len);
 }

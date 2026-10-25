@@ -2497,51 +2497,8 @@ CONFIG_CONSOLE_POLL=y
 CONFIG_NET_VENDOR_REALTEK=y
 CONFIG_RTL9602C_ETH=y
 CONFIG_RTL9602C_FLOWOFFLOAD=y
-# ═══════════════════════════════════════════════════════════════════════════
-# ** CRASH TRACE -- so a wedge leaves something behind.  Added 2026-08-20 after
-# ** the X111W's processor stopped and the console printed NOTHING on the way
-# ** down.  `gpon_vs_cpu.py` proved the GPON silicon OUTLIVED the CPU (the OLT
-# ** reported the ONU in service for 6 more minutes), so the board had power and
-# ** a clock -- yet no trace existed, because none was ever GENERATED.
-# **
-# ** ★ TWO-PLACE GOTCHA -- the same one realtek-elnath/config-6.18 documents,
-# **   and this file did NOT, which is exactly why it bit here.  OpenWrt exposes
-# **   DETECT_HUNG_TASK and SOFTLOCKUP_DETECTOR as its OWN buildroot options
-# **   (config/Config-kernel.in: KERNEL_DETECT_HUNG_TASK,
-# **   KERNEL_SOFTLOCKUP_DETECTOR) and merges the derived CONFIG_KERNEL_* block
-# **   AFTER this file, so the two lines below are DEAD ON THEIR OWN.  They must
-# **   ALSO be set in the buildroot .config:
-# **       CONFIG_KERNEL_DETECT_HUNG_TASK=y
-# **       CONFIG_KERNEL_SOFTLOCKUP_DETECTOR=y
-# **   Measured 2026-08-20: this target asked for both and the BUILT kernel had
-# **   neither.  Verify with, and never by reading this file:
-# **       python3 ONU-test-case/kconfig_effective_guard.py --board=<S>/<B>/<M>
-# **       python3 ONU-test-case/crash_trace.py --board=<S>/<B>/<M> --probe
-# **
-# ** ★ PSTORE IS *NOT* TWO-PLACE.  Config-kernel.in carries no PSTORE or RAMOOPS
-# **   symbol at all, so these lines take effect straight from here.  The
-# **   ramoops REGION is per-board and lives in each board's own .dts beside the
-# **   memory map it has to fit inside -- the X111W has one 128 MiB span and the
-# **   G24W has two spans with PBO DL holes between them, so one shared address
-# **   would write a panic into unbacked memory on one of them.
-# **
-# ** ★ WHAT PSTORE CANNOT DO, stated here so nobody reads more into it: the
-# **   records live in DRAM, so they survive a PANIC or a WATCHDOG reboot and
-# **   NOT a power cut.  PSTORE_CONSOLE is the one that speaks to our actual
-# **   symptom -- a wedge that never reaches panic() writes no oops record, but
-# **   whatever the kernel printed before it stopped is already in the console
-# **   buffer and is readable from /sys/fs/pstore on the next boot.
-# **   Compression is deliberately OFF: an unreadable record is worse than a
-# **   short one, and 128 KiB on a 128 MiB board is not worth an algorithm.
-CONFIG_PSTORE=y
-CONFIG_PSTORE_RAM=y
-CONFIG_PSTORE_CONSOLE=y
-# CONFIG_PSTORE_COMPRESS is not set
-# CONFIG_PSTORE_PMSG is not set
-# CONFIG_PSTORE_FTRACE is not set
-CONFIG_REED_SOLOMON=y
-CONFIG_REED_SOLOMON_ENC8=y
-CONFIG_REED_SOLOMON_DEC8=y
+# A wedge panics instead of hanging silently. OpenWrt also needs
+# CONFIG_KERNEL_DETECT_HUNG_TASK and CONFIG_KERNEL_SOFTLOCKUP_DETECTOR in .config.
 CONFIG_DEFAULT_HUNG_TASK_TIMEOUT=120
 CONFIG_DETECT_HUNG_TASK=y
 CONFIG_DETECT_HUNG_TASK_BLOCKER=y

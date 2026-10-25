@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* gpon_ddm.c -- optical diagnostic (DDM) unit conversion. ONE ...
- * dev/MEASURED-gpon_ddm.c.md sec 1. */
+/* gpon_ddm.c -- optical diagnostic (DDM) unit conversion. */
 
 #include "gpon_ddm.h"
 
-/* log10 of the mantissa, in milli-decades, sampled every 1/16 ...
- * dev/MEASURED-gpon_ddm.c.md sec 2. */
+/* log10 of the mantissa, in milli-decades, sampled every */
 static const u16 MANT_LOG10[17] = {
 	  0,  26,  51,  75,  97, 118, 138, 158, 176,
 	194, 211, 227, 243, 258, 273, 287, 301,

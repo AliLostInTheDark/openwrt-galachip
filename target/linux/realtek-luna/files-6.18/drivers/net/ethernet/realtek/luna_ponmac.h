@@ -1,13 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* luna_ponmac.h - board-agnostic bring-up of the Realtek ...
- * dev/MEASURED-luna_ponmac.h.md sec 1. */
+/* luna_ponmac.h - board-agnostic bring-up of the */
 #ifndef _LUNA_PONMAC_H
 #define _LUNA_PONMAC_H
 
 #include <linux/types.h>
 
-/* The chips this library actually serves. It is the LUNA MIPS ...
- * dev/MEASURED-luna_ponmac.h.md sec 2. */
+/* The chips this library actually serves. */
 enum luna_chip {
 	LUNA_CHIP_9602C = 0,	/* + 9601C / 9601C_VB subtypes */
 };
@@ -42,7 +40,7 @@ static inline void luna_rfwr(const struct luna_ops *o, u32 phys,
 	o->wr(phys, gpon_field_set(o->rd(phys), msb, lsb, val));
 }
 
-/* Bring-up entry points. rev = LUNA_REV_A or the HW ... -- dev/MEASURED-luna_ponmac.h.md sec 3. */
+/* Bring-up entry points. */
 int luna_ponmac_init(enum luna_chip chip, int rev, int subtype,
 			const struct luna_ops *o);
 int luna_ponmac_mode_set(enum luna_chip chip, int rev, int subtype,

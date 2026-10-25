@@ -29,7 +29,6 @@ include $(INCLUDE_DIR)/target.mk
 # MUST be AFTER the target.mk include and use `+=`, never `:=` before it:
 # include/kernel.mk:44 sets FILES_DIR with `?=`, so assigning earlier would
 # stop that from firing and DROP this target's own files-6.18 entirely.
-# Guarded offline by target/linux/gpon-common/build_wiring_guard.py.
 #
 # Symlinking the shared files into each target instead is REFUSED on two
 # measurements: rules.mk:314 CP:=cp -fpR copies the LINK (whose relative path

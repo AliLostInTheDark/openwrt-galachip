@@ -25,17 +25,14 @@
 
 #include <linux/types.h>
 
-/* ★ THREE DIFFERENT 12-BIT-ISH THINGS ARE ALL CALLED "gem" IN ...
- * dev/MEASURED-gpon_gem_us.h.md sec 1. */
+/* THREE DIFFERENT 12-BIT-ISH THINGS ARE ALL CALLED "gem" */
 #define GPON_GEM_US_PORT_MASK	0x0fffu
 #define GPON_GEM_US_ALLOC_MASK	0x0fffu
 
-/* The value written to an upstream port-map slot that must ...
- * dev/MEASURED-gpon_gem_us.h.md sec 7. */
+/* The value written to an upstream port-map slot that */
 #define GPON_GEM_US_PORT_NONE	0u
 
-/* The upstream index slots that carry ONE GEM Port-ID, ...
- * dev/MEASURED-gpon_gem_us.h.md sec 2. */
+/* The upstream index slots that carry ONE GEM */
 struct gpon_gem_us_range {
 	u16	base;		/* first upstream slot that stamps the Port-ID */
 	u16	count;		/* how many consecutive slots (>= 1)           */
@@ -77,8 +74,7 @@ enum gpon_gem_us_bind {
 	GPON_GEM_US_BIND_IS_OMCC,
 };
 
-/* ★★★ SINGLE-ALLOC OLTs: THE DATA RIDES THE OMCC T-CONT. ...
- * dev/MEASURED-gpon_gem_us.h.md sec 3. */
+/* SINGLE-ALLOC OLTs: THE DATA RIDES THE OMCC T-CONT. */
 #define GPON_GEM_US_OMCI_RESERVED_SLOTS	2	/* the top two: OMCI + PLOAM */
 
 /* Derive the sub-range of @omcc the data GEM may use.  -> false when the OMCC
@@ -97,8 +93,7 @@ enum gpon_gem_us_bind gpon_gem_us_tcont_decide(u16 alloc, u16 omcc_alloc,
 /* One-line name for a verdict, for logs and for test failure messages. */
 const char *gpon_gem_us_bind_name(enum gpon_gem_us_bind v);
 
-/* ★★★ ONE PROTOCOL RULE THAT WAS WRITTEN THREE TIMES — the ...
- * dev/MEASURED-gpon_gem_us.h.md sec 4. */
+/* ONE PROTOCOL RULE THAT WAS WRITTEN THREE TIMES */
 enum gpon_omcc_action {
 	GPON_OMCC_IGNORE,	/* enable=0: a Configure_Port-ID transient. Write
 				 * NOTHING and keep the link; the following
@@ -112,21 +107,20 @@ enum gpon_omcc_action {
 				 * path stays byte-identical */
 };
 
-/* gpon_omcc_decide - what a Configure_Port-ID means for the ...
- * dev/MEASURED-gpon_gem_us.h.md sec 5. */
+/* gpon_omcc_decide - what a Configure_Port-ID means for */
 enum gpon_omcc_action gpon_omcc_decide(bool port_en, u16 want_gem,
 				       bool installed, u16 cur_gem);
 
 /* One-line name for a verdict, for logs and for test failure messages. */
 const char *gpon_omcc_action_name(enum gpon_omcc_action a);
 
-/* ★★★ THE SECOND OMCC RULE THAT WAS WRITTEN TWICE: ... -- dev/MEASURED-gpon_gem_us.h.md sec 8. */
+/* THE SECOND OMCC RULE THAT WAS WRITTEN TWICE */
 struct gpon_omcc_tcont_plan {
 	u16  alloc;		/* Alloc-ID to bind the OMCC's own T-CONT to  */
 	bool bind_alt;		/* ALSO bind @alloc to the ALTERNATE T-CONT   */
 };
 
-/* gpon_omcc_tcont_decide - which Alloc-ID the OMCC's ... -- dev/MEASURED-gpon_gem_us.h.md sec 6. */
+/* gpon_omcc_tcont_decide - which Alloc-ID the */
 void gpon_omcc_tcont_decide(u16 alloc_override, u8 onu_id, bool alt_bind,
 			  struct gpon_omcc_tcont_plan *out);
 

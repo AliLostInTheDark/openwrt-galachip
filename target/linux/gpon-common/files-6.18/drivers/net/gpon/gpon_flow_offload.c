@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* gpon_flow_offload -- the TC hardware-offload lifecycle, ...
- * dev/MEASURED-gpon_flow_offload.c.md sec 1. */
+/* gpon_flow_offload */
 #include <linux/errno.h>
 #include <linux/if_vlan.h>
 #include <linux/ip.h>
@@ -121,7 +120,7 @@ static bool gpon_flow_vlan_carry(const struct gpon_flow_offload *fo,
 	return true;
 }
 
-/* ── the ACTION decode ... -- dev/MEASURED-gpon_flow_offload.c.md sec 2. */
+/* ── the ACTION */
 int gpon_flow_act_from_tc(struct gpon_flow_offload *fo, struct flow_rule *rule,
 			  bool ds_leg, struct gpon_flow_act *act,
 			  struct net_device **odev_out,
@@ -141,8 +140,7 @@ int gpon_flow_act_from_tc(struct gpon_flow_offload *fo, struct flow_rule *rule,
 		case FLOW_ACTION_MANGLE:
 			switch (fa->mangle.htype) {
 			case FLOW_ACT_MANGLE_HDR_TYPE_IP4:
-				/* nf_flow_table's two legs of a masqueraded flow are exact ...
-				 * dev/MEASURED-gpon_flow_offload.c.md sec 3. */
+				/* nf_flow_table's two legs of a masqueraded flow are */
 				if (fa->mangle.offset !=
 				    (ds_leg ? offsetof(struct iphdr, daddr)
 					    : offsetof(struct iphdr, saddr))) {
@@ -156,8 +154,7 @@ int gpon_flow_act_from_tc(struct gpon_flow_offload *fo, struct flow_rule *rule,
 				break;
 			case FLOW_ACT_MANGLE_HDR_TYPE_TCP:
 			case FLOW_ACT_MANGLE_HDR_TYPE_UDP:
-				/* The port rewrite is ONE big-endian 32-bit word at offset 0: ...
-				 * dev/MEASURED-gpon_flow_offload.c.md sec 4. */
+				/* The port rewrite is ONE big-endian 32-bit word at offset 0 */
 				if (fa->mangle.offset != 0 ||
 				    (fa->mangle.mask == ~htonl(0xffff)) != ds_leg) {
 					if (why)
@@ -170,8 +167,7 @@ int gpon_flow_act_from_tc(struct gpon_flow_offload *fo, struct flow_rule *rule,
 				act->port_valid = 1;
 				break;
 			case FLOW_ACT_MANGLE_HDR_TYPE_ETH:
-				/* This leg's next-hop DMAC, emitted as TWO ETH mangles: ...
-				 * dev/MEASURED-gpon_flow_offload.c.md sec 5. */
+				/* This leg's next-hop DMAC, emitted as TWO ETH mangles */
 				if (fa->mangle.offset == 0) {
 					u32 w = fa->mangle.val;
 
@@ -194,14 +190,12 @@ int gpon_flow_act_from_tc(struct gpon_flow_offload *fo, struct flow_rule *rule,
 		case FLOW_ACTION_CSUM:
 			break;		/* implicit in the HW rewrite */
 		case FLOW_ACTION_PPPOE_PUSH:
-			/* The LIVE negotiated session id (host-order u16, from the ...
-			 * dev/MEASURED-gpon_flow_offload.c.md sec 10. */
+			/* The LIVE negotiated session id */
 			act->pppoe_sid = fa->pppoe.sid;
 			break;
 		case FLOW_ACTION_VLAN_PUSH:
 		case FLOW_ACTION_VLAN_POP:
-			/* Reached only when the WAN sub-interface's LOWER device is ...
-			 * dev/MEASURED-gpon_flow_offload.c.md sec 6. */
+			/* Reached only when the WAN sub-interface's LOWER device */
 			if (gpon_flow_vlan_carry(fo, fa, ds_leg, act))
 				break;
 			if (fo && fo->ops->note_vlan_action)
@@ -314,10 +308,7 @@ int gpon_flow_offload_replace(struct gpon_flow_offload *fo,
 		return -EOPNOTSUPP;
 	}
 
-	/* ⚠ NOT "the other direction": on 6.18 the cookie is the address of THIS
-	 * direction's own tuple, so the two legs never share one. A dup-cookie is
-	 * the SAME cookie delivered again -- most plausibly by the block-cb
-	 * fan-out. Refusing ... dev/MEASURED-gpon_flow_offload.c.md sec 7. */
+	/* ⚠ NOT "the other direction": on 6.18 the cookie is the address of THIS * direction's own tuple, so the two legs never share one. A dup-cookie is * the SAME cookie delivered again -- most plausibly by the block-cb * fan-out. */
 	entry = rhashtable_lookup_fast(&fo->table, &f->cookie, gpon_flow_ht_params);
 	if (entry) {
 		if (!entry->failed) {
@@ -335,8 +326,7 @@ int gpon_flow_offload_replace(struct gpon_flow_offload *fo,
 		return err;
 	}
 
-	/* ★ The block-cb device is NOT the flow's ingress -- every ...
-	 * dev/MEASURED-gpon_flow_offload.c.md sec 8. */
+	/* The block-cb device is NOT the flow's ingress */
 	if (flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_META)) {
 		struct flow_match_meta m;
 

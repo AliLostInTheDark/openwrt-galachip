@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* TIER: CORE, and in the STRICT host-buildable subset -- ...
- * dev/MEASURED-gpon_omci_mic.h.md sec 1. */
+
 #ifndef GPON_OMCI_MIC_H
 #define GPON_OMCI_MIC_H
 
@@ -28,8 +27,7 @@ enum gpon_mic_conv {
 	GPON_MIC_CONV_NEITHER,		/* corrupt, or a convention we lack     */
 };
 
-/* The MIC as the OLT stamped it: bytes 44..47, big-endian. ...
- * dev/MEASURED-gpon_omci_mic.h.md sec 2. */
+/* The MIC as the OLT stamped it: bytes 44..47, big-endian. */
 static inline u32 gpon_omci_mic_stamped(const u8 *pdu)
 {
 	return ((u32)pdu[44] << 24) | ((u32)pdu[45] << 16) |
@@ -45,8 +43,7 @@ static inline u32 gpon_omci_mic_zlib_le(const u8 *pdu)
 	return crc32_le(~0u, pdu, 44) ^ ~0u;
 }
 
-/* Which convention stamped @pdu. Pure: no state, no counters, ...
- * dev/MEASURED-gpon_omci_mic.h.md sec 3. */
+/* Which convention stamped @pdu. Pure */
 static inline enum gpon_mic_conv gpon_omci_mic_conv(const u8 *pdu,
 						    unsigned int len)
 {

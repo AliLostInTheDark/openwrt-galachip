@@ -49,7 +49,7 @@ void luna_mark(char c)
 	prom_putchar(']');
 }
 
-/* The bootloader enters Linux with a legacy MIPS argument ... -- dev/MEASURED-prom.c.md sec 1. */
+/* The bootloader enters Linux with a legacy MIPS */
 static void __init prom_init_cmdline(void)
 {
 	int argc = (int)fw_arg0;
@@ -76,8 +76,7 @@ void __init prom_init(void)
 
 	luna_mark('P');
 
-	/* Clear the CPU's unmapped-memory-segment (UMSAR0..3 @ ...
-	 * dev/MEASURED-prom.c.md sec 2. */
+	/* Clear the CPU's unmapped-memory-segment */
 	for (i = 0; i < 4; i++) {
 		*(volatile u32 *)(0xb8001300ul + i * 0x10) = 0;
 		*(volatile u32 *)(0xb8004000ul + i * 0x10) = 0;

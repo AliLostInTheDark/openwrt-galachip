@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* Realtek "Luna" SoC watchdog timer (RTL960x family). The ...
- * dev/MEASURED-luna_wdt.c.md sec 1. */
+/* Realtek "Luna" SoC watchdog timer (RTL960x family). */
 
 #include <linux/bits.h>
 #include <linux/clk.h>
@@ -36,8 +35,7 @@
 #define LUNA_WDT_PH_TO_MSK		0x1fu
 #define LUNA_WDT_RESET_MODE_MSK	0x3u
 
-/* RESET_MODE 0 is the H/W FULL CHIP reset: it takes the CPU ...
- * dev/MEASURED-luna_wdt.c.md sec 2. */
+/* RESET_MODE 0 is the H/W FULL CHIP reset */
 #define LUNA_WDT_RESET_MODE_FULL_CHIP 0u
 
 /* One tick is 2^(SCALE_SHIFT + WDT_CLK_SC) cycles of the LX bus clock. */
@@ -46,8 +44,7 @@
 /* Each phase field is 5 bits and counts from ONE, so 0 means a single tick. */
 #define LUNA_WDT_TICKS		32u
 
-/* Phase 2 is kept at its shortest. It exists so a vendor ...
- * dev/MEASURED-luna_wdt.c.md sec 3. */
+/* Phase 2 is kept at its shortest. */
 #define LUNA_WDT_PH2_TICKS		1u
 
 #define LUNA_WDT_MIN_TIMEOUT		1u
@@ -65,16 +62,14 @@ MODULE_PARM_DESC(nowayout,
 		 "Watchdog cannot be stopped once started (default: "
 		 __MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
 
-/* struct luna_wdt_timing - the WDT_CTRL timing fields for one ...
- * dev/MEASURED-luna_wdt.c.md sec 4. */
+/* struct luna_wdt_timing - the WDT_CTRL timing fields for */
 struct luna_wdt_timing {
 	u32 clk_sc;
 	u32 ph1;
 	u32 ph2;
 };
 
-/* Pure: the longest timeout this block can express on a @rate ...
- * dev/MEASURED-luna_wdt.c.md sec 5. */
+/* Pure: the longest timeout this block can express on a */
 static unsigned int luna_wdt_max_timeout(unsigned long rate)
 {
 	u64 cycles = (u64)LUNA_WDT_TICKS <<
@@ -83,8 +78,7 @@ static unsigned int luna_wdt_max_timeout(unsigned long rate)
 	return rate ? (unsigned int)div_u64(cycles, rate) : 0;
 }
 
-/* Pure: turn a timeout in whole seconds into the WDT_CTRL ...
- * dev/MEASURED-luna_wdt.c.md sec 6. */
+/* Pure: turn a timeout in whole seconds into the */
 static int luna_wdt_calc_timing(unsigned long rate, unsigned int secs,
 				   struct luna_wdt_timing *t)
 {
@@ -122,8 +116,7 @@ static u32 luna_wdt_ctrl_timing(const struct luna_wdt_timing *t,
 	       (reset_mode & LUNA_WDT_RESET_MODE_MSK);
 }
 
-/* struct luna_wdt - one Luna watchdog instance @wdd: the ...
- * dev/MEASURED-luna_wdt.c.md sec 7. */
+/* struct luna_wdt - one Luna watchdog instance @wdd */
 struct luna_wdt {
 	struct watchdog_device	wdd;
 	void __iomem		*base;
@@ -137,8 +130,7 @@ static inline struct luna_wdt *to_luna_wdt(struct watchdog_device *wdd)
 	return container_of(wdd, struct luna_wdt, wdd);
 }
 
-/* Reload both phases. ★ READ-MODIFY-WRITE, and it is not a ...
- * dev/MEASURED-luna_wdt.c.md sec 8. */
+/* Reload both phases. */
 static void luna_wdt_kick(struct luna_wdt *wdt)
 {
 	u32 cnt = readl(wdt->base + LUNA_WDT_CNT);
@@ -153,19 +145,16 @@ static int luna_wdt_stop(struct watchdog_device *wdd);
 
 static int luna_wdt_ping(struct watchdog_device *wdd)
 {
-	/* ★★★ THE KICK ALONE DOES NOT RELOAD THIS COUNTER -- MEASURED ...
-	 * dev/MEASURED-luna_wdt.c.md sec 9. */
+	/* THE KICK ALONE DOES NOT RELOAD THIS COUNTER */
 	struct luna_wdt *wdt = to_luna_wdt(wdd);
 
-	/* ⚠ THE RELOAD EXPERIMENTS ARE NOT KEPT. Both were tried on ...
-	 * dev/MEASURED-luna_wdt.c.md sec 10. */
+	/* ⚠ THE RELOAD EXPERIMENTS ARE NOT KEPT. */
 	luna_wdt_kick(wdt);
 
 	return 0;
 }
 
-/* Program the window and arm. The kick comes LAST and is not ...
- * dev/MEASURED-luna_wdt.c.md sec 11. */
+/* Program the window and arm. */
 static int luna_wdt_start(struct watchdog_device *wdd)
 {
 	struct luna_wdt *wdt = to_luna_wdt(wdd);
@@ -226,20 +215,17 @@ static int luna_wdt_set_timeout(struct watchdog_device *wdd,
 
 	wdd->timeout = new_timeout;
 
-	/* Reprogram only a watchdog that is already counting. ...
-	 * dev/MEASURED-luna_wdt.c.md sec 18. */
+	/* Reprogram only a watchdog that is already counting. */
 	if (watchdog_hw_running(wdd))
 		return luna_wdt_start(wdd);
 
 	return 0;
 }
 
-/* No .get_timeleft. WDT_CNT is the kick register; whether its ...
- * dev/MEASURED-luna_wdt.c.md sec 12. */
+/* No .get_timeleft. WDT_CNT is the kick register */
 static const struct watchdog_info luna_wdt_info = {
 	.identity	= "Realtek Luna WDT",
-	/* No WDIOF_CARDRESET: see the file header. Nothing on this ...
-	 * dev/MEASURED-luna_wdt.c.md sec 19. */
+	/* No WDIOF_CARDRESET: see the file header. */
 	.options	= WDIOF_SETTIMEOUT | WDIOF_KEEPALIVEPING |
 			  WDIOF_MAGICCLOSE,
 };
@@ -279,8 +265,7 @@ static int luna_wdt_probe(struct platform_device *pdev)
 				     &res->start, LUNA_WDT_BLOCK_SIZE);
 	phys = res->start;
 
-	/* devm_ioremap(), not devm_ioremap_resource(): this block is ...
-	 * dev/MEASURED-luna_wdt.c.md sec 13. */
+	/* devm_ioremap(), not devm_ioremap_resource() */
 	wdt->base = devm_ioremap(dev, res->start, resource_size(res));
 
 	if (!wdt->base)
@@ -300,8 +285,7 @@ static int luna_wdt_probe(struct platform_device *pdev)
 				     "a %lu Hz input clock cannot reach a 1 s window\n",
 				     wdt->rate);
 
-	/* The phase-1 timeout has its own interrupt line on this SoC ...
-	 * dev/MEASURED-luna_wdt.c.md sec 14. */
+	/* The phase-1 timeout has its own interrupt line on this */
 
 	wdt->wdd.info = &luna_wdt_info;
 	wdt->wdd.ops = &luna_wdt_ops;
@@ -312,8 +296,7 @@ static int luna_wdt_probe(struct platform_device *pdev)
 	wdt->wdd.timeout = min(LUNA_WDT_DEFAULT_TIMEOUT, max_timeout);
 
 
-	/* ★ Was it already counting when Linux took over? A boot ...
-	 * dev/MEASURED-luna_wdt.c.md sec 15. */
+	/* Was it already counting when Linux took over? A */
 	ctrl = readl(wdt->base + LUNA_WDT_CTRL);
 	adopted = !!(ctrl & LUNA_WDT_CTRL_EN);
 
@@ -324,8 +307,7 @@ static int luna_wdt_probe(struct platform_device *pdev)
 
 	watchdog_set_nowayout(&wdt->wdd, nowayout);
 
-	/* Stop it across an orderly reboot. The alternative -- ...
-	 * dev/MEASURED-luna_wdt.c.md sec 16. */
+	/* Stop it across an orderly reboot. */
 	watchdog_stop_on_reboot(&wdt->wdd);
 
 	/* Armed here and flagged running: the core feeds it until userspace opens

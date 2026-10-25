@@ -87,6 +87,7 @@
 #define GPON_GTC_DS_INTR_DLT	0x1000
 #define GPON_GTC_DS_INTR_MASK	0x1004
 #define GPON_GTC_DS_INTR_STS	0x1008
+#define   GPON_DS_INTR_STS_FEC	BIT(2)		/* downstream FEC in use */
 #define GPON_GTC_DS_LOS_CFG_STS	0x1040		/* downstream LOS status/cfg  */
 #define   GPON_CDR_LOS_SIG	BIT(10)		/* 1 = CDR not recovering clk */
 #define   GPON_OPTIC_LOS_SIG	BIT(8)		/* 1 = no optical signal      */
@@ -378,6 +379,7 @@
  * fabrication in the one place a reader would trust it most. */
 #define GPON_GTC_DS_CFG			0x01014
 #define GPON_GTC_DS_SUPERFRAME_CNT	0x01048
+#define   GPON_SUPERFRAME_MASK		GENMASK(29, 0)	/* one per 125 us DS frame */
 #define GPON_GTC_DS_TOD_SUPERFRAME_CTRL	0x0104c
 /* The next GTC DS word, read by gpon_proc_show() and previously spelled as the
  * bare literal 0x1050 under the label "r1050".  The RTL9603CVD chipdef names it
@@ -387,7 +389,11 @@
  * bypasses nothing (gpon_rd is not relocated), but an unnamed address in a
  * /proc label is a reader sent to a register nobody can look up. */
 #define GPON_GTC_DS_PPS_CTRL		0x01050
-#define GPON_GTC_DS_MISC_CNTR_BIP_ERR_BLK	0x01180	/* DS BIP block errors; every Luna die's stock map */
+#define GPON_GTC_DS_MISC_CNTR_BIP_ERR_BLK	0x01180	/* DS BIP block errors */
+/* Downstream FEC counters; like their neighbours they clear on read. */
+#define GPON_GTC_DS_MISC_CNTR_FEC_CORRECT_BYTE	0x0118c
+#define GPON_GTC_DS_MISC_CNTR_FEC_CORRECT_CW	0x01190
+#define GPON_GTC_DS_MISC_CNTR_FEC_UNCOR_CW	0x01194
 #define GPON_GTC_DS_MISC_CNTR_PLOAM_ACPT	0x0119c
 #define GPON_GTC_DS_MISC_CNTR_PLOAM_FAIL	0x011a0
 #define GPON_GTC_DS_MISC_CNTR_BWM_FAIL	0x011a4
@@ -485,6 +491,7 @@
 #define GPON_GTC_US_INTR_DLT		0x05000
 #define GPON_GTC_US_INTR_MASK		0x05004
 #define GPON_GTC_US_INTR_STS		0x05008
+#define   GPON_US_INTR_STS_FEC		BIT(2)	/* upstream FEC in use */
 #define GPON_GTC_US_PROC_MODE		0x05200
 #define PI_RXFDP1_US			0x053f0
 #define GPON_GEM_US_INTR_DLT		0x06000

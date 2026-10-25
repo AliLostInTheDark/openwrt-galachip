@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* TIER: CORE, and in the STRICT host-buildable subset -- a ...
- * dev/MEASURED-gpon_ploam_diag.h.md sec 1. */
+
 #ifndef GPON_PLOAM_DIAG_H
 #define GPON_PLOAM_DIAG_H
 
@@ -12,8 +11,7 @@
 enum gpon_ploam_diag_point {
 	GPON_PDIAG_ASSIGN,		/* Assign_ONU-ID accepted -> O4 (one per copy the OLT sends) */
 	GPON_PDIAG_RANGING_TIME,	/* Ranging_Time accepted -> O5: the ranging grant WAS answered */
-	/* ★★★ THE EARLY LADDER: a dwell at O1, O2 or O3 (2026-09-08). ...
-	 * dev/MEASURED-gpon_ploam_diag.h.md sec 7. */
+	/* THE EARLY LADDER: a dwell at O1, O2 or O3 (2026-09-08). */
 	GPON_PDIAG_EARLY,
 	GPON_PDIAG_DEACT,		/* Deactivate_ONU-ID: the window closed without ranging     */
 	GPON_PDIAG_NONE,		/* not a sample point                                        */
@@ -33,7 +31,7 @@ enum gpon_ploam_diag_point {
 #define GPON_PDIAG_HAS_RNG_REQ		0x800u
 #define GPON_PDIAG_HAS_ALL		0xfffu
 
-/* ★ THE READER'S LATENESS IS PART OF THE READING ... -- dev/MEASURED-gpon_ploam_diag.h.md sec 2. */
+/* THE READER'S LATENESS IS PART OF THE */
 struct gpon_ploam_diag {
 	u32 valid;		/* GPON_PDIAG_HAS_*: a clear bit is COULD NOT ASK       */
 	u32 ploam_acpt;		/* DS PLOAMs that passed the ONU-ID filter               */
@@ -42,8 +40,7 @@ struct gpon_ploam_diag {
 	u32 bwm_inv;		/* BWmap grants invalid                                  */
 	u32 us_ploam_tx;	/* upstream PLOAMs the MAC actually transmitted, every kind (CPU normal+urgent, auto No_message+SN): the "did we ANSWER the grant" half */
 	u32 us_sn_tx;		/* of those, the auto-fired Serial_Number_ONU -- the one a ranging grant is answered with */
-	/* ★ THE TWO THAT DECIDE THE O4 FORK (2026-09-07). The Luna ...
-	 * dev/MEASURED-gpon_ploam_diag.h.md sec 3. */
+	/* THE TWO THAT DECIDE THE O4 FORK (2026-09-07). */
 	u32 sn_req;		/* Serial_Number requests the GTC received since the previous read */
 	u32 rng_req;		/* ranging requests the GTC received since the previous read */
 	u32 poll_gap_ms;	/* ms between the start of the poll handling this message and the start of the previous poll */
@@ -52,8 +49,7 @@ struct gpon_ploam_diag {
 	u8  ds_onu_id;		/* the ONU-ID the downstream filter holds (readback)     */
 };
 
-/* ★ THE ACCEPTED-GRANT CAPTURE, accumulated between two ...
- * dev/MEASURED-gpon_ploam_diag.h.md sec 4. */
+/* THE ACCEPTED-GRANT CAPTURE, accumulated between */
 #define GPON_BWCAP_HAS			0x01u
 
 struct gpon_bwcap_diag {
@@ -69,8 +65,7 @@ struct gpon_bwcap_diag {
 	u32 last_raw1;
 };
 
-/* One line, fields in a fixed order: bwcap-diag <point> ...
- * dev/MEASURED-gpon_ploam_diag.h.md sec 5. */
+/* One line, fields in a fixed order */
 int gpon_bwcap_diag_format(char *out, size_t sz, enum gpon_ploam_diag_point p,
 			   u32 t_ms, u8 ostate, const struct gpon_bwcap_diag *b);
 
@@ -82,8 +77,7 @@ enum gpon_ploam_diag_point gpon_ploam_diag_point_of(enum gpon_ploam_ev ev);
 /* "assign" / "ranging_time" / "deact"; "?" for anything else, never NULL. */
 const char *gpon_ploam_diag_point_name(enum gpon_ploam_diag_point p);
 
-/* One line, fields in a fixed order so a reader can grep it: ...
- * dev/MEASURED-gpon_ploam_diag.h.md sec 6. */
+/* One line, fields in a fixed order so a reader can grep it */
 int gpon_ploam_diag_format(char *out, size_t sz, enum gpon_ploam_diag_point p,
 			   u32 t_ms, u8 ostate, const struct gpon_ploam_diag *d);
 /* The core's per-type PLOAM counters (struct gpon_ploam ds_own/ds_bcast/

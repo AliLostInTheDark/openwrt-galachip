@@ -55,8 +55,7 @@
  * masked before. */
 #include "gpon_gem_us.h"
 
-/* What the shell has actually armed in silicon. Allocation ...
- * dev/MEASURED-gpon_data_plan.h.md sec 7. */
+/* What the shell has actually armed in silicon. */
 struct gpon_data_armed {
 	u16	alloc;		/* Alloc-ID armed in the T-CONT CAM */
 	bool	alloc_bound;	/* never inferred from numeric alloc or installed */
@@ -98,8 +97,7 @@ enum gpon_data_plan {
 	GPON_DATA_TEARDOWN,
 };
 
-/* WHY the data path is not up -- and this is a SEPARATE ...
- * dev/MEASURED-gpon_data_plan.h.md sec 1. */
+/* WHY the data path is not up */
 enum gpon_data_blocker {
 	GPON_DATA_BLOCK_NONE = 0,	/* nothing blocks: KEEP / INSTALL / REPLACE */
 	GPON_DATA_BLOCK_NO_INPUT,	/* a NULL reached us: OUR defect, not the OLT's */
@@ -129,8 +127,7 @@ static inline bool gpon_data_alloc_valid(u16 alloc)
 	return alloc <= GPON_GEM_US_ALLOC_MASK && alloc != 0x00fe && alloc != 0x00ff;
 }
 
-/* gpon_data_armed_is_stale - is the armed identity no longer ...
- * dev/MEASURED-gpon_data_plan.h.md sec 2. */
+/* gpon_data_armed_is_stale - is the armed identity no */
 static inline bool gpon_data_armed_is_stale(const struct gpon_data_armed *armed,
 					    const struct gpon_data_want *want)
 {
@@ -146,8 +143,7 @@ static inline bool gpon_data_armed_is_stale(const struct gpon_data_armed *armed,
 	       (armed->rides_omcc && armed->alloc != want->omcc_alloc);
 }
 
-/* gpon_data_plan_decide - what should happen to the WAN data ...
- * dev/MEASURED-gpon_data_plan.h.md sec 3. */
+/* gpon_data_plan_decide - what should happen to the WAN */
 static inline enum gpon_data_plan
 gpon_data_plan_decide(const struct gpon_data_armed *armed,
 		      const struct gpon_data_want *want)
@@ -169,8 +165,7 @@ gpon_data_plan_decide(const struct gpon_data_armed *armed,
 	return GPON_DATA_INSTALL;
 }
 
-/* gpon_data_plan_why - what is the data path WAITING FOR? ...
- * dev/MEASURED-gpon_data_plan.h.md sec 4. */
+/* gpon_data_plan_why - what is the data path WAITING */
 static inline enum gpon_data_blocker
 gpon_data_plan_why(const struct gpon_data_armed *armed,
 		   const struct gpon_data_want *want)
@@ -201,16 +196,14 @@ static inline const char *gpon_data_plan_name(enum gpon_data_plan p)
 	return "?";
 }
 
-/* Which parts of a teardown apply to the identity that is ...
- * dev/MEASURED-gpon_data_plan.h.md sec 5. */
+/* Which parts of a teardown apply to the identity that */
 struct gpon_data_undo {
 	bool	drain_tcont;	/* disable + flush the DATA T-CONT's VoQs first */
 	bool	unbind_gem;	/* invalidate the unicast DS GEM CAM entry */
 	bool	unbind_alloc;	/* invalidate the data T-CONT CAM entry */
 };
 
-/* gpon_data_undo_plan - which teardown steps apply to what is ...
- * dev/MEASURED-gpon_data_plan.h.md sec 6. */
+/* gpon_data_undo_plan - which teardown steps apply to what */
 static inline void gpon_data_undo_plan(const struct gpon_data_armed *armed,
 				       u16 omcc_alloc,
 				       struct gpon_data_undo *out)

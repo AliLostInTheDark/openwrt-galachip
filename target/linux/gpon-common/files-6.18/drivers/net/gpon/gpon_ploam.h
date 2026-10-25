@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* TIER: CORE (prefix gpon_) — decides, never touches ... -- dev/MEASURED-gpon_ploam.h.md sec 1. */
+
 #ifndef GPON_PLOAM_H
 #define GPON_PLOAM_H
 
@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
-/* ★ TEMPORARY COMPATIBILITY SHIM — IT BELONGS IN ... -- dev/MEASURED-gpon_ploam.h.md sec 2. */
+/* TEMPORARY COMPATIBILITY SHIM */
 #ifndef GPON_HOST_TYPES_DEFINED
 #define GPON_HOST_TYPES_DEFINED
 typedef uint8_t  u8;
@@ -79,8 +79,7 @@ static inline bool gpon_ploam_us_repetitive(u8 type)
 	return type == PLM_US_SERIAL_NUMBER || type == PLM_US_REI;
 }
 
-/* A DS PLOAM is 13 bytes ([0]=ONU-ID [1]=type [2..11]=data ...
- * dev/MEASURED-gpon_ploam.h.md sec 13. */
+/* A DS PLOAM is 13 bytes */
 #ifndef GPON_PLOAM_DS_LEN
 #define GPON_PLOAM_DS_LEN		13u
 #define GPON_PLOAM_TYPE_SLOTS		32u	/* per-type counters; the last slot is ">= 31" */
@@ -89,8 +88,7 @@ static inline bool gpon_ploam_us_repetitive(u8 type)
 #define GPON_PLOAM_US_LEN		12u
 #endif
 
-/* Burst-overhead geometry: 12 = TOTAL_OVERHEAD_BITS(96)/8 ...
- * dev/MEASURED-gpon_ploam.h.md sec 14. */
+/* Burst-overhead geometry */
 #define GPON_PLOAM_BOH_LEN		12
 #define GPON_PLOAM_BOH_MAX_LEN		252
 
@@ -116,8 +114,7 @@ static inline bool gpon_ploam_ranging_allowed(u8 state, u8 addressed_onu,
 	       addressed_onu == own_onu && !(path & 1);
 }
 
-/* Diagnostic events. The core NEVER formats a string: it ...
- * dev/MEASURED-gpon_ploam.h.md sec 15. */
+/* Diagnostic events. The core NEVER formats a string */
 enum gpon_ploam_ev {
 	GPON_PLOAM_EV_STATE,		/* a = previous O-state, b = new O-state   */
 	GPON_PLOAM_EV_RERANGE_DONE,	/* a = re-range count, b = outage ms       */
@@ -144,16 +141,14 @@ enum gpon_ploam_ev {
 	GPON_PLOAM_EV_O5_WATCHDOG,	/* a = ticks held at O5 with no WAN RX     */
 	GPON_PLOAM_EV_O4_TIMEOUT,	/* a = ticks held at O4, no Ranging_Time   */
 	GPON_PLOAM_EV_LOS_RERANGE,	/* a = consecutive LOS ticks               */
-	/* ★★★ THE EARLY LADDER, AND IT ONLY REPORTS (operator, ...
-	 * dev/MEASURED-gpon_ploam.h.md sec 3. */
+	/* THE EARLY LADDER, AND IT ONLY REPORTS */
 	GPON_PLOAM_EV_EARLY_DWELL,
 	GPON_PLOAM_EV_KEEP_LOCK_GIVEUP,	/* a = ticks since the keep-lock DEACT, b = state */
 	GPON_PLOAM_EV_O3_UNHEARD,	/* a = ticks at O3, b = SN offers so far  */
 	GPON_PLOAM_EV_O5_UNGRANTED,	/* a = ticks at O5 with no grant, b = streak */
 };
 
-/* The imperative shell: every entry is a SIDE EFFECT the core ...
- * dev/MEASURED-gpon_ploam.h.md sec 4. */
+/* The imperative shell */
 struct gpon_ploam_ops {
 	/* Enqueue one 12-byte US PLOAM on `queue` (PLM_US_QUEUE_*).  Replaces
 	 * gpon_send_cpu_ploam(). */
@@ -225,13 +220,11 @@ struct gpon_ploam_ops {
 	void (*arm_dying_gasp)(void *sh, const u8 m[GPON_PLOAM_US_LEN]);
 	/* --- diagnostics: NEVER load-bearing, NULL is always legal. */
 	void (*trace)(void *sh, enum gpon_ploam_ev ev, u32 a, u32 b);
-	/* ONE datum the FSM received and could not place. Same ...
-	 * dev/MEASURED-gpon_ploam.h.md sec 5. */
+	/* ONE datum the FSM received and could not place. */
 	gpon_unsup_fn unsupported;
 };
 
-/* ★★★ THE MANDATORY SET — C's answer to a C++ PURE VIRTUAL. A ...
- * dev/MEASURED-gpon_ploam.h.md sec 6. */
+/* THE MANDATORY SET — C's answer to a C++ PURE VIRTUAL. */
 #define GPON_PLOAM_OPS_MANDATORY(X)					\
 	X(ploam_tx)		/* gpon_ploam.c:195  */			\
 	X(boh_write)		/* :395  */				\
@@ -265,12 +258,10 @@ struct gpon_ploam_ops {
 #  endif
 #endif
 
-/* gpon_ploam_ops_missing() - is this table complete enough to ...
- * dev/MEASURED-gpon_ploam.h.md sec 7. */
+/* gpon_ploam_ops_missing() - is this table complete enough */
 const char *gpon_ploam_ops_missing(const struct gpon_ploam_ops *ops);
 
-/* Per-board / per-chip configuration, READ-ONLY on the core ...
- * dev/MEASURED-gpon_ploam.h.md sec 8. */
+/* Per-board / per-chip configuration, READ-ONLY on the */
 struct gpon_ploam_cfg {
 	/* Park the FSM at O1: refuse every advance so the GPON never ranges and
 	 * the shared switch datapath stops churning. */
@@ -303,8 +294,7 @@ struct gpon_ploam_cfg {
 	/* Emit a No_message US PLOAM every N ticks at O5.  0 disables, and that
 	 * is the shipped default: stock emits no unsolicited US PLOAM at O5. */
 	unsigned int o5_ploam_keepalive_ticks;
-	/* ★★ G.984.3's RANGING TIMER: leave O4 after this many ticks ...
-	 * dev/MEASURED-gpon_ploam.h.md sec 9. */
+	/* G.984.3's RANGING TIMER */
 	unsigned int o4_ranging_timeout_ticks;
 	/* How often to report a dwell at O1/O2/O3.  0 = silent, which is what a
 	 * family that sets nothing gets. */
@@ -315,8 +305,7 @@ struct gpon_ploam_cfg {
 	u8 data_tcont;		/* Luna 8  */
 };
 
-/* The FSM context. ALL state lives here — there is not one ...
- * dev/MEASURED-gpon_ploam.h.md sec 16. */
+/* The FSM context. ALL state lives here */
 struct gpon_ploam {
 	const struct gpon_ploam_ops *ops;
 	const struct gpon_ploam_cfg *cfg;
@@ -352,17 +341,13 @@ struct gpon_ploam {
 	 * events and by the poll teardowns.  The CAM/table work itself is behind
 	 * the install ops. */
 	bool omcc_installed;		/* OMCC GEM datapath installed              */
-	/* ★★ THE GEM THAT WAS INSTALLED, so a REASSIGNMENT is not ...
-	 * dev/MEASURED-gpon_ploam.h.md sec 17. */
+	/* THE GEM THAT WAS INSTALLED, so a REASSIGNMENT is */
 	u16 omcc_gem;
-	/* ★ MOVED UNCHANGED, AND IT IS DEAD: measured 2026-08-05, ...
-	 * dev/MEASURED-gpon_ploam.h.md sec 18. */
+	/* MOVED UNCHANGED, AND IT IS DEAD */
 	bool tcont_installed;		/* OMCC T-CONT/alloc-id bound (one-shot)     */
-	/* Cleared by the teardowns here and READ by the install gate ...
-	 * dev/MEASURED-gpon_ploam.h.md sec 19. */
+	/* Cleared by the teardowns here and READ by the install */
 	bool data_installed;		/* WAN data GEM datapath installed           */
-	/* ★ THESE THREE ARE SESSION STATE, AND EVERY TEARDOWN CLEARS ...
-	 * dev/MEASURED-gpon_ploam.h.md sec 10. */
+	/* THESE THREE ARE SESSION STATE, AND EVERY TEARDOWN */
 	bool data_gem_solicited;	/* OLT sent the OMCI ME268 Create -> may install */
 	u16  data_gem_port;		/* ★ the OLT's WIRE GEM Port-ID from that ME 268 */
 	/* PLOAM authorization is independent of the single selected HW data path.
@@ -426,8 +411,7 @@ static inline void gpon_ploam_data_alloc_reset(struct gpon_ploam *o)
 }
 
 
-/* Entry points. ★ EVERY ONE TAKES `now_ms`, a free-running ...
- * dev/MEASURED-gpon_ploam.h.md sec 11. */
+/* Entry points. */
 GPON_MUST_CHECK const char *
 gpon_ploam_init(struct gpon_ploam *o, const struct gpon_ploam_ops *ops,
 		const struct gpon_ploam_cfg *cfg, void *sh, const u8 sn[8]);
@@ -440,8 +424,7 @@ void gpon_ploam_set_sn(struct gpon_ploam *o, const u8 sn[8]);
 int gpon_ploam_password_parse(const char *s, u8 out[GPON_PLOAM_PASSWORD_LEN]);
 void gpon_ploam_set_password(struct gpon_ploam *o, const u8 pwd[GPON_PLOAM_PASSWORD_LEN]);
 
-/* The OMCI layer saw the OLT's ME 268 (GEM-CTP) Create for ...
- * dev/MEASURED-gpon_ploam.h.md sec 12. */
+/* The OMCI layer saw the OLT's ME 268 (GEM-CTP) Create */
 void gpon_ploam_set_data_gem_solicited(struct gpon_ploam *o, bool solicited,
 				       u16 port_id);
 

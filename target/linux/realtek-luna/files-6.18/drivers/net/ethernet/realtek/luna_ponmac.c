@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* TIER: FAMILY (prefix luna_) -- silicon shared by one ...
- * dev/MEASURED-luna_ponmac.c.md sec 1. */
+
 
 #include "luna_ponmac.h"
 #include "luna_ponmac_logic.h"	/* hoisted logic */
@@ -10,8 +9,7 @@
 #include <linux/seq_file.h>
 #include <linux/bits.h>
 
-/* The opcodes, the step and the interpreter are the core's ...
- * dev/MEASURED-luna_ponmac.c.md sec 14. */
+/* The opcodes, the step and the interpreter are the */
 #include "gpon_regseq.h"
 
 #define r960_op		gpon_regseq_op
@@ -51,8 +49,7 @@ static int r960_run(const struct luna_ops *o,
 	return gpon_regseq_run(&io, seq, n);
 }
 
-/* RTL9602C GPON PON-MAC / SerDes bring-up, clean-room ...
- * dev/MEASURED-luna_ponmac.c.md sec 7. */
+/* RTL9602C GPON PON-MAC / SerDes bring-up */
 #define C2_SWCORE_BASE		0x1B000000u	/* SDS / swcore offset base    */
 #define C2_PONIP_BASE		0x1BF00000u	/* PON-IP datapath offset base */
 
@@ -109,8 +106,7 @@ static const u32 c2_fib_reg0_banks[] = {
 	C2_FIB_REG(2, 0), C2_FIB_REG(3, 0),
 };
 
-/* Full SerDes analog + WSDS golden table: the operating point ...
- * dev/MEASURED-luna_ponmac.c.md sec 8. */
+/* Full SerDes analog + WSDS golden table */
 static const struct { u32 off; u32 val; } c2_analog[] = {
 	/* WSDS analog front, plus the hex-numbered WSDS_DIG RX-path config. */
 	{ C2_WSDS_ANA(0),             0x00000805 }, { C2_WSDS_ANA(2),             0x0000ffff },
@@ -256,12 +252,10 @@ static const struct r960_op c2_ponmac_init[] = {
 	FLD(C2_PON_SCH_CTRL, 18, 18, 0),	/* rev-A: clear PON_GEN_PIR_DROP    */
 };
 
-/* Drive SDS_ANA_COM REG01 (0x22584) = 0x73a4 (BEN_TTL_OUT ...
- * dev/MEASURED-luna_ponmac.c.md sec 9. */
+/* Drive SDS_ANA_COM REG01 (0x22584) = 0x73a4 */
 int luna_c2_stock_analog = 1;
 
-/* Program the FULL analog CMU/CDR golden table AFTER the SDS ...
- * dev/MEASURED-luna_ponmac.c.md sec 20. */
+/* Program the FULL analog CMU/CDR golden table AFTER the */
 int luna_c2_analog_postreset = 1;
 
 static int rtl9602c_ponmac_init(const struct luna_ops *o)
@@ -280,8 +274,7 @@ static int rtl9602c_ponmac_init(const struct luna_ops *o)
 	return 0;
 }
 
-/* SerDes CDR-lock pulse (the stock CDR-reset behaviour): ...
- * dev/MEASURED-luna_ponmac.c.md sec 10. */
+/* SerDes CDR-lock pulse (the stock CDR-reset behaviour) */
 static int rtl9602c_serdes_cdr_reset(const struct luna_ops *o)
 {
 	u32 cdr = o->rd(C2_SDS_ANA_COM_REG12);
@@ -292,8 +285,7 @@ static int rtl9602c_serdes_cdr_reset(const struct luna_ops *o)
 	return 0;
 }
 
-/* GPON SerDes bring-up, a faithful translation of the stock ...
- * dev/MEASURED-luna_ponmac.c.md sec 11. */
+/* GPON SerDes bring-up, a faithful translation of the */
 static const struct r960_op c2_sds_pre[] = {
 	FLD(C2_SDS_CFG, 4, 0, C2_SDS_MODE_OFF),	/* park CFG_SDS_MODE = off (0x1f) */
 	WR(C2_WSDS_DIG_01, 0),			/* clear force-SDS dummy          */
@@ -321,8 +313,7 @@ static const struct r960_op c2_sds_rstb[] = {
 	DLY(10),
 };
 
-/* Steps 5 + 6: burst-enable output with optic-LOS left ...
- * dev/MEASURED-luna_ponmac.c.md sec 12. */
+/* Steps 5 + 6 */
 static const struct r960_op c2_sds_rx_arm[] = {
 	FLD(C2_WSDS_DIG_18, 12, 12, 1),		/* BEN_OE = 1                     */
 	FLD(C2_WSDS_DIG_18, 15, 15, 0),		/* OPTIC_LOS_SEL_EPON = 0         */
@@ -342,7 +333,7 @@ static const struct r960_op c2_sds_rx_arm[] = {
 	FLD(C2_SDS_FORCE_BEN, 0, 0, 0),		/* BEN_FORCE_MODE = 0 (GTC gates) */
 };
 
-/* Step 6b + TX drive, with serdes_modev1_tx and ... -- dev/MEASURED-luna_ponmac.c.md sec 21. */
+/* Step 6b + TX drive, with serdes_modev1_tx */
 static const struct r960_op c2_sds_tx[] = {
 	FLD(C2_WSDS_DIG_1E,    5,  4, 0),	/* D2A interconnect = 0 (stock)   */
 	FLD(C2_SDS_REG7,      14, 14, 0),	/* SP_CFG_NEG_CLKWR_A2D = 0       */
@@ -351,8 +342,7 @@ static const struct r960_op c2_sds_tx[] = {
 	FLD(C2_SDS_ANA_COM_REG22, 2, 0, 1),	/* REG_TX_EMP = 0x1               */
 };
 
-/* Steps 7a + 7b: force signal-detect on so the MAC reset ...
- * dev/MEASURED-luna_ponmac.c.md sec 13. */
+/* Steps 7a + 7b */
 int luna_c2_postmode_perturb = 1;
 
 /* Milliseconds to wait after forcing the 125M ref and BEFORE releasing the
@@ -447,8 +437,7 @@ static int rtl9602c_ponmac_mode_set(const struct luna_ops *o,
 	if (luna_c2_analog_postreset)
 		c2_program_analog(o);
 
-	/* Step 4: force the 125M ref clock, optionally let the TX CMU ...
-	 * dev/MEASURED-luna_ponmac.c.md sec 22. */
+	/* Step 4: force the 125M ref clock, optionally let the TX */
 	if (luna_c2_skip_rstb_dance) {
 		/* Skip the dance: DIG_1D is already 0x1c000 and DIG_00 already 0xf30, and
 		 * the SDS reset does not clear them, so an assert->release would be a
@@ -456,8 +445,7 @@ static int rtl9602c_ponmac_mode_set(const struct luna_ops *o,
 		pr_info("luna-gpon: skip interface reset-B dance (DIG_1D=0x%x already released)\n",
 			o->rd(C2_WSDS_DIG_1D));
 	} else if (luna_c2_clkgate_rstb) {
-		/* Synchronous clock-gated reset-B release: legacy releases ...
-		 * dev/MEASURED-luna_ponmac.c.md sec 23. */
+		/* Synchronous clock-gated reset-B release */
 		o->wr(C2_WSDS_DIG_00, C2_WSDS_DIG00_RUN | 1u);	/* STOP_CLK=1 (gate, 0xf31) */
 		ret = r960_run(o, c2_sds_rstb + 1, ARRAY_SIZE(c2_sds_rstb) - 1); /* reset-B dance, gated */
 		if (ret)
@@ -522,8 +510,7 @@ static int rtl9602c_ponmac_mode_set(const struct luna_ops *o,
 	}, 1);
 }
 
-/* NO CALLER TODAY (measured 2026-09-10 over the whole overlay)
- * dev/MEASURED-luna_ponmac.c.md sec 24. */
+/* NO CALLER TODAY */
 int luna_ponmac_init(enum luna_chip chip, int rev, int subtype,
 			const struct luna_ops *o)
 {

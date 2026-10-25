@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* TIER: CORE (prefix gpon_) — protocol only. NEVER touches ...
- * dev/MEASURED-gpon_omci_core.c.md sec 1. */
+
 #include <linux/crc32.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -10,8 +9,7 @@
 #include "gpon_omci_me.h"	/* struct omci_onu + the ME model / dynamic store */
 #include "gpon_omci_mic.h"
 
-/* MIC (bytes 44..47) = the I.363.5 / AAL5 CRC-32 over bytes ...
- * dev/MEASURED-gpon_omci_core.c.md sec 2. */
+/* MIC (bytes 44..47) = the I.363.5 / AAL5 CRC-32 over */
 u32 omci_mic_compute(const u8 *msg)
 {
 	return ~crc32_be(~0u, msg, 44);
@@ -31,8 +29,7 @@ bool omci_mic_ok(const u8 *msg, unsigned int len)
 	       msg[46] == (u8)(c >> 8)  && msg[47] == (u8)c;
 }
 
-/* ★ EXPORTED so a host test STAMPS WITH THE SHIPPED STAMPER ...
- * dev/MEASURED-gpon_omci_core.c.md sec 3. */
+/* EXPORTED so a host test STAMPS WITH THE SHIPPED */
 void omci_set_mic(u8 *msg)
 {
 	u32 c = omci_mic_compute(msg);
@@ -43,8 +40,7 @@ void omci_set_mic(u8 *msg)
 	msg[47] = (u8)c;
 }
 
-/* Stamp the baseline trailer (40..43 = 00 00 00 28) + MIC. ...
- * dev/MEASURED-gpon_omci_core.c.md sec 4. */
+/* Stamp the baseline trailer (40..43 = 00 00 00 28) + MIC. */
 void omci_finalize(u8 *msg)
 {
 	msg[40] = 0x00;
@@ -54,8 +50,7 @@ void omci_finalize(u8 *msg)
 	omci_set_mic(msg);
 }
 
-/* GET-response filler: result(8) + attr-mask(9,10) + ...
- * dev/MEASURED-gpon_omci_core.c.md sec 5. */
+/* GET-response filler */
 static u8 omci_get_fill(struct omci_onu *o, u16 class_id, u16 inst, u16 mask,
 			u8 *resp)
 {
@@ -92,8 +87,7 @@ static u8 omci_get_fill(struct omci_onu *o, u16 class_id, u16 inst, u16 mask,
 					OMCI_RC_UNKNOWN_INST :
 					OMCI_RC_UNKNOWN_ME;
 		}
-		/* Opaque set-by-create/set body: no descriptor table exists ...
-		 * dev/MEASURED-gpon_omci_core.c.md sec 19. */
+		/* Opaque set-by-create/set body */
 		memcpy(resp + 11, e->body, e->blen > 25 ? 25 : e->blen);
 		rmask = mask;
 		known = mask;
@@ -107,16 +101,14 @@ static u8 omci_get_fill(struct omci_onu *o, u16 class_id, u16 inst, u16 mask,
 	return (unsup | failed) ? OMCI_RC_ATTR_FAILED : OMCI_RC_OK;
 }
 
-/* Create / Set / Delete: APPLY or NAK, and move MIB-Data-Sync ...
- * dev/MEASURED-gpon_omci_core.c.md sec 6. */
+/* Create / Set / Delete */
 static u8 omci_config_apply(struct omci_onu *o, u8 mt, u16 class_id, u16 inst,
 			    const u8 *msg, unsigned int len, u8 *resp)
 {
 	struct omci_me_inst *e = omci_store_find(o, class_id, inst);
 	u16 mask;
 
-	/* T-CONTs, PPTP Ethernet UNIs and UNI-Gs are all ...
-	 * dev/MEASURED-gpon_omci_core.c.md sec 7. */
+	/* T-CONTs, PPTP Ethernet UNIs and UNI-Gs are */
 	if ((class_id == OMCI_ME_TCONT || class_id == OMCI_ME_PPTP_ETH_UNI ||
 	     class_id == OMCI_ME_UNI_G || class_id == OMCI_ME_ANI_G ||
 	     class_id == OMCI_ME_MAC_BRIDGE_TABLE ||
@@ -141,8 +133,7 @@ static u8 omci_config_apply(struct omci_onu *o, u8 mt, u16 class_id, u16 inst,
 			omci_store_del(o, class_id, inst);
 			return OMCI_RC_ATTR_FAILED;
 		}
-		/* and its filter pre-assign table, the same way and for the
-		 * dev/MEASURED-gpon_omci_core.c.md sec 20. */
+		/* and its filter pre-assign table, the same way and for */
 		if (class_id == OMCI_ME_MAC_BRIDGE_PORT &&
 		    !omci_store_create(o, OMCI_ME_PREASSIGN_FILTER, inst,
 				       NULL, 0)) {
@@ -150,8 +141,7 @@ static u8 omci_config_apply(struct omci_onu *o, u8 mt, u16 class_id, u16 inst,
 			omci_store_del(o, class_id, inst);
 			return OMCI_RC_ATTR_FAILED;
 		}
-		/* and its MAC filter table, the third companion. Through ...
-		 * dev/MEASURED-gpon_omci_core.c.md sec 8. */
+		/* and its MAC filter table, the third companion. */
 		if (class_id == OMCI_ME_MAC_BRIDGE_PORT &&
 		    !omci_store_put(o, OMCI_ME_MAC_BRIDGE_FILTER, inst,
 				    NULL, 0)) {
@@ -259,8 +249,7 @@ int omci_onu_input_ex(struct omci_onu *o, const u8 *msg, unsigned int len,
 	if (accepted)
 		memset(accepted, 0, sizeof(*accepted));
 
-	/* ★ A BASELINE OMCI PDU IS 48 BYTES, FULL STOP (G.988 A.3). ...
-	 * dev/MEASURED-gpon_omci_core.c.md sec 9. */
+	/* A BASELINE OMCI PDU IS 48 BYTES, FULL STOP (G.988 A.3). */
 	o->rx_total++;
 	if (len < OMCI_LEN) {
 		o->rx_runt++;
@@ -279,22 +268,19 @@ int omci_onu_input_ex(struct omci_onu *o, const u8 *msg, unsigned int len,
 	inst = ((u16)msg[6] << 8) | msg[7];
 
 	if (devid != 0x0a) {
-		/* Only the BASELINE message set is modelled. An ...
-		 * dev/MEASURED-gpon_omci_core.c.md sec 10. */
+		/* Only the BASELINE message set is modelled. */
 		if (devid == 0x0b)
 			o->rx_extended++;
 		return 0;
 	}
 
-	/* ★ THE MIC GATE, BEFORE THE REPLAY CACHE. A corrupted frame ...
-	 * dev/MEASURED-gpon_omci_core.c.md sec 21. */
+	/* THE MIC GATE, BEFORE THE REPLAY CACHE. */
 	if (!omci_mic_ok(msg, len)) {
 		o->rx_bad_mic++;
 		return 0;
 	}
 
-	/* G.988 11.2.2.1 retained last response: the OMCC is ...
-	 * dev/MEASURED-gpon_omci_core.c.md sec 11. */
+	/* G.988 11.2.2.1 retained last response */
 	if (o->have_last[prio] && !memcmp(msg, o->last_req[prio], 40)) {
 		memcpy(resp, o->last_resp[prio], OMCI_LEN);
 		o->dup_replay++;
@@ -323,8 +309,7 @@ int omci_onu_input_ex(struct omci_onu *o, const u8 *msg, unsigned int len,
 		/* a provisioning event is the walk's GOAL, reached: rearm it */
 		o->audit_reads = 0;
 		o->mds_tries = 0;
-		/* ★★★ AND THE VEIP OPER-UP AVC MUST BE RE-EMITTED. A MIB-Reset
-		 * dev/MEASURED-gpon_omci_core.c.md sec 12. */
+		/* AND THE VEIP OPER-UP AVC MUST BE RE-EMITTED. */
 		o->avc_veip_up_sent = false;
 		resp[8] = OMCI_RC_OK;
 		if (accepted)
@@ -359,8 +344,7 @@ int omci_onu_input_ex(struct omci_onu *o, const u8 *msg, unsigned int len,
 		}
 		break;
 	case OMCI_MT_GET_ALL_ALARMS:
-		/* Alarm-entry count at contents[8..9], NO result byte — same ...
-		 * dev/MEASURED-gpon_omci_core.c.md sec 13. */
+		/* Alarm-entry count at contents[8..9], NO result byte */
 		omci_put_be16(resp + 8, omci_alarm_count(o));
 		o->alarm_snapshot_class = omci_alarm_count(o) ? o->alarm_class : 0;
 		o->alarm_snapshot_inst = o->alarm_inst;
@@ -400,8 +384,7 @@ int omci_onu_input_ex(struct omci_onu *o, const u8 *msg, unsigned int len,
 			if (e) {
 				omci_put_be16(resp + 8, e->class_id);
 				omci_put_be16(resp + 10, e->inst);
-				/* ★ EVERY DENSE CLASS, not just ME 268. A row that announces ...
-				 * dev/MEASURED-gpon_omci_core.c.md sec 14. */
+				/* EVERY DENSE CLASS, not just ME 268. */
 				if (omci_me_dense_len(e->class_id)) {
 					omci_me_fill(o, e->class_id, e->inst, 0xffff,
 						     resp + 14, resp + 40, &wmask, &wknown);
@@ -435,12 +418,10 @@ int omci_onu_input_ex(struct omci_onu *o, const u8 *msg, unsigned int len,
 		resp[8] = OMCI_RC_OK;
 		break;
 	case OMCI_MT_GET_NEXT:
-		/* Get Next walks a TABLE attribute. ⚠ THE MODEL NOW DEFINES ...
-		 * dev/MEASURED-gpon_omci_core.c.md sec 15. */
+		/* Get Next walks a TABLE attribute. */
 		break;
 	default:
-		/* A message type with no ONU-side action. Answer result 0x00 ...
-		 * dev/MEASURED-gpon_omci_core.c.md sec 16. */
+		/* A message type with no ONU-side action. */
 		o->unhandled++;
 		break;
 	}
@@ -456,8 +437,7 @@ int omci_onu_input_ex(struct omci_onu *o, const u8 *msg, unsigned int len,
 	}
 	omci_finalize(resp);
 
-	/* Refresh the retransmission cache. It may only ever hold the ...
-	 * dev/MEASURED-gpon_omci_core.c.md sec 17. */
+	/* Refresh the retransmission cache. */
 	if (msg[2] & 0x40) {
 		memcpy(o->last_req[prio], msg, 40);
 		memcpy(o->last_resp[prio], resp, OMCI_LEN);
@@ -483,15 +463,13 @@ int omci_onu_input(struct omci_onu *o, const u8 *msg, unsigned int len, u8 *resp
 	return omci_onu_input_ex(o, msg, len, resp, NULL);
 }
 
-/* Autonomous AVC (MT 0x11, TID 0): report that (class, ...
- * dev/MEASURED-gpon_omci_core.c.md sec 22. */
+/* Autonomous AVC (MT 0x11, TID 0) */
 void omci_onu_set_alarms(struct omci_onu *o, u16 class_id, u16 inst,
 			 u16 bitmap)
 {
 	if (!o)
 		return;
-	/* ★ ONE ME'S WORTH TODAY, and the shape says so rather than ...
-	 * dev/MEASURED-gpon_omci_core.c.md sec 23. */
+	/* ONE ME'S WORTH TODAY, and the shape says so rather */
 	o->alarm_class = class_id;
 	o->alarm_inst = inst;
 	o->alarm_active = bitmap;
@@ -523,8 +501,7 @@ int omci_onu_alarm_prepare(const struct omci_onu *o, u8 *out)
 	omci_put_be16(out + 4, o->alarm_class);
 	omci_put_be16(out + 6, o->alarm_inst);
 
-	/* Contents (octets 8..39). G.988 clause 11.2.2: the alarm ...
-	 * dev/MEASURED-gpon_omci_core.c.md sec 18. */
+	/* Contents (octets 8..39). G.988 clause 11.2.2 */
 	out[8] = (u8)(o->alarm_active >> 8);
 	out[9] = (u8)(o->alarm_active & 0xff);
 

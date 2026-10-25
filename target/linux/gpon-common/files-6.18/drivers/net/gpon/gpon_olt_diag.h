@@ -1,12 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* TIER: CORE, strict host-buildable subset -- no MMIO, no lock, no allocator,
- * and NO CLOCK: every timestamp arrives as an argument.
- *
- * The far end's own conversation -- (sequence, time, O-state, direction, bytes),
- * not just frames -- recorded so it replays off the board. Renderer and parser
- * both live here, so both ends use one codec.
- * dev/MEASURED-gpon_olt_diag.md sec 5.
- */
+
 #ifndef GPON_OLT_DIAG_H
 #define GPON_OLT_DIAG_H
 

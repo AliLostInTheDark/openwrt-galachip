@@ -45,8 +45,7 @@ static inline void l34_wr(struct rtl9602c_l34 *l, u32 off, u32 val)
 	writel(val, l->sw + off);
 }
 
-/* l34_field_get() moved to rtl9602c_l34_logic.c (flowcore, ...
- * dev/MEASURED-rtl9602c_l34.c.md sec 1. */
+/* l34_field_get() moved to rtl9602c_l34_logic.c */
 /* ★ THE BODY MOVED TO FAMILY TIER, 2026-09-16 (luna_l34_acc.h).  This is the ONE
  * thing this family's two L3/L4 engines share -- the NAPT model here and the
  * FLOWBASED model on the RTL9603CVD -- and it lived as `static` inside the file
@@ -72,8 +71,7 @@ static int l34_tbl_read(struct rtl9602c_l34 *l, enum l34_tbl type, u16 idx,
 	return l34_tbl_op(l, type, idx, w, n, false);
 }
 
-/* The writer flowcore's l34_prog_run() drives. flowcore holds ...
- * dev/MEASURED-rtl9602c_l34.c.md sec 2. */
+/* The writer flowcore's l34_prog_run() drives. */
 static int l34_prog_wr(void *ctx, u8 tbl, u16 idx, const u32 *w, unsigned int n)
 {
 	struct rtl9602c_l34 *l = ctx;
@@ -88,8 +86,7 @@ static int l34_prog_wr(void *ctx, u8 tbl, u16 idx, const u32 *w, unsigned int n)
 	return ret;
 }
 
-/* Enable the L34 NAT engine. DEFERRED from init: writing the ...
- * dev/MEASURED-rtl9602c_l34.c.md sec 3. */
+/* Enable the L34 NAT engine. DEFERRED from init */
 static void l34_engine_on(struct rtl9602c_l34 *l)
 {
 	u32 v;
@@ -231,8 +228,7 @@ static int l34_free_way(struct rtl9602c_l34 *l, enum l34_tbl type, u16 bucket,
 	return -ENOSPC;
 }
 
-/* NAPT flow programming. A 4-way hashed pair: the outbound ...
- * dev/MEASURED-rtl9602c_l34.c.md sec 4. */
+/* NAPT flow programming. A 4-way hashed pair */
 int rtl9602c_l34_flow_add(struct rtl9602c_l34 *l, struct l34_flow *f)
 {
 	u32 naptr[L34_WORDS_NAPTR_IN] = { 0 };
@@ -385,8 +381,7 @@ int rtl9602c_l34_flow_hit(struct rtl9602c_l34 *l, u16 hw_index, bool *active)
 	return 0;
 }
 
-/* WAN forwarding bring-up: the per-interface state a NAPT ...
- * dev/MEASURED-rtl9602c_l34.c.md sec 13. */
+/* WAN forwarding bring-up */
 static int l2_busy_wait(struct rtl9602c_l34 *l)
 {
 	unsigned int t;
@@ -757,13 +752,7 @@ int rtl9602c_l34_wan_setup(struct rtl9602c_l34 *l, u8 idx, u32 wan_ip,
 	step[4].words = L34_WORDS_ARP;
 	l34_arp_encode(step[4].w, gw_ip, l2idx);
 
-	/* The /32 CPU self-route for the WAN address.  The LAN side has always
-	 * written one and this side never did, so l34_iface_blackholes() -- our
-	 * own predicate, "the engine claims traffic for this interface and
-	 * nothing terminates its OWN address locally" -- was true for the WAN
-	 * netif on every boot, and /proc/flowdump printed `netif[0] blackholes
-	 * 1` while nobody acted on it.  A NATed reply is addressed to this very
-	 * address.  dev/MEASURED-rtl9602c_l34.c.md sec 14. */
+	/* The /32 CPU self-route for the WAN address. The LAN side has always * written one and this side never did, so l34_iface_blackholes() -- our * own predicate, "the engine claims traffic for this interface and * nothing terminates its OWN address locally" -- was true for the WAN * netif on every boot, and /proc/flowdump printed `netif[0] blackholes * 1` while nobody acted on it. A NATed reply is addressed to this very * address. */
 	step[5].tbl = L34_TBL_L3ROUTE;
 	step[5].idx = idx + L34_RT_CPU_SLOT_OFF;
 	step[5].words = L34_WORDS_L3ROUTE;
@@ -781,8 +770,7 @@ out:
 	return ret;
 }
 
-/* Program a LAN-side interface: a NETIF (the ONU's LAN ...
- * dev/MEASURED-rtl9602c_l34.c.md sec 5. */
+/* Program a LAN-side interface */
 int rtl9602c_l34_lan_setup(struct rtl9602c_l34 *l, u8 idx, u32 lan_ip,
 			   const u8 *lan_mac, u32 lan_net, u8 prefix, u16 vlan)
 {
@@ -794,8 +782,7 @@ int rtl9602c_l34_lan_setup(struct rtl9602c_l34 *l, u8 idx, u32 lan_ip,
 	if (idx >= L34_EXTIP_SLOTS || prefix < 1 || prefix > 32)
 		return -EINVAL;
 
-	/* ★ STEP 0 IS THE CLAIM, AND ON THIS SIDE IT IS THE ONU'S OWN ...
-	 * dev/MEASURED-rtl9602c_l34.c.md sec 6. */
+	/* STEP 0 IS THE CLAIM, AND ON THIS SIDE IT IS THE ONU'S */
 	step[0].tbl = L34_TBL_NETIF;
 	step[0].idx = idx;
 	step[0].words = L34_WORDS_NETIF;
@@ -809,8 +796,7 @@ int rtl9602c_l34_lan_setup(struct rtl9602c_l34 *l, u8 idx, u32 lan_ip,
 	step[1].words = L34_WORDS_L3ROUTE;
 	l34_rt_lan_encode(step[1].w, lan_net, prefix, idx);
 
-	/* The /32 CPU self-route. ⚠ On its own it does NOT keep ...
-	 * dev/MEASURED-rtl9602c_l34.c.md sec 14. */
+	/* The /32 CPU self-route. */
 	step[2].tbl = L34_TBL_L3ROUTE;
 	step[2].idx = idx + L34_RT_CPU_SLOT_OFF;
 	step[2].words = L34_WORDS_L3ROUTE;
@@ -921,8 +907,7 @@ out:
 	return ret;
 }
 
-/* Program BOTH interface slots from one reading of the live ...
- * dev/MEASURED-rtl9602c_l34.c.md sec 7. */
+/* Program BOTH interface slots from one reading of the */
 int rtl9602c_l34_provision(struct rtl9602c_l34 *l, const struct gpon_edge *e)
 {
 	int ret;
@@ -946,8 +931,7 @@ int rtl9602c_l34_provision(struct rtl9602c_l34 *l, const struct gpon_edge *e)
 	return 0;
 }
 
-/* /proc/flowdump: read the outbound NAPT hit bitmap; write ...
- * dev/MEASURED-rtl9602c_l34.c.md sec 8. */
+/* /proc/flowdump: read the outbound NAPT hit bitmap */
 static ssize_t l34_proc_write(struct file *fp, const char __user *ub,
 			      size_t n, loff_t *off)
 {
@@ -994,8 +978,7 @@ static ssize_t l34_proc_write(struct file *fp, const char __user *ub,
 		 * whose per-entry owner can retry the cleanup. */
 		return -EOPNOTSUPP;
 	} else if (buf[0] == 'x') {
-		/* Raw indirect table write: the companion of the read-back ...
-		 * dev/MEASURED-rtl9602c_l34.c.md sec 9. */
+		/* Raw indirect table write */
 		unsigned int tbl, tidx;
 		u32 w[L34_WORDS_MAX] = { 0 };
 		int got = sscanf(buf, "x %u %u %x %x %x %x",
@@ -1022,8 +1005,7 @@ static ssize_t l34_proc_write(struct file *fp, const char __user *ub,
 	return ret ? ret : n;
 }
 
-/* ⚠ `hits_seen` IS RATE-DEPENDENT AND THE NODE SAYS SO. The ...
- * dev/MEASURED-rtl9602c_l34.c.md sec 10. */
+/* ⚠ `hits_seen` IS RATE-DEPENDENT AND THE NODE SAYS SO. */
 /* ★ CONFIG_GPON_FLOW_DIAG gates the READ only.  The bring-up WRITE below is a
  * control, not a measurement: dropping it with a diagnostic flag would change
  * behaviour, and this family is DIAG -- it reports, it never decides. */
@@ -1070,8 +1052,7 @@ static void l34_proc_show_iface(struct seq_file *sf, struct rtl9602c_l34 *l)
 		seq_puts(sf, "engine off -- interface tables not read back\n");
 		return;
 	}
-	/* ★ THE ENGINE CONTROL WORDS, READ BACK. l34_engine_on() ...
-	 * dev/MEASURED-rtl9602c_l34.c.md sec 11. */
+	/* THE ENGINE CONTROL WORDS, READ BACK. */
 	v = l34_rd(l, L34_SWTCR0);
 	seq_printf(sf,
 		   "swtcr0 %08x natmode %u limdbc %u v4flrt %u v6flrt %u\nglb_cfg %08x\n",
@@ -1289,8 +1270,7 @@ static int l34_proc_show(struct seq_file *sf, void *v)
 			   &l->edge.wan_ip, &l->edge.gw_ip, l->edge.gw_mac,
 			   L34_NETIF_WAN, &l->edge.lan_net, l->edge.lan_prefix,
 			   l->edge.lan_mac, L34_NETIF_LAN);
-	/* ★ THE THREE COUNTS THAT SEPARATE FOUR DIFFERENT SILENCES, ...
-	 * dev/MEASURED-rtl9602c_l34.c.md sec 12. */
+	/* THE THREE COUNTS THAT SEPARATE FOUR DIFFERENT */
 	/* ★ THE CORE'S OWN LINE, identical on every family: which of the
 	 * lifecycle's sixteen refusal causes fired, and how often.  The four
 	 * fields below it are what only THIS shell can read; `cap` is the chip's
@@ -1314,8 +1294,7 @@ static int l34_proc_show(struct seq_file *sf, void *v)
 	seq_printf(sf, "binds %u\noffered %u\ninstalls %u\nremovals %u\nrefusals %u\nds_legs %u\n",
 		   l->binds, l->offered, l->installs,
 		   l->removals, l->refusals, l->ds_legs);
-	/* ★ THE FEW LINES THAT DECIDE, ON DEMAND -- not a log flood. ...
-	 * dev/MEASURED-rtl9602c_l34.c.md sec 15. */
+	/* THE FEW LINES THAT DECIDE, ON DEMAND -- not a log flood. */
 	if (l->vlan_refused)
 		seq_printf(sf, "vlan_refused %u last_vid %u\n",
 			   l->vlan_refused, l->vlan_refused_vid);

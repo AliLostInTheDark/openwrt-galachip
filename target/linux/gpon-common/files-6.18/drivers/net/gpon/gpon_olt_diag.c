@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* TIER: CORE, strict host-buildable subset.  See gpon_olt_diag.h for what this
- * is; dev/MEASURED-gpon_olt_diag.md for the stock mechanism it answers and the
- * measured byte costs. */
+/* See gpon_olt_diag.h for what this is. */
 #include <linux/kernel.h>
 #include <linux/types.h>
 

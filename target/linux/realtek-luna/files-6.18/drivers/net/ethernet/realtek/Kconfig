@@ -82,20 +82,10 @@ config LUNA_DEBUG
 	bool "Luna family bring-up diagnostics (boot markers, frame dumps, link diag, PHY survey)"
 	default n
 	help
-	  Also the platform's early boot markers ([P] [M] [L] [T] [I] [i]) and its
-	  LUNA-DIAG CPU / CM lines, on every Luna board (2026-09-29).
-	  The FAMILY member of the per-category debug set (operator, 2026-09-22:
-	  "DEBUG por categoria ... para evitar sobrecargar el firmware"). It
-	  compiles in the bring-up aids of luna_eth.c: the first-N RX/TX frame
-	  hex dumps, the periodic per-port link/rxpkts diagnostic and the PHY
-	  survey with its `resurvey` knob; and rtl9602c_eth.c's first-N OMCI TX
-	  descriptor prints (one with a 120 us busy-wait each, in the MIB-upload
-	  window) and its per-frame DHCP-DS RX check. They printed on EVERY boot of a
-	  shipping image. Off, their knobs are constants 0 and the code is gone.
-	  The capability stays in the source; only this decides whether it is
-	  built. MEASURED 2026-09-22 (G24W, gcc 14.3): luna_eth.o 35768 -> 33846
-	  bytes of text, 333 -> 317 of data with it off -- about 1.9 KB; 2026-09-30
-	  (X111W): rtl9602c_eth.o 55875 -> 55283 bytes of text.
+	  Bring-up aids: the early boot markers ([P] [M] [L] [T] [I] [i]),
+	  the first OMCI TX descriptor prints and the per-frame DHCP RX check
+	  in rtl9602c_eth.c. Off, their knobs are constant 0 and the code is
+	  not built.
 
 if NET_VENDOR_REALTEK
 

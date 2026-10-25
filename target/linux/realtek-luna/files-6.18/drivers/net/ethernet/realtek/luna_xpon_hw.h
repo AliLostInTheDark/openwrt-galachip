@@ -20,6 +20,19 @@ struct luna_xpon_optics {
 	u32 bias_ua;
 	u32 tx_nw;
 	u32 rx_nw;
+	u16 alarms;	/* SFF-8472 A2h bytes 112-113 */
+};
+
+/* Downstream PON counters since boot, folded from clear-on-read registers. */
+struct luna_xpon_pm {
+	u64 bip_errors;
+	u64 fec_corrected_bytes;
+	u64 fec_corrected_codewords;
+	u64 fec_uncorrectable_codewords;
+	u64 fec_total_codewords;
+	u64 fec_seconds;
+	bool ds_fec;
+	bool us_fec;
 };
 
 u8 luna_xpon_hw_state(void);
@@ -35,6 +48,10 @@ int luna_xpon_hw_gem_install(unsigned int slot, u16 gem, int qid);
 void luna_xpon_hw_gem_remove(unsigned int slot);
 bool luna_xpon_hw_mic_valid(const u8 *msg, unsigned int len);
 int luna_xpon_hw_optics(struct luna_xpon_optics *o);
+void luna_xpon_hw_pm(struct luna_xpon_pm *pm);
+int luna_xpon_hw_a2h(u8 off, u8 *buf, unsigned int len);
+bool luna_xpon_hw_allow_tx(void);
+int luna_xpon_hw_set_allow_tx(bool on);
 void luna_xpon_hw_get_identity(u8 sn[8], u8 password[10]);
 int luna_xpon_hw_set_identity(const u8 *sn, const u8 *password);
 

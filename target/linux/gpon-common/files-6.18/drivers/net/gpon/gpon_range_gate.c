@@ -18,8 +18,7 @@ void gpon_range_plan(const struct gpon_range_request *r,
 	if (!r)
 		return;
 
-	/* NOTHING TO DO comes first AND touches no hardware: ...
-	 * dev/MEASURED-gpon_range_gate.c.md sec 1. */
+	/* NOTHING TO DO comes first AND touches no hardware */
 	if (r->ranging_now && r->identity_defined && !r->identity_changed &&
 	    r->activation_wanted && r->laser_wanted) {
 		a->activated = true;

@@ -4,7 +4,7 @@
  *
  * PLOAM stays in luna_gpon.c. omcid owns the MIB and asks for T-CONTs, GEM
  * ports and services, which this file binds through luna_xpon_hw.h. The
- * services ride gpon0 through the CPU: upstream frames choose their GEM flow
+ * services ride pon0 through the CPU: upstream frames choose their GEM flow
  * by VLAN and get the service's network tag.
  */
 #include <linux/ctype.h>
@@ -18,6 +18,7 @@
 #include <linux/workqueue.h>
 #include <net/xpon.h>
 #include <net/xpon/omci.h>
+#include <linux/optical_frontend.h>
 
 #include "luna_gpon_nic.h"
 #include "luna_xpon_hw.h"
@@ -601,24 +602,60 @@ static int luna_xpon_delete_service(struct omci_device *odev, u32 cookie)
 	return 0;
 }
 
+/* SFF-8472 A2h alarm flags, bytes 112-113 as one big-endian word. */
+static const struct {
+	u16 bit;
+	u32 alarm;
+} luna_xpon_alarms[] = {
+	{ BIT(15), OPTICAL_FRONTEND_ALARM_HIGH_TEMP },
+	{ BIT(14), OPTICAL_FRONTEND_ALARM_LOW_TEMP },
+	{ BIT(13), OPTICAL_FRONTEND_ALARM_HIGH_VOLTAGE },
+	{ BIT(12), OPTICAL_FRONTEND_ALARM_LOW_VOLTAGE },
+	{ BIT(11), OPTICAL_FRONTEND_ALARM_TX_HIGH_BIAS },
+	{ BIT(10), OPTICAL_FRONTEND_ALARM_TX_LOW_BIAS },
+	{ BIT(9), OPTICAL_FRONTEND_ALARM_TX_HIGH_POWER },
+	{ BIT(8), OPTICAL_FRONTEND_ALARM_TX_LOW_POWER },
+	{ BIT(7), OPTICAL_FRONTEND_ALARM_RX_HIGH_POWER },
+	{ BIT(6), OPTICAL_FRONTEND_ALARM_RX_LOW_POWER },
+};
+
 static int luna_xpon_get_telemetry(struct omci_device *odev,
 				   struct omci_telemetry *t)
 {
 	struct luna_xpon_optics o;
-	int rc = luna_xpon_hw_optics(&o);
+	struct luna_xpon_pm pm;
+	unsigned int i;
 
-	if (rc)
-		return rc;
+	luna_xpon_hw_pm(&pm);
+	t->downstream_fec = pm.ds_fec ? OMCI_FEC_STATUS_UP : OMCI_FEC_STATUS_DOWN;
+	t->upstream_fec = pm.us_fec ? OMCI_FEC_STATUS_UP : OMCI_FEC_STATUS_DOWN;
+	t->valid |= OMCI_TELEMETRY_F_FEC_DOWNSTREAM | OMCI_TELEMETRY_F_FEC_UPSTREAM;
+	if (luna_xpon_hw_state() == GPON_O5) {
+		t->bip_errors = pm.bip_errors;
+		t->fec_corrected_bytes = pm.fec_corrected_bytes;
+		t->fec_corrected_codewords = pm.fec_corrected_codewords;
+		t->fec_uncorrectable_codewords = pm.fec_uncorrectable_codewords;
+		t->fec_total_codewords = pm.fec_total_codewords;
+		t->fec_seconds = pm.fec_seconds;
+		t->valid |= OMCI_TELEMETRY_F_BIP_ERRORS | OMCI_TELEMETRY_F_FEC_COUNTERS;
+	}
+
+	if (luna_xpon_hw_optics(&o))
+		return 0;
 	t->bosa_temperature_mc = o.temp_mc;
 	t->bosa_voltage_uv = o.vcc_uv;
 	t->bosa_bias_ua = o.bias_ua;
 	t->bosa_tx_power_nw = o.tx_nw;
 	t->bosa_rx_power_nw = o.rx_nw;
+	for (i = 0; i < ARRAY_SIZE(luna_xpon_alarms); i++)
+		if (o.alarms & luna_xpon_alarms[i].bit)
+			t->bosa_alarms |= luna_xpon_alarms[i].alarm;
 	t->valid |= OMCI_TELEMETRY_F_BOSA_TEMPERATURE |
 		    OMCI_TELEMETRY_F_BOSA_VOLTAGE |
 		    OMCI_TELEMETRY_F_BOSA_BIAS |
 		    OMCI_TELEMETRY_F_BOSA_TX_POWER |
-		    OMCI_TELEMETRY_F_BOSA_RX_POWER;
+		    OMCI_TELEMETRY_F_BOSA_RX_POWER |
+		    OMCI_TELEMETRY_F_BOSA_ALARMS;
 	return 0;
 }
 
@@ -865,15 +902,28 @@ static u16 luna_xpon_lan_vid(const struct luna_xpon_service *s, u8 mode,
 	       uni_vid : s->vlan;
 }
 
+/* The better of two candidate services for a frame with priority @pcp. */
+static bool luna_xpon_better(const struct luna_xpon_service *s,
+			     const struct luna_xpon_service *best, int pcp)
+{
+	if (!best)
+		return true;
+	if (pcp >= 0 && s->pcp_valid && s->pcp == pcp)
+		return !(best->pcp_valid && best->pcp == pcp);
+	return luna_xpon_rank(s) < luna_xpon_rank(best);
+}
+
 /*
  * The upstream flow for a frame, after giving it the service's network tag:
  * a frame the LAN sends untagged takes the VLAN of the service whose UNI side
- * is untagged. Returns the flow or a negative errno; the skb may be replaced,
- * and is freed when vlan_insert_tag fails.
+ * is untagged. A tagged frame that matches no LAN-side VLAN but carries a
+ * service's network VLAN, as omci-vlanscan's probes do, goes out unchanged;
+ * else a VLAN-transparent service takes it. Returns the flow or a negative
+ * errno; the skb may be replaced, and is freed when vlan_insert_tag fails.
  */
 int luna_xpon_tx_flow(struct sk_buff **pskb)
 {
-	const struct luna_xpon_service *svc = NULL, *s;
+	const struct luna_xpon_service *svc = NULL, *net_svc = NULL, *any = NULL, *s;
 	struct sk_buff *skb = *pskb;
 	u16 tci = 0, vid, uni_vid;
 	u8 mode, svc_mode = OMCI_UNI_VLAN_SAME;
@@ -892,6 +942,11 @@ int luna_xpon_tx_flow(struct sk_buff **pskb)
 			continue;
 		mode = luna_xpon_lan_mode(s, &uni_vid);
 		if (tagged) {
+			if (s->vlan_valid && s->vlan == vid &&
+			    luna_xpon_better(s, net_svc, tci >> VLAN_PRIO_SHIFT))
+				net_svc = s;
+			if (!s->vlan_valid && luna_xpon_better(s, any, -1))
+				any = s;
 			if (!s->vlan_valid || mode == OMCI_UNI_VLAN_UNTAGGED ||
 			    luna_xpon_lan_vid(s, mode, uni_vid) != vid)
 				continue;
@@ -908,9 +963,13 @@ int luna_xpon_tx_flow(struct sk_buff **pskb)
 			svc_mode = mode;
 		}
 	}
+	if (!svc && (net_svc || any)) {
+		svc = net_svc ?: any;
+		svc_mode = OMCI_UNI_VLAN_SAME;
+	}
 	if (svc)
 		flow = svc->flow;
-	if (svc && svc->vlan_valid) {
+	if (svc && svc->vlan_valid && svc_mode != OMCI_UNI_VLAN_SAME) {
 		if (!tagged || svc_mode == OMCI_UNI_VLAN_STACKED) {
 			u16 net = svc->vlan;
 
@@ -1070,11 +1129,11 @@ static ssize_t sfu_vlan_map_store(struct device *dev,
 }
 static DEVICE_ATTR_RW(sfu_vlan_map);
 
-/* The laser follows the PLOAM machine here; there is no hold to release. */
+/* 0 keeps the ONU receive-only: no ranging, laser off. */
 static ssize_t allow_tx_show(struct device *dev, struct device_attribute *attr,
 			     char *buf)
 {
-	return sysfs_emit(buf, "1\n");
+	return sysfs_emit(buf, "%d\n", luna_xpon_hw_allow_tx());
 }
 
 static ssize_t allow_tx_store(struct device *dev, struct device_attribute *attr,
@@ -1083,13 +1142,53 @@ static ssize_t allow_tx_store(struct device *dev, struct device_attribute *attr,
 	bool on;
 	int rc = kstrtobool(buf, &on);
 
-	if (rc)
-		return rc;
-	return on ? count : -EOPNOTSUPP;
+	if (!rc)
+		rc = luna_xpon_hw_set_allow_tx(on);
+	return rc ?: count;
 }
 static DEVICE_ATTR_RW(allow_tx);
 
+/* SFF-8472 A2h diagnostics 0x60-0x71, in the units omci_telemetry uses. */
+static ssize_t bosa_ddm_show(struct device *dev, struct device_attribute *attr,
+			     char *buf)
+{
+	u8 d[18];
+	int rc = luna_xpon_hw_a2h(0x60, d, sizeof(d));
+
+	if (rc)
+		return rc;
+	return sysfs_emit(buf,
+			  "temp_mc=%d vcc_uv=%u bias_ua=%u tx_nw=%u rx_nw=%u alarms=%#06x raw=%*phN\n",
+			  (s16)get_unaligned_be16(d) * 1000 / 256,
+			  get_unaligned_be16(d + 2) * 100, get_unaligned_be16(d + 4) * 2,
+			  get_unaligned_be16(d + 6) * 100, get_unaligned_be16(d + 8) * 100,
+			  get_unaligned_be16(d + 16), 10, d);
+}
+static DEVICE_ATTR_RO(bosa_ddm);
+
+/* SFF-8472 A2h 0x18-0x27: the module's TX and RX power alarm and warning
+ * levels (high alarm, low alarm, high warning, low warning), in nW. */
+static ssize_t bosa_thresholds_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	u8 d[16];
+	int rc = luna_xpon_hw_a2h(0x18, d, sizeof(d));
+
+	if (rc)
+		return rc;
+	return sysfs_emit(buf,
+			  "tx_alarm_high_nw=%u tx_alarm_low_nw=%u tx_warn_high_nw=%u tx_warn_low_nw=%u "
+			  "rx_alarm_high_nw=%u rx_alarm_low_nw=%u rx_warn_high_nw=%u rx_warn_low_nw=%u\n",
+			  get_unaligned_be16(d) * 100, get_unaligned_be16(d + 2) * 100,
+			  get_unaligned_be16(d + 4) * 100, get_unaligned_be16(d + 6) * 100,
+			  get_unaligned_be16(d + 8) * 100, get_unaligned_be16(d + 10) * 100,
+			  get_unaligned_be16(d + 12) * 100, get_unaligned_be16(d + 14) * 100);
+}
+static DEVICE_ATTR_RO(bosa_thresholds);
+
 static struct attribute *luna_xpon_attrs[] = {
+	&dev_attr_bosa_ddm.attr,
+	&dev_attr_bosa_thresholds.attr,
 	&dev_attr_sfu_untag_vlan.attr,
 	&dev_attr_sfu_vlan_map.attr,
 	&dev_attr_allow_tx.attr,

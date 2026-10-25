@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* TIER: CORE, strict host-buildable subset.  It REPORTS: no register, no lock,
- * no allocation, no clock -- dev/MEASURED-gpon_flow_diag.c.md sec 1. */
+
 #include <linux/kernel.h>
 #include <linux/types.h>
 

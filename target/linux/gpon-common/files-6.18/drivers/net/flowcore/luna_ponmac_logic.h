@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* luna_ponmac_logic.h -- logic hoisted out of luna_ponmac.c. ...
- * dev/MEASURED-luna_ponmac_logic.h.md sec 1. */
+/* luna_ponmac_logic.h -- logic hoisted out of luna_ponmac.c. */
 #ifndef _LUNA_PONMAC_LOGIC_H
 #define _LUNA_PONMAC_LOGIC_H
 

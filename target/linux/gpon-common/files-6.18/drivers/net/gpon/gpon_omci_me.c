@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* TIER: CORE (prefix gpon_) — protocol only. NEVER touches ...
- * dev/MEASURED-gpon_omci_me.c.md sec 1. */
+
 #include <linux/kernel.h>
 #include <linux/string.h>
 
@@ -48,8 +47,7 @@ struct omci_me_inst *omci_store_nth(struct omci_onu *o, u16 idx)
 	return NULL;
 }
 
-/* Insert one OLT-created instance. Returns false when the ...
- * dev/MEASURED-gpon_omci_me.c.md sec 2. */
+/* Insert one OLT-created instance. */
 bool omci_store_put(struct omci_onu *o, u16 class_id, u16 inst,
 		    const u8 *body, int blen)
 {
@@ -79,8 +77,7 @@ bool omci_store_put(struct omci_onu *o, u16 class_id, u16 inst,
 	return true;
 }
 
-/* Apply a Set's attribute values to a provisioned instance. ...
- * dev/MEASURED-gpon_omci_me.c.md sec 3. */
+/* Apply a Set's attribute values to a provisioned instance. */
 void omci_store_merge(struct omci_me_inst *e, const u8 *val, int vlen)
 {
 	if (vlen <= 0)
@@ -103,8 +100,8 @@ void omci_store_del(struct omci_onu *o, u16 class_id, u16 inst)
 	}
 }
 
-/* ME attribute model ---- Constant attribute bytes live in ...
- * dev/MEASURED-gpon_omci_me.c.md sec 4. struct omci_identity is in the header:
+/* ME attribute model.
+ * struct omci_identity is in the header:
  * each ONU carries its own copy, seeded from this build default. */
 static const struct omci_identity omci_id_default_bytes = {
 	/* The HSGQ-G008 OLT recognizes HSGQ ONUs; "XPON" was rejected. */
@@ -158,8 +155,7 @@ enum omci_attr_src {
 	OMCI_SRC_MDS,		/* ME 2 #1 = the live MIB-Data-Sync */
 	OMCI_SRC_DYN,		/* v = enum omci_attr_dyn */
 	OMCI_SRC_STORE,		/* v = dense offset in the dynamic instance */
-	/* A LONG attribute the 26-octet dense body cannot hold: ME ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 6. */
+	/* A LONG attribute the 26-octet dense body cannot hold */
 	OMCI_SRC_TBL,
 	/* ★★ A COUNTER THIS MODEL DECLARES AND THIS ONU CANNOT ESTABLISH.
 	 * It occupies its dense slot (so the layout stays stock's) and serves
@@ -214,8 +210,7 @@ enum omci_attr_tbl {
 /* The few attributes whose value is derived from the ME INSTANCE. */
 enum omci_attr_dyn {
 	OMCI_DYN_UNI_ADMIN,	/* ME 11 #5: accepted reported admin state */
-	/* ★★ TWO SELECTORS FOR ONE VALUE, ON PURPOSE. #1 Expected and ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 7. */
+	/* TWO SELECTORS FOR ONE VALUE, ON PURPOSE. */
 	OMCI_DYN_UNI_EXPECTED,	/* ME 11 #1: the expected plug-in type */
 	OMCI_DYN_UNI_TYPE,	/* ME 11 #2: the SENSED type -- the capability */
 	OMCI_DYN_UNI_MAX_FRAME,	/* ME 11 #8: as the OLT set it */
@@ -248,8 +243,7 @@ enum omci_attr_dyn {
 	OMCI_DYN_OMCC,		/* ONU2-G #2: the identity's, else the far end's */
 };
 
-/* One modelled attribute. Rows of the same class are ...
- * dev/MEASURED-gpon_omci_me.c.md sec 8. */
+/* One modelled attribute. */
 struct omci_attr {
 	u16	class_id;
 	u16	v;
@@ -259,8 +253,7 @@ struct omci_attr {
 	u8	access;	/* verified dynamic layout: read=1, write=2, create=4 */
 };
 
-/* G.988 calls the attribute writable and this ONU has exactly ...
- * dev/MEASURED-gpon_omci_me.c.md sec 9. */
+/* G.988 calls the attribute writable and this ONU has */
 #define OMCI_ACCESS_WRITE_UNCHANGED	8
 /* Served by a Get and never uploaded: stock's optionType & 0x31A, read out of
  * its own ME plugins (OMCI-simulate/me_attr_table.py) and identical on four
@@ -375,8 +368,7 @@ static const struct omci_attr omci_attrs[] = {
 	A_D(7, 2,  1, OMCI_DYN_SW_FLAG),	/* #2  Is committed */
 	A_D(7, 3,  1, OMCI_DYN_SW_FLAG),	/* #3  Is active */
 	A_C(7, 4,  1, 1),			/* #4  Is valid */
-	/* ⚠ #5 AND #6 WERE ONE ROW UNTIL 2026-08-31: this table ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 10. */
+	/* ⚠ #5 AND #6 WERE ONE ROW UNTIL 2026-08-31 */
 	A_HIDE(7, 5, 25, OMCI_SRC_ID, offsetof(struct omci_identity, zeros), 0),
 						/* #5  Product code */
 	A_HIDE(7, 6, 16, OMCI_SRC_ID, offsetof(struct omci_identity, zeros), 0),
@@ -385,8 +377,7 @@ static const struct omci_attr omci_attrs[] = {
 	/* ---- ME 11 PPTP Ethernet UNI (inst 0x0101) — THE HGU gate ---- */
 	A_D(11,  1, 1, OMCI_DYN_UNI_EXPECTED),	/* #1  Expected type */
 	A_D(11,  2, 1, OMCI_DYN_UNI_TYPE),	/* #2  Sensed type */
-	/* ★ THE WRITABLE SET IS STOCK'S OWN, MEASURED: both boards' ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 11. */
+	/* THE WRITABLE SET IS STOCK'S OWN, MEASURED */
 	A_CW(11,  3, 1, 0),			/* #3  Auto-detect config */
 	A_CW(11,  4, 1, 0),			/* #4  Eth loopback config */
 	A_D(11,  5, 1, OMCI_DYN_UNI_ADMIN),	/* #5  Admin state */
@@ -501,7 +492,7 @@ static const struct omci_attr omci_attrs[] = {
 	A_ST(45,  9, 1, 12, 7),		/* #9  MAC learning depth  MacLearningDepth */
 	A_ST(45, 10, 4, 13, 7),		/* #10 ageing time         DynamicFilteringAgeingTime */
 
-	/* ME 47 MAC bridge port configuration data ... -- dev/MEASURED-gpon_omci_me.c.md sec 39. */
+	/* ME 47 MAC bridge port configuration */
 	A_ST(47,  1, 2,  0, 7),		/* #1  bridge ID pointer   BridgeIdPtr */
 	A_ST(47,  2, 1,  2, 7),		/* #2  port number         PortNum */
 	A_ST(47,  3, 1,  3, 7),		/* #3  TP type             TPType */
@@ -516,32 +507,29 @@ static const struct omci_attr omci_attrs[] = {
 	A_ST(47, 12, 2, 21, 3),		/* #12 inbound TD ptr      InboundTD */
 	A_ST(47, 13, 1, 23, 7),		/* #13 MAC learning depth  NumOfAllowedMac */
 
-	/* ME 49 MAC bridge port filter table data ... -- dev/MEASURED-gpon_omci_me.c.md sec 12. */
+	/* ME 49 MAC bridge port filter table */
 	A_TBL(49, 1, GPON_MAC_FILTER_ROW_LEN, OMCI_TBL_MAC_FILTER_ROW, 3),
-					/* #1 MAC filter table MACFilterTable ---- ME 50 MAC bridge ...
-					 * dev/MEASURED-gpon_omci_me.c.md sec 13. */
+					/* #1 MAC filter table MACFilterTable ---- ME 50 MAC */
 	A_NO_ATTRS(50),
 
-	/* ME 52 MAC bridge port PM history data ... -- dev/MEASURED-gpon_omci_me.c.md sec 14. */
+	/* ME 52 MAC bridge port PM history */
 	A_ST(52, 1, 1,  0, 1),		/* #1 interval end time    IntervalEndTime (R) */
 	A_ST(52, 2, 2,  1, 7),		/* #2 threshold data 1/2   ThresholdData12Id */
-	/* #3..#7 ARE COUNTERS AND NOTHING COUNTS. ... -- dev/MEASURED-gpon_omci_me.c.md sec 44. */
+	/* #3..#7 ARE COUNTERS AND NOTHING COUNTS. */
 	A_CNT(52, 3, 4,  3),		/* #3 forwarded frames     ForwardedFrameCounter */
 	A_CNT(52, 4, 4,  7),		/* #4 delay exceeded disc  DelayExceededDiscard */
 	A_CNT(52, 5, 4, 11),		/* #5 MTU exceeded disc    MtuExceededDiscard */
 	A_CNT(52, 6, 4, 15),		/* #6 received frames      ReceivedFrameCounter */
 	A_CNT(52, 7, 4, 19),		/* #7 received+discarded   ReceivedAndDiscardedCounter */
 
-	/* ME 78 VLAN tagging operation configuration data ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 15. */
+	/* ME 78 VLAN tagging operation configuration */
 	A_ST(78, 1, 1, 0, 7),		/* #1  upstream op mode    UsTagOpMode */
 	A_ST(78, 2, 2, 1, 7),		/* #2  upstream TCI        UsTagTci */
 	A_ST(78, 3, 1, 3, 7),		/* #3  downstream op mode  DsTagOpMode */
 	A_ST(78, 4, 1, 4, 7),		/* #4  association type    Type */
 	A_ST(78, 5, 2, 5, 7),		/* #5  associated ME ptr   Pointer */
 
-	/* ME 79 MAC bridge port filter pre-assign table ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 16. */
+	/* ME 79 MAC bridge port filter pre-assign */
 	A_ST(79,  1, 1, 0, 3),		/* #1  IPv4 multicast      IPv4McastFilter */
 	A_ST(79,  2, 1, 1, 3),		/* #2  IPv6 multicast      IPv6McastFilter */
 	A_ST(79,  3, 1, 2, 3),		/* #3  IPv4 broadcast      IPv4BcastFilter */
@@ -553,14 +541,12 @@ static const struct omci_attr omci_attrs[] = {
 	A_ST(79,  9, 1, 8, 3),		/* #9  ARP                 ARPFilter */
 	A_ST(79, 10, 1, 9, 3),		/* #10 PPPoE broadcast     PPPoeBcastFilter */
 
-	/* ME 84 VLAN tagging filter data (mib_VlanTagFilterData) -- ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 17. */
+	/* ME 84 VLAN tagging filter data (mib_VlanTagFilterData) */
 	A_ST(84, 1, 24,  0, 7),		/* #1  VLAN filter list    FilterTbl */
 	A_ST(84, 2,  1, 24, 7),		/* #2  forward operation   FwdOp */
 	A_ST(84, 3,  1, 25, 7),		/* #3  number of entries   NumOfEntries */
 
-	/* ME 130 802.1p mapper service profile (mib_Map8021pServProf)
-	 * dev/MEASURED-gpon_omci_me.c.md sec 18. */
+	/* ME 130 802.1p mapper service profile */
 	A_ST(130,  1, 2,  0, 7),	/* #1  TP pointer          TPPtr */
 	A_ST(130,  2, 2,  2, 7),	/* #2  P-bit 0 -> IW TP    IwTpPtrPbit0 */
 	A_ST(130,  3, 2,  4, 7),	/* #3  P-bit 1             IwTpPtrPbit1 */
@@ -576,8 +562,7 @@ static const struct omci_attr omci_attrs[] = {
 	A_ST(130, 12, 1, 19, 7),	/* #12 default P-bit mark  DefPbitMark */
 	A_ST(130, 13, 1, 20, 7),	/* #13 TP type             TPType */
 
-	/* ME 171 extended VLAN tagging operation configuration data
-	 * dev/MEASURED-gpon_omci_me.c.md sec 19. */
+	/* ME 171 extended VLAN tagging operation configuration */
 	A_ST(171, 1, 1, 0, 7),		/* #1  association type    AssociationType */
 	A_C(171, 2, 2, GPON_EXT_VLAN_ROWS),
 					/* #2  table max size (R)  our capacity */
@@ -630,8 +615,7 @@ static const struct omci_attr omci_attrs[] = {
 	A_C(264, 4, 2, 0x0000),			/* #4  Non-OMCI mgmt ID */
 	A_C(264, 5, 2, 0x0000),			/* #5  Relay-agent options */
 
-	/* ME 266 GEM interworking termination point (mib_GemIwTp)
-	 * dev/MEASURED-gpon_omci_me.c.md sec 40. */
+	/* ME 266 GEM interworking termination point */
 	A_ST(266, 1, 2,  0, 7),		/* #1 GEM port CTP pointer GemCtpPtr */
 	A_ST(266, 2, 1,  2, 7),		/* #2 interworking option  IwOpt */
 	A_ST(266, 3, 2,  3, 7),		/* #3 service profile ptr  ServProPtr */
@@ -687,8 +671,7 @@ static const struct omci_attr omci_attrs[] = {
 						 * omci_app creates every one */
 	A_C(278, 4, 1, 0),			/* #4  Priority/weight */
 
-	/* ME 280 GEM traffic descriptor (mib_GemTrafficDescriptor)
-	 * dev/MEASURED-gpon_omci_me.c.md sec 20. */
+	/* ME 280 GEM traffic descriptor */
 	A_ST(280, 1, 4,  0, 7),		/* #1  CIR                 CIR */
 	A_ST(280, 2, 4,  4, 7),		/* #2  PIR                 PIR */
 	A_ST(280, 3, 4,  8, 7),		/* #3  CBS                 CBS */
@@ -698,8 +681,7 @@ static const struct omci_attr omci_attrs[] = {
 	A_ST(280, 7, 1, 18, 7),		/* #7  egress colour mark  EgressColourMarking */
 	A_ST(280, 8, 1, 19, 7),		/* #8  meter type          MeterType */
 
-	/* ME 281 multicast GEM interworking termination point ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 21. */
+	/* ME 281 multicast GEM interworking termination */
 	A_ST(281, 1, 2, 0, 7),		/* #1  GEM CTP pointer     GemCtpPtr */
 	A_ST(281, 2, 1, 2, 7),		/* #2  interworking option IwOpt */
 	A_ST(281, 3, 2, 3, 7),		/* #3  service profile ptr ServProPtr */
@@ -716,8 +698,7 @@ static const struct omci_attr omci_attrs[] = {
 	/* ---- ME 329 VEIP (inst 0x0601) — the HGU marker ---- */
 	A_C(329, 1, 1, 0),			/* #1  Admin state */
 	A_C(329, 2, 1, 0),			/* #2  Op state */
-	/* ⚠ THE SAME OFF-BY-ONE, and on the ME this port's WAN path ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 41. */
+	/* ⚠ THE SAME OFF-BY-ONE, and on the ME this port's WAN */
 	A_ZERO(329, 3, 25),			/* #3  Interdomain name */
 	A_C(329, 4,  2, 0x0000),		/* #4  TCP/UDP pointer */
 	A_C(329, 5,  2, 0x0000),		/* #5  IANA assigned port */
@@ -895,8 +876,7 @@ static const struct omci_attr omci_attrs[] = {
 						 * G.988 class ID) */
 };
 
-/* Is @class_id in a G.988 vendor-reserved range (240..255, ...
- * dev/MEASURED-gpon_omci_me.c.md sec 22. */
+/* Is @class_id in a G.988 vendor-reserved range */
 static bool omci_vendor_class(u16 class_id)
 {
 	return (class_id >= 240 && class_id <= 255) ||
@@ -1086,8 +1066,7 @@ bool omci_me_mutable(u16 class_id)
 	case OMCI_ME_MAC_BRIDGE_PM:
 	case OMCI_ME_GEM_IW_TP:
 	case OMCI_ME_GAL_ETH_PROF:
-	/* The VLAN / classification half. Every attribute stock ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 42. */
+	/* The VLAN / classification half. */
 	case OMCI_ME_VLAN_TAG_OP:
 	case OMCI_ME_PREASSIGN_FILTER:
 	case OMCI_ME_VLAN_TAG_FILTER:
@@ -1336,8 +1315,7 @@ void omci_me_reset_values(struct omci_onu *o)
 	o->omcc_farend = o->farend;
 }
 
-/* How many octets of DENSE attribute body @class_id's ...
- * dev/MEASURED-gpon_omci_me.c.md sec 23. */
+/* How many octets of DENSE attribute body */
 u8 omci_me_dense_len(u16 class_id)
 {
 	const struct omci_attr *a;
@@ -1350,8 +1328,7 @@ u8 omci_me_dense_len(u16 class_id)
 	return end > OMCI_STORE_BODY ? 0 : (u8)end;
 }
 
-/* Create carries only SBC attributes, with no mask. A class ...
- * dev/MEASURED-gpon_omci_me.c.md sec 24. */
+/* Create carries only SBC attributes, with no mask. */
 bool omci_store_create(struct omci_onu *o, u16 class_id, u16 inst,
 		       const u8 *body, unsigned int blen)
 {
@@ -1384,8 +1361,7 @@ bool omci_store_create(struct omci_onu *o, u16 class_id, u16 inst,
 	return omci_store_put(o, class_id, inst, dense, dlen);
 }
 
-/* Can this ONU actually realise the value the OLT asks for in ...
- * dev/MEASURED-gpon_omci_me.c.md sec 25. */
+/* Can this ONU actually realise the value the OLT asks for */
 static bool omci_set_value_realisable(const struct omci_onu *o, int pptp_slot,
 				      const struct omci_attr *a, const u8 *v)
 {
@@ -1492,8 +1468,7 @@ u8 omci_me_set(struct omci_onu *o, u16 class_id, u16 inst, u16 mask,
 		known |= bit;
 		if ((a->access & 2) ||
 		    (a->access & OMCI_ACCESS_WRITE_UNCHANGED) ||
-		    /* ME 11 #5 and ME 264 #2, the administrative states. Both are ...
-		     * dev/MEASURED-gpon_omci_me.c.md sec 26. */
+		    /* ME 11 #5 and ME 264 #2, the administrative states. */
 		    (pptp_slot >= 0 && (a->attr == 1 || a->attr == 5 ||
 					a->attr == 8 || a->attr == 10)) ||
 		    (unig_slot >= 0 && a->attr == 2) ||
@@ -1666,8 +1641,7 @@ static const u8 *omci_attr_bytes(struct omci_onu *o,
 		return e && a->v + a->size <= e->blen ? e->body + a->v : NULL;
 	}
 	case OMCI_SRC_TBL:
-		/* A table attribute read as a scalar. G.988 reads one with ...
-		 * dev/MEASURED-gpon_omci_me.c.md sec 27. */
+		/* A table attribute read as a scalar. */
 		return a->size <= OMCI_ID_SIZEOF(zeros) ? o->id.zeros : NULL;
 	case OMCI_SRC_CNT:
 		return NULL;		/* could not ask -- never a zero */
@@ -1787,8 +1761,7 @@ static const u8 *omci_attr_bytes(struct omci_onu *o,
 	return scratch + 4 - a->size;
 }
 
-/* the ONE generic attribute filler ---- Shared by GET and ...
- * dev/MEASURED-gpon_omci_me.c.md sec 28. */
+/* the ONE generic attribute filler ---- Shared by GET */
 u8 omci_me_fill(struct omci_onu *o, u16 class_id, u16 inst, u16 mask,
 		u8 *v, const u8 *end, u16 *rmask_out, u16 *known_out)
 {
@@ -2014,8 +1987,7 @@ bool omci_onu_declare_unis(struct omci_onu *o,
 			   const u16 *unig_inst, const u8 *unig_mgmt_cap,
 			   u8 unig_n)
 {
-	/* The panel as it stands, so a refusal can put it back ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 33. */
+	/* The panel as it stands, so a refusal can put it */
 	struct omci_uni_inv was_pptp = o->pptp_eth_uni, was_unig = o->uni_g;
 	u8 was_cap[OMCI_UNI_MAX], was_type[OMCI_UNI_MAX];
 	u8 i;
@@ -2036,8 +2008,7 @@ bool omci_onu_declare_unis(struct omci_onu *o,
 	omci_uni_defaults(o);
 	omci_build_mib(o);
 	if (o->rows_dropped) {
-		/* ⚠ A PANEL THAT DOES NOT FIT IS PUT BACK, NOT LEFT INSTALLED
-		 * dev/MEASURED-gpon_omci_me.c.md sec 43. */
+		/* ⚠ A PANEL THAT DOES NOT FIT IS PUT BACK, NOT LEFT */
 		o->pptp_eth_uni = was_pptp;
 		o->uni_g = was_unig;
 		memcpy(o->uni_g_mgmt_cap, was_cap, sizeof(was_cap));
@@ -2624,15 +2595,13 @@ void omci_onu_set_wan_mac(struct omci_onu *o, const u8 mac[6])
 
 void omci_onu_init(struct omci_onu *o, const u8 sn[8], u8 mds_seed)
 {
-	/* ⚠ THIS READS NOTHING OUT OF @o. It is a COLD init: callers ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 34. */
+	/* ⚠ THIS READS NOTHING OUT OF @o. It is a COLD init */
 	memset(o, 0, sizeof(*o));
 	memcpy(o->sn, sn, 8);
 	omci_id_default(&o->id);
 	omci_me_reset_values(o);
 	o->mds = mds_seed;
-	/* Seed the ANI-G optical levels with the static fallback: a ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 35. */
+	/* Seed the ANI-G optical levels with the static fallback */
 	o->mds_adapt = true;
 	o->mds_adapt_reads = OMCI_MDS_ADAPT_READS;
 	o->anig_rx_level = OMCI_ANIG_RX_FALLBACK;
@@ -2749,8 +2718,7 @@ bool omci_inst_exists(struct omci_onu *o, u16 class_id, u16 inst)
 	return false;
 }
 
-/* THE WAN DATA GEM -- which ME 268 the OLT meant for user ...
- * dev/MEASURED-gpon_omci_me.c.md sec 36. */
+/* THE WAN DATA GEM */
 
 enum omci_dgem omci_dgem_classify(const u8 *body, u8 blen,
 				  u16 omcc_gem, u16 mcast_gem, u16 *port_id)
@@ -2858,8 +2826,7 @@ enum omci_tcont_verdict omci_tcont_snoop(u8 mt, const u8 *body,
 	else if (m == OMCI_MT_CREATE)
 		a = ((u16)body[0] << 8) | body[1];	/* SBC: alloc first */
 
-	/* ★★ 0xffff IS THE G.988 DEALLOCATE, NOT NOISE (2026-08-05). ...
-	 * dev/MEASURED-gpon_omci_me.c.md sec 37. */
+	/* 0xffff IS THE G.988 DEALLOCATE, NOT NOISE (2026-08-05). */
 	if (a == 0xffff && cur_alloc && (!cur_inst || inst == cur_inst))
 		return OMCI_TCONT_DEALLOC;
 	if (a && a != 0xffff && a != cur_alloc) {
@@ -2877,8 +2844,7 @@ bool omci_dgem_delete(u8 mt, u16 inst, u16 cur_gem, u16 cur_inst)
 	return cur_gem && (!cur_inst || inst == cur_inst);
 }
 
-/* THE WAN SERVICE SPINE -- where the OLT said this GEM port ...
- * dev/MEASURED-gpon_omci_me.c.md sec 38. */
+/* THE WAN SERVICE SPINE */
 static bool omci_store_attr(struct omci_onu *o, u16 class_id, u16 inst,
 			    u8 attr, u32 *out)
 {

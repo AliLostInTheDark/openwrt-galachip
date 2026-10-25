@@ -5,8 +5,7 @@
 
 #include "luna_ponmac_logic.h"
 
-/* True for the SerDes offsets our golden table writes but the ...
- * dev/MEASURED-luna_ponmac_logic.c.md sec 1. */
+/* True for the SerDes offsets our golden table writes but */
 bool c2_off_overconfig(u32 off)
 {
 	u32 a = off & 0xffffu;

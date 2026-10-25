@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* gpon_unsup.h — REPORT ANYTHING THE FIRMWARE DID NOT ... -- dev/MEASURED-gpon_unsup.h.md sec 1. */
+/* gpon_unsup.h */
 #ifndef GPON_UNSUP_H
 #define GPON_UNSUP_H
 
@@ -18,8 +18,7 @@
 #define GPON_UNSUP_LOG	pr_info
 #endif
 
-/* HOST builds only; in kernel context compiler_attributes.h ...
- * dev/MEASURED-gpon_unsup.h.md sec 2. */
+/* HOST builds only */
 #ifndef noinline
 # if defined(__GNUC__)
 #  define noinline	__attribute__((__noinline__))
@@ -81,7 +80,7 @@ static noinline __maybe_unused void gpon_unsup_emit(const char *subsys,
 		want ? want : "-", c, hex);
 }
 
-/* THE ONE THING A SHELL CALLS: ... -- dev/MEASURED-gpon_unsup.h.md sec 3. */
+/* THE ONE THING A SHELL CALLS */
 #define gpon_unsup_report(kind, cls, val, want, data, len)		\
 	do {								\
 		static unsigned int _gpon_unsup_n;			\

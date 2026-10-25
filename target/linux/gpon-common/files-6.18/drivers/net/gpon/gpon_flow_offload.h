@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* TIER: CORE. ⚠ NOT in the STRICT host-buildable subset -- it ...
- * dev/MEASURED-gpon_flow_offload.h.md sec 1. */
+
 #ifndef GPON_FLOW_OFFLOAD_H
 #define GPON_FLOW_OFFLOAD_H
 
@@ -12,8 +11,7 @@
 struct net_device;
 struct flow_cls_offload;
 
-/* WHAT TO DO to the flow, in vocabulary no accelerator owns. ...
- * dev/MEASURED-gpon_flow_offload.h.md sec 2. */
+/* WHAT TO DO to the flow, in vocabulary no accelerator owns. */
 struct gpon_flow_act {
 	u32 nat_addr;		/* host order					*/
 	u16 nat_port;		/* host order					*/
@@ -29,23 +27,20 @@ struct gpon_flow_act {
 	u8  vlan_pop;		/* DS: 1 = the rule pops one tag		*/
 };
 
-/* The devices the rule names, and which leg this is. The core ...
- * dev/MEASURED-gpon_flow_offload.h.md sec 3. */
+/* The devices the rule names, and which leg this is. */
 struct gpon_flow_ctx {
 	struct net_device *idev;	/* the rule's META ingress	*/
 	struct net_device *odev;	/* the REDIRECT target		*/
 	bool ds_leg;			/* the WAN->LAN reply leg	*/
 };
 
-/* ⚠ `install` OWNS THE INDEX IT RETURNS. The core stores it ...
- * dev/MEASURED-gpon_flow_offload.h.md sec 4. */
+/* ⚠ `install` OWNS THE INDEX IT RETURNS. */
 struct gpon_flow_ops {
 	/* Which side of the box is this netdev on?  The core needs it before it
 	 * can decode the actions at all: the leg discriminates every mangle. */
 	bool (*is_lan_side)(void *sh, struct net_device *dev);
 
-	/* EVERY decision that must read or write silicon, AND the ...
-	 * dev/MEASURED-gpon_flow_offload.h.md sec 5. */
+	/* EVERY decision that must read or write silicon, AND */
 	/* -> 0 installed; <0 the engine REFUSED; GPON_FLOW_DECLINED the family
 	 * declined BY DESIGN -- this leg needs no flow of its own, which is
 	 * not a failure and may not be tallied as one.  ⚠ THE ERRNO CANNOT
@@ -73,8 +68,7 @@ struct gpon_flow_ops {
 	 * false = refused and attributed through note_vlan_action, as before. */
 	bool wan_vlan;
 
-	/* Bytes of per-entry family state, appended to the core's ...
-	 * dev/MEASURED-gpon_flow_offload.h.md sec 6. */
+	/* Bytes of per-entry family state, appended to the */
 	size_t priv_size;
 };
 
@@ -96,8 +90,7 @@ struct gpon_flow_offload *gpon_flow_offload_new(const struct gpon_flow_ops *ops,
 						void *sh);
 void gpon_flow_offload_free(struct gpon_flow_offload *fo);
 
-/* Tear down EVERY installed flow. A family calls this when ...
- * dev/MEASURED-gpon_flow_offload.h.md sec 7. */
+/* Tear down EVERY installed flow. */
 int gpon_flow_offload_flush(struct gpon_flow_offload *fo);
 
 /* The three TC verbs, dispatched by cookie. */
@@ -112,8 +105,7 @@ int gpon_flow_offload_stats(struct gpon_flow_offload *fo,
 int gpon_flow_offload_tc(struct gpon_flow_offload *fo, struct flow_cls_offload *f,
 			 struct net_device *blockdev);
 
-/* Decode a rule's ACTIONS. Split out of replace() so a family ...
- * dev/MEASURED-gpon_flow_offload.h.md sec 8. */
+/* Decode a rule's ACTIONS. */
 int gpon_flow_act_from_tc(struct gpon_flow_offload *fo, struct flow_rule *rule,
 			  bool ds_leg, struct gpon_flow_act *act,
 			  struct net_device **odev_out,

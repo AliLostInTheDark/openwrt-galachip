@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* GN25L95 per-unit calibration: the ORDERED OPERATIONS, as ...
- * dev/MEASURED-gn25l95_cal_logic.h.md sec 1. */
+/* GN25L95 per-unit calibration */
 #ifndef _GN25L95_CAL_LOGIC_H
 #define _GN25L95_CAL_LOGIC_H
 
@@ -31,41 +30,35 @@ int gn25l95_v2802rh_cal_ops(const u8 *cal, u32 cal_len, u8 lan_type,
 
 #define GN_OPS_MAX	1200u
 
-/* Byte I/O, supplied by the family shell. The core builds and ...
- * dev/MEASURED-gn25l95_cal_logic.h.md sec 3. */
+/* Byte I/O, supplied by the family shell. */
 struct gn_io {
 	void *ctx;
 	int (*rd)(void *ctx, u8 slave, u8 reg, u8 *val);
 	int (*wr)(void *ctx, u8 slave, u8 reg, u8 val);
-	/* Where GN_READ_NOTE values land, in order, when `notes` is ...
-	 * dev/MEASURED-gn25l95_cal_logic.h.md sec 8. */
+	/* Where GN_READ_NOTE values land, in order, when `notes` */
 	u8  *notes;
 	u32 notes_max;
 	u32 notes_n;
 };
 
-/* Where the sequence stopped. `op` is the index into the op ...
- * dev/MEASURED-gn25l95_cal_logic.h.md sec 4. */
+/* Where the sequence stopped. */
 struct gn_fail {
 	u32 op;
 	u8  reg, got, want, mask;
 	int err;
 };
 
-/* Execute `ops` in order, stopping at the FIRST failure. -> ...
- * dev/MEASURED-gn25l95_cal_logic.h.md sec 5. */
+/* Execute `ops` in order, stopping at the FIRST failure. */
 int gn25l95_cal_apply(const struct gn_op *ops, u32 n, struct gn_io *io,
 		      struct gn_fail *f);
 
-/* POSITIVE IDENTIFICATION, exactly as both units' own stock ...
- * dev/MEASURED-gn25l95_cal_logic.h.md sec 6. */
+/* POSITIVE IDENTIFICATION, exactly as both units' own */
 #define GN_PROBE_OPS	11u
 #define GN_PROBE_NOTES	3u
 
 int gn25l95_probe_ops(struct gn_op *out, u32 out_max);
 
-/* > true when the three noted bytes are a GN28L9x family id, ...
- * dev/MEASURED-gn25l95_cal_logic.h.md sec 7. */
+/* > true when the three noted bytes are a GN28L9x family */
 bool gn25l95_is_gn28l9x(const u8 id[GN_PROBE_NOTES]);
 
 #endif /* _GN25L95_CAL_LOGIC_H */

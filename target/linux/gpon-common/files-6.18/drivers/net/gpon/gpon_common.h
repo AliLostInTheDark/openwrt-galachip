@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* gpon_common.h -- THE CONTRACT between the HW-decoupled GPON ...
- * dev/MEASURED-gpon_common.h.md sec 10. */
+/* gpon_common.h */
 #ifndef GPON_COMMON_H
 #define GPON_COMMON_H
 
@@ -31,8 +30,7 @@
  * SILICON and is therefore NOT part of this buffer. */
 #define GPON_PLOAM_US_LEN	12u
 
-/* Canonical ONU activation state, G.984.3 clause 10 names, ...
- * dev/MEASURED-gpon_common.h.md sec 2. */
+/* Canonical ONU activation state, G.984.3 clause 10 */
 enum gpon_ostate {
 	GPON_O1_INITIAL		= 1,	/* no downstream sync                */
 	GPON_O2_STANDBY		= 2,	/* DS sync, awaiting parameters      */
@@ -43,9 +41,8 @@ enum gpon_ostate {
 	GPON_O7_EMERGENCY	= 7,	/* emergency stop (SN disabled)      */
 };
 
-/* The dwell rule, whoever runs the FSM (our core on Luna, the MAC silicon on Cortina): a state
- * held this many ticks without progress goes back to O1.  O3: an SN nobody hears
- * (MEASURED-gpon_ploam.c.md sec 47); O4: G.984.3 TO1, stock's 10 s (sec 48). */
+/* A state held this many ticks without progress goes back to O1.  O3: a serial
+ * nobody answers; O4: G.984.3 TO1, 10 s as stock. */
 #define GPON_DWELL_TICK_MS	10
 #define GPON_DWELL_O3_TICKS	3000
 #define GPON_DWELL_TO1_TICKS	1000
@@ -66,16 +63,14 @@ enum gpon_gem_dir {
 	GPON_GEM_BIDIR	= 3,	/* bidirectional — THE data GEM */
 };
 
-/* Which upstream PLOAM queue a decision wants its message on: ...
- * dev/MEASURED-gpon_common.h.md sec 11. */
+/* Which upstream PLOAM queue a decision wants its message on */
 enum gpon_ploam_q {
 	GPON_PLOAM_Q_SN,	/* Serial_Number_ONU: the auto-SN slot        */
 	GPON_PLOAM_Q_URGENT,	/* Acknowledge, Password, Encryption_Key      */
 	GPON_PLOAM_Q_NOMSG,	/* the idle No_message keepalive slot         */
 };
 
-/* Per-chip facts. A member belongs here only if BOTH hold: ...
- * dev/MEASURED-gpon_common.h.md sec 3. */
+/* Per-chip facts. A member belongs here only if BOTH hold */
 struct gpon_chip_cfg {
 	/* F2 — one-past-the-end of the GET response value area.  36 is
 	 * conformant (G.988 always reserves 36-37 and 38-39); realtek-luna
@@ -88,8 +83,7 @@ struct gpon_chip_cfg {
 	u8			mt_get_next;
 };
 
-/* ANYTHING THE CORE DID NOT UNDERSTAND — two classes, and ...
- * dev/MEASURED-gpon_common.h.md sec 4. */
+/* ANYTHING THE CORE DID NOT UNDERSTAND */
 enum gpon_unsup_class {
 	GPON_UNSUP_UNKNOWN = 0,
 	GPON_UNSUP_RANGE   = 1,
@@ -112,11 +106,9 @@ static inline void gpon_unsup_call(gpon_unsup_fn fn, void *sh, const char *kind,
 		fn(sh, kind, (int)cls, val, want, data, len);
 }
 
-/* CALL CONTEXT — mixing the two classes is the largest ...
- * dev/MEASURED-gpon_common.h.md sec 5. */
+/* CALL CONTEXT */
 struct gpon_shell_ops {
-	/* PLOAM activation. One consumer today (realtek-luna): elnath ...
-	 * dev/MEASURED-gpon_common.h.md sec 6. */
+	/* PLOAM activation. One consumer today (realtek-luna) */
 	void (*ploam_tx)(void *sh, enum gpon_ploam_q q,
 			 const u8 msg[GPON_PLOAM_US_LEN]);
 
@@ -128,15 +120,13 @@ struct gpon_shell_ops {
 	 * copy.  <- luna_gpon.c:6805-6236 and the four teardown paths */
 	void (*set_hw_onu_id)(void *sh, u8 onu_id);
 
-	/* Upstream equalization delay in bits, as Ranging_Time gave it
-	 * dev/MEASURED-gpon_common.h.md sec 7. */
+	/* Upstream equalization delay in bits, as Ranging_Time gave */
 	void (*set_eqd)(void *sh, u32 eqd_bits);
 
 	/* <- luna_gpon.c:6940 gpon_apply_boh() */
 	void (*apply_boh)(void *sh, bool ranged);
 
-	/* Re-lock the transmit analog at O3 entry: the cold-start ...
-	 * dev/MEASURED-gpon_common.h.md sec 12. */
+	/* Re-lock the transmit analog at O3 entry */
 	void (*analog_relock)(void *sh);
 
 	/* Load a 128-bit AES key into the STAGED bank; hardware promotes
@@ -153,8 +143,7 @@ struct gpon_shell_ops {
 	 * core stays deterministic under replay and fuzzing. */
 	void (*rng)(void *sh, u8 *out, unsigned int len);
 
-	/* GEM / T-CONT. THE GRANULARITY IS "INSTALL", NEVER "WRITE ...
-	 * dev/MEASURED-gpon_common.h.md sec 8. */
+	/* GEM / T-CONT. */
 	int (*omcc_install)(void *sh, u16 alloc, u16 gem);
 
 	/* The user-data path, as snooped from ME 262 / ME 268.
@@ -171,12 +160,10 @@ struct gpon_shell_ops {
 	 * <- cortina-gpon.c:2393 cg_omci_tx() */
 	int (*omci_tx)(void *sh, const u8 *pdu, unsigned int len);
 
-	/* diagnostics: NEVER load-bearing. A NULL ->trace must change ...
-	 * dev/MEASURED-gpon_common.h.md sec 13. */
+	/* diagnostics: NEVER load-bearing. */
 	void (*trace)(void *sh, unsigned int ev, u32 a, u32 b);
 
-	/* ONE datum the core received and could not place. Same ...
-	 * dev/MEASURED-gpon_common.h.md sec 9. */
+	/* ONE datum the core received and could not place. */
 	gpon_unsup_fn unsupported;
 };
 

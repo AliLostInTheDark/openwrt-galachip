@@ -16,8 +16,7 @@
 
 #include "gpon_edge.h"
 
-/* The L3 interface above a driver's netdev. On a router built ...
- * dev/MEASURED-gpon_edge.c.md sec 1. */
+/* The L3 interface above a driver's netdev. */
 static struct net_device *gpon_edge_l3_dev(struct net_device *dev)
 {
 	struct net_device *master = netdev_master_upper_dev_get_rcu(dev);
@@ -104,8 +103,7 @@ int gpon_edge_read_via(struct net_device *lan, struct net_device *wan,
 	memset(e, 0, sizeof(*e));
 	rcu_read_lock();
 
-	/* ★★ THE ROUTE COMES FIRST, AND IT NAMES THE WAN L3 DEVICE. ⚠ ...
-	 * dev/MEASURED-gpon_edge.c.md sec 2. */
+	/* THE ROUTE COMES FIRST, AND IT NAMES THE WAN L3 DEVICE. */
 	rt = ip_route_output_key(dev_net(wan), &fl4);
 	if (IS_ERR(rt)) {
 		*why = "no route to the flow's destination";
@@ -125,8 +123,7 @@ int gpon_edge_read_via(struct net_device *lan, struct net_device *wan,
 		goto out_put;
 	}
 	wan_l3 = rt->dst.dev;
-	/* ⚠ AND IT MUST LEAVE THROUGH THE PORT THIS ENGINE OWNS. A ...
-	 * dev/MEASURED-gpon_edge.c.md sec 3. */
+	/* ⚠ AND IT MUST LEAVE THROUGH THE PORT THIS ENGINE OWNS. */
 	if (!gpon_edge_rides(wan_l3, wan) && odev != wan) {
 		*why = "the WAN route leaves through a device this engine does not drive";
 		ret = -EOPNOTSUPP;

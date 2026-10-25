@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* luna_vlan_install.c -- the Luna family's gpon_vlan_ops. ...
- * dev/MEASURED-luna_vlan_install.c.md sec 1. */
+/* luna_vlan_install.c -- the Luna family's gpon_vlan_ops. */
 #include <linux/errno.h>
 #include <linux/types.h>
 
 #include "luna_vlan_install.h"
 #include "regtable.h"		/* struct reg / reg_rc / REG_AT */
 
-/* The three dies. Addresses: VLAN_PB_VID's base, width and ...
- * dev/MEASURED-luna_vlan_install.c.md sec 2. */
+/* The three dies. Addresses */
 const struct luna_vlan_regs luna_vlan_rtl9602c = {
 	.name		= "RTL9602C",
 	.pb_vid		= REG_AT(0x1300c),
@@ -110,8 +108,7 @@ int luna_vlan_rule_to_pvid(const struct gpon_vlan_rule *r, u16 *vid)
 	 * port default VID says. */
 	if (w.shape != GPON_VLAN_SHAPE_PUSH || w.write != 1 || !w.all_assigned)
 		return -EOPNOTSUPP;
-	/* ⚠ AND THE FILTER MUST BE THE WHOLE PORT. A default VID has ...
-	 * dev/MEASURED-luna_vlan_install.c.md sec 3. */
+	/* ⚠ AND THE FILTER MUST BE THE WHOLE PORT. */
 	if ((r->f.s_mode & LUNA_VLAN_FILTER_MATCHES) ||
 	    (r->f.c_mode & LUNA_VLAN_FILTER_MATCHES))
 		return -EOPNOTSUPP;
@@ -162,8 +159,7 @@ static int luna_vlan_rule_install(void *ctx, const struct gpon_vlan_rule *r)
 	return luna_vlan_pvid_write(c, vid);
 }
 
-/* Remove: put the port back on the default VID this driver ...
- * dev/MEASURED-luna_vlan_install.c.md sec 4. */
+/* Remove: put the port back on the default VID this */
 #define LUNA_VLAN_SHIPPED_PVID	1u
 
 static int luna_vlan_rule_remove(void *ctx, const struct gpon_vlan_rule *r)
@@ -182,8 +178,7 @@ static int luna_vlan_rule_remove(void *ctx, const struct gpon_vlan_rule *r)
 	return luna_vlan_pvid_write(c, LUNA_VLAN_SHIPPED_PVID);
 }
 
-/* ⚠ THE FIVE NULL SLOTS SAY SOMETHING, and it is not "not ...
- * dev/MEASURED-luna_vlan_install.c.md sec 5. */
+/* ⚠ THE FIVE NULL SLOTS SAY SOMETHING, and it is not */
 const struct gpon_vlan_ops luna_vlan_ops = {
 	.rule_install	= luna_vlan_rule_install,
 	.rule_remove	= luna_vlan_rule_remove,

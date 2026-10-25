@@ -8,8 +8,7 @@
 #include "gpon_omci_core.h"	/* OMCI_MT_*: the ONE numbering of Table 11.2.2-1 */
 #include "gpon_omci_trace.h"
 
-/* G.988 Table 11.2.2-1. 32 entries because the message type ...
- * dev/MEASURED-gpon_omci_trace.c.md sec 1. */
+/* G.988 Table 11.2.2-1. */
 static const char *const gpon_omci_mt[32] = {
 	[OMCI_MT_CREATE]		= "Create",
 	[OMCI_MT_DELETE]		= "Delete",

@@ -19,8 +19,7 @@ void l34_field_set(u32 *w, unsigned int lsp, unsigned int width, u32 val)
 		take = min(width, 32 - bit);
 		w[word] &= ~((((take >= 32) ? ~0u : ((1u << take) - 1))) << bit);
 		w[word] |= (val & ((take >= 32) ? ~0u : ((1u << take) - 1))) << bit;
-		/* ⚠ `val >>= take` was UNDEFINED on the 32-bit-wide fields ...
-		 * dev/MEASURED-rtl9602c_l34_logic.c.md sec 1. */
+		/* ⚠ `val >>= take` was UNDEFINED on the 32-bit-wide */
 		val = (take >= 32) ? 0 : (val >> take);
 		width -= take;
 		word++;
@@ -28,8 +27,7 @@ void l34_field_set(u32 *w, unsigned int lsp, unsigned int width, u32 val)
 	}
 }
 
-/* NAPT bucket hashes (clean-room: the arithmetic is ...
- * dev/MEASURED-rtl9602c_l34_logic.c.md sec 2. */
+/* NAPT bucket hashes */
 u16 l34_hash_out(bool is_tcp, u32 sip, u16 sport, u32 dip, u16 dport)
 {
 	/* low 16 bits of both addresses + both ports, summed then folded 18->10 */
@@ -77,8 +75,7 @@ u32 l34_field_get(const u32 *w, unsigned int lsp, unsigned int width)
 	return val;
 }
 
-/* ===== entry encoders, SPLIT from rtl9602c_l34.c ...
- * dev/MEASURED-rtl9602c_l34_logic.c.md sec 3. */
+/* ===== entry encoders, SPLIT from */
 void l34_mac48_set(u32 *w, unsigned int lsp, const u8 *mac)
 {
 	l34_field_set(w, lsp, 32,
@@ -159,8 +156,7 @@ void l34_rt_wan_net_encode(u32 *w, u32 net, u8 prefix, u8 nh_idx)
 	l34_field_set(w, L34_RT_VALID_LSP,     L34_RT_VALID_W,     1);
 }
 
-/* The /32 CPU self-route (mask code 31): traffic addressed to ...
- * dev/MEASURED-rtl9602c_l34_logic.c.md sec 4. */
+/* The /32 CPU self-route (mask code 31) */
 void l34_rt_cpu_encode(u32 *w, u32 own_ip, u8 netif_idx)
 {
 	l34_field_set(w, L34_RT_IP_LSP,      L34_RT_IP_W,      own_ip);
@@ -171,8 +167,7 @@ void l34_rt_cpu_encode(u32 *w, u32 own_ip, u8 netif_idx)
 	l34_field_set(w, L34_RT_VALID_LSP,   L34_RT_VALID_W,   1);
 }
 
-/* Run one ordered interface program, revoking the CLAIM if a ...
- * dev/MEASURED-rtl9602c_l34_logic.c.md sec 5. */
+/* Run one ordered interface program, revoking the CLAIM if */
 int l34_prog_run(const struct l34_prog_step *s, unsigned int n,
 		 l34_tbl_wr_fn wr, void *ctx)
 {
@@ -300,8 +295,7 @@ int l34_l2uc_sts_index(u32 sts)
 	return ((sts & L2_STS_CAM) ? (1 << 10) : 0) | (sts & L2_STS_ADDR_MASK);
 }
 
-/* ===== hoisted from rtl9602c_eth.c (same shell TU) ...
- * dev/MEASURED-rtl9602c_l34_logic.c.md sec 6. */
+/* ===== hoisted from rtl9602c_eth.c */
 void rtl9602c_wan_mac_add(u8 *out, const u8 *base, unsigned int add)
 {
 	int i;
@@ -316,8 +310,7 @@ void rtl9602c_wan_mac_add(u8 *out, const u8 *base, unsigned int add)
 	}
 }
 
-/* DS-OMCI classifier + length guard, SPLIT from ...
- * dev/MEASURED-rtl9602c_l34_logic.c.md sec 7. */
+/* DS-OMCI classifier + length guard, SPLIT */
 bool rtl9602c_rx_is_ds_omci(const struct luna_rx_layout *rxl,
 			    bool trap_on, u32 opts2, u32 opts3,
 			    const u8 *data, u32 len, unsigned int pon_port,
@@ -333,8 +326,7 @@ bool rtl9602c_rx_is_ds_omci(const struct luna_rx_layout *rxl,
 	       !(data[cpu_prefix + 2] & 0x80);
 }
 
-/* WAN demux verdict, SPLIT from rtl9602c_eth_rx(): does this ...
- * dev/MEASURED-rtl9602c_l34_logic.c.md sec 8. */
+/* WAN demux verdict, SPLIT from rtl9602c_eth_rx() */
 bool rtl9602c_rx_wan_demux(const struct luna_rx_layout *rxl, u32 opts3,
 			   const u8 *dst, const u8 *wan_mac,
 			   unsigned int pon_port)
@@ -359,7 +351,7 @@ unsigned int rtl9602c_omci_hwring(unsigned int omci_tx_ring)
 	return omci_tx_ring > 5 ? 4 : omci_tx_ring;
 }
 
-/* Which doorbell kicks HW ring h, SPLIT from ... -- dev/MEASURED-rtl9602c_l34_logic.c.md sec 9. */
+/* Which doorbell kicks HW ring h, SPLIT */
 bool rtl9602c_omci_doorbell(unsigned int omci_tx_ring,
 			    unsigned int doorbell_ovr,
 			    unsigned int *hwring, u32 *mask)
@@ -378,8 +370,7 @@ bool rtl9602c_omci_doorbell(unsigned int omci_tx_ring,
 	return false;
 }
 
-/* rtl9602c_rxdesnum_pack / rtl9602c_rxcdo_pack MOVED to ...
- * dev/MEASURED-rtl9602c_l34_logic.c.md sec 10. */
+/* rtl9602c_rxdesnum_pack / rtl9602c_rxcdo_pack MOVED */
 /* Pattern 0: upstream unicast IPv4 on the routed WAN -> data GEM SID. */
 void l34_cf_wan_encode(u32 rule[2], u32 mask[2], u32 action[3],
 		       u8 netif, u8 sid)
@@ -403,8 +394,7 @@ u32 rtl9602c_omci_txd_word3(u32 ovr, unsigned int sid)
 	return ovr ? ovr : TXD3_OMCI_9602C(sid);
 }
 
-/* Bad-frame verdict, SPLIT from rtl9602c_eth_rx(): is a ...
- * dev/MEASURED-rtl9602c_l34_logic.c.md sec 11. */
+/* Bad-frame verdict, SPLIT from rtl9602c_eth_rx() */
 bool rtl9602c_rx_frame_bad(u32 opts1, u32 err_mask, u32 len,
 			   unsigned int cpu_prefix, u32 buf_size)
 {
