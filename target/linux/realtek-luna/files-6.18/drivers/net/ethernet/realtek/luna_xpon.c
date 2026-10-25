@@ -295,9 +295,14 @@ static int luna_xpon_get_ani_topology(struct omci_device *odev,
 		.queues_per_tcont = 8,
 		.queue_config_option = 1,
 		.scheduler_policy = 2,
-		.gem_port_count = LUNA_XPON_GEMS,
+		/* ONU2-G as the GC1601 reports it, which Nokia accepts */
+		.gem_port_count = 256,
+		.qos_configuration = BIT(3) | BIT(4),
 		.downstream_queues_per_uni = 8,
-		.flags = OMCI_TOPOLOGY_F_FULL_UNI_ENTITY,
+		/* Nokia's VEIP service arrives over PLOAM without OMCI Creates:
+		 * omcid seeds it, as on the GC1601. */
+		.flags = OMCI_TOPOLOGY_F_PROFILE_SERVICES |
+			 OMCI_TOPOLOGY_F_FULL_UNI_ENTITY,
 	};
 	return 0;
 }
@@ -484,20 +489,22 @@ static int luna_xpon_set_gem_port(struct omci_device *odev, u16 entity,
 	return 0;
 }
 
-/* The single-queue backend has no configured QoS or GEM policer to clear.
- * Keep explicit scheduling/rate requests unsupported until they are mapped
- * to hardware; accepting them would silently discard the OLT's policy.
- */
+/* Each T-CONT drains one hardware queue at full rate: the OLT's queue
+ * weights and GEM rate limits are not applied yet. */
 static int luna_xpon_set_tcont_qos(struct omci_device *odev, u16 entity,
 				   const struct omci_tcont_qos *qos)
 {
-	return qos->enabled ? -EOPNOTSUPP : 0;
+	if (qos->enabled)
+		pr_info_once("luna-xpon: T-CONT QoS from the OLT is not applied\n");
+	return 0;
 }
 
 static int luna_xpon_set_gem_rate(struct omci_device *odev, u16 gem,
 				  bool upstream, u32 rate, u32 burst)
 {
-	return rate || burst ? -EOPNOTSUPP : 0;
+	if (rate || burst)
+		pr_info_once("luna-xpon: GEM rate limits from the OLT are not applied\n");
+	return 0;
 }
 
 static int luna_xpon_uni_port(u16 entity)

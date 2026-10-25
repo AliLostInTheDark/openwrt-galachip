@@ -188,7 +188,8 @@ static int qos(struct omci_device *odev, u16 entity, const struct omci_tcont_qos
 
 	memcpy(q.weight, value->weight, sizeof(q.weight));
 	ret = omcid_backend(odev->priv, OMCI_BACKEND_TCONT_QOS, &q, sizeof(q), NULL, 0);
-	return ret == -EOPNOTSUPP && !value->enabled ? 0 : ret;
+	/* A provider without QoS hardware keeps its defaults. */
+	return ret == -EOPNOTSUPP ? 0 : ret;
 }
 
 static int rate(struct omci_device *odev, u16 port, bool upstream, u32 rate, u32 burst)
@@ -196,7 +197,7 @@ static int rate(struct omci_device *odev, u16 port, bool upstream, u32 rate, u32
 	struct omci_backend_rate q = { port, upstream, rate, burst };
 	int ret = omcid_backend(odev->priv, OMCI_BACKEND_GEM_RATE, &q, sizeof(q), NULL, 0);
 
-	return ret == -EOPNOTSUPP && !rate && !burst ? 0 : ret;
+	return ret == -EOPNOTSUPP ? 0 : ret;
 }
 
 static int uni(struct omci_device *odev, u16 entity, bool enabled)
