@@ -38,15 +38,6 @@ config device
 	option type 'bridge'
 	list ports 'eth0'
 
-# ⚠ THE ADDRESS IS THIS SoC'S OWN, AND IT USED TO BE THE OTHER BOARD'S.
-# The per-SoC split was made deliberately content-identical to taroko, which
-# copied the X111W's declared LAN address (192.168.1.12) into the subtarget the
-# G24W boots -- two boards on ONE LAN segment claiming one address. It has been
-# masked at runtime by the uci-default `09-luna-lan-addr`, which sets .13 from
-# the board name at first boot, so nothing failed and the duplicate survived
-# the split; if that script ever does not run (a board name it does not know, a
-# first boot that does not reach uci-defaults) the collision is live and the
-# symptom is two DHCP servers answering at one address.
 config interface 'lan'
 	option device 'br-lan'
 	option proto 'static'

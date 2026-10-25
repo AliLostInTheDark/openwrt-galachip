@@ -66,7 +66,7 @@ config device
 config interface 'lan'
 	option device 'br-lan'
 	option proto 'static'
-	option ipaddr '192.168.1.12'
+	option ipaddr '192.168.1.1'
 	option netmask '255.255.255.0'
 	option ip6assign '60'
 	list ip6class 'local'

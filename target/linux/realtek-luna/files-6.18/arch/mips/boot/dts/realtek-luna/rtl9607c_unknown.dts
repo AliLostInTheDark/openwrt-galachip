@@ -36,7 +36,7 @@
 
 	/delete-node/ board_setting;
 	/* ethernet@18012000 KEPT (2026-09-29): luna_eth binds it and needs none of
-	 * the nodes deleted here; the LAN address comes from 09-luna-lan-addr (.14). */
+	 * the nodes deleted here. */
 	/delete-node/ switch@0;
 	/delete-node/ gpio@1b000038;
 	/delete-node/ soft_ipc@18141180;
