@@ -9517,8 +9517,12 @@ bool luna_xpon_hw_mic_valid(const u8 *msg, unsigned int len)
 int luna_xpon_hw_optics(struct luna_xpon_optics *o)
 {
 	struct gpon_ddm_a2h d;
+	int rc;
 
-	if (bosa_a2h_read(&d) != GPON_DDM_OK)
+	mutex_lock(&bosa_lock);
+	rc = bosa_a2h_read(&d);
+	mutex_unlock(&bosa_lock);
+	if (rc != GPON_DDM_OK)
 		return -EIO;
 	o->temp_mc = gpon_ddm_temp_dc(d.temp) * 100;
 	o->vcc_uv = gpon_ddm_vcc_mv(d.vcc) * 1000;

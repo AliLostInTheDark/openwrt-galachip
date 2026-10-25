@@ -88,10 +88,18 @@ static struct {
 	unsigned int vlan_maps;
 	struct device *dev;
 	struct work_struct reconcile_work;
+	/* activation events waiting for process context */
+	struct work_struct event_work;
+	spinlock_t ev_lock;
+	unsigned int ev;
+	u8 ev_state;
+	u8 ev_onu_id;
+	u16 ev_gem;
 	bool data_up;
 } luna_xpon = {
 	.lock = __MUTEX_INITIALIZER(luna_xpon.lock),
 	.svc_lock = __SPIN_LOCK_UNLOCKED(luna_xpon.svc_lock),
+	.ev_lock = __SPIN_LOCK_UNLOCKED(luna_xpon.ev_lock),
 };
 
 /* A board opts in with realtek,omci-userspace on its GPON node; the others
@@ -491,13 +499,52 @@ static void luna_xpon_reconcile_fn(struct work_struct *work)
 		omci_device_reconcile_services(odev);
 }
 
+/*
+ * The activation machine reports from its timer and its PLOAM worker, under
+ * spinlocks, while the OMCI device's notifications read the optics over I2C
+ * and sleep. Events are recorded here and delivered from process context.
+ */
+#define LUNA_XPON_EV_STATE	BIT(0)
+#define LUNA_XPON_EV_ONU_ID	BIT(1)
+#define LUNA_XPON_EV_CHANNEL	BIT(2)
+
+static void luna_xpon_post(unsigned int ev, u8 state, u8 onu_id, u16 gem)
+{
+	unsigned long flags;
+
+	if (!READ_ONCE(luna_xpon.odev))
+		return;
+	spin_lock_irqsave(&luna_xpon.ev_lock, flags);
+	luna_xpon.ev |= ev;
+	if (ev & LUNA_XPON_EV_STATE)
+		luna_xpon.ev_state = state;
+	if (ev & LUNA_XPON_EV_ONU_ID)
+		luna_xpon.ev_onu_id = onu_id;
+	if (ev & LUNA_XPON_EV_CHANNEL)
+		luna_xpon.ev_gem = gem;
+	spin_unlock_irqrestore(&luna_xpon.ev_lock, flags);
+	schedule_work(&luna_xpon.event_work);
+}
+
 void luna_xpon_report_state(u8 state)
 {
-	struct omci_device *odev = READ_ONCE(luna_xpon.odev);
+	luna_xpon_post(LUNA_XPON_EV_STATE, state, 0, 0);
+}
+
+void luna_xpon_report_onu_id(u8 onu_id)
+{
+	luna_xpon_post(LUNA_XPON_EV_ONU_ID, 0, onu_id, 0);
+}
+
+void luna_xpon_report_channel(u16 gem)
+{
+	luna_xpon_post(LUNA_XPON_EV_CHANNEL, 0, 0, gem);
+}
+
+static void luna_xpon_deliver_state(struct omci_device *odev, u8 state)
+{
 	enum xpon_registration_state reg;
 
-	if (!odev)
-		return;
 	omci_device_set_state(odev, state);
 	if (state == GPON_O5)
 		schedule_work(&luna_xpon.reconcile_work);
@@ -523,22 +570,34 @@ void luna_xpon_report_state(u8 state)
 	xpon_device_report_registration(luna_xpon.xpon, reg);
 }
 
-void luna_xpon_report_onu_id(u8 onu_id)
+static void luna_xpon_event_fn(struct work_struct *work)
 {
 	struct omci_device *odev = READ_ONCE(luna_xpon.odev);
+	unsigned int ev;
+	u8 state, onu_id;
+	u16 gem;
 
-	if (odev)
-		omci_device_set_onu_id(odev, onu_id);
-}
-
-void luna_xpon_report_channel(u16 gem)
-{
-	struct omci_device *odev = READ_ONCE(luna_xpon.odev);
-
+	spin_lock_irq(&luna_xpon.ev_lock);
+	ev = luna_xpon.ev;
+	luna_xpon.ev = 0;
+	state = luna_xpon.ev_state;
+	onu_id = luna_xpon.ev_onu_id;
+	gem = luna_xpon.ev_gem;
+	spin_unlock_irq(&luna_xpon.ev_lock);
 	if (!odev)
 		return;
-	luna_xpon_forget();
-	omci_device_set_channel(odev, gem, true);
+
+	if (ev & LUNA_XPON_EV_ONU_ID)
+		omci_device_set_onu_id(odev, onu_id);
+	if (ev & LUNA_XPON_EV_CHANNEL) {
+		/* The OMCC install scrubbed the CAMs: what we bound is gone. */
+		mutex_lock(&luna_xpon.lock);
+		luna_xpon_forget();
+		mutex_unlock(&luna_xpon.lock);
+		omci_device_set_channel(odev, gem, true);
+	}
+	if (ev & LUNA_XPON_EV_STATE)
+		luna_xpon_deliver_state(odev, state);
 }
 
 void luna_xpon_report_alloc(void)
@@ -871,6 +930,7 @@ int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 		return -EBUSY;
 
 	INIT_WORK(&luna_xpon.reconcile_work, luna_xpon_reconcile_fn);
+	INIT_WORK(&luna_xpon.event_work, luna_xpon_event_fn);
 	luna_xpon.wan = wan;
 	luna_xpon.cookie = cookie;
 	luna_xpon.tx = tx;
@@ -926,6 +986,7 @@ void luna_xpon_detach(void *cookie)
 	if (!odev || luna_xpon.cookie != cookie)
 		return;
 	WRITE_ONCE(luna_xpon.odev, NULL);
+	cancel_work_sync(&luna_xpon.event_work);
 	cancel_work_sync(&luna_xpon.reconcile_work);
 	omci_device_stop(odev);
 	omci_device_unregister(odev);
