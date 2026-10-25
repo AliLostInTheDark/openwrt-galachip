@@ -87,14 +87,13 @@
 		realtek,tx-disable-gpio = <13>;
 	};
 
-	/* Stock reports two GE UNIs (gePortNum=2): switch port 0 is the RTL8221B
-	 * 2.5G PHY on the SerDes, port 1 the internal GE PHY. The instance order
-	 * and the rest of the panel are copied from the X100DG until this unit's
-	 * own MIB is read off an OLT. */
+	/* As stock's MIB on the OLT reports them: PPTP 0x0101 is LAN1, the
+	 * internal GE PHY on switch port 1 (type 47); 0x0102 is LAN2, the
+	 * RTL8221B on the port 0 SerDes (type 50, 2.5G). */
 	omci-uni {
 		ethernet-uni-instances = /bits/ 16 <0x0101 0x0102>;
-		ethernet-uni-ports = /bits/ 8 <0 1>;
-		ethernet-uni-types = /bits/ 8 <47 47>;
+		ethernet-uni-ports = /bits/ 8 <1 0>;
+		ethernet-uni-types = /bits/ 8 <47 50>;
 		uni-g-instances = /bits/ 16 <0x0101 0x0102 0x0601>;
 		uni-g-management-capability = /bits/ 8 <1 1 0>;
 		circuit-packs = /bits/ 16 <
@@ -184,4 +183,6 @@
 &gpon {
 	memory-region = <&pbo_us>, <&pbo_ds>;
 	realtek,port-leds = <1 2>;
+	/* OMCI in omcid (G7 stack) through net/xpon, not the in-kernel responder. */
+	realtek,omci-userspace;
 };

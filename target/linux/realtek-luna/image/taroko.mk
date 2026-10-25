@@ -156,10 +156,10 @@ define Device/vsol_v2802rh
 	append-rootfs | pad-rootfs | check-size | append-metadata
   # An L2 bridge: no routing, NAT, DHCP server, firewall or WiFi. Nor TLS,
   # package fetching or process jails, which would leave no room in r0 for
-  # LuCI and the overlay.
+  # LuCI and the overlay. OMCI runs in omcid, as on the XZ000-G7.
   DEVICE_PACKAGES := -iw -dnsmasq -firewall4 -nftables -kmod-nft-offload \
 	-odhcpd-ipv6only -odhcp6c -ppp -ppp-mod-pppoe -wpad-basic-mbedtls \
 	-procd-ujail -libustream-mbedtls -uclient-fetch -ca-bundle \
-	gpon-provision
+	gpon-provision omcid omci-agent luci-app-omci
 endef
 TARGET_DEVICES += vsol_v2802rh

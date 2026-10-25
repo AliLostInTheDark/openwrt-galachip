@@ -9,8 +9,10 @@ case "$board" in
 vsol,v2802rh)
 	uci -q delete network.wan
 	uci -q delete network.wan6
-	uci -q del_list network.@device[0].ports='gpon0'
-	uci -q add_list network.@device[0].ports='gpon0'
+	# omcid's PON netdev; omci.main.untag_vlan names the VLAN the LAN
+	# sends untagged
+	uci -q del_list network.@device[0].ports='pon0'
+	uci -q add_list network.@device[0].ports='pon0'
 	uci -q commit network
 	uci -q set gpon.wan_auto.enabled='0'
 	uci -q commit gpon
