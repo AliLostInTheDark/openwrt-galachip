@@ -35,7 +35,8 @@ struct luna_xpon_tcont {
 	u16 entity;
 	u16 alloc;
 	u8 qid;
-	bool hw;	/* a data T-CONT of ours, not the OMCC's */
+	bool hw;	/* a data T-CONT installed in the MAC */
+	bool omcc;	/* the ONU-ID's own Alloc-ID: data shares the OMCC queue */
 	bool valid;
 };
 
@@ -44,6 +45,7 @@ struct luna_xpon_gem {
 	u16 gem;
 	u16 tcont;
 	u8 dir;
+	bool hw;
 	bool valid;
 };
 
@@ -136,7 +138,7 @@ static void luna_xpon_update_data(void)
 	unsigned int i;
 
 	for (i = 0; i < LUNA_XPON_GEMS; i++)
-		up |= luna_xpon.gem[i].valid &&
+		up |= luna_xpon.gem[i].hw &&
 		      (luna_xpon.gem[i].dir & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI);
 	WRITE_ONCE(luna_xpon.data_up, up);
 }
@@ -176,10 +178,10 @@ static int luna_xpon_backend_reset(struct omci_device *odev)
 	unsigned int i;
 
 	for (i = 0; i < LUNA_XPON_GEMS; i++)
-		if (luna_xpon.gem[i].valid)
+		if (luna_xpon.gem[i].hw)
 			luna_xpon_hw_gem_remove(i);
 	for (i = 0; i < LUNA_XPON_TCONTS; i++)
-		if (luna_xpon.tcont[i].valid && luna_xpon.tcont[i].hw)
+		if (luna_xpon.tcont[i].hw)
 			luna_xpon_hw_tcont_remove(i);
 	luna_xpon_forget();
 
@@ -240,45 +242,64 @@ static struct luna_xpon_tcont *luna_xpon_tcont_find(u16 entity)
 	return NULL;
 }
 
+/*
+ * The MIB names T-CONTs and GEM ports before PLOAM grants their Alloc-IDs,
+ * and seeds T-CONTs with none at all. Bindings are kept and reach the MAC
+ * once the Alloc-ID is granted: the grant reconciles the MIB again. Until
+ * then a service on them has no flow and replace_service defers it.
+ */
+static int luna_xpon_tcont_bind(struct luna_xpon_tcont *t)
+{
+	unsigned int slot = t - luna_xpon.tcont;
+	int rc;
+
+	if (t->hw || t->omcc)
+		return 0;
+	if (t->alloc == luna_xpon_hw_onu_id()) {
+		t->omcc = true;
+		t->qid = luna_xpon_hw_omcc_qid();
+		return 0;
+	}
+	if (!luna_xpon_hw_alloc_known(t->alloc))
+		return 0;
+	rc = luna_xpon_hw_tcont_install(slot, t->alloc);
+	if (rc)
+		return rc;
+	t->hw = true;
+	t->qid = luna_xpon_hw_tcont_qid(slot);
+	return 0;
+}
+
+static bool luna_xpon_tcont_ready(const struct luna_xpon_tcont *t)
+{
+	return t && (t->hw || t->omcc);
+}
+
 static int luna_xpon_set_tcont(struct omci_device *odev, u16 entity,
 			       u16 alloc, bool valid)
 {
 	struct luna_xpon_tcont *t = luna_xpon_tcont_find(entity);
-	bool omcc = alloc == luna_xpon_hw_onu_id();
 	unsigned int i;
-	int rc;
 
 	if (t && valid && t->alloc == alloc)
-		return 0;
+		return luna_xpon_tcont_bind(t);
 	if (t) {
 		if (t->hw)
 			luna_xpon_hw_tcont_remove(t - luna_xpon.tcont);
-		t->valid = false;
+		*t = (struct luna_xpon_tcont) { };
 	}
 	if (!valid)
 		return 0;
-	/* Only an Alloc-ID the OLT assigned over PLOAM gets grants; omcid keeps
-	 * the service pending until it does. The ONU-ID's own Alloc-ID is the
-	 * OMCC's T-CONT, and data on it shares the OMCC queue. */
-	if (!omcc && !luna_xpon_hw_alloc_known(alloc))
-		return -EAGAIN;
 
 	for (i = 0; i < LUNA_XPON_TCONTS; i++) {
 		if (luna_xpon.tcont[i].valid)
 			continue;
-		if (!omcc) {
-			rc = luna_xpon_hw_tcont_install(i, alloc);
-			if (rc)
-				return rc;
-		}
 		luna_xpon.tcont[i] = (struct luna_xpon_tcont) {
 			.entity = entity,
 			.alloc = alloc,
-			.qid = omcc ? luna_xpon_hw_omcc_qid() : luna_xpon_hw_tcont_qid(i),
-			.hw = !omcc,
 			.valid = true,
 		};
-		return 0;
+		return luna_xpon_tcont_bind(&luna_xpon.tcont[i]);
 	}
 	return -ENOSPC;
 }
@@ -288,6 +309,7 @@ static int luna_xpon_set_gem_port(struct omci_device *odev, u16 entity,
 				  bool valid, bool encrypted)
 {
 	struct luna_xpon_tcont *t = NULL;
+	struct luna_xpon_gem *g;
 	unsigned int i, slot = LUNA_XPON_GEMS;
 	int rc;
 
@@ -308,12 +330,13 @@ static int luna_xpon_set_gem_port(struct omci_device *odev, u16 entity,
 			return -EEXIST;
 	}
 	if (i < LUNA_XPON_GEMS) {
-		struct luna_xpon_gem *g = &luna_xpon.gem[i];
-
-		if (valid && g->gem == gem && g->tcont == tcont_entity && g->dir == dir)
+		g = &luna_xpon.gem[i];
+		if (valid && g->hw && g->gem == gem && g->tcont == tcont_entity &&
+		    g->dir == dir)
 			return 0;
-		luna_xpon_hw_gem_remove(i);
-		g->valid = false;
+		if (g->hw)
+			luna_xpon_hw_gem_remove(i);
+		*g = (struct luna_xpon_gem) { };
 		slot = i;
 	}
 	if (!valid) {
@@ -322,24 +345,29 @@ static int luna_xpon_set_gem_port(struct omci_device *odev, u16 entity,
 	}
 	if (slot == LUNA_XPON_GEMS)
 		return -ENOSPC;
-	if (dir & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI) {
-		t = luna_xpon_tcont_find(tcont_entity);
-		if (!t)
-			return -EAGAIN;
-	}
-	/* Downstream decryption follows the PLOAM key; nothing to arm per GEM. */
-	(void)encrypted;
 
-	rc = luna_xpon_hw_gem_install(slot, gem, t ? t->qid : -1);
-	if (rc)
-		return rc;
-	luna_xpon.gem[slot] = (struct luna_xpon_gem) {
+	g = &luna_xpon.gem[slot];
+	*g = (struct luna_xpon_gem) {
 		.entity = entity,
 		.gem = gem,
 		.tcont = tcont_entity,
 		.dir = dir,
 		.valid = true,
 	};
+	if (dir & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI) {
+		t = luna_xpon_tcont_find(tcont_entity);
+		if (!luna_xpon_tcont_ready(t))
+			return 0;
+	}
+	/* Downstream decryption follows the PLOAM key; nothing to arm per GEM. */
+	(void)encrypted;
+
+	rc = luna_xpon_hw_gem_install(slot, gem, t ? t->qid : -1);
+	if (rc) {
+		g->valid = false;
+		return rc;
+	}
+	g->hw = true;
 	luna_xpon_update_data();
 	return 0;
 }
@@ -380,7 +408,7 @@ static int luna_xpon_gem_flow(u16 gem)
 	unsigned int i;
 
 	for (i = 0; i < LUNA_XPON_GEMS; i++)
-		if (luna_xpon.gem[i].valid && luna_xpon.gem[i].gem == gem)
+		if (luna_xpon.gem[i].hw && luna_xpon.gem[i].gem == gem)
 			return luna_xpon_hw_gem_flow(i);
 	return -ENOENT;
 }

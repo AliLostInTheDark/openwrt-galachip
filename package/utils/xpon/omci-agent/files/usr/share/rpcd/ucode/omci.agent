@@ -191,7 +191,10 @@ function profile_value(value) {
 	return value;
 }
 
+/* null: no agent reported one, e.g. while omcid is not running */
 function profile_name(value) {
+	if (value == null)
+		return 'none';
 	return profile_names[value] || `unknown-${value}`;
 }
 

@@ -231,7 +231,7 @@ return view.extend({
 		var m, s, o;
 
 		m = new form.Map('omci', _('OMCI configuration'),
-			_('Settings for the GC1601 OMCI agent. Each setting shows when a saved change reaches the OLT. Empty identity fields leave the current values unchanged.'));
+			_('Settings for the OMCI agent. Each setting shows when a saved change reaches the OLT. Empty identity fields leave the current values unchanged.'));
 
 		s = m.section(form.NamedSection, 'main', 'agent');
 		s.anonymous = true;
@@ -382,7 +382,7 @@ return view.extend({
 		o = s.taboption('capabilities', form.Flag, 'dba_status_reporting', _('Report queue status for DBA'));
 		o.default = o.enabled;
 		o.rmempty = false;
-		o.description = _('ANI-G SR indication. On tells the OLT that the ONU sends valid DBRu queue reports, as the GC1601 does; off makes it use traffic-monitoring DBA. The OLT reads it at its next MIB upload.');
+		o.description = _('ANI-G SR indication. On tells the OLT that the ONU sends valid DBRu queue reports; off makes it use traffic-monitoring DBA. The OLT reads it at its next MIB upload.');
 
 		o = s.taboption('capabilities', form.ListValue, 'onu_type', _('ONU type'));
 		o.value('', _('Keep current value'));
