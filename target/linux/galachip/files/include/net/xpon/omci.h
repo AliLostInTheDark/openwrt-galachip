@@ -195,6 +195,8 @@ struct omci_service_config {
 
 /* Permit deployment-specific default GEM/VLAN graphs for this provider. */
 #define OMCI_TOPOLOGY_F_PROFILE_SERVICES BIT(0)
+/* Preserve the UNI type encoded in the high byte for physical port binding. */
+#define OMCI_TOPOLOGY_F_FULL_UNI_ENTITY BIT(1)
 
 struct omci_ani_topology {
 	u16 tcont_base;
