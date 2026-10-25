@@ -1,0 +1,130 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/dts-v1/;
+
+#include "rtl9602c.dtsi"
+
+/* The RTL9601D runs the RTL9602C platform map (see rtl9601d_x100dg.dts). Stock
+ * on this board is Realtek's RTOS SDK ("8671x", SDK V1.3.1), not Linux, so what
+ * follows comes from its U-Boot env, its boot console and a full flash dump. */
+/ {
+	model = "VSOL V2802RH";
+	compatible = "vsol,v2802rh", "realtek,rtl9601d";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	/* 32 MiB DDR2 (U-Boot: "DRAM: 32 MB"), laid out as the X100DG's. */
+	memory@0 {
+		device_type = "memory";
+		reg = <0x00000000 0x016ff000>, <0x01800000 0x006ff000>;
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		pbo_ds: pon-pool@16ff000 {
+			no-map;
+			reg = <0x016ff000 0x00101000>;
+		};
+
+		pbo_us: pon-pool@1eff000 {
+			no-map;
+			reg = <0x01eff000 0x00101000>;
+		};
+	};
+
+	/* Semtech GN25L95, host-calibrated from the stock rtl-25l95-backup.bin.
+	 * Stock drives TX_DISABLE on GPIO 13 ("debug gpio set pin 13"); its I2C
+	 * bus and any TX power pin are not yet measured. */
+	pon-optics {
+		realtek,tx-disable-gpio = <13>;
+	};
+
+	/* Stock reports two GE UNIs (gePortNum=2): switch port 0 is the RTL8221B
+	 * 2.5G PHY on the SerDes, port 1 the internal GE PHY. The instance order
+	 * and the rest of the panel are copied from the X100DG until this unit's
+	 * own MIB is read off an OLT. */
+	omci-uni {
+		ethernet-uni-instances = /bits/ 16 <0x0101 0x0102>;
+		ethernet-uni-ports = /bits/ 8 <0 1>;
+		ethernet-uni-types = /bits/ 8 <47 47>;
+		uni-g-instances = /bits/ 16 <0x0101 0x0102 0x0601>;
+		uni-g-management-capability = /bits/ 8 <1 1 0>;
+		circuit-packs = /bits/ 16 <
+			0x0101 47 2 8 0 0
+			0x0106 48 1 8 0 0
+			0x0180 248 1 128 16 16>;
+		ip-host-instances = /bits/ 16 <0x0000 0x0001 0x0002>;
+		ip-host-wan-mac = /bits/ 8 <0 0 0>;
+		onu-capacity = /bits/ 16 <16 128 16 64>;
+		downstream-queue-ports = /bits/ 16 <0x0101 0x0102 0x0601>;
+	};
+};
+
+&nic {
+	realtek,rx-ring-entries = <256>;
+};
+
+/* Zbit ZB25VQ32, 4 MiB. U-Boot boots the uImage at 0x27000 (bootcmd bootm
+ * 9fc27000), which is not 64 KiB aligned, hence 4 KiB erase. Everything stock
+ * keeps outside the firmware stays read-only: the hardware MIB at 0x25000 (GPON
+ * serial, MAC) and, from 0x3e0000, the OSK1FS files (GN25L95 calibration, OMCI)
+ * and the RTOS config. */
+&spi_nor {
+	compatible = "realtek,luna-spi-nor";
+	reg = <0x14000000 0x400000>, <0x18001200 0x10>;
+	erase-size = <0x1000>;
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		partition@0 {
+			label = "boot";
+			reg = <0x000000 0x021000>;
+			read-only;
+		};
+		partition@21000 {
+			label = "env";
+			reg = <0x021000 0x002000>;
+			read-only;
+		};
+		partition@23000 {
+			label = "env2";
+			reg = <0x023000 0x002000>;
+			read-only;
+		};
+		partition@25000 {
+			label = "config";
+			reg = <0x025000 0x002000>;
+			read-only;
+		};
+		partition@27000 {
+			label = "k0";
+			reg = <0x027000 0x1f9000>;
+		};
+		partition@220000 {
+			label = "r0";
+			reg = <0x220000 0x1c0000>;
+			linux,rootfs;
+		};
+		partition@3e0000 {
+			label = "osk";
+			reg = <0x3e0000 0x020000>;
+			read-only;
+		};
+	};
+};
+
+/* LED pins are not yet mapped (stock PON_LED_SPEC 0). */
+&gpon {
+	memory-region = <&pbo_us>, <&pbo_ds>;
+};

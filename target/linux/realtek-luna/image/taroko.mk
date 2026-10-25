@@ -86,3 +86,27 @@ define Device/hsgq_x100dg
   DEVICE_PACKAGES := -iw gpon-provision
 endef
 TARGET_DEVICES += hsgq_x100dg
+
+define Device/vsol_v2802rh
+  DEVICE_VENDOR := VSOL
+  DEVICE_MODEL := V2802RH
+  DEVICE_ALT0_VENDOR := VSOL
+  DEVICE_ALT0_MODEL := V2801RD
+  DEVICE_DTS := rtl9601d_v2802rh
+  DEVICE_DTS_DIR := $(DTS_DIR)/realtek-luna
+  SOC := rtl9601d
+  # 4 MiB Zbit ZB25VQ32 with the stock bootloader, env and hardware MIB below
+  # 0x27000 and the RTOS's OSK1FS files above 0x3e0000; U-Boot boots k0 in place:
+  #   k0 = 0x1f9000 (2020k) at 0x27000, r0 = 0x1c0000 (1792k) at 0x220000.
+  KERNEL_SIZE := $(call flash_kernel_size,2020k)
+  IMAGE_SIZE := 1792k
+  IMAGES := kernel.bin rootfs.bin sysupgrade.bin
+  IMAGE/kernel.bin := append-kernel | check-size $$(KERNEL_SIZE)
+  IMAGE/rootfs.bin := append-rootfs | check-size
+  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+  # An L2 bridge: no routing, NAT, DHCP server, firewall or WiFi.
+  DEVICE_PACKAGES := -iw -dnsmasq -firewall4 -nftables -kmod-nft-offload \
+	-odhcpd-ipv6only -odhcp6c -ppp -ppp-mod-pppoe -wpad-basic-mbedtls \
+	gpon-provision
+endef
+TARGET_DEVICES += vsol_v2802rh

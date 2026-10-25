@@ -98,6 +98,12 @@ vsol,v2801rgw)
 	uci -q commit network
 	logger -t luna-lan-addr "board_name=$board -> lan 192.168.1.15"
 	;;
+vsol,v2802rh)
+	# The address its stock RTOS firmware holds on the LAN.
+	uci -q set network.lan.ipaddr='192.168.100.1'
+	uci -q commit network
+	logger -t luna-lan-addr "board_name=$board -> lan 192.168.100.1"
+	;;
 unknown,rtl9607c-unknown)
 	# bench onu4. Declared ONU_LAN_IP = 192.168.1.14. MEASURED 2026-09-29: with no
 	# arm it kept the interaptiv file's 192.168.1.13 -- the G24W's address.
