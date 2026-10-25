@@ -1,0 +1,34 @@
+From: Herman Brule <brule.herman@confiared.com>
+Subject: mips: -mfix-rlx, keep a three-operand mul out of branch delay slots
+
+On the Realtek RLX (Lexra) Taroko core a branch whose delay slot holds
+`mul rd,rs,rt`, rd being a register the branch reads, decides on the mul
+result: `bnez $8; mul $8,a,b` branched wrong 100000/100000 (RTL9602C,
+2026-10-03), while mflo/mfhi/addu/lw in the same slot were 0/100000.
+
+--- a/gcc/config/mips/mips.opt
++++ b/gcc/config/mips/mips.opt
+@@ -190,6 +190,10 @@
+ Target Mask(FIX_R5900)
+ Work around the R5900 short loop erratum.
+ 
++mfix-rlx
++Target Var(TARGET_FIX_RLX)
++Work around the Realtek RLX (Lexra) erratum: a branch whose delay slot holds a three-operand mul that writes a register the branch reads decides on the mul's result.
++
+ mfix-rm7000
+ Target Var(TARGET_FIX_RM7000)
+ Work around certain RM7000 errata.
+--- a/gcc/config/mips/mips.md
++++ b/gcc/config/mips/mips.md
+@@ -775,7 +775,9 @@
+ (define_attr "can_delay" "no,yes"
+   (if_then_else (and (eq_attr "type" "!branch,call,jump,simd_branch")
+ 		     (eq_attr "hazard" "none")
+-		     (match_test "get_attr_insn_count (insn) == 1"))
++		     (match_test "get_attr_insn_count (insn) == 1")
++		     (not (and (eq_attr "type" "imul3,imul3nc")
++			       (match_test "TARGET_FIX_RLX"))))
+ 		(const_string "yes")
+ 		(const_string "no")))
+ 
