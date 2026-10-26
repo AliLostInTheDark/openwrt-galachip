@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# The GPON protocol core: PLOAM, OMCI, GEM and flow offload, selected by the
+# Luna GPON driver.
+
+config GPON_CORE
+	bool
+	help
+	  The hardware-independent GPON protocol core: the PLOAM activation
+	  state machine, the in-kernel G.988 OMCI responder and the GEM/T-CONT
+	  provisioning lifecycle. The vendor GPON driver selects it. It is
+	  built in only, as that driver is.
+
+config OLT_ZTE
+	bool "Serve ZTE OLTs"
+	depends on GPON_CORE
+	default y
+	help
+	  What only a ZTE OLT needs of the ONU: the "zte" far-end profile
+	  (OMCC 0xa2, ME 138 and ME 340 on the VEIP), ZTE's vendor MEs 247
+	  (extended ONU-G) and 65294 (SNTP), and PLOAM 0x81 (ZTE's
+	  Disable_Serial_Number). Off, a ZTE OLT's messages are unknown to
+	  this image: they land in /proc/gpon_unknown and /proc/ploam_unknown,
+	  and a board declaring ME 247 or 65294 is refused at boot.
+
+config GPON_FLOW_OFFLOAD
+	bool
+	depends on GPON_CORE
+	help
+	  The TC hardware-offload lifecycle: reading a TC rule into a 5-tuple,
+	  keeping the cookie -> flow map, tearing entries down and answering
+	  stats polls. The driver's accelerator backend selects it and
+	  supplies the engine (struct gpon_flow_ops).
+
+config GPON_FLOW_DIAG
+	bool "GPON accelerator diagnostics (why a flow was NOT offloaded)"
+	depends on GPON_FLOW_OFFLOAD
+	default y
+	help
+	  Records why a TC flow was refused by the hardware accelerator, for
+	  the flow-offload /proc nodes.
+
+config GPON_GEM_DIAG
+	bool "GPON data-path diagnostics (what the WAN path is waiting for)"
+	depends on GPON_CORE
+	default y
+	help
+	  Reports which step of the GEM/T-CONT data path is still missing
+	  when no traffic passes.
+
+config GPON_OLT_DIAG
+	bool "GPON far-end capture (record the OLT's conversation for offline replay)"
+	depends on GPON_CORE
+	default y
+	help
+	  Keeps rings of the OMCI and PLOAM messages the OLT sent, readable
+	  from /proc/oltcap, /proc/ploamcap, /proc/gpon_prov, /proc/gpon_unknown
+	  and /proc/ploam_unknown, so an OLT's behaviour can be analysed
+	  offline.
+
+config GPON_OLT_DIAG_RECORDS
+	int "Records per far-end capture ring (OMCI and PLOAM)"
+	depends on GPON_OLT_DIAG
+	range 16 4096
+	default 256
+	help
+	  Messages kept per capture ring. 256 holds a full provisioning.
+
+config GPON_OMCI_DIAG
+	bool "GPON OMCI per-message diagnostics (message type, ME, Get masks)"
+	depends on GPON_CORE
+	default y
+	help
+	  Decodes each OMCI message for the OMCI trace: message type, managed
+	  entity, attribute masks and values.
+
+config GPON_PLOAM_DIAG
+	bool "GPON activation diagnostics (grant acceptance at Assign/Ranging/Deactivate)"
+	depends on GPON_CORE
+	default y
+	help
+	  Counts the downstream PLOAM messages by type and reports what the
+	  activation saw at Assign_ONU-ID, Ranging and Deactivate.
