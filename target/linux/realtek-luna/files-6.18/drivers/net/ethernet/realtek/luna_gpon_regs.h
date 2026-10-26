@@ -746,6 +746,7 @@ static_assert(SW_P_MISC_PORT_9602C(2) == 0x20804u &&
 						 * 0x1400..0x1600 array, into the void.) */
 #define   DS_TRAFFIC_CFG_STRIDE	4u
 #define   DS_TRAFFIC_IS_OMCI	BIT(2)
+#define   DS_TRAFFIC_AES	BIT(4)		/* decrypt (stock's dsGemPort aes_en) */
 #define GPON_GEM_US_PORT_MAP	0x6400		/* array: base 0x6400, stride 4 (one 32-bit
 						 * word/entry), idx 0..127, [11:0] gemPortId.
 						 * Flow 64 (OMCC) = 0x6400 + 64*4 = 0x6500. */

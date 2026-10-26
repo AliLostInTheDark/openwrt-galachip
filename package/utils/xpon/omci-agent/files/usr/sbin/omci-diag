@@ -4,12 +4,17 @@
 #                      recorded exchange and the OMCI log
 #   omci-diag trace    start or stop recording every OMCI exchange
 #   omci-diag full [S] record S seconds (default 60) of OMCI, then print
-#                      everything, the OLT's PLOAM capture included
+#                      everything, the OLT's PLOAM capture included; a
+#                      recording started earlier with "trace" is kept
 trace=/tmp/omcid-trace.txt
 
 trace_toggle() {
 	pid=$(pidof omcid) || { echo "omcid is not running" >&2; exit 1; }
 	kill -USR1 "$pid"
+}
+
+tracing() {
+	ls -l "/proc/$(pidof omcid)/fd" 2>/dev/null | grep -q "$trace"
 }
 
 section() {
@@ -25,8 +30,10 @@ trace)
 	exit 0
 	;;
 full)
-	rm -f "$trace"
-	trace_toggle
+	if ! tracing; then
+		rm -f "$trace"
+		trace_toggle
+	fi
 	echo "recording OMCI for ${2:-60} s..." >&2
 	sleep "${2:-60}"
 	trace_toggle

@@ -2991,6 +2991,17 @@ static int luna_alloc_cam_write(u32 tcont, u16 alloc)
 	return luna_cam_xact(true, GPON_GTC_CAM_OP_WRITE, tcont, &alloc, NULL);
 }
 
+/* GEM Port-IDs the OLT marked encrypted with Encrypted_Port-ID. Nokia
+ * encrypts the OMCC as well as the data GEMs, as stock's flows show. */
+static DECLARE_BITMAP(gpon_aes_ports, 4096);
+
+static void gpon_ds_traffic_set(u32 flow, u16 gem, u32 type)
+{
+	if (test_bit(gem & 0xfff, gpon_aes_ports))
+		type |= DS_TRAFFIC_AES;
+	gpon_wr(GPON_GTC_DS_TRAFFIC_CFG + flow * DS_TRAFFIC_CFG_STRIDE, type);
+}
+
 /* Per-flow downstream GEM Ethernet RX packet */
 static u32 gpon_gem_ds_rx_cnt(u8 flow)
 {
@@ -3975,8 +3986,7 @@ static int gpon_install_omcc(u16 gem)
 		pr_err("luna-gpon: OMCC DS GEM install timeout\n");
 		return rc;
 	}
-	gpon_wr(GPON_GTC_DS_TRAFFIC_CFG + GPON_OMCC_FLOW * DS_TRAFFIC_CFG_STRIDE,
-		DS_TRAFFIC_IS_OMCI);
+	gpon_ds_traffic_set(GPON_OMCC_FLOW, gem, DS_TRAFFIC_IS_OMCI);
 
 	/* DS OMCI PTI: tell the GTC how to detect the end of an OMCI GEM frame for
 	 * reassembly. At reset this register is 0, so the GTC never recognises an OMCI
@@ -4893,7 +4903,7 @@ int gpon_install_data_gem(void)
 		return rc;
 	}
 	/* DATA flow DS routing = 0x2 (BIT1). */
-	gpon_wr(GPON_GTC_DS_TRAFFIC_CFG + GPON_DATA_FLOW * DS_TRAFFIC_CFG_STRIDE, 0x2);
+	gpon_ds_traffic_set(GPON_DATA_FLOW, gpon_data_gem_port, 0x2);
 
 	/* US GEM-port map: the data flow -> the OLT's gem, the gem-id stamped on US
 	 * data frames. Same shared gpon_gtc_us_gem_stamp() as the OMCC stamp, and the
@@ -4930,7 +4940,7 @@ int gpon_install_data_gem(void)
 	}
 	/* MCAST flow DS routing = 0x3 (BIT1|BIT0): BIT0 is the broadcast/flood
 	 * variant, so DHCP-broadcast and ARP DS also drain to the NIC. */
-	gpon_wr(GPON_GTC_DS_TRAFFIC_CFG + GPON_MCAST_FLOW * DS_TRAFFIC_CFG_STRIDE, 0x3);
+	gpon_ds_traffic_set(GPON_MCAST_FLOW, GPON_MCAST_GEM, 0x3);
 
 	/* Data-flow SID classify commit */
 	if (relatch_us) {
@@ -5597,8 +5607,19 @@ static void gpon_o5_rearm_burst_regs(void)
  * FSM has always done on an O5 entry, unchanged.  The core FSM must NOT reach
  * this one -- it sends its own No_message. */
 
+/* The marks belong to one activation: the OLT sends them again after it. */
+static void gpon_aes_ports_clear(void)
+{
+	unsigned int f;
+
+	bitmap_zero(gpon_aes_ports, 4096);
+	for (f = 0; f < 128; f++)
+		gpon_field(GPON_GTC_DS_TRAFFIC_CFG + f * DS_TRAFFIC_CFG_STRIDE, 4, 4, 0);
+}
+
 static void gpon_below_o5(void)
 {
+	gpon_aes_ports_clear();
 	luna_data_suspend();
 	gpon_rerange_start_j = jiffies ? jiffies : 1;	/* start the outage timer */
 	gpon_o5_entry_tick = 0;
@@ -5901,6 +5922,27 @@ static void luna_op_aes_stage_key(void *sh, const u8 key[16])
 {
 	(void)sh;
 	gpon_aes_stage_key(key);
+}
+
+static void luna_op_port_encrypt(void *sh, u16 port, bool encrypted)
+{
+	unsigned int f, n = 0;
+
+	(void)sh;
+	if (encrypted == test_bit(port, gpon_aes_ports))
+		return;
+	assign_bit(port, gpon_aes_ports, encrypted);
+	for (f = 0; f < 128; f++) {
+		int e = gpon_ds_cam_read(f);
+
+		if (e < 0 || !(e & BIT(16)) || (e & 0xfff) != port)
+			continue;
+		gpon_field(GPON_GTC_DS_TRAFFIC_CFG + f * DS_TRAFFIC_CFG_STRIDE,
+			   4, 4, encrypted);
+		n++;
+	}
+	luna_log("GEM %u: AES %s (%u flow%s)\n", port, encrypted ? "on" : "off",
+		 n, n == 1 ? "" : "s");
 }
 
 static int luna_op_install_omcc(void *sh, u16 gem)
@@ -6246,6 +6288,7 @@ static const struct gpon_ploam_ops luna_ploam_ops __maybe_unused = {
 	.analog_relock	= luna_op_analog_relock,
 	.o3_feed_reset	= luna_op_o3_feed_reset,
 	.aes_stage_key	= luna_op_aes_stage_key,
+	.port_encrypt	= luna_op_port_encrypt,
 	.install_omcc	= luna_op_install_omcc,
 	.install_tcont	= luna_op_install_tcont,
 	.data_alloc_changed = luna_data_alloc_changed,
@@ -7036,7 +7079,7 @@ int luna_xpon_hw_gem_install(unsigned int slot, u16 gem, int qid)
 	if (rc < 0)
 		goto out;
 	/* DS routing 0x2: drain the flow to the NIC, as the data flow does. */
-	gpon_wr(GPON_GTC_DS_TRAFFIC_CFG + flow * DS_TRAFFIC_CFG_STRIDE, 0x2);
+	gpon_ds_traffic_set(flow, gem, 0x2);
 	if (qid < 0)
 		goto out;
 	if (!gpon_gtc_us_gem_stamp(&gpon_io, &luna_gpon_chip.gtc, flow,
@@ -7172,7 +7215,7 @@ int luna_xpon_hw_set_identity(const u8 *sn, const u8 *password)
 static void luna_xpon_hw_arm_broadcast(void)
 {
 	if (luna_port_cam_write(GPON_MCAST_FLOW, GPON_MCAST_GEM) >= 0)
-		gpon_wr(GPON_GTC_DS_TRAFFIC_CFG + GPON_MCAST_FLOW * DS_TRAFFIC_CFG_STRIDE, 0x3);
+		gpon_ds_traffic_set(GPON_MCAST_FLOW, GPON_MCAST_GEM, 0x3);
 }
 
 /* Walk every ME 171 the OLT provisioned and render what came back.  It installs
