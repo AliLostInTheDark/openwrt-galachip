@@ -1,0 +1,90 @@
+{#
+ Slate theme for LuCI.
+ Adapted from luci-theme-bootstrap:
+ Copyright 2022 Jo-Philipp Wich <jo@mein.io>
+ Licensed to the public under the Apache License 2.0.
+-#}
+
+{% include('header', { blank_page: true }) %}
+
+{% const boardinfo = ubus.call('system', 'board') ?? {}; %}
+
+<main class="login">
+	<form method="post" class="login-card">
+		<div class="login-head">
+			{% include('themes/slate/logo') %}
+			<h1>{{ entityencode(striptags(boardinfo.hostname ?? '?')) }}</h1>
+			{% if (boardinfo.model): %}
+			<p>{{ entityencode(striptags(boardinfo.model)) }}</p>
+			{% endif %}
+		</div>
+
+		{% if (auth_message): %}
+		<div class="alert-message{% if (auth_plugin): %} warning{% endif %}">{{ entityencode(auth_message) }}</div>
+		{% elif (fuser): %}
+		<div class="alert-message error">{{ _('Invalid username and/or password! Please try again.') }}</div>
+		{% endif %}
+
+		<div class="login-field">
+			<label for="luci_username">{{ _('Username') }}</label>
+			<input name="luci_username" id="luci_username" type="text" autocomplete="username" value="{{ entityencode(duser, true) }}">
+		</div>
+
+		<div class="login-field">
+			<label for="luci_password">{{ _('Password') }}</label>
+			<input name="luci_password" id="luci_password" type="password" autocomplete="current-password" autofocus>
+		</div>
+
+		{% for (let field in auth_fields ?? []): %}
+		<div class="login-field">
+			<label for="{{ entityencode(field.name, true) }}">{{ entityencode(_(field.label ?? field.name)) }}</label>
+			<input
+				name="{{ entityencode(field.name, true) }}"
+				id="{{ entityencode(field.name, true) }}"
+				type="{{ entityencode(field.type ?? 'text', true) }}"
+				{% if (field.placeholder): %}placeholder="{{ entityencode(field.placeholder, true) }}"{% endif %}
+				{% if (field.inputmode): %}inputmode="{{ entityencode(field.inputmode, true) }}"{% endif %}
+				{% if (field.pattern): %}pattern="{{ entityencode(field.pattern, true) }}"{% endif %}
+				{% if (field.maxlength): %}maxlength="{{ +field.maxlength }}"{% endif %}
+				{% if (field.autocomplete): %}autocomplete="{{ entityencode(field.autocomplete, true) }}"{% endif %}
+				{% if (field.required): %}required{% endif %}
+			>
+		</div>
+		{% endfor %}
+
+		{% if (auth_html): %}
+		<div class="login-field">{{ auth_html }}</div>
+		{% endif %}
+		{% for (let asset in auth_assets ?? []): %}
+		{% if (asset.type == 'script'): %}
+		<script src="{{ entityencode(asset.src, true) }}"></script>
+		{% endif %}
+		{% endfor %}
+
+		<button type="submit" class="btn cbi-button-positive important">{{ _('Log in') }}</button>
+	</form>
+
+	<p class="login-foot">{{ entityencode(version.distname) }} {{ entityencode(version.distversion) }}</p>
+</main>
+
+<script>
+	(function() {
+		var form = document.querySelector('.login-card'),
+		    btn = form.querySelector('button[type="submit"]');
+
+		form.addEventListener('submit', function(ev) {
+			setTimeout(function() {
+				if (!ev.defaultPrevented) {
+					btn.classList.add('spinning');
+					btn.disabled = true;
+				}
+			}, 0);
+		});
+		window.addEventListener('pageshow', function() {
+			btn.classList.remove('spinning');
+			btn.disabled = false;
+		});
+	})();
+</script>
+
+{% include('footer', { blank_page: true }) %}
