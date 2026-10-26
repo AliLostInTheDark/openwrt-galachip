@@ -2,8 +2,9 @@
 
 Built and copied to TFTP. Firmware source commit: `3c2bc7c1f9`.
 Image revision: `r37655+136-6db25ee835`, Linux 6.18.55.
-L2 offload remains disabled by default. Board traffic validation is pending;
-hardware QoS remains the next stage after the L2 validation gate.
+L2 offload remains disabled by default. The subsequent LAN2 off/on/off
+capture demonstrates CPU bypass; disabled-path performance and the rest
+of the board validation remain open. Hardware QoS follows the L2 gate.
 
 ## Changes and rollback
 
@@ -77,6 +78,12 @@ Previous TFTP files were preserved under ignored
 and `cfc19ece806ca8d37f4f7a8f9f2920f04ab16e43526032c4b1cc77d679ed7b6d`.
 
 ## Board validation
+
+The first LAN2 hardware result and exact counter deltas are recorded in
+[L2-OFFLOAD.md](L2-OFFLOAD.md#board-result-2026-10-26). Hardware forwarding
+bypasses CPU RX/TX in both directions. Offload-off performance is poor and
+its PON bridge-discard counter rises; this is still an unresolved fallback
+issue. These documentation updates do not change the shipped images.
 
 Use the off/on/off sequence in [L2-OFFLOAD.md](L2-OFFLOAD.md), checking each
 LAN and bidirectional traffic. Capture omci-diag, switch/CPU MIB deltas,

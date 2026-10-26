@@ -3,7 +3,8 @@
 The RTL9601D SFU path in `rtl9601d_l2.c` programs upstream classification
 and switch VLAN forwarding from omcid's installed services. It is specific
 to `vsol,v2802rh`; the other Realtek boards keep their existing paths.
-It starts disabled. Hardware forwarding has not yet been verified on the board.
+It starts disabled. The 2026-10-26 off/on/off capture demonstrates LAN2
+CPU bypass in both directions; the remaining checks are recorded below.
 
 ## Forwarding
 
@@ -87,8 +88,8 @@ internet peer, and capture these again before and after that traffic:
 ```sh
 omci-diag
 ethtool -S eth0
-ip -s link show dev eth0
-ip -s link show dev pon0
+cat /proc/net/dev
+cat /proc/stat
 cat /sys/class/net/pon0/device/l2_offload
 cat /sys/class/net/pon0/device/l2_offload_bindings
 cat /sys/class/net/pon0/device/l2_offload_counters
@@ -117,7 +118,44 @@ actual programmer and planner passed for match isolation, SID selection,
 eight-pbit merging, UNI binding, RX copy marking/untagging, VLAN/PVID restore,
 occupied slots, stale generations and injected write failures. The omcid
 suite passed, including full-UNI regression coverage. Board traffic
-validation remains pending.
+validation beyond the LAN2 comparison below remains pending.
+
+## Board result, 2026-10-26
+
+The user's `/home/ali/Desktop/offload-l2.log` has SHA-256
+`8ee2286e0c67ad7e50931447511d5771e747cc2c54b1c00f9eabf0a4157054ac`.
+Its six snapshots cover off/on/off on the same boot. DT maps physical
+port 0 to LAN2, port 1 to LAN1; port 2 is PON and port 3 is CPU.
+
+| Counter delta | Off | On | Off again |
+|---|---:|---:|---:|
+| LAN2 RX bytes (upstream) | 146,492,988 | 372,495,853 | 108,497,321 |
+| LAN2 TX bytes (downstream) | 5,716,167 | 595,223,244 | 5,707,780 |
+| CPU-port RX bytes | 152,270,461 | 0 | 112,578,237 |
+| CPU-port TX bytes | 151,760,635 | 0 | 112,217,005 |
+| `p2_tx_bridge_discards` | 68,159 | 0 | 49,049 |
+| LAN2 RX drop events | 867 | 64 | 1,749 |
+| Average CPU busy | 23.8% | 11.9% | 21.0% |
+
+Offload-on has two bindings, VID 100/SID 4 (untagged) and VID 660/SID 5
+(tagged), both with LAN mask 0x3 and successful VLAN readback. It stays at
+`active=1 error=0 gated=0 retries=0`. During that interval all eth0/pon0
+Linux packet/byte counters also stay unchanged, as do RX marking counters
+and softirq CPU time. Paired LAN2/PON byte and unicast counters rise in
+both directions. This demonstrates bulk hardware forwarding without CPU
+copies for this LAN2 traffic, beyond the installation status alone.
+
+The user reports roughly 2 Mbps down/64 Mbps up with offload off, and
+plan speed with it on (300 Mbps service). These snapshots cover changing
+speed-test traffic plus diagnostics; their byte totals are not sustained
+throughput measurements. Disabled forwarding resumes but performs poorly
+and has substantial PON bridge-discard counter increments. Average CPU
+load does not establish saturation; the fallback failure needs diagnosis.
+
+LAN1 counters are zero throughout, so LAN1 and simultaneous-port behavior
+remain untested. Management/OMCI under load, MAC moves, service replacement,
+re-ranging and higher-rate capacity also remain pending. This result does
+not complete the full validation gate or justify a default-enable change.
 
 The 2026-10-26 repair additionally passed 196,608 TCAM comparisons, failures
 at all 109 install and 18 withdrawal table-transaction positions, readback
