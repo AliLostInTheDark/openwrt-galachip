@@ -360,8 +360,10 @@ return view.extend({
 		var mibSync = status.mib_sync, vlan = data[1];
 
 		poll.add(function() {
+			/* A load during an apply finds no configuration, and OLT-G
+			 * comes with provisioning: read it all until both are there. */
 			return Promise.all([
-				omci.liveStatus(0),
+				status.identity && status.olt ? omci.liveStatus(0) : omci.status(0),
 				L.resolveDefault(omci.vlanStatus(), null)
 			]).then(function(next) {
 				if (next[0]) {
