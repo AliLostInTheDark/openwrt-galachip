@@ -18,6 +18,9 @@
 #include <linux/mutex.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/ethtool.h>	/* the LAN jacks' link settings */
+#include <linux/if_vlan.h>	/* the per-jack steering tag */
+#include <linux/leds.h>		/* the board's PON/LOS lamps, handed to net/xpon */
 #include "luna_eth_regs.h"	/* the family MAC/switch register map + per-chip table */
 #include "luna_gpon_regs.h"	/* the family's luna_sw_io(): a struct hwio over the SWCORE base */
 #include "regtable.h"		/* flowcore: gpon_ind_poll() -- the ONE bounded busy-wait */
@@ -32,32 +35,29 @@
 
 /* US-OMCI TX tuning knobs (see rtl9602c_eth_omci_xmit) */
 static unsigned int omci_sid_idx = 4;	/* PON_SID one-hot shift (word3[28:23]); 4 = SID-64 classify slot (RX_SID group [4]) */
-/* ★★★ ONE VID PER LAN PORT, so the CPU can tell the sockets apart.
- * Stock does exactly this (tier 2, its own kernel: it runs
- * 'brctl addif br0 eth0.%d' and a 'vconfig rem' loop over
- * /sys/class/net | grep eth0.), which is why a stock
- * X111W shows eth0.2/eth0.3 and ours shows one bare eth0: we give EVERY port
- * SW_DEFAULT_VID, so the per-socket information is destroyed in the switch
- * before the CPU sees it, and no netdev layer can get it back.
- *
- * ⚠ DEFAULT OFF, AND THAT IS NOT TIMIDITY. Turning it on moves LAN traffic
- * onto TAGGED frames at the CPU port, so bare eth0 stops receiving and
- * the board is unreachable over LAN until eth0.<vid> netdevs exist and
- * are
- * bridged. The image must carry BOTH halves or it locks itself out; the knob
- * is what lets the two land in separate, testable steps.
- */
-static unsigned int port_vlans;
-module_param(port_vlans, uint, 0644);
-MODULE_PARM_DESC(port_vlans,
-		 "one VID per LAN port so the CPU can tell sockets apart (default 0 = every port on SW_DEFAULT_VID, as before). 1 REQUIRES eth0.<vid> netdevs in the image or LAN goes dark");
+/* One netdev per LAN jack (the DT ethernet-ports node): the switch tells the
+ * CPU which port a frame came in on (the RX descriptor's source port), and
+ * this is how a frame the CPU sends reaches ONE jack. The switch's own
+ * forwarding keys on the destination MAC: a plain frame from the CPU goes
+ * wherever that MAC was learned, or to every LAN jack, so a bridge that sends
+ * a copy per port would deliver each flood twice.
+ *   0  plain: no steering, a copy per port floods to both jacks (duplicates)
+ *   1  VLAN: each jack has a VLAN of its own, members the jack and the CPU,
+ *      untagged on the jack; the CPU tags its copy with it (default)
+ *   2  CPU tag: Realtek's in-band 0x8899 tag with the jack's port mask
+ * Writable at run time (/sys/module/rtl9602c_eth/parameters/lan_tx_steer);
+ * the VLAN entries are installed at open whatever the mode. */
+enum { LAN_STEER_PLAIN, LAN_STEER_VLAN, LAN_STEER_CPUTAG };
+static unsigned int lan_tx_steer = LAN_STEER_VLAN;
+module_param(lan_tx_steer, uint, 0644);
+MODULE_PARM_DESC(lan_tx_steer,
+		 "how a lanN netdev's frame is held to its own jack: 0=plain (the switch floods), 1=per-jack VLAN (default), 2=in-band CPU tag");
 
-/* The per-port VID base. Stock's own numbering is FOUND, never chosen -- its
- * X111W shows eth0.2/eth0.3 -- so this base only has to make the VIDs
- * DISTINCT and not collide with SW_DEFAULT_VID; which VID reaches which
- * PRINTED socket is a cable-move measurement (lan_map.py --ask), exactly as
- * this project's panel-map rule requires. */
-#define SW_PORT_VID_BASE	2u
+/* The per-jack steering VLANs, from the top of the range: an OLT's service
+ * VLANs are low, and the L2 offload refuses a service on one of these. */
+#define SW_LAN_STEER_VID_BASE	4092u
+#define SW_LAN_STEER_VID(port)	(SW_LAN_STEER_VID_BASE + (port))
+#define LAN_PORTS		2u	/* jacks a board may declare: switch ports 0..1 */
 
 module_param(omci_sid_idx, uint, 0644);
 MODULE_PARM_DESC(omci_sid_idx, "US-OMCI PON_SID one-hot shift count (default 4 = SID-64 classify slot)");
@@ -200,8 +200,6 @@ static_assert(R_TXOKCNT == 0x10 && R_TXERR == 0x14 && R_MISSPKT == 0x18 &&
 #define OMCI_RESV	2	/* LAN xmit stops this many slots early so the sparse shared-ring OMCI inject always has room (never dropped) */
 #define DUMMY_RING_SIZE	4	/* idle filler armed on the unused HW TX rings (gap rings) */
 #define RX_CPU_PREFIX	2	/* switch CPU-port prepends a 2-byte offset word on RX */
-/* TX_CPUTAG picks the CPU->switch egress method */
-#define TX_CPUTAG	0
 #define POLL_INTERVAL	msecs_to_jiffies(2)	/* legacy pure-poll fallback (ep->irq<=0) */
 #define REKICK_INTERVAL	msecs_to_jiffies(100)	/* slow TX-unpark backstop when IRQ-driven */
 
@@ -212,12 +210,17 @@ static_assert(R_TXOKCNT == 0x10 && R_TXERR == 0x14 && R_MISSPKT == 0x18 &&
 /* The indirect PHY window has ONE owner on this shell too */
 static DEFINE_MUTEX(rtl9602c_gphy_lock);
 
-/* The UNI administrative lock, as a DESIRED state per */
-static u32 rtl9602c_uni_locked_ports;
+/* The UNI administrative lock, as a DESIRED state per port: OMCI's (the
+ * OLT's Administrative State) and the netdev's (a lanN taken down). Either
+ * holds the jack's link down; the hardware is driven from the union. */
+static u32 rtl9602c_uni_locked_ports;	/* OMCI */
+static u32 rtl9602c_uni_down_ports;	/* ip link set lanN down */
 
 static bool rtl9602c_uni_port_locked(unsigned int port)
 {
-	return port < 32 && (READ_ONCE(rtl9602c_uni_locked_ports) & BIT(port));
+	return port < 32 &&
+	       ((READ_ONCE(rtl9602c_uni_locked_ports) |
+		 READ_ONCE(rtl9602c_uni_down_ports)) & BIT(port));
 }
 /* P_MISC, the per-port misc word */
 #define SW_SYS_LRN_LIMITNO	0x17018	/* system MAC-learn limit [10:0]; 0 = no learning */
@@ -409,19 +412,27 @@ struct rtl9602c_eth {
 	struct gpon_flow_offload *fo;	/* the COMMON TC lifecycle, drivers/net/gpon/ */
 	struct notifier_block l34_addr_nb;	/* releases the WAN rows when its address leaves */
 #endif
-	/* Host uplink port, learned from the RX descriptor src_port_num. All RX
-	 * arrives on the board's single connected LAN port, so this resolves to the
-	 * physical switch port the host is on — we then steer CPU->LAN TX there
-	 * regardless of the (ambiguous) static port numbering. 0xff = not yet seen. */
-	unsigned int	host_port;
+	/* The LAN jacks as netdevs (the DT ethernet-ports node), by switch
+	 * port. A frame from port p goes up lan_ndev[p] when that is running,
+	 * else eth0, so a bridge built on eth0 alone keeps working. */
+	struct net_device *lan_ndev[LAN_PORTS];
+	struct rtl9602c_lan_link {
+		bool		seen;		/* link_work has looked at the port */
+		bool		up;
+		bool		full;
+		u32		speed;		/* SPEED_* while up */
+	} lan_link[LAN_PORTS];
+	bool		lan_steer_blocked;	/* an OLT service took a steering VID */
+	u32		dbg_lan_relay_skipped;	/* LAN->LAN copies the CPU refused: the switch did it */
+	struct led_classdev *pon_led, *los_led;	/* the board's lamps, net/xpon drives them */
 
 	/* Port 0 runs over the SerDes to an external PHY (DT realtek,port0-serdes):
 	 * its internal GPHY stays powered down and the MAC link is forced, following
-	 * the SerDes link polled by port0_link_work. */
+	 * the SerDes link polled by link_work. */
 	bool		port0_serdes;
 	bool		stock_switch;
-	struct delayed_work port0_link_work;
-	u32		port1_sts;	/* last logged GPHY link/speed/duplex */
+	struct delayed_work link_work;	/* once a second: the SerDes mirror, every jack's carrier */
+	u32		gphy_sts[LAN_PORTS];	/* last logged GPHY link/speed/duplex, per port */
 
 	/* The external PHY's MDIO bus, bit-banged on two GPIOs as stock does it
 	 * (DT realtek,ext-mdio-gpios = MDC, MDIO; realtek,ext-phy-addr). */
@@ -450,7 +461,34 @@ struct rtl9602c_eth {
 	u8		dbg_omci_rxbuf[48];	/* the last DS OMCI baseline message */
 };
 
+/* netdev_priv of a LAN jack's netdev */
+struct rtl9602c_lan {
+	struct rtl9602c_eth *ep;
+	unsigned int	port;		/* switch port */
+};
+
 static struct rtl9602c_eth *g_ep;	/* single-instance, for /proc diag */
+
+static int rtl9602c_eth_hw_ensure(struct rtl9602c_eth *ep);
+static int rtl9602c_lan_gate(struct rtl9602c_eth *ep, unsigned int port, bool down);
+
+/* The GMAC accepts every destination (RCR AcceptAllPhys) while ANY netdev
+ * riding it is promiscuous: a bridge enslaves lan1, lan2 and pon0 -- and
+ * eth0 on a configuration from before the jacks had netdevs of their own. */
+static bool rtl9602c_eth_want_promisc(const struct rtl9602c_eth *ep)
+{
+	unsigned int p;
+
+	if (ep->ndev->flags & (IFF_PROMISC | IFF_ALLMULTI))
+		return true;
+	if (ep->wan_ndev && (ep->wan_ndev->flags & (IFF_PROMISC | IFF_ALLMULTI)))
+		return true;
+	for (p = 0; p < LAN_PORTS; p++)
+		if (ep->lan_ndev[p] &&
+		    (ep->lan_ndev[p]->flags & (IFF_PROMISC | IFF_ALLMULTI)))
+			return true;
+	return false;
+}
 
 static inline u32 ep_rd(struct rtl9602c_eth *ep, u32 r) { return ioread32(ep->base + r); }
 static inline void ep_wr(struct rtl9602c_eth *ep, u32 r, u32 v) { iowrite32(v, ep->base + r); }
@@ -746,33 +784,27 @@ static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 			if (!(ep->swm->port_mask & BIT(p)))
 				continue;	/* not a port on this chip */
 
-			/* One VID per LAN port: member = that port + the CPU
-			 * port, UNTAGGED on the port and TAGGED toward the CPU,
-			 * which is what lets eth0.<vid> demux the socket. The
-			 * CPU port keeps SW_DEFAULT_VID itself. */
-			/* ⚠ COPPER SOCKETS ONLY.  The CPU port carries the tagged
-			 * trunk, and the PON port is the FIBRE -- giving either
-			 * its own LAN VID would put the WAN datapath in a
-			 * per-socket VLAN.  Both come from the chip's own map,
-			 * never from a literal: pon_port is 2 here and 4 on the
-			 * RTL9603CVD, so a hardcoded skip would be wrong on the
-			 * next board. */
-			if (port_vlans && p != ep->swm->cpu_port &&
-			    p != ep->swm->pon_port) {
-				u32 mbr = BIT(p) | BIT(ep->swm->cpu_port);
-
-				vid = SW_PORT_VID_BASE + p;
-				if (rtl9602c_vlan_write(ep, vid, mbr, BIT(p), lan_ext, false) < 0)
-					netdev_warn(ep->ndev,
-						    "swcore VLAN table BUSY writing per-port VLAN %u for port %u: that socket will not be separable\n",
-						    vid, p);
-			}
-
 			w = ep->sw + sw_packed_off(SW_VLAN_PB_VID, p,
 						   SW_VLAN_PB_VID_BITS);
 			iowrite32(sw_packed_ins(ioread32(w), p,
 						SW_VLAN_PB_VID_BITS,
 						vid), w);
+		}
+		/* One steering VLAN per LAN jack (lan_tx_steer): members the
+		 * jack and the CPU, untagged on the jack, so a frame the CPU
+		 * tags with it leaves on that jack and no other. The PVIDs
+		 * above are untouched: what a jack receives is classified as
+		 * before. SVL, as VLAN 1: one MAC table, so a host the switch
+		 * learned is a known host here too. */
+		for (p = 0; p < LAN_PORTS; p++) {
+			if (!ep->lan_ndev[p])
+				continue;
+			if (rtl9602c_vlan_write(ep, SW_LAN_STEER_VID(p),
+						BIT(p) | BIT(ep->swm->cpu_port),
+						BIT(p), lan_ext, false) < 0)
+				netdev_warn(ep->ndev,
+					    "swcore VLAN table BUSY writing steering VLAN %u for %s: in VLAN mode its frames would reach no jack\n",
+					    SW_LAN_STEER_VID(p), ep->lan_ndev[p]->name);
 		}
 		iowrite32(0xf, ep->sw + SW_VLAN_INGRESS);	/* ingress filter, ports 0-3 */
 		iowrite32(SW_VLAN_CTRL_VAL, ep->sw + SW_VLAN_CTRL); /* enable VLAN function */
@@ -848,10 +880,18 @@ static int rtl9602c_eth_set_mac_address(struct net_device *ndev, void *p)
 {
 	struct rtl9602c_eth *ep = netdev_priv(ndev);
 	int ret = eth_mac_addr(ndev, p);
+	unsigned int port;
 
 	if (ret)
 		return ret;
 	rtl9602c_eth_set_hwaddr(ep, ndev->dev_addr);
+	/* The jacks carry the board MAC too, as DSA user ports their conduit's. */
+	for (port = 0; port < LAN_PORTS; port++) {
+		if (!ep->lan_ndev[port])
+			continue;
+		eth_hw_addr_set(ep->lan_ndev[port], ndev->dev_addr);
+		call_netdevice_notifiers(NETDEV_CHANGEADDR, ep->lan_ndev[port]);
+	}
 	/* Keep the WAN (gpon0) identity tracking the board MAC provisioned onto eth0
 	 * (rtk_factory), applying the stock model offset: WAN = LAN + wan_mac_offset
 	 * (see rtl9602c_wan_mac). This is the MAC the ISP/OLT identifies the ONU by. */
@@ -1133,7 +1173,13 @@ static netdev_tx_t rtl9602c_eth_wan_xmit(struct sk_buff *skb, struct net_device 
 static int rtl9602c_eth_wan_open(struct net_device *ndev)
 {
 	struct rtl9602c_eth *ep = *(struct rtl9602c_eth **)netdev_priv(ndev);
+	int ret;
 
+	/* The rings are eth0's, but eth0 is a bridge member only on an old
+	 * configuration: whichever netdev opens first brings the GMAC up. */
+	ret = rtl9602c_eth_hw_ensure(ep);
+	if (ret)
+		return ret;
 	/* Set the WAN identity the OLT/ISP uses to recognise */
 	if (ep && ep->ndev && is_valid_ether_addr(ep->ndev->dev_addr)) {
 		u8 wmac[ETH_ALEN];
@@ -1181,6 +1227,13 @@ static int rtl9602c_wan_vid_kill(struct net_device *ndev, __be16 proto, u16 vid)
 	return rtl9602c_wan_vid(*(struct rtl9602c_eth **)netdev_priv(ndev), vid, false);
 }
 
+static void rtl9602c_eth_wan_set_rx_mode(struct net_device *ndev)
+{
+	struct rtl9602c_eth *ep = *(struct rtl9602c_eth **)netdev_priv(ndev);
+
+	luna_eth_set_promisc(ep->base, rtl9602c_eth_want_promisc(ep));
+}
+
 static const struct net_device_ops rtl9602c_eth_wan_ops = {
 	.ndo_get_port_parent_id = v2802_l2_parent_id,
 #ifdef CONFIG_GPON_FLOW_OFFLOAD
@@ -1189,6 +1242,7 @@ static const struct net_device_ops rtl9602c_eth_wan_ops = {
 	.ndo_open		= rtl9602c_eth_wan_open,
 	.ndo_stop		= rtl9602c_eth_wan_stop,
 	.ndo_start_xmit		= rtl9602c_eth_wan_xmit,
+	.ndo_set_rx_mode	= rtl9602c_eth_wan_set_rx_mode,
 	.ndo_set_mac_address	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_vlan_rx_add_vid	= rtl9602c_wan_vid_add,
@@ -1444,15 +1498,18 @@ static int rtl9602c_eth_rx(struct rtl9602c_eth *ep, int budget, bool napi_ctx)
 				unsigned int sp = luna_gmac_rx_src_port(ep->swm->rx_layout,
 						       ep->rx_ring[i].opts3);
 
-				/* Route drained WAN frames */
+				/* Route drained WAN frames. A LAN frame goes up
+				 * its jack's netdev while that is running, else
+				 * eth0: a bridge built on eth0 alone still works. */
 				if (ep->wan_ndev &&
 				    rtl9602c_rx_wan_demux(ep->swm->rx_layout,
 						  ep->rx_ring[i].opts3, dst,
 							  ep->wan_ndev->dev_addr,
 							  ep->swm->pon_port))
 					rdev = ep->wan_ndev;
-				else
-					ep->host_port = sp;
+				else if (sp < LAN_PORTS && ep->lan_ndev[sp] &&
+					 netif_running(ep->lan_ndev[sp]))
+					rdev = ep->lan_ndev[sp];
 				/* DS-OFFER diag (find why the WAN DHCP OFFER misses gpon0):
 				 * log any DHCP-to-client (UDP dst port 68) DS frame + where
 				 * it routed. dst = eth hdr; [12:13]=ethertype 0x0800,
@@ -1464,7 +1521,7 @@ static int rtl9602c_eth_rx(struct rtl9602c_eth *ep, int budget, bool napi_ctx)
 				    dst[36] == 0x00 && dst[37] == 0x44)
 					pr_info("rtl9602c-eth: DHCP-DS sp=%u opts3=%08x dst=%pM -> %s\n",
 						sp, ep->rx_ring[i].opts3, dst,
-						rdev == ep->wan_ndev ? "gpon0" : "host");
+						rdev->name);
 			}
 			/* The switch CPU port prepends a 2-byte offset word ahead */
 			skb_pull(skb, RX_CPU_PREFIX);
@@ -1511,10 +1568,17 @@ static void rtl9602c_eth_tx_reclaim(struct rtl9602c_eth *ep)
 		ep->tx_skb[i] = NULL;
 		ep->tx_dirty++;
 	}
-	if (netif_queue_stopped(ep->ndev) &&
-	    !luna_gmac_tx_ring_full(ep->tx_head, ep->tx_dirty,
-				     TX_RING_SIZE, OMCI_RESV))
-		netif_wake_queue(ep->ndev);
+	if (!luna_gmac_tx_ring_full(ep->tx_head, ep->tx_dirty,
+				    TX_RING_SIZE, OMCI_RESV)) {
+		unsigned int p;
+
+		if (netif_queue_stopped(ep->ndev))
+			netif_wake_queue(ep->ndev);
+		/* The jacks' netdevs stop on the same ring. */
+		for (p = 0; p < LAN_PORTS; p++)
+			if (ep->lan_ndev[p] && netif_queue_stopped(ep->lan_ndev[p]))
+				netif_wake_queue(ep->lan_ndev[p]);
+	}
 }
 
 /* The GMAC TX DMA is a self-polling sequential fetch engine */
@@ -1655,7 +1719,6 @@ static int rtl9602c_eth_alloc_rings(struct rtl9602c_eth *ep)
 	ep->otx_head = ep->otx_dirty = 0;
 	ep->tx_rot = ep->otx_rot = 0;	/* fresh rings: HW walk starts at slot 0 */
 	ep->omci_r0_last_slot = -1;	/* no OMCI on shared LAN ring 0 yet */
-	ep->host_port = 0xff;		/* uplink port unknown until first RX */
 	for (i = 0; i < TX_RING_SIZE; i++) {
 		ep->tx_ring[i].opts1 = (i == TX_RING_SIZE - 1) ? D_EOR : 0;
 		ep->tx_skb[i] = NULL;
@@ -1785,7 +1848,7 @@ static void rtl9602c_hw_program(struct rtl9602c_eth *ep)
 	iowrite8(0x0A, ep->base + R_CMD);	/* CMD: RxChkSum|RxJumboSupport */
 	ep_wr(ep, R_TCR, 0x00000C00);		/* TX pad ON (bit0=0) */
 	rcr = 0x0000000E;
-	if (ndev->flags & (IFF_PROMISC | IFF_ALLMULTI))
+	if (rtl9602c_eth_want_promisc(ep))
 		rcr |= BIT(0);			/* re-apply AcceptAllPhys */
 	ep_wr(ep, R_RCR, rcr);
 	/* Stock O5 golden CONFIG = 0x21000000 (Rff 2k + rx-mring int split);
@@ -2205,16 +2268,23 @@ fail:
 	return ret;
 }
 
+/* The GMAC and the switch come up once, on the first open of any netdev
+ * riding them (eth0, a jack's, pon0); no ndo_stop takes them down. */
+static int rtl9602c_eth_hw_ensure(struct rtl9602c_eth *ep)
+{
+	if (ep->hw_up)
+		return 0;
+	return rtl9602c_eth_hw_start(ep);
+}
+
 static int rtl9602c_eth_open(struct net_device *ndev)
 {
 	struct rtl9602c_eth *ep = netdev_priv(ndev);
 	int ret;
 
-	if (!ep->hw_up) {
-		ret = rtl9602c_eth_hw_start(ep);
-		if (ret)
-			return ret;
-	}
+	ret = rtl9602c_eth_hw_ensure(ep);
+	if (ret)
+		return ret;
 	netif_carrier_on(ndev);
 	netif_start_queue(ndev);
 	return 0;
@@ -2230,13 +2300,60 @@ static int rtl9602c_eth_stop(struct net_device *ndev)
 	return 0;
 }
 
-/* CPU-directed TX uses a SOFTWARE DSA-style cpu-tag */
-#define SW_TAG_LAN_MASK	0x7	/* forwarding mask: LAN ports 0,1,2 (CPU port = 3) */
-
-static netdev_tx_t rtl9602c_eth_xmit(struct sk_buff *skb,
-				     struct net_device *ndev)
+/* The in-band Realtek cpu-tag (rtl8_4, between SA and the EtherType): the
+ * switch strips it and forwards to the ports in its mask. lan_tx_steer=2
+ * sends a jack's frame with that jack alone in the mask. */
+static int rtl9602c_cpu_tag_push(struct sk_buff *skb, u16 port_mask)
 {
-	struct rtl9602c_eth *ep = netdev_priv(ndev);
+	__be16 *t;
+
+	if (skb_cow_head(skb, RTL8_4_TAG_LEN))
+		return -ENOMEM;
+	skb_push(skb, RTL8_4_TAG_LEN);
+	memmove(skb->data, skb->data + RTL8_4_TAG_LEN, 2 * ETH_ALEN);
+	t = (__be16 *)(skb->data + 2 * ETH_ALEN);
+	t[0] = htons(0x8899);		/* Realtek EtherType */
+	t[1] = htons(0x0400);		/* protocol 0x04 (rtl8_4), reason 0 */
+	t[2] = htons(0x0020);		/* LEARN_DIS (rtl8_4 word2) */
+	t[3] = htons(port_mask);	/* CPU->switch forwarding port mask */
+	return 0;
+}
+
+/* Hold @skb to one jack, by the mode in force. Under tx_lock, after the
+ * ring-full test: a frame the ring refuses is requeued by the stack as it
+ * was, so it must not carry a tag yet. */
+static int rtl9602c_lan_steer(struct rtl9602c_eth *ep, struct sk_buff **pskb,
+			      unsigned int port)
+{
+	struct sk_buff *skb = *pskb;
+
+	switch (READ_ONCE(lan_tx_steer)) {
+	case LAN_STEER_VLAN:
+		if (READ_ONCE(ep->lan_steer_blocked))
+			return 0;
+		skb = vlan_insert_tag_set_proto(skb, htons(ETH_P_8021Q),
+						SW_LAN_STEER_VID(port));
+		if (!skb) {
+			*pskb = NULL;	/* freed by the insert */
+			return -ENOMEM;
+		}
+		*pskb = skb;
+		return 0;
+	case LAN_STEER_CPUTAG:
+		return rtl9602c_cpu_tag_push(skb, BIT(port));
+	default:
+		return 0;
+	}
+}
+
+/* Hand one frame to LAN ring 0. A plain frame (@port < 0, eth0's) the switch
+ * forwards by its own lookup; a jack's (lan_ndev[@port]'s) is first held to
+ * that jack. The bootloader's own TX path writes no cpu-tag descriptor
+ * either: the descriptor-inserted tag gave no egress on this silicon. */
+static netdev_tx_t rtl9602c_eth_lan_submit(struct rtl9602c_eth *ep,
+					   struct sk_buff *skb,
+					   struct net_device *ndev, int port)
+{
 	unsigned int i;
 	unsigned int len = skb->len;
 	unsigned long flags;
@@ -2258,25 +2375,13 @@ static netdev_tx_t rtl9602c_eth_xmit(struct sk_buff *skb,
 		}
 		len = ETH_ZLEN;
 	}
-#if TX_CPUTAG
-	/* Prepend the software cpu-tag after DA+SA (the hardware portmask insertion
-	 * is broken on this silicon — see RTL8_4 defines). */
-	if (skb_cow_head(skb, RTL8_4_TAG_LEN)) {
+	if (port >= 0 && rtl9602c_lan_steer(ep, &skb, port)) {
 		spin_unlock_irqrestore(&ep->tx_lock, flags);
 		ndev->stats.tx_dropped++;
-		dev_kfree_skb_any(skb);
+		if (skb)
+			dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
 	}
-	skb_push(skb, RTL8_4_TAG_LEN);
-	memmove(skb->data, skb->data + RTL8_4_TAG_LEN, 2 * ETH_ALEN);
-	{
-		__be16 *t = (__be16 *)(skb->data + 2 * ETH_ALEN);
-		t[0] = htons(0x8899);		/* Realtek EtherType */
-		t[1] = htons(0x0400);		/* protocol 0x04 (rtl8_4), reason 0 */
-		t[2] = htons(0x0020);	/* LEARN_DIS (rtl8_4 word2) */
-		t[3] = htons(SW_TAG_LAN_MASK);	/* CPU->switch forwarding port mask */
-	}
-#endif
 	len = skb->len;
 	da = dma_map_single(ep->dev, skb->data, len, DMA_TO_DEVICE);
 	if (dma_mapping_error(ep->dev, da)) {
@@ -2291,24 +2396,11 @@ static netdev_tx_t rtl9602c_eth_xmit(struct sk_buff *skb,
 	ep->tx_buf_len[i] = len;
 
 	ep->tx_ring[i].addr = da | DMA_BUS_WINDOW;	/* TX desc.addr bus window |= 0x20000000 */
-	/* Program the descriptor cpu-tag so the GMAC inserts a cpu-tag carrying a
-	 * NON-ZERO egress portmask; the switch (TAG_AWARE) parses it and directs
-	 * the frame to the LAN port(s). tx_portmask 0 was the bug: the switch then
-	 * does an empty L2 DA lookup and drops the frame ("TX never egresses"). */
-#if TX_CPUTAG
-	/* The software in-band 0x8899 tag (built above) already carries the egress
-	 * portmask; the GMAC must NOT also insert its own (broken-portmask) cpu-tag,
-	 * so opts2=0. This software-tag path is the one that put frames on the wire
-	 * at the host (observed: clean stripped IPv6 frames received). */
+	/* PLAIN descriptor: no GMAC-inserted cpu-tag (the cputag/TAG_AWARE trio
+	 * gave 0 egress even with the correct GMAC CPUtagCR -- reverted). What
+	 * holds a jack's frame to its jack is in the frame itself, above. */
 	ep->tx_ring[i].opts2 = 0;
 	ep->tx_ring[i].opts3 = 0;
-#else
-	/* PLAIN frame (cputag/TAG_AWARE trio gave 0 egress even with the correct
-	 * GMAC CPUtagCR — reverted). The bootloader's own TX path writes NO cputag
-	 * either. */
-	ep->tx_ring[i].opts2 = 0;
-	ep->tx_ring[i].opts3 = 0;
-#endif
 	ep->tx_ring[i].opts4 = 0;
 	opts1 = D_OWN | D_FS | D_LS | D_TXCRC | (len & TXD_LEN_MASK);
 	if (i == tx_eor_slot(ep))
@@ -2328,6 +2420,33 @@ static netdev_tx_t rtl9602c_eth_xmit(struct sk_buff *skb,
 	return NETDEV_TX_OK;
 }
 
+static netdev_tx_t rtl9602c_eth_xmit(struct sk_buff *skb,
+				     struct net_device *ndev)
+{
+	return rtl9602c_eth_lan_submit(netdev_priv(ndev), skb, ndev, -1);
+}
+
+/* A jack's netdev transmits. A frame that came in on a jack was already put
+ * on the other jack by the switch (one VLAN, flooding on) and is never sent
+ * back to its own: the bridge's copy for a LAN port is dropped here, counted,
+ * whatever the steering mode -- a steered copy would be the second one. */
+static netdev_tx_t rtl9602c_lan_xmit(struct sk_buff *skb,
+				     struct net_device *ndev)
+{
+	struct rtl9602c_lan *lan = netdev_priv(ndev);
+	struct rtl9602c_eth *ep = lan->ep;
+	unsigned int p;
+
+	for (p = 0; p < LAN_PORTS; p++) {
+		if (ep->lan_ndev[p] && skb->skb_iif == ep->lan_ndev[p]->ifindex) {
+			ep->dbg_lan_relay_skipped++;
+			dev_kfree_skb_any(skb);
+			return NETDEV_TX_OK;
+		}
+	}
+	return rtl9602c_eth_lan_submit(ep, skb, ndev, lan->port);
+}
+
 /* Honour promiscuous/all-multi (the bridge enslaving eth0 requests promisc).
  * Without AcceptAllPhys the GMAC drops unicast frames whose DA != our station
  * MAC — i.e. exactly the LAN-client frames a router/bridge must receive and
@@ -2336,8 +2455,14 @@ static void rtl9602c_eth_set_rx_mode(struct net_device *ndev)
 {
 	struct rtl9602c_eth *ep = netdev_priv(ndev);
 
-	luna_eth_set_promisc(ep->base,
-				 !!(ndev->flags & (IFF_PROMISC | IFF_ALLMULTI)));
+	luna_eth_set_promisc(ep->base, rtl9602c_eth_want_promisc(ep));
+}
+
+static void rtl9602c_lan_set_rx_mode(struct net_device *ndev)
+{
+	struct rtl9602c_lan *lan = netdev_priv(ndev);
+
+	luna_eth_set_promisc(lan->ep->base, rtl9602c_eth_want_promisc(lan->ep));
 }
 
 #ifdef CONFIG_GPON_FLOW_OFFLOAD
@@ -2359,6 +2484,175 @@ static const struct net_device_ops rtl9602c_eth_netdev_ops = {
 	.ndo_set_mac_address	= rtl9602c_eth_set_mac_address,
 	.ndo_validate_addr	= eth_validate_addr,
 };
+
+/* ---- the LAN jacks' netdevs ----------------------------------------------
+ * lan1 and lan2 (the DT ethernet-ports node) ride eth0's rings: RX is demuxed
+ * by the descriptor's source port, TX is held to the jack (lan_tx_steer).
+ * eth0 stays the conduit -- the rings, the IRQ, the station address the
+ * jacks inherit -- and a bridge port only on a configuration from before. */
+static void rtl9602c_lan_carrier_sync(struct rtl9602c_eth *ep, unsigned int port);
+
+static int rtl9602c_lan_open(struct net_device *ndev)
+{
+	struct rtl9602c_lan *lan = netdev_priv(ndev);
+	struct rtl9602c_eth *ep = lan->ep;
+	int ret;
+
+	ret = rtl9602c_eth_hw_ensure(ep);
+	if (ret)
+		return ret;
+	/* Taken down by ndo_stop: open the jack's link again. A jack never
+	 * opened was never gated, so a bridge built on eth0 alone is unaffected. */
+	if (READ_ONCE(rtl9602c_uni_down_ports) & BIT(lan->port)) {
+		ret = rtl9602c_lan_gate(ep, lan->port, false);
+		if (ret)
+			return ret;
+	}
+	rtl9602c_lan_carrier_sync(ep, lan->port);
+	netif_start_queue(ndev);
+	return 0;
+}
+
+static int rtl9602c_lan_stop(struct net_device *ndev)
+{
+	struct rtl9602c_lan *lan = netdev_priv(ndev);
+	int ret;
+
+	netif_stop_queue(ndev);
+	/* The switch would keep forwarding through a jack nobody watches:
+	 * hold its link down while the netdev is, as the bridge expects. */
+	ret = rtl9602c_lan_gate(lan->ep, lan->port, true);
+	if (ret)
+		netdev_warn(ndev, "the jack's link could not be held down (%d): it keeps forwarding while this netdev is down\n",
+			    ret);
+	netif_carrier_off(ndev);
+	return 0;
+}
+
+/* The switch's own counters: hardware-forwarded traffic never reaches the
+ * CPU, so the netdev's software counts would read almost nothing. */
+static void rtl9602c_lan_get_stats64(struct net_device *ndev,
+				     struct rtnl_link_stats64 *s)
+{
+	struct rtl9602c_lan *lan = netdev_priv(ndev);
+
+	if (luna_mib_port_stats(lan->ep->sw, lan->ep->swm, lan->port, s))
+		netdev_stats_to_stats64(s, &ndev->stats);
+	else
+		s->tx_dropped += ndev->stats.tx_dropped;
+}
+
+static const struct net_device_ops rtl9602c_lan_netdev_ops = {
+	.ndo_get_port_parent_id = v2802_l2_parent_id,
+	.ndo_open		= rtl9602c_lan_open,
+	.ndo_stop		= rtl9602c_lan_stop,
+	.ndo_start_xmit		= rtl9602c_lan_xmit,
+	.ndo_set_rx_mode	= rtl9602c_lan_set_rx_mode,
+	.ndo_set_mac_address	= eth_mac_addr,
+	.ndo_validate_addr	= eth_validate_addr,
+	.ndo_get_stats64	= rtl9602c_lan_get_stats64,
+};
+
+/* What link_work last saw of the port; nothing is read from the PHY here. */
+static int rtl9602c_lan_get_link_ksettings(struct net_device *ndev,
+					   struct ethtool_link_ksettings *cmd)
+{
+	struct rtl9602c_lan *lan = netdev_priv(ndev);
+	const struct rtl9602c_lan_link *l = &lan->ep->lan_link[lan->port];
+
+	ethtool_link_ksettings_zero_link_mode(cmd, supported);
+	ethtool_link_ksettings_zero_link_mode(cmd, advertising);
+	ethtool_link_ksettings_add_link_mode(cmd, supported, TP);
+	ethtool_link_ksettings_add_link_mode(cmd, supported, Autoneg);
+	ethtool_link_ksettings_add_link_mode(cmd, supported, 10baseT_Half);
+	ethtool_link_ksettings_add_link_mode(cmd, supported, 10baseT_Full);
+	ethtool_link_ksettings_add_link_mode(cmd, supported, 100baseT_Half);
+	ethtool_link_ksettings_add_link_mode(cmd, supported, 100baseT_Full);
+	ethtool_link_ksettings_add_link_mode(cmd, supported, 1000baseT_Full);
+	if (lan->port == 0 && lan->ep->port0_serdes)
+		ethtool_link_ksettings_add_link_mode(cmd, supported, 2500baseT_Full);
+	bitmap_copy(cmd->link_modes.advertising, cmd->link_modes.supported,
+		    __ETHTOOL_LINK_MODE_MASK_NBITS);
+	cmd->base.port = PORT_TP;
+	cmd->base.autoneg = AUTONEG_ENABLE;
+	cmd->base.speed = l->up ? l->speed : SPEED_UNKNOWN;
+	cmd->base.duplex = !l->up ? DUPLEX_UNKNOWN :
+			   l->full ? DUPLEX_FULL : DUPLEX_HALF;
+	return 0;
+}
+
+static void rtl9602c_lan_get_drvinfo(struct net_device *ndev,
+				     struct ethtool_drvinfo *di)
+{
+	strscpy(di->driver, "rtl9602c-eth", sizeof(di->driver));
+	strscpy(di->bus_info, dev_name(ndev->dev.parent), sizeof(di->bus_info));
+}
+
+static const struct ethtool_ops rtl9602c_lan_ethtool_ops = {
+	.get_drvinfo		= rtl9602c_lan_get_drvinfo,
+	.get_link		= ethtool_op_get_link,
+	.get_link_ksettings	= rtl9602c_lan_get_link_ksettings,
+};
+
+/* The board's jacks, from its DT:
+ *	ethernet-ports {
+ *		port@1 { reg = <1>; label = "lan1"; };
+ *	};
+ * reg is the switch port, label the netdev's name. No node: eth0 alone
+ * carries the LAN, as before. */
+static int rtl9602c_lan_register(struct rtl9602c_eth *ep)
+{
+	struct device *dev = ep->dev;
+	struct device_node *ports, *pn;
+	int ret = 0;
+
+	ports = of_get_child_by_name(dev->of_node, "ethernet-ports");
+	if (!ports)
+		return 0;
+	for_each_available_child_of_node(ports, pn) {
+		struct net_device *ndev;
+		struct rtl9602c_lan *lan;
+		const char *label;
+		u32 port;
+
+		if (of_property_read_u32(pn, "reg", &port) || port >= LAN_PORTS ||
+		    port >= ep->swm->n_copper || ep->lan_ndev[port] ||
+		    of_property_read_string(pn, "label", &label) || !*label) {
+			dev_err(dev, "ethernet-ports/%pOFn: needs reg (one of this board's %u copper ports, once) and a label\n",
+				pn, min_t(unsigned int, LAN_PORTS, ep->swm->n_copper));
+			ret = -EINVAL;
+			break;
+		}
+		ndev = devm_alloc_etherdev(dev, sizeof(*lan));
+		if (!ndev) {
+			ret = -ENOMEM;
+			break;
+		}
+		SET_NETDEV_DEV(ndev, dev);
+		strscpy(ndev->name, label, IFNAMSIZ);
+		lan = netdev_priv(ndev);
+		lan->ep = ep;
+		lan->port = port;
+		ndev->netdev_ops = &rtl9602c_lan_netdev_ops;
+		ndev->ethtool_ops = &rtl9602c_lan_ethtool_ops;
+		ndev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
+		ndev->needed_headroom = RTL8_4_TAG_LEN;	/* a steering tag's room */
+		eth_hw_addr_set(ndev, ep->ndev->dev_addr);
+		netif_carrier_off(ndev);
+		ret = devm_register_netdev(dev, ndev);
+		if (ret) {
+			dev_err(dev, "%s (switch port %u) not registered: %d\n",
+				label, port, ret);
+			break;
+		}
+		ep->lan_ndev[port] = ndev;
+		dev_info(dev, "%s: switch port %u\n", ndev->name, port);
+	}
+	if (ret)
+		of_node_put(pn);
+	of_node_put(ports);
+	return ret;
+}
 
 /* /proc/ethdump `omci_inject`: 5 baseline OMCI frames onto the US OMCC TX path,
  * with no OLT. Run at O5; ustx (0x1b0329bc) climbing means the steering works. */
@@ -2484,6 +2778,10 @@ static int rtl9602c_ethdump_show(struct seq_file *m, void *v)
 	}
 	seq_printf(m, "rxring: HW-owned(D_OWN=1)=%u  CPU-owned(filled)=%u\n",
 		   own, hwfilled);
+	seq_printf(m, "lan: steer=%u blocked=%u relay_skipped=%u lan2(p0)=%s/%u lan1(p1)=%s/%u\n",
+		   lan_tx_steer, ep->lan_steer_blocked, ep->dbg_lan_relay_skipped,
+		   ep->lan_link[0].up ? "up" : "down", ep->lan_link[0].speed,
+		   ep->lan_link[1].up ? "up" : "down", ep->lan_link[1].speed);
 	{
 		/* TX ring OWN bitmap (slot 0 = LSB of the first hex word):
 		 * separates "HW transmits but never clears OWN" from reclaim
@@ -2593,28 +2891,35 @@ static void rtl9602c_eth_tx_fence(void *cookie)
 	spin_unlock_irqrestore(&ep->tx_lock, flags);
 }
 
-/* the UNI administrative */
-static int rtl9602c_uni_admin_set(void *cookie, unsigned int port, bool locked)
+/* A UNI is a COPPER port.  The PON and CPU ports share this index space, so a
+ * mis-declared panel would otherwise drive a PHY that is not there and then
+ * report the reserved port LOCKED. */
+static bool rtl9602c_uni_port_ok(struct rtl9602c_eth *ep, unsigned int port)
 {
-	struct rtl9602c_eth *ep = cookie;
+	if (ep && port < ep->swm->n_copper)
+		return true;
+	pr_err("rtl9602c-eth: UNI port %u is not one of this board's %u copper ports -- REFUSED, nothing is written\n",
+	       port, ep ? ep->swm->n_copper : 0);
+	return false;
+}
+
+/* Drive one jack's link gate from the union of the OMCI lock and the
+ * netdev's administrative state (rtl9602c_uni_port_locked); @why names the
+ * caller in the log. The unlock of a GPHY port is a power-down pulse, so
+ * the far end re-negotiates. */
+static int rtl9602c_uni_gate_apply(struct rtl9602c_eth *ep, unsigned int port,
+				   const char *why)
+{
 	u32 force, mode, guard;
-	bool phy_allowed = true;
+	bool phy_allowed = true, locked;
 	u16 bmcr, want;
 	int rc;
 
-	/* A UNI is a COPPER port.  The PON and CPU ports share this index space,
-	 * so a mis-declared panel would otherwise drive a PHY that is not there
-	 * and then report the reserved port LOCKED. */
-	if (!ep || port >= ep->swm->n_copper) {
-		pr_err("rtl9602c-eth: UNI port %u is not one of this board's %u copper ports -- REFUSED, nothing is written\n",
-		       port, ep ? ep->swm->n_copper : 0);
+	if (!rtl9602c_uni_port_ok(ep, port))
 		return -EINVAL;
-	}
 
 	mutex_lock(&rtl9602c_gphy_lock);
-	WRITE_ONCE(rtl9602c_uni_locked_ports,
-		   locked ? (rtl9602c_uni_locked_ports | BIT(port))
-			  : (rtl9602c_uni_locked_ports & ~BIT(port)));
+	locked = rtl9602c_uni_port_locked(port);
 
 	/* A SerDes port has no GPHY in its path: the forced link IS the gate. */
 	if (port == 0 && ep->port0_serdes) {
@@ -2631,8 +2936,8 @@ static int rtl9602c_uni_admin_set(void *cookie, unsigned int port, bool locked)
 				port, force);
 			return -EIO;
 		}
-		dev_info(ep->dev, "UNI port %u %s (SerDes, FORCE_P_ABLTY %08x)\n",
-			 port, locked ? "LOCKED" : "UNLOCKED", force);
+		dev_info(ep->dev, "UNI port %u %s by %s (SerDes, FORCE_P_ABLTY %08x)\n",
+			 port, locked ? "LOCKED" : "UNLOCKED", why, force);
 		return 0;
 	}
 
@@ -2705,9 +3010,38 @@ static int rtl9602c_uni_admin_set(void *cookie, unsigned int port, bool locked)
 			port, locked ? "power-down" : "power-up", rc, bmcr);
 		return rc;
 	}
-	dev_info(ep->dev, "UNI port %u %s (BMCR %04x, ABLTY_FORCE_MODE %08x)\n",
-		 port, locked ? "LOCKED" : "UNLOCKED", bmcr, mode);
+	dev_info(ep->dev, "UNI port %u %s by %s (BMCR %04x, ABLTY_FORCE_MODE %08x)\n",
+		 port, locked ? "LOCKED" : "UNLOCKED", why, bmcr, mode);
 	return 0;
+}
+
+/* OMCI's Administrative State for a UNI (the OLT's, through omcid or the
+ * in-kernel responder): a DESIRED state, applied with the netdev's. */
+static int rtl9602c_uni_admin_set(void *cookie, unsigned int port, bool locked)
+{
+	struct rtl9602c_eth *ep = cookie;
+
+	if (!rtl9602c_uni_port_ok(ep, port))
+		return -EINVAL;
+	mutex_lock(&rtl9602c_gphy_lock);
+	WRITE_ONCE(rtl9602c_uni_locked_ports,
+		   locked ? (rtl9602c_uni_locked_ports | BIT(port))
+			  : (rtl9602c_uni_locked_ports & ~BIT(port)));
+	mutex_unlock(&rtl9602c_gphy_lock);
+	return rtl9602c_uni_gate_apply(ep, port, "OMCI");
+}
+
+/* ip link set lanN down / up. */
+static int rtl9602c_lan_gate(struct rtl9602c_eth *ep, unsigned int port, bool down)
+{
+	if (!rtl9602c_uni_port_ok(ep, port))
+		return -EINVAL;
+	mutex_lock(&rtl9602c_gphy_lock);
+	WRITE_ONCE(rtl9602c_uni_down_ports,
+		   down ? (rtl9602c_uni_down_ports | BIT(port))
+			: (rtl9602c_uni_down_ports & ~BIT(port)));
+	mutex_unlock(&rtl9602c_gphy_lock);
+	return rtl9602c_uni_gate_apply(ep, port, "netdev");
 }
 
 /* ---- the external PHY's bit-banged MDIO ----------------------------------
@@ -2876,81 +3210,141 @@ static int rtl9602c_ext_phy_init(struct rtl9602c_eth *ep)
 
 /* Link changes in phylink's words, per LAN jack: LAN1 is the GPHY port,
  * LAN2 the SerDes one. Pause is the ability word's TX (b5) / RX (b6). */
-static void rtl9602c_link_log(struct rtl9602c_eth *ep, unsigned int lan,
-			      const char *speed, bool full, u32 ablty)
+static const char *rtl9602c_speed_str(u32 speed)
+{
+	switch (speed) {
+	case SPEED_10: return "10Mbps";
+	case SPEED_100: return "100Mbps";
+	case SPEED_1000: return "1Gbps";
+	case SPEED_2500: return "2.5Gbps";
+	default: return "Unknown";
+	}
+}
+
+static void rtl9602c_link_log(struct rtl9602c_eth *ep, unsigned int lan, bool up,
+			      u32 speed, bool full, u32 ablty)
 {
 	static const char * const pause[] = { "off", "tx", "rx", "rx/tx" };
 
-	if (!speed) {
+	if (!up) {
 		dev_info(ep->dev, "lan%u: Link is Down\n", lan);
 		return;
 	}
 	dev_info(ep->dev, "lan%u: Link is Up - %s/%s - flow control %s\n", lan,
-		 speed, full ? "Full" : "Half", pause[(ablty >> 5) & 0x3]);
+		 rtl9602c_speed_str(speed), full ? "Full" : "Half",
+		 pause[(ablty >> 5) & 0x3]);
+}
+
+/* What the jack's netdev shows: carrier now, speed and duplex to ethtool. */
+static void rtl9602c_lan_link_set(struct rtl9602c_eth *ep, unsigned int port,
+				  bool up, u32 speed, bool full)
+{
+	struct net_device *ndev;
+
+	if (port >= LAN_PORTS)
+		return;
+	ep->lan_link[port].seen = true;
+	ep->lan_link[port].up = up;
+	ep->lan_link[port].speed = speed;
+	ep->lan_link[port].full = full;
+	ndev = ep->lan_ndev[port];
+	if (!ndev)
+		return;
+	if (up)
+		netif_carrier_on(ndev);
+	else
+		netif_carrier_off(ndev);
+}
+
+static void rtl9602c_lan_carrier_sync(struct rtl9602c_eth *ep, unsigned int port)
+{
+	if (port < LAN_PORTS)
+		rtl9602c_lan_link_set(ep, port, ep->lan_link[port].up,
+				      ep->lan_link[port].speed,
+				      ep->lan_link[port].full);
 }
 
 /* RTL8221B PHYSR (VEND2 0xa434): duplex bit 3, speed bits 10:9 and 5:4. */
-static const char *rtl9602c_port0_speed(struct rtl9602c_eth *ep, bool *full)
+static u32 rtl9602c_port0_speed(struct rtl9602c_eth *ep, bool *full)
 {
 	int sr = ext_mdio_read_c45(ep, MDIO_MMD_VEND2_RTL, 0xa434);
 
 	*full = sr >= 0 && (sr & BIT(3));
 	switch (sr < 0 ? -1 : sr & 0x630) {
-	case 0x000: return "10Mbps";
-	case 0x010: return "100Mbps";
-	case 0x020: return "1Gbps";
-	case 0x210: return "2.5Gbps";
-	default: return "Unknown";
+	case 0x000: return SPEED_10;
+	case 0x010: return SPEED_100;
+	case 0x020: return SPEED_1000;
+	case 0x210: return SPEED_2500;
+	default: return SPEED_UNKNOWN;
 	}
 }
 
-/* The GPHY port links on its own; report it as port 0's poll does. */
-static void rtl9602c_port1_link_log(struct rtl9602c_eth *ep)
+/* A GPHY port links on its own; its live ability word says how. The log
+ * names the jack as the panel does: port 1 is LAN1, port 0 LAN2. */
+static void rtl9602c_gphy_link_poll(struct rtl9602c_eth *ep, unsigned int port)
 {
-	static const char * const speed[] = { "10Mbps", "100Mbps", "1Gbps", "Unknown" };
-	u32 sts = ioread32(ep->sw + ep->swm->p_ablty + 4) &
+	static const u32 speed[] = { SPEED_10, SPEED_100, SPEED_1000, SPEED_UNKNOWN };
+	u32 sts = ioread32(ep->sw + ep->swm->p_ablty + 4 * port) &
 		  (ABLTY_LINK | BIT(2) | BIT(5) | BIT(6) | 0x3);
+	bool up = sts & ABLTY_LINK;
 
-	if (sts == ep->port1_sts)
+	if (sts == ep->gphy_sts[port] && ep->lan_link[port].seen)
 		return;
-	ep->port1_sts = sts;
-	rtl9602c_link_log(ep, 1, sts & ABLTY_LINK ? speed[sts & 0x3] : NULL,
-			  sts & BIT(2), sts);
+	ep->gphy_sts[port] = sts;
+	/* The first look at a port with no link is not news. */
+	if (sts || ep->lan_link[port].seen)
+		rtl9602c_link_log(ep, port == 0 ? 2 : 1, up, speed[sts & 0x3],
+				  sts & BIT(2), sts);
+	rtl9602c_lan_link_set(ep, port, up, speed[sts & 0x3], sts & BIT(2));
 }
 
 /* Mirror the external PHY's link into port 0's forced link, so a LAN2 jack
  * with no cable is a down port to the switch, as a copper port would be. An
  * administrative lock keeps it down whatever the cable does. BMSR's link bit
- * latches low, so the second read is the live state. */
-static void rtl9602c_port0_link_work(struct work_struct *work)
+ * latches low, so the second read is the live state. The bit-banged bus has
+ * one user at a time: the gphy lock, which the gate holds too. */
+static void rtl9602c_port0_link_poll(struct rtl9602c_eth *ep)
 {
-	struct rtl9602c_eth *ep = container_of(to_delayed_work(work),
-					       struct rtl9602c_eth, port0_link_work);
 	u32 cur, want = SW_ABLTY_SERDES_UP;
 	int bmsr;
-	bool up;
+	bool up, link;
 
+	mutex_lock(&rtl9602c_gphy_lock);
 	ext_mdio_read(ep, MII_BMSR);
 	bmsr = ext_mdio_read(ep, MII_BMSR);
 	up = bmsr >= 0 && (bmsr & BMSR_LSTATUS);
-
-	mutex_lock(&rtl9602c_gphy_lock);
-	if (!up || rtl9602c_uni_port_locked(0))
+	link = up && !rtl9602c_uni_port_locked(0);
+	if (!link)
 		want &= ~ABLTY_LINK;
 	cur = ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, 0));
-	if (cur != want) {
+	if (cur != want)
 		iowrite32(want, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
-		if ((cur ^ want) & ABLTY_LINK) {
-			bool full = false;
-			const char *speed = want & ABLTY_LINK ?
-				rtl9602c_port0_speed(ep, &full) : NULL;
+	if (link != ep->lan_link[0].up || !ep->lan_link[0].seen) {
+		bool full = false;
+		u32 speed = link ? rtl9602c_port0_speed(ep, &full) : SPEED_UNKNOWN;
 
-			rtl9602c_link_log(ep, 2, speed, full, want);
-		}
+		if (link || ep->lan_link[0].seen)
+			rtl9602c_link_log(ep, 2, link, speed, full, want);
+		rtl9602c_lan_link_set(ep, 0, link, speed, full);
 	}
 	mutex_unlock(&rtl9602c_gphy_lock);
-	rtl9602c_port1_link_log(ep);
-	schedule_delayed_work(&ep->port0_link_work, HZ);
+}
+
+static void rtl9602c_link_work(struct work_struct *work)
+{
+	struct rtl9602c_eth *ep = container_of(to_delayed_work(work),
+					       struct rtl9602c_eth, link_work);
+	unsigned int p;
+
+	for (p = 0; p < LAN_PORTS && p < ep->swm->n_copper; p++) {
+		if (p == 0 && ep->port0_serdes) {
+			if (ep->ext_phy_ok)
+				rtl9602c_port0_link_poll(ep);
+		} else {
+			rtl9602c_gphy_link_poll(ep, p);
+		}
+	}
+	schedule_delayed_work(&ep->link_work, HZ);
 }
 
 static bool rtl9602c_uni_link(void *cookie, unsigned int port)
@@ -2965,6 +3359,22 @@ static void rtl9602c_eth_omci_release(void *cookie)
 	WRITE_ONCE(g_ep, NULL);
 	luna_xpon_detach(cookie);
 	luna_omci_detach(cookie);
+}
+
+/* One of the board's lamps by its led-names entry; none is not an error. */
+static int rtl9602c_eth_get_led(struct device *dev, char *name,
+				struct led_classdev **out)
+{
+	struct led_classdev *led = devm_led_get(dev, name);
+
+	*out = NULL;
+	if (!IS_ERR(led)) {
+		*out = led;
+		return 0;
+	}
+	if (PTR_ERR(led) == -ENOENT)
+		return 0;
+	return dev_err_probe(dev, PTR_ERR(led), "the %s LED\n", name);
 }
 
 static int rtl9602c_eth_probe(struct platform_device *pdev)
@@ -2991,6 +3401,15 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	spin_lock_init(&ep->tx_lock);
 	spin_lock_init(&ep->sw_table_lock);
 	INIT_WORK(&ep->recover_work, rtl9602c_eth_recover_work);
+
+	/* The board's PON/LOS lamps (this node's leds / led-names) are
+	 * net/xpon's to drive. Not registered yet = probe again later, before
+	 * the GMAC is touched. */
+	ret = rtl9602c_eth_get_led(dev, "pon", &ep->pon_led);
+	if (!ret)
+		ret = rtl9602c_eth_get_led(dev, "los", &ep->los_led);
+	if (ret)
+		return ret;
 
 	ep->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(ep->base))
@@ -3116,6 +3535,9 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	ret = devm_register_netdev(dev, ndev);
 	if (ret)
 		return ret;
+	ret = rtl9602c_lan_register(ep);
+	if (ret)
+		return ret;
 
 	dev_dbg(dev, "inherited IO_CMD %08x\n", ep->ub_iocmd);
 
@@ -3151,7 +3573,8 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 
 	if (ep->wan_ndev && luna_xpon_wanted()) {
 		ret = luna_xpon_attach(dev, ep->wan_ndev, ep, rtl9602c_eth_omci_send,
-				       rtl9602c_uni_admin_set, rtl9602c_uni_link);
+				       rtl9602c_uni_admin_set, rtl9602c_uni_link,
+				       ep->pon_led, ep->los_led);
 		if (ret)
 			dev_err(dev, "omcid backend not registered: %d\n", ret);
 	}
@@ -3160,12 +3583,13 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	if (ret)
 		dev_warn(dev, "V2802RH L2 offload unavailable: %d\n", ret);
 
-	if (ep->port0_serdes && ep->ext_phy_ok) {
-		ret = devm_delayed_work_autocancel(dev, &ep->port0_link_work,
-						   rtl9602c_port0_link_work);
+	/* The SerDes mirror needs the poll; so does any jack with a netdev. */
+	if ((ep->port0_serdes && ep->ext_phy_ok) || ep->lan_ndev[0] || ep->lan_ndev[1]) {
+		ret = devm_delayed_work_autocancel(dev, &ep->link_work,
+						   rtl9602c_link_work);
 		if (ret)
 			return ret;
-		schedule_delayed_work(&ep->port0_link_work, HZ);
+		schedule_delayed_work(&ep->link_work, HZ);
 	}
 
 	ep->omci_mds = (u8)omci_mds_seed;	/* poison seed: fail the OLT's ME2 audit so a warm

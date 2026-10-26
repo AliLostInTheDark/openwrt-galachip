@@ -120,6 +120,52 @@ static u64 luna_mib_read(void __iomem *sw, u32 base, unsigned int port,
 	return ((u64)hi << 32) | lo2;
 }
 
+/* The counters a netdev's statistics are made of, by name in the tables
+ * above; the lookup is by name so a table edit cannot shift a meaning. */
+static u64 luna_mib_named(void __iomem *sw, u32 base,
+			  const struct luna_mib_field *tbl, unsigned int n,
+			  unsigned int port, const char *name)
+{
+	unsigned int i;
+
+	for (i = 0; i < n; i++)
+		if (!strcmp(tbl[i].name, name))
+			return luna_mib_read(sw, base, port, &tbl[i]);
+	return 0;
+}
+
+int luna_mib_port_stats(void __iomem *sw, const struct luna_sw_map *map,
+			unsigned int port, struct rtnl_link_stats64 *s)
+{
+	u64 rx_bad;
+
+	if (!sw || !map || port >= map->n_mib_ports)
+		return -ENODEV;
+#define LUNA_TXC(n) luna_mib_named(sw, SW_STAT_PORT_TX_MIB, luna_mib_tx, ARRAY_SIZE(luna_mib_tx), port, n)
+#define LUNA_RXC(n) luna_mib_named(sw, map->rx_mib, luna_mib_rx, ARRAY_SIZE(luna_mib_rx), port, n)
+	s->tx_bytes = LUNA_TXC("tx_octets");
+	s->tx_packets = LUNA_TXC("tx_unicast") + LUNA_TXC("tx_multicast") + LUNA_TXC("tx_broadcast");
+	s->multicast = 0;
+	s->tx_dropped = LUNA_TXC("tx_discards");
+	s->collisions = LUNA_TXC("tx_collisions");
+	s->tx_errors = LUNA_TXC("tx_excess_collision") + LUNA_TXC("tx_late_collision");
+	if (!map->rx_mib)
+		return 0;
+	s->rx_bytes = LUNA_RXC("rx_octets");
+	s->rx_packets = LUNA_RXC("rx_unicast") + LUNA_RXC("rx_multicast") + LUNA_RXC("rx_broadcast");
+	s->multicast = LUNA_RXC("rx_multicast");
+	s->rx_crc_errors = LUNA_RXC("rx_crc_align_err");
+	s->rx_length_errors = LUNA_RXC("rx_undersize") + LUNA_RXC("rx_oversize") +
+			      LUNA_RXC("rx_fragments") + LUNA_RXC("rx_jabbers");
+	rx_bad = LUNA_RXC("rx_symbol_err");
+	s->rx_errors = s->rx_crc_errors + s->rx_length_errors + rx_bad;
+	s->rx_dropped = LUNA_RXC("rx_drop_events");
+#undef LUNA_TXC
+#undef LUNA_RXC
+	return 0;
+}
+EXPORT_SYMBOL_GPL(luna_mib_port_stats);
+
 static int luna_mib_get_sset_count(struct net_device *ndev, int sset)
 {
 	if (sset != ETH_SS_STATS)

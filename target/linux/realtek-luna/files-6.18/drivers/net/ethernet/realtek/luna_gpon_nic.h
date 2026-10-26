@@ -36,16 +36,20 @@ void rtl9601d_l2_changed(void);
 struct device;
 struct net_device;
 struct sk_buff;
+struct led_classdev;
 #if IS_ENABLED(CONFIG_XPON_OMCI)
 int luna_xpon_l2_services(struct luna_l2_service *services);
 void luna_xpon_service_vids(unsigned long *vids);
 bool luna_xpon_wanted(void);
 bool luna_xpon_active(void);
 bool luna_xpon_data_ready(void);
+/* @pon_led and @los_led: the board's lamps, NULL for none; net/xpon drives
+ * them from the registration state and the optical LOS. */
 int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 		     int (*tx)(void *, const u8 *, unsigned int),
 		     int (*uni_admin_set)(void *, unsigned int, bool),
-		     bool (*uni_link)(void *, unsigned int));
+		     bool (*uni_link)(void *, unsigned int),
+		     struct led_classdev *pon_led, struct led_classdev *los_led);
 void luna_xpon_detach(void *cookie);
 void luna_xpon_omci_rx(const u8 *msg, unsigned int len);
 int luna_xpon_tx_flow(struct sk_buff **pskb);
@@ -63,7 +67,9 @@ static inline int luna_xpon_attach(struct device *dev, struct net_device *wan,
 				   void *cookie,
 				   int (*tx)(void *, const u8 *, unsigned int),
 				   int (*uni_admin_set)(void *, unsigned int, bool),
-				   bool (*uni_link)(void *, unsigned int))
+				   bool (*uni_link)(void *, unsigned int),
+				   struct led_classdev *pon_led,
+				   struct led_classdev *los_led)
 {
 	return -EOPNOTSUPP;
 }

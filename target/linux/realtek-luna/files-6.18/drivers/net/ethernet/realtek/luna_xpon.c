@@ -125,6 +125,7 @@ static struct {
 	u8 ev_state;
 	u8 ev_onu_id;
 	u16 ev_gem;
+	bool ev_los;
 	bool data_up;
 	bool operational;
 } luna_xpon = {
@@ -1148,6 +1149,7 @@ static void luna_xpon_reconcile_fn(struct work_struct *work)
 #define LUNA_XPON_EV_ONU_ID	BIT(1)
 #define LUNA_XPON_EV_CHANNEL	BIT(2)
 #define LUNA_XPON_EV_IDENTITY	BIT(3)
+#define LUNA_XPON_EV_LOS	BIT(4)
 
 static void luna_xpon_post(unsigned int ev, u8 state, u8 onu_id, u16 gem)
 {
@@ -1163,6 +1165,19 @@ static void luna_xpon_post(unsigned int ev, u8 state, u8 onu_id, u16 gem)
 		luna_xpon.ev_onu_id = onu_id;
 	if (ev & LUNA_XPON_EV_CHANNEL)
 		luna_xpon.ev_gem = gem;
+	spin_unlock_irqrestore(&luna_xpon.ev_lock, flags);
+	schedule_work(&luna_xpon.event_work);
+}
+
+void luna_xpon_report_los(bool los)
+{
+	unsigned long flags;
+
+	if (!READ_ONCE(luna_xpon.odev))
+		return;
+	spin_lock_irqsave(&luna_xpon.ev_lock, flags);
+	luna_xpon.ev |= LUNA_XPON_EV_LOS;
+	luna_xpon.ev_los = los;
 	spin_unlock_irqrestore(&luna_xpon.ev_lock, flags);
 	schedule_work(&luna_xpon.event_work);
 }
@@ -1244,6 +1259,7 @@ static void luna_xpon_event_fn(struct work_struct *work)
 	unsigned int ev;
 	u8 state, onu_id;
 	u16 gem;
+	bool los;
 
 	spin_lock_irq(&luna_xpon.ev_lock);
 	ev = luna_xpon.ev;
@@ -1251,10 +1267,13 @@ static void luna_xpon_event_fn(struct work_struct *work)
 	state = luna_xpon.ev_state;
 	onu_id = luna_xpon.ev_onu_id;
 	gem = luna_xpon.ev_gem;
+	los = luna_xpon.ev_los;
 	spin_unlock_irq(&luna_xpon.ev_lock);
 	if (!odev)
 		return;
 
+	if (ev & LUNA_XPON_EV_LOS)
+		xpon_device_report_optical(luna_xpon.xpon, !los, los);
 	if (ev & LUNA_XPON_EV_IDENTITY)
 		luna_xpon_push_identity(odev);
 	if (ev & LUNA_XPON_EV_ONU_ID)
@@ -1655,13 +1674,16 @@ static const struct xpon_device_ops luna_xpon_device_ops = {
 int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 		     int (*tx)(void *, const u8 *, unsigned int),
 		     int (*uni_admin_set)(void *, unsigned int, bool),
-		     bool (*uni_link)(void *, unsigned int))
+		     bool (*uni_link)(void *, unsigned int),
+		     struct led_classdev *pon_led, struct led_classdev *los_led)
 {
 	struct xpon_device_desc desc = {
 		.modes = XPON_MODE_CAP(XPON_MODE_GPON),
 		.mode = XPON_MODE_GPON,
 		.ops = &luna_xpon_device_ops,
 		.netdev = wan,
+		.pon_led = pon_led,
+		.los_led = los_led,
 	};
 	struct omci_device *odev;
 	struct xpon_device *xpon;
@@ -1710,6 +1732,9 @@ int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 	if (gem >= 0 && luna_xpon_hw_state() == GPON_O5)
 		luna_xpon_report_channel(gem);
 	luna_xpon_report_state(luna_xpon_hw_state());
+	/* A LOS sampled before this device existed was told to nobody. */
+	if (luna_xpon_hw_los() >= 0)
+		luna_xpon_report_los(luna_xpon_hw_los() == 1);
 
 	rc = omci_device_start(odev);
 	if (rc)
