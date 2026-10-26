@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Realtek "Luna" GPON ONU (RTL960xC / RLX Taroko)
+#
+# Run-from-RAM kernel: U-Boot bootm's an LZMA uImage loaded at 0x80000000.
+load-$(CONFIG_REALTEK_LUNA)	+= 0xffffffff80000000
+
+# The RLX Taroko part (MIPS32 R1 here; the interAptiv one is R2) branches on a mul
+# that sits in its delay slot: keep mul out of delay slots (gcc -mfix-rlx).
+ifdef CONFIG_REALTEK_LUNA
+cflags-$(CONFIG_CPU_MIPS32_R1)	+= -mfix-rlx
+endif

@@ -1,0 +1,213 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Realtek RTL9602C "Europa" GPON ONU SoC (RLX "Taroko" core).
+ *
+ * Clean-room device description derived from observed hardware facts
+ * (register bases, IRQ numbers and clocks read from a running unit by
+ * probing the live device).
+ */
+
+#include "luna.dtsi"
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	compatible = "realtek,rtl9602c";
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "realtek,rlx-taroko";
+			reg = <0>;
+		};
+	};
+
+	cpuintc: interrupt-controller {
+		#address-cells = <0>;
+		#interrupt-cells = <1>;
+		interrupt-controller;
+		compatible = "mti,cpu-interrupt-controller";
+	};
+
+	/*
+	 * SoC clocks (fixed): CPU 625 MHz, MEM 525 MHz, LX (bus) 200 MHz,
+	 * SPI-F 50 MHz. The 16550 UART is fed from a 197.2352 MHz reference
+	 * (base_baud 12327200 x 16).
+	 */
+	uart_clk: uart-clk {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <197235200>;
+	};
+
+	/* LX (peripheral) bus clock, 200 MHz; feeds the SoC TC timer. */
+	lx_clk: lx-clk {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <200000000>;
+	};
+
+	intc: interrupt-controller@18003000 {
+		compatible = "realtek,rtl9602c-intc";
+		reg = <0x18003000 0x100>;
+		interrupt-controller;
+		#interrupt-cells = <1>;
+		interrupt-parent = <&cpuintc>;
+		/*
+		 * The aggregator routes each input (GIRR nibble = target CP0 HW
+		 * IRQ) onto one of several CP0 lines, not just line 2: the loaded
+		 * routing uses values 2, 3 and 6 (e.g. the SoC timer is on 6).
+		 * Cascade the dispatch on every CP0 line the routing targets so
+		 * those interrupts are delivered (the dispatch scans all GISR
+		 * words regardless of which line woke it).
+		 */
+		interrupts = <2>, <3>, <6>;
+	};
+
+	/* Second reg is the SWCORE IO_GPIO_EN pair (0x1b000048/4c), the pad
+	 * mux that hands a pin to this block. */
+	gpio: gpio-controller@18003300 {
+		compatible = "realtek,rtl960x-gpio";
+		reg = <0x18003300 0x40>, <0x1b000048 0x8>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		status = "disabled";
+	};
+
+	uart0: serial@18002000 {
+		compatible = "ns16550a";
+		reg = <0x18002000 0x100>;
+		reg-shift = <2>;
+		reg-io-width = <1>;
+		clocks = <&uart_clk>;
+		interrupt-parent = <&intc>;
+		interrupts = <49>;
+		status = "okay";
+	};
+
+	timer@18003200 {
+		/*
+		 * SoC "rlx timer": TC0 drives the tick, TC1 is the free-running
+		 * clocksource (CP0 Count is unreliable on this core). 0x18003100
+		 * is a different block whose +0x00 happens to be writable.
+		 */
+		compatible = "realtek,otto-timer";
+		reg = <0x18003200 0x10>, <0x18003210 0x10>;
+		clocks = <&lx_clk>;
+		interrupt-parent = <&intc>;
+		interrupts = <43>;
+	};
+
+	watchdog@18003260 {
+		/*
+		 * The SoC watchdog, at the top of the same TC block (TC_BASE +
+		 * 0x60): WDT_CNT at +0x00 (bit 31 = kick), WDT_INTR at +0x04,
+		 * WDT_CTRL at +0x08 (bit 31 enable, [30:29] tick scale,
+		 * [26:22] phase-1 timeout, [19:15] phase-2 timeout, [1:0]
+		 * reset mode).  It does not overlap the timer window above,
+		 * which ends at +0x1f.
+		 *
+		 * The block is family-wide, not chip-specific -- the vendor
+		 * BSP declares it once for every Luna part -- hence the
+		 * generic compatible the driver actually binds on, with the
+		 * chip name in front so a future chip-specific quirk has
+		 * somewhere to go.
+		 *
+		 * The counter is scaled from the LX bus clock, so the window
+		 * the driver can express follows &lx_clk: at 200 MHz one tick
+		 * is 1.342 s at the coarsest scale and the ceiling is 42 s.
+		 * That rate is not a fresh assumption -- the same &lx_clk
+		 * drives the SoC timer above, which is this kernel's system
+		 * tick, so a wrong LX frequency would already show up as a
+		 * board that cannot keep time.
+		 *
+		 * 30 s is a working default, not a measurement: it is well
+		 * inside that ceiling, and it is what procd asks for anyway
+		 * once it opens /dev/watchdog, feeding at half the window.
+		 *
+		 * NOTE the arch restart path in arch/mips/realtek-luna/setup.c
+		 * drives these same registers through a fixed KSEG1 address.
+		 * That is deliberate and predates this node; the driver maps
+		 * the window non-exclusively so both can coexist.
+		 */
+		compatible = "realtek,rtl9602c-wdt", "realtek,rtl960x-wdt";
+		reg = <0x18003260 0xc>;
+		clocks = <&lx_clk>;
+		/* 42 s, the hardware maximum (scale 3, phase-1 31): stock's own
+		 * WDT_CTRL word 0xe7c00000. */
+		timeout-sec = <42>;
+
+		/* Enabled 2026-10-08: the August failure no longer reproduces. Armed
+		 * by devmem with stock's word on X111W and X100DG, 5 s kicks held it
+		 * for 102 s and 115 s and it bit 46-47 s after the last one: the kick
+		 * reloads. The driver arms it at probe; the core feeds it until procd
+		 * does. */
+	};
+
+	nic: ethernet@18012000 {
+		/* re8686-class GMAC0; base confirmed on silicon (IDR0-5 hold the
+		 * U-Boot MAC). INTC input 26 = GMAC0 TX/RX completion (matches live
+		 * stock GIMR0/GISR0 bit26 and /proc/interrupts "26: ... eth0"). The
+		 * driver request_irq()s this for IRQ-driven NAPI TX/RX servicing. */
+		compatible = "realtek,rtl9602c-nic";
+		reg = <0x18012000 0x2000>;
+		interrupt-parent = <&intc>;
+		interrupts = <26>;
+		status = "okay";
+	};
+
+	spi_nor: flash@14000000 {
+		/*
+		 * 16 MB SPI-NOR, memory-mapped (physmap) at 0x14000000.
+		 *
+		 * READ-ONLY: this describes the controller's memory-map read
+		 * window only, so map_rom binds and the MTD carries
+		 * MTD_CAP_ROM. Program and erase live behind a separate
+		 * register interface (SoC "SPI-F Gen3" PIO block) for which no
+		 * driver exists yet -- until one does, nothing on this device
+		 * can be written and the board keeps no setting across a
+		 * reboot.
+		 */
+		compatible = "mtd-rom";
+		reg = <0x14000000 0x1000000>;
+		bank-width = <2>;
+		/*
+		 * The erase block, and it is LOAD-BEARING even on a read-only
+		 * mapping. drivers/mtd/chips/map_rom.c default_erasesize()
+		 * reads this property and, ABSENT IT, falls back to map->size
+		 * -- the whole 16 MB chip as ONE erase block. The squashfs
+		 * rootfs splitter rounds up to that block against the WHOLE
+		 * DEVICE (mtdsplit_squashfs.c: mtd_roundup_to_eb(part_offset +
+		 * squashfs_len, parent_mtd)), so a 3.2 MB rootfs rounded to
+		 * 16 MB lands past the end of every partition and mtdpart.c
+		 * publishes the overlay as
+		 *     mtd: partition "rootfs_data" is out of reach -- disabled
+		 * with size 0. Measured on the X111W 2026-08-16: /proc/mtd
+		 * showed `rootfs_data` at size 0 with erasesize 0x01000000 --
+		 * the chip -- which is exactly what that code path prints.
+		 *
+		 * 64 KiB is the JEDEC NOR sector and is a CONSERVATIVE choice:
+		 * it is a valid alignment whatever the fitted part uses (a
+		 * 4 KiB-sub-sector chip is aligned by it too), and with it the
+		 * split yields a 1600 KiB rootfs_data inside the 4864 KiB
+		 * bank-0 rootfs partition. It is a declaration, not a
+		 * measurement -- this unit's flash has never been identified;
+		 * confirm with a JEDEC RDID (0x9F) once the PIO path exists,
+		 * at which point the chip reports its own block and this
+		 * property is superseded.
+		 */
+		erase-size = <0x10000>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+	};
+};
+
+/* The GPON block raises the switch interrupt, aggregator input 8: stock's
+ * "apl_sw" in /proc/interrupts on the X111W and the X100DG. */
+&gpon {
+	interrupt-parent = <&intc>;
+	interrupts = <8>;
+};

@@ -862,6 +862,133 @@ config KERNEL_PRINTK_TIME
 	bool "Enable printk timestamps"
 	default y
 
+config KERNEL_CFG80211
+	bool "WiFi configuration API (cfg80211) in the kernel"
+	depends on TARGET_realtek_luna
+	default y
+	help
+	  A board with no radio turns it off (operator: "desactivar todo lo
+	  relacionado wifi si el equipo no tiene wifi"); mac80211 and every WiFi
+	  driver built into the kernel depend on it.
+
+config KERNEL_MAC80211
+	bool "IEEE 802.11 stack (mac80211) in the kernel"
+	depends on TARGET_realtek_luna
+	default y
+
+config KERNEL_RTL8192EE
+	bool "Realtek RTL8192EE (10ec:818b) PCIe WiFi, mainline rtlwifi driver"
+	depends on TARGET_realtek_luna
+	default n
+	help
+	  A board whose radio is an RTL8192EE turns it on (the V2801RGW).
+
+config KERNEL_RTL8192FE
+	bool "Realtek RTL8192FE PCIe WiFi, our rtlwifi driver"
+	depends on TARGET_realtek_luna
+	default y
+	help
+	  The X111W's and G24W's radio. A board without it turns it off (the
+	  V2801RGW, whose kernel must fit a 2560 KiB k0).
+
+config KERNEL_EXTRA_FIRMWARE
+	string "Firmware files built into the kernel"
+	depends on TARGET_realtek_luna
+	default "rtlwifi/rtl8192fefw.bin regulatory.db regulatory.db.p7s"
+	help
+	  The radio's firmware is built in: the WiFi driver probes before a
+	  flash root filesystem is mounted. A board names its own radio's blob.
+
+config KERNEL_PCI
+	bool "PCI in the kernel"
+	depends on TARGET_realtek_luna
+	default y
+	help
+	  A board whose SoC has no PCIe port turns it off.
+
+config KERNEL_BPF_SYSCALL
+	bool "eBPF system call (bpf())"
+	depends on TARGET_realtek_luna
+	default y
+	help
+	  A board that loads no eBPF program turns it off: kernel/bpf is 572 kB
+	  of the 32 MB X100DG's kernel.
+
+config KERNEL_BPF_JIT
+	bool "BPF JIT compiler"
+	depends on TARGET_realtek_luna
+	default y
+
+config KERNEL_LOG_BUF_SHIFT
+	int "Kernel log ring size, as 2^N bytes"
+	depends on TARGET_realtek_luna
+	range 12 25
+	default 17
+	help
+	  The printk ring and its static index arrays scale together: 17 costs
+	  528 kB of static RAM (measured on the X100DG).
+
+config KERNEL_JFFS2_LZMA
+	bool "JFFS2 LZMA compression"
+	depends on TARGET_realtek_luna
+	default y
+	help
+	  Its compressor is allocated at init (284 kB vmalloc on the X100DG)
+	  whether or not JFFS2 is mounted; the vendor config partition read so
+	  far (X100DG mtd3) holds zlib and uncompressed nodes, never LZMA.
+
+config KERNEL_GPON_OLT_DIAG_RECORDS
+	int "Records per GPON far-end capture ring"
+	depends on TARGET_realtek_luna || TARGET_realtek_elnath
+	range 16 4096
+	default 256
+	help
+	  CONFIG_GPON_OLT_DIAG_RECORDS: 256 by default, 1024 for a field build
+	  (build-openwrt.py variant "field"), 64 B per record per ring.
+
+config KERNEL_SLUB_TINY
+	bool "SLUB for a minimal memory footprint"
+	depends on TARGET_realtek_luna && !KERNEL_SLUB_DEBUG
+	help
+	  For 16-32 MB boards: no per-CPU partial lists and no slab sysfs
+	  (/sys/kernel/slab was 3764 of the X100DG's 7419 kernfs nodes).
+
+config KERNEL_MTD_LUNA_NOR_WRITE
+	bool "Luna SPI-NOR erase/program (off = read-only flash)"
+	depends on TARGET_realtek_luna
+	default y
+	help
+	  A bench unit booted from RAM over a vendor bank turns it off: the flash
+	  stays readable (the unit's identity) and nothing can write it
+	  (build-openwrt.py variant "ram").
+
+config KERNEL_LUNA_DEBUG
+	bool "Luna bring-up markers and driver diagnostics"
+	depends on TARGET_realtek_luna
+	default n
+	help
+	  Early-boot markers on the UART ([P] prom, [M] memory setup, [L] L2 window
+	  done, [T] timer, [I] irqchip) plus the luna_eth bring-up aids
+	  (build-openwrt.py variant "boot-marks").
+
+config KERNEL_MEM_ALLOC_PROFILING
+	bool "Track kernel allocation sites in /proc/allocinfo"
+	select KERNEL_DEBUG_KERNEL
+	default n
+	help
+	  Attribute live allocations to source locations when diagnosing leaks.
+	  Keep disabled in normal images to avoid profiling overhead.
+
+config KERNEL_MEM_ALLOC_PROFILING_ENABLED_BY_DEFAULT
+	bool
+	depends on KERNEL_MEM_ALLOC_PROFILING
+	default y
+
+config KERNEL_MEM_ALLOC_PROFILING_DEBUG
+	bool "Check allocation profiler accounting"
+	depends on KERNEL_MEM_ALLOC_PROFILING
+	default n
+
 config KERNEL_SLUB_DEBUG
 	bool "Enable SLUB debugging support"
 	help

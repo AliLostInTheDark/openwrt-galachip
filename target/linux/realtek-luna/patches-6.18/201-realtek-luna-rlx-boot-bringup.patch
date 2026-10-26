@@ -1,0 +1,191 @@
+realtek-luna: RLX kernel bring-up to a running system tick + userspace
+
+Clean-room RLX (RTL9602C "Taroko") fixes: -march=mips2 codegen (no SPECIAL2
+before trap_init), CPU_RLX_TAROKO cpu-type map, fixed primary-cache geometry
+(no Config0/1, no prefetch), R3000 (rfe) exception model on CPU_R3K_TLB, BUG_ON
+branch-to-break, cache-flush barriers, module-reloc / kexec / r4kcache support.
+
+--- a/arch/mips/Makefile
++++ b/arch/mips/Makefile
+@@ -158,7 +158,20 @@
+ cflags-$(CONFIG_CPU_R4300)	+= $(call cc-option,-march=r4300,-march=mips3) -Wa,--trap
+ cflags-$(CONFIG_CPU_R4X00)	+= $(call cc-option,-march=r4600,-march=mips3) -Wa,--trap
+ cflags-$(CONFIG_CPU_TX49XX)	+= $(call cc-option,-march=r4600,-march=mips3) -Wa,--trap
++ifeq ($(CONFIG_CPU_R3K_TLB),y)
++# The RLX ("Taroko") core uses the MIPS32 TLB/cache config but its ALU traps the
++# SPECIAL2 multiply/count-leading group (mul/madd/msub/clz/clo) that a mips32
++# toolchain emits.  Those faults are emulated on the reserved-instruction path,
++# which is not installed yet for hot code reached before trap setup (e.g. the
++# first sched_clock() from the boot banner) -> early hang.  Build MIPS II code
++# instead: it keeps ll/sc but uses mult/mflo for multiply and branches for
++# conditional-move/count, so none of the trapped opcodes are produced.  Also
++# suppress the divide-by-zero conditional trap.  (cache/sync/ll-sc asm carry
++# their own .set wrappers.)
++cflags-$(CONFIG_CPU_MIPS32_R1)	+= -march=mips2 -Wa,--trap -mno-check-zero-division
++else
+ cflags-$(CONFIG_CPU_MIPS32_R1)	+= -march=mips32 -Wa,--trap
++endif
+ cflags-$(CONFIG_CPU_MIPS32_R2)	+= -march=mips32r2 -mtune=24kc -Wa,--trap
+ cflags-$(CONFIG_CPU_MIPS32_R5)	+= -march=mips32r5 -Wa,--trap -modd-spreg
+ cflags-$(CONFIG_CPU_MIPS32_R6)	+= -march=mips32r6 -Wa,--trap -modd-spreg
+--- a/arch/mips/include/asm/bug.h
++++ b/arch/mips/include/asm/bug.h
+@@ -17,7 +17,15 @@
+ 
+ #define HAVE_ARCH_BUG
+ 
+-#if (_MIPS_ISA > _MIPS_ISA_MIPS1)
++/*
++ * The conditional-trap (tne) form of BUG_ON below is only valid on cores that
++ * implement the MIPS II+ trap instructions.  The RLX "Taroko" core is declared
++ * MIPS32 (so _MIPS_ISA > MIPS1) but, like an R3000, does not implement the
++ * conditional traps, so exclude the R3000-style cores (CONFIG_CPU_R3K_TLB) and
++ * fall back to the generic branch-to-break BUG_ON -- there the break is only
++ * reached on the failing branch, never executed unconditionally.
++ */
++#if (_MIPS_ISA > _MIPS_ISA_MIPS1) && !defined(CONFIG_CPU_R3K_TLB)
+ 
+ static inline void  __BUG_ON(unsigned long condition)
+ {
+--- a/arch/mips/include/asm/cpu-type.h
++++ b/arch/mips/include/asm/cpu-type.h
+@@ -32,6 +32,13 @@
+ 	case CPU_4KC:
+ 	case CPU_ALCHEMY:
+ 	case CPU_PR4450:
++	/*
++	 * The RLX "Taroko" reports a MIPS32R1 ISA (set_isa M32R1) but a legacy
++	 * company id, so it is probed by cpu_probe_legacy.  It must still appear
++	 * in this compile-time map or current_cpu_type() returns garbage and the
++	 * BUG_ON(current_cpu_type() != cputype) in cpu_probe() fires.
++	 */
++	case CPU_RLX_TAROKO:
+ #endif
+ 
+ #if defined(CONFIG_SYS_HAS_CPU_MIPS32_R1) || \
+--- a/arch/mips/include/asm/stackframe.h
++++ b/arch/mips/include/asm/stackframe.h
+@@ -42,7 +42,7 @@
+ 	cfi_restore \reg \offset \docfi
+ 	.endm
+ 
+-#if defined(CONFIG_CPU_R3000)
++#if defined(CONFIG_CPU_R3K_TLB)
+ #define STATMASK 0x3f
+ #else
+ #define STATMASK 0x1f
+@@ -352,7 +352,7 @@
+ 		cfi_ld	sp, PT_R29, \docfi
+ 		.endm
+ 
+-#if defined(CONFIG_CPU_R3000)
++#if defined(CONFIG_CPU_R3K_TLB)
+ 
+ 		.macro	RESTORE_SOME docfi=0
+ 		.set	push
+@@ -481,7 +481,7 @@
+ 		.macro	KMODE
+ 		mfc0	t0, CP0_STATUS
+ 		li	t1, ST0_KERNEL_CUMASK | (STATMASK & ~1)
+-#if defined(CONFIG_CPU_R3000)
++#if defined(CONFIG_CPU_R3K_TLB)
+ 		andi	t2, t0, ST0_IEP
+ 		srl	t2, 2
+ 		or	t0, t2
+--- a/arch/mips/kernel/entry.S
++++ b/arch/mips/kernel/entry.S
+@@ -100,7 +100,7 @@
+ 	SAVE_AT
+ 	SAVE_TEMP
+ 	LONG_L	v0, PT_STATUS(sp)
+-#if defined(CONFIG_CPU_R3000)
++#if defined(CONFIG_CPU_R3K_TLB)
+ 	and	v0, ST0_IEP
+ #else
+ 	and	v0, ST0_IE
+--- a/arch/mips/kernel/genex.S
++++ b/arch/mips/kernel/genex.S
+@@ -173,7 +173,7 @@
+ 	.set	push
+ 	.set	noat
+ 	mfc0	k0, CP0_STATUS
+-#if defined(CONFIG_CPU_R3000)
++#if defined(CONFIG_CPU_R3K_TLB)
+ 	and	k0, ST0_IEP
+ 	bnez	k0, 1f
+ 
+@@ -655,7 +655,7 @@
+ 	get_saved_sp	/* k1 := current_thread_info */
+ 	.set	noreorder
+ 	MFC0	k0, CP0_EPC
+-#if defined(CONFIG_CPU_R3000)
++#if defined(CONFIG_CPU_R3K_TLB)
+ 	ori	k1, _THREAD_MASK
+ 	xori	k1, _THREAD_MASK
+ 	LONG_L	v1, TI_TP_VALUE(k1)
+--- a/arch/mips/mm/c-r4k.c
++++ b/arch/mips/mm/c-r4k.c
+@@ -1174,6 +1174,48 @@
+ 		c->options |= MIPS_CPU_PREFETCH;
+ 		break;
+ 
++	case CPU_RLX_TAROKO:
++		/*
++		 * The RLX leaves Config0.M clear (so the generic MIPS32 path
++		 * below refuses to probe), but it does implement the Config1
++		 * cache-descriptor fields.  Decode them the same way; dump the
++		 * raw words once so the geometry can be cross-checked against
++		 * stock (which reports 64kB/32B I-cache, 32kB/32B D-cache, no
++		 * L2).  Fall back to that stock geometry if Config1 reads bogus.
++		 */
++		config1 = read_c0_config1();
++		pr_debug("RLX cache probe: Config0=%08x Config1=%08lx\n",
++			config, config1);
++		lsize = (config1 >> 19) & 7;
++		c->icache.linesz = lsize ? 2 << lsize : 0;
++		c->icache.sets = 32 << (((config1 >> 22) + 1) & 7);
++		c->icache.ways = 1 + ((config1 >> 16) & 7);
++		icache_size = c->icache.sets * c->icache.ways * c->icache.linesz;
++		lsize = (config1 >> 10) & 7;
++		c->dcache.linesz = lsize ? 2 << lsize : 0;
++		c->dcache.sets = 32 << (((config1 >> 13) + 1) & 7);
++		c->dcache.ways = 1 + ((config1 >> 7) & 7);
++		dcache_size = c->dcache.sets * c->dcache.ways * c->dcache.linesz;
++		if (icache_size != 0x10000 || dcache_size != 0x8000) {
++			pr_debug("RLX: Config1 cache fields bogus (ic=%lu dc=%lu) -> stock geometry\n",
++				icache_size, dcache_size);
++			c->icache.linesz = 32; c->icache.ways = 4; c->icache.sets = 512;
++			icache_size = 0x10000;
++			c->dcache.linesz = 32; c->dcache.ways = 4; c->dcache.sets = 256;
++			dcache_size = 0x8000;
++		}
++		c->icache.waybit = __ffs(icache_size / c->icache.ways);
++		c->dcache.waybit = __ffs(dcache_size / c->dcache.ways);
++		/*
++		 * Do NOT set MIPS_CPU_PREFETCH: the RLX ALU is MIPS II-class and
++		 * lacks `pref`; the runtime-built clear_page/copy_page would emit
++		 * `pref 30` and fault.  Leave prefetch off.
++		 */
++		pr_info("RLX cache: icache %luK/%dB/%dway dcache %luK/%dB/%dway\n",
++			icache_size >> 10, c->icache.linesz, c->icache.ways,
++			dcache_size >> 10, c->dcache.linesz, c->dcache.ways);
++		break;
++
+ 	default:
+ 		if (!(config & MIPS_CONF_M))
+ 			panic("Don't know how to probe P-caches on this cpu.");
+@@ -1551,6 +1593,14 @@
+ 		/* don't need to worry about L2, fully coherent */
+ 		return;
+ 
++	case CPU_RLX_TAROKO:
++		/*
++		 * The RLX has no second-level cache (stock reports scache 0kB)
++		 * and exposes no Config2, so the generic MIPS32 probe below
++		 * would wrongly panic.  Just record "no L2" and return.
++		 */
++		return;
++
+ 	default:
+ 		if (c->isa_level & (MIPS_CPU_ISA_M32R1 | MIPS_CPU_ISA_M64R1 |
+ 				    MIPS_CPU_ISA_M32R2 | MIPS_CPU_ISA_M64R2 |

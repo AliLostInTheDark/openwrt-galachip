@@ -1,0 +1,555 @@
+Index: linux-6.18.31/arch/mips/Kconfig
+===================================================================
+--- linux-6.18.31.orig/arch/mips/Kconfig
++++ linux-6.18.31/arch/mips/Kconfig
+@@ -2498,13 +2498,13 @@ config CPU_R4X00_BUGS64
+ 
+ config MIPS_ASID_SHIFT
+ 	int
+-	default 6 if CPU_R3000
++	default 6 if CPU_R3000 || CPU_R3K_TLB
+ 	default 0
+ 
+ config MIPS_ASID_BITS
+ 	int
+ 	default 0 if MIPS_ASID_BITS_VARIABLE
+-	default 6 if CPU_R3000
++	default 6 if CPU_R3000 || CPU_R3K_TLB
+ 	default 8
+ 
+ config MIPS_ASID_BITS_VARIABLE
+Index: linux-6.18.31/arch/mips/include/asm/cpu-features.h
+===================================================================
+--- linux-6.18.31.orig/arch/mips/include/asm/cpu-features.h
++++ linux-6.18.31/arch/mips/include/asm/cpu-features.h
+@@ -103,6 +103,23 @@
+ #endif
+ 
+ /*
++ * The RLX "Taroko" core is a hybrid: it uses R3000-style exception entry and
++ * return (no R4000 EXL/ERET) together with an r4k-style 4-way cache whose
++ * virtual indexing introduces D-cache aliases.  Pin those capabilities here so
++ * the generic feature tests describe the hybrid exactly, independent of the
++ * option bits the probe leaves set.  Definitions placed before the #ifndef
++ * fallbacks below take precedence.  (The core does implement the MIPS32
++ * LL/SC and PREF instructions, so those are left at their ISA defaults.)
++ */
++#ifdef CONFIG_CPU_R3K_TLB
++#define cpu_has_4kex		0
++#define cpu_has_3kex		1
++#define cpu_has_3k_cache	0
++#define cpu_has_4k_cache	1
++#define cpu_has_dc_aliases	1
++#endif
++
++/*
+  * For the moment we don't consider R6000 and R8000 so we can assume that
+  * anything that doesn't support R4000-style exceptions and interrupts is
+  * R3000-like.  Users should still treat these two macro definitions as
+Index: linux-6.18.31/arch/mips/include/asm/isadep.h
+===================================================================
+--- linux-6.18.31.orig/arch/mips/include/asm/isadep.h
++++ linux-6.18.31/arch/mips/include/asm/isadep.h
+@@ -10,9 +10,10 @@
+ #ifndef __ASM_ISADEP_H
+ #define __ASM_ISADEP_H
+ 
+-#if defined(CONFIG_CPU_R3000)
++#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_R3K_TLB)
+ /*
+- * R2000 or R3000
++ * R2000 or R3000 -- and the RLX "Taroko" core, which shares the R3000-style
++ * CP0_STATUS kernel/user (KU/IE) bit stack rather than the R4000 KSU field.
+  */
+ 
+ /*
+Index: linux-6.18.31/arch/mips/include/asm/mipsregs.h
+===================================================================
+--- linux-6.18.31.orig/arch/mips/include/asm/mipsregs.h
++++ linux-6.18.31/arch/mips/include/asm/mipsregs.h
+@@ -1837,8 +1837,37 @@ do {									\
+ #define read_c0_contextconfig()		__read_32bit_c0_register($4, 1)
+ #define write_c0_contextconfig(val)	__write_32bit_c0_register($4, 1, val)
+ 
++#ifdef CONFIG_CPU_R3K_TLB
++/*
++ * The RLX "Taroko" core has no architectural UserLocal register (CP0 $4,2).
++ * Its per-thread pointer lives in the Lexra coprocessor register $8, reached
++ * with the custom mflxc0/mtlxc0 instructions.  The assembler has no mnemonic
++ * for them, so they are emitted as .word; both encodings name GPR $3 as the
++ * transfer register.  Userspace reads the same register via mflxc0, so the
++ * kernel and C library agree on where the thread pointer lives.
++ */
++static inline unsigned long read_c0_userlocal(void)
++{
++	unsigned long val;
++
++	__asm__ __volatile__(
++		"	.word	0x40634000	\n"	/* mflxc0 $3, $8 */
++		"	move	%0, $3		\n"
++		: "=r" (val) : : "$3");
++	return val;
++}
++
++static inline void write_c0_userlocal(unsigned long val)
++{
++	__asm__ __volatile__(
++		"	move	$3, %0		\n"
++		"	.word	0x40e34000	\n"	/* mtlxc0 $3, $8 */
++		: : "r" (val) : "$3");
++}
++#else
+ #define read_c0_userlocal()	__read_ulong_c0_register($4, 2)
+ #define write_c0_userlocal(val) __write_ulong_c0_register($4, 2, val)
++#endif
+ 
+ #define read_c0_xcontextconfig()	__read_ulong_c0_register($4, 3)
+ #define write_c0_xcontextconfig(val)	__write_ulong_c0_register($4, 3, val)
+Index: linux-6.18.31/arch/mips/kernel/Makefile
+===================================================================
+--- linux-6.18.31.orig/arch/mips/kernel/Makefile
++++ linux-6.18.31/arch/mips/kernel/Makefile
+@@ -11,7 +11,14 @@ obj-y		+= head.o branch.o cmpxchg.o elf.
+ 		   vdso.o cacheinfo.o
+ 
+ ifdef CONFIG_CPU_R3K_TLB
++ifdef CONFIG_CPU_R3K_TLB
++# The RLX "Taroko" PRId is identified by cpu_probe_legacy() in cpu-probe.c,
++# not by the minimal cpu-r3k-probe.c, so use the full probe even though this
++# core uses an R3000-style TLB.
++obj-y		+= cpu-probe.o
++else
+ obj-y		+= cpu-r3k-probe.o
++endif
+ else
+ obj-y		+= cpu-probe.o
+ endif
+Index: linux-6.18.31/arch/mips/kernel/cpu-probe.c
+===================================================================
+--- linux-6.18.31.orig/arch/mips/kernel/cpu-probe.c
++++ linux-6.18.31/arch/mips/kernel/cpu-probe.c
+@@ -1052,7 +1052,8 @@ static inline void cpu_probe_legacy(stru
+ 		c->cputype = CPU_RLX_TAROKO;
+ 		__cpu_name[cpu] = "Realtek Taroko (RLX)";
+ 		c->options = MIPS_CPU_TLB | MIPS_CPU_4KEX |
+-			     MIPS_CPU_4K_CACHE | MIPS_CPU_NOFPUEX;
++			     MIPS_CPU_4K_CACHE | MIPS_CPU_NOFPUEX |
++			     MIPS_CPU_ULRI;
+ 		c->tlbsize = 64;
+ 		set_isa(c, MIPS_CPU_ISA_M32R1);
+ 		break;
+Index: linux-6.18.31/arch/mips/kernel/process.c
+===================================================================
+--- linux-6.18.31.orig/arch/mips/kernel/process.c
++++ linux-6.18.31/arch/mips/kernel/process.c
+@@ -142,7 +142,12 @@ int copy_thread(struct task_struct *p, c
+ 		p->thread.reg17 = (unsigned long)args->fn_arg;
+ 		p->thread.reg29 = childksp;
+ 		p->thread.reg31 = (unsigned long) ret_from_kernel_thread;
+-#if defined(CONFIG_CPU_R3000)
++#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_R3K_TLB)
++		/*
++		 * The RLX core returns from exceptions R3000-style via the
++		 * KU/IE bit stack rather than the R4000 EXL bit, so prime the
++		 * kernel thread's status by pushing the current KU/IE state.
++		 */
+ 		status = (status & ~(ST0_KUP | ST0_IEP | ST0_IEC)) |
+ 			 ((status & (ST0_KUC | ST0_IEC)) << 2);
+ #else
+Index: linux-6.18.31/arch/mips/kernel/traps.c
+===================================================================
+--- linux-6.18.31.orig/arch/mips/kernel/traps.c
++++ linux-6.18.31/arch/mips/kernel/traps.c
+@@ -1150,6 +1150,119 @@ out_sigsegv:
+ 	goto out;
+ }
+ 
++#ifdef CONFIG_CPU_R3K_TLB
++/*
++ * The RLX "Taroko" core implements the MIPS-I integer base but not a handful of
++ * later opcodes a mips32 toolchain still emits: the SPECIAL2 multiply /
++ * count-leading group (mul, madd[u], msub[u], clz, clo) and the conditional
++ * TRAP instructions (tge/tgeu/tlt/tltu/teq/tne, used for divide-by-zero and
++ * overflow checks).  Emulate them on the reserved-instruction path so both
++ * kernel and user code built for mips32 run unmodified.
++ *
++ * Returns 1 if the faulting instruction was handled (EPC advanced for a normal
++ * op or a no-op trap, or a signal raised for a taken trap), 0 if it is not one
++ * of ours and the generic handling should continue.
++ */
++static int rlx_emulate_insn(struct pt_regs *regs)
++{
++	unsigned long pc = exception_epc(regs);
++	unsigned int opcode, rs, rt, rd, func;
++	long va, vb;
++
++	if (get_isa16_mode(regs->cp0_epc))
++		return 0;
++
++	if (user_mode(regs)) {
++		if (get_user(opcode, (unsigned int __user *)pc))
++			return 0;
++	} else {
++		opcode = *(unsigned int *)pc;
++	}
++
++	rs   = (opcode >> 21) & 0x1f;
++	rt   = (opcode >> 16) & 0x1f;
++	rd   = (opcode >> 11) & 0x1f;
++	func =  opcode        & 0x3f;
++	va = (long)regs->regs[rs];
++	vb = (long)regs->regs[rt];
++
++	switch (opcode >> 26) {
++	case 0x1c:				/* SPECIAL2 */
++		switch (func) {
++		case 0x02:			/* mul rd, rs, rt */
++			if (rd)
++				regs->regs[rd] = (s32)((s32)va * (s32)vb);
++			break;
++		case 0x00:			/* madd  rs, rt */
++		case 0x01: {			/* maddu rs, rt */
++			u64 acc = ((u64)(u32)regs->hi << 32) | (u32)regs->lo;
++			u64 p = (func == 0x00)
++			      ? (u64)((s64)(s32)va * (s32)vb)
++			      : (u64)((u32)va) * (u32)vb;
++			acc += p;
++			regs->lo = (s32)(u32)acc;
++			regs->hi = (s32)(u32)(acc >> 32);
++			break;
++		}
++		case 0x04:			/* msub  rs, rt */
++		case 0x05: {			/* msubu rs, rt */
++			u64 acc = ((u64)(u32)regs->hi << 32) | (u32)regs->lo;
++			u64 p = (func == 0x04)
++			      ? (u64)((s64)(s32)va * (s32)vb)
++			      : (u64)((u32)va) * (u32)vb;
++			acc -= p;
++			regs->lo = (s32)(u32)acc;
++			regs->hi = (s32)(u32)(acc >> 32);
++			break;
++		}
++		case 0x20:			/* clz rd, rs */
++			if (rd)
++				regs->regs[rd] =
++					(u32)va ? __builtin_clz((u32)va) : 32;
++			break;
++		case 0x21:			/* clo rd, rs */
++			if (rd)
++				regs->regs[rd] =
++					(u32)~va ? __builtin_clz((u32)~va) : 32;
++			break;
++		default:
++			return 0;
++		}
++		compute_return_epc(regs);
++		return 1;
++
++	case 0x00: {				/* SPECIAL: conditional traps */
++		int taken;
++
++		switch (func) {
++		case 0x30: taken = (va >= vb); break;			/* tge  */
++		case 0x31: taken = ((unsigned long)va >=
++				    (unsigned long)vb); break;		/* tgeu */
++		case 0x32: taken = (va <  vb); break;			/* tlt  */
++		case 0x33: taken = ((unsigned long)va <
++				    (unsigned long)vb); break;		/* tltu */
++		case 0x34: taken = (va == vb); break;			/* teq  */
++		case 0x36: taken = (va != vb); break;			/* tne  */
++		default:
++			return 0;
++		}
++		if (!taken) {
++			compute_return_epc(regs);	/* no-op: skip it */
++			return 1;
++		}
++		/* condition true: divide-by-zero / overflow check fired */
++		if (user_mode(regs))
++			force_sig(SIGFPE);
++		else
++			die_if_kernel("Trap instruction in kernel code", regs);
++		return 1;
++	}
++	}
++
++	return 0;
++}
++#endif /* CONFIG_CPU_R3K_TLB */
++
+ asmlinkage void do_ri(struct pt_regs *regs)
+ {
+ 	unsigned int __user *epc = (unsigned int __user *)exception_epc(regs);
+@@ -1159,6 +1272,17 @@ asmlinkage void do_ri(struct pt_regs *re
+ 	unsigned int opcode = 0;
+ 	int status = -1;
+ 
++#ifdef CONFIG_CPU_R3K_TLB
++	/*
++	 * Emulate the SPECIAL2 / conditional-trap opcodes the RLX core lacks.
++	 * This runs before die_if_kernel() below because mips32-built kernel
++	 * code contains these instructions too, and like the R2 fast path it
++	 * returns before exception_enter().
++	 */
++	if (rlx_emulate_insn(regs))
++		return;
++#endif
++
+ 	/*
+ 	 * Avoid any kernel code. Just emulate the R2 instruction
+ 	 * as quickly as possible.
+Index: linux-6.18.31/arch/mips/mm/Makefile
+===================================================================
+--- linux-6.18.31.orig/arch/mips/mm/Makefile
++++ linux-6.18.31/arch/mips/mm/Makefile
+@@ -33,7 +33,13 @@ obj-$(CONFIG_HUGETLB_PAGE)	+= hugetlbpag
+ obj-$(CONFIG_DMA_NONCOHERENT)	+= dma-noncoherent.o
+ 
+ obj-$(CONFIG_CPU_R3K_TLB)	+= tlb-r3k.o
+-obj-$(CONFIG_CPU_R4K_CACHE_TLB) += c-r4k.o cex-gen.o tlb-r4k.o
++obj-$(CONFIG_CPU_R4K_CACHE_TLB) += c-r4k.o cex-gen.o
++# The RLX "Taroko" core pairs the r4k-style cache (c-r4k.o) with an
++# R3000-style TLB (tlb-r3k.o above), so the R4K TLB implementation must not
++# be pulled in alongside it or the two would provide duplicate TLB routines.
++ifndef CONFIG_CPU_R3K_TLB
++obj-$(CONFIG_CPU_R4K_CACHE_TLB) += tlb-r4k.o
++endif
+ obj-$(CONFIG_CPU_R3000)		+= c-r3k.o
+ obj-$(CONFIG_CPU_SB1)		+= c-r4k.o cerr-sb1.o cex-sb1.o tlb-r4k.o
+ obj-$(CONFIG_CPU_CAVIUM_OCTEON) += c-octeon.o cex-oct.o tlb-r4k.o
+Index: linux-6.18.31/arch/mips/mm/c-r4k.c
+===================================================================
+--- linux-6.18.31.orig/arch/mips/mm/c-r4k.c
++++ linux-6.18.31/arch/mips/mm/c-r4k.c
+@@ -1624,6 +1624,7 @@ void au1x00_fixup_config_od(void)
+ 
+ static void nxp_pr4450_fixup_config(void)
+ {
++#ifndef CONFIG_CPU_R3K_TLB
+ 	unsigned long config0;
+ 
+ 	config0 = read_c0_config();
+@@ -1635,6 +1636,7 @@ static void nxp_pr4450_fixup_config(void
+ 		    ((_page_cachable_default >> _CACHE_SHIFT) << 28));
+ 	write_c0_config(config0);
+ 	NXP_BARRIER();
++#endif
+ }
+ 
+ static int cca = -1;
+@@ -1650,9 +1652,22 @@ early_param("cca", cca_setup);
+ 
+ static void coherency_setup(void)
+ {
++#ifdef CONFIG_CPU_R3K_TLB
++	/*
++	 * The RLX core pairs an R3000-style TLB (whose EntryLo carries a single
++	 * "uncached" bit, not the R4000 3-bit cache-coherency field) with an
++	 * r4k-style cache, so the R4000 Config.CM coherency-mode programming
++	 * below does not apply.  Default mappings are cacheable (uncached bit
++	 * clear -> 0) and cache coherency is driven by the cache-control
++	 * primitive instead of Config.CM.
++	 */
++	_page_cachable_default = 0;
++	return;
++#else
+ 	if (cca < 0 || cca > 7)
+ 		cca = read_c0_config() & CONF_CM_CMASK;
+ 	_page_cachable_default = cca << _CACHE_SHIFT;
++#endif
+ 
+ 	pr_debug("Using cache attribute %d\n", cca);
+ 	change_c0_config(CONF_CM_CMASK, cca);
+@@ -1705,6 +1720,45 @@ static void r4k_cache_error_setup(void)
+ 	}
+ }
+ 
++#ifdef CONFIG_CPU_R3K_TLB
++/*
++ * The RLX "Taroko" core provides a single-shot cache-control register (CP0
++ * $20) that writes back+invalidates the whole D-cache and invalidates the
++ * whole I-cache regardless of geometry.  The per-line "cache" instruction
++ * also works on this core (used for the DMA paths), but for the whole-cache
++ * maintenance hooks we issue this register op: it is geometry-independent so
++ * correctness never depends on the probed line/size being exact, and these
++ * hooks are off the per-packet datapath so the extra work is immaterial.
++ *
++ * Operation bits: 0x200 = D writeback+invalidate, 0x002 = I invalidate.
++ * Order is D-before-I (push dirty data lines to memory, then drop stale
++ * instruction lines); a sync separates them.  The register self-completes,
++ * so no done-bit poll is needed.
++ */
++#define LUNA_CCTL_D_WBINV	0x200
++#define LUNA_CCTL_I_INV		0x002
++
++static inline void luna_flush_cache_all(void)
++{
++	__asm__ __volatile__(
++		"	.set	push		\n"
++		"	.set	noreorder	\n"
++		"	mtc0	$0, $20		\n"	/* arm: clear control */
++		"	nop; nop		\n"
++		"	mtc0	%0, $20		\n"	/* D writeback+invalidate */
++		"	nop; nop		\n"
++		"	sync			\n"
++		"	mtc0	$0, $20		\n"
++		"	nop; nop		\n"
++		"	mtc0	%1, $20		\n"	/* I invalidate */
++		"	nop; nop		\n"
++		"	.set	pop		\n"
++		:
++		: "r" (LUNA_CCTL_D_WBINV), "r" (LUNA_CCTL_I_INV)
++		: "memory");
++}
++#endif /* CONFIG_CPU_R3K_TLB */
++
+ void r4k_cache_init(void)
+ {
+ 	extern void build_clear_page(void);
+@@ -1763,6 +1817,29 @@ void r4k_cache_init(void)
+ 	_dma_cache_inv		= r4k_dma_cache_inv;
+ #endif /* CONFIG_DMA_NONCOHERENT */
+ 
++#ifdef CONFIG_CPU_R3K_TLB
++	/*
++	 * Route every whole-cache and range/page maintenance hook through the
++	 * geometry-independent cache-control blast.  The DMA hooks set just
++	 * above keep using the efficient per-line "cache" instruction since
++	 * they sit on the network datapath; these hooks do not.
++	 */
++	flush_cache_all		= luna_flush_cache_all;
++	__flush_cache_all	= luna_flush_cache_all;
++	flush_cache_mm		= (void *)luna_flush_cache_all;
++	flush_cache_page	= (void *)luna_flush_cache_all;
++	flush_cache_range	= (void *)luna_flush_cache_all;
++	__flush_kernel_vmap_range = (void *)luna_flush_cache_all;
++	__flush_cache_vmap	= luna_flush_cache_all;
++	__flush_cache_vunmap	= luna_flush_cache_all;
++	flush_icache_all	= luna_flush_cache_all;
++	flush_data_cache_page	= (void *)luna_flush_cache_all;
++	flush_icache_range	= (void *)luna_flush_cache_all;
++	local_flush_icache_range	= (void *)luna_flush_cache_all;
++	__flush_icache_user_range	= (void *)luna_flush_cache_all;
++	__local_flush_icache_user_range	= (void *)luna_flush_cache_all;
++#endif /* CONFIG_CPU_R3K_TLB */
++
+ 	build_clear_page();
+ 	build_copy_page();
+ 
+@@ -1771,7 +1848,11 @@ void r4k_cache_init(void)
+ 	 * caches. Therefore, do not use CONFIG_MIPS_CMP to decide whether
+ 	 * or not to flush caches.
+ 	 */
++#ifdef CONFIG_CPU_R3K_TLB
++	luna_flush_cache_all();
++#else
+ 	local_r4k___flush_cache_all(NULL);
++#endif
+ 
+ 	coherency_setup();
+ 	board_cache_error_setup = r4k_cache_error_setup;
+Index: linux-6.18.31/arch/mips/mm/init.c
+===================================================================
+--- linux-6.18.31.orig/arch/mips/mm/init.c
++++ linux-6.18.31/arch/mips/mm/init.c
+@@ -167,7 +167,13 @@ void copy_user_highpage(struct page *to,
+ 	void *vfrom, *vto;
+ 
+ 	vto = kmap_atomic(to);
+-	if (cpu_has_dc_aliases &&
++	/*
++	 * The RLX "Taroko" core resolves its D-cache aliases by blasting the
++	 * whole cache in the flush hooks rather than through the R4000
++	 * colour-coherent temporary mapping, so skip kmap_coherent and take the
++	 * plain-copy path (which marks the folio dcache-dirty for a later flush).
++	 */
++	if (!IS_ENABLED(CONFIG_CPU_R3K_TLB) && cpu_has_dc_aliases &&
+ 	    folio_mapped(src) && !folio_test_dcache_dirty(src)) {
+ 		vfrom = kmap_coherent(from, vaddr);
+ 		copy_page(vto, vfrom);
+@@ -191,7 +197,8 @@ void copy_to_user_page(struct vm_area_st
+ {
+ 	struct folio *folio = page_folio(page);
+ 
+-	if (cpu_has_dc_aliases &&
++	/* RLX: skip the colour-coherent mapping; see copy_user_highpage(). */
++	if (!IS_ENABLED(CONFIG_CPU_R3K_TLB) && cpu_has_dc_aliases &&
+ 	    folio_mapped(folio) && !folio_test_dcache_dirty(folio)) {
+ 		void *vto = kmap_coherent(page, vaddr) + (vaddr & ~PAGE_MASK);
+ 		memcpy(vto, src, len);
+@@ -211,7 +218,8 @@ void copy_from_user_page(struct vm_area_
+ {
+ 	struct folio *folio = page_folio(page);
+ 
+-	if (cpu_has_dc_aliases &&
++	/* RLX: skip the colour-coherent mapping; see copy_user_highpage(). */
++	if (!IS_ENABLED(CONFIG_CPU_R3K_TLB) && cpu_has_dc_aliases &&
+ 	    folio_mapped(folio) && !folio_test_dcache_dirty(folio)) {
+ 		void *vfrom = kmap_coherent(page, vaddr) + (vaddr & ~PAGE_MASK);
+ 		memcpy(dst, vfrom, len);
+Index: linux-6.18.31/arch/mips/mm/tlbex.c
+===================================================================
+--- linux-6.18.31.orig/arch/mips/mm/tlbex.c
++++ linux-6.18.31/arch/mips/mm/tlbex.c
+@@ -1867,10 +1867,25 @@ build_r3000_tlbchange_handler_head(u32 *
+ 	uasm_i_srl(p, pte, pte, 22); /* load delay */
+ 	uasm_i_sll(p, pte, pte, 2);
+ 	uasm_i_addu(p, ptr, ptr, pte);
++	/*
++	 * The RLX core only refills the Context register's BadVPN field on a
++	 * TLB-refill miss, not on the load/store/modify exceptions that reach
++	 * this change handler, so recover the page-table index from BadVAddr
++	 * instead: VA bits [21:12] select the pte within its page, scaled by 4
++	 * -> (BadVAddr >> 10) & 0xffc.
++	 */
++#ifdef CONFIG_CPU_R3K_TLB
++	uasm_i_mfc0(p, pte, C0_BADVADDR);
++	uasm_i_lw(p, ptr, 0, ptr); /* cp0 delay */
++	uasm_i_srl(p, pte, pte, 10); /* load delay */
++	uasm_i_andi(p, pte, pte, 0xffc);
++	uasm_i_addu(p, ptr, ptr, pte);
++#else
+ 	uasm_i_mfc0(p, pte, C0_CONTEXT);
+ 	uasm_i_lw(p, ptr, 0, ptr); /* cp0 delay */
+ 	uasm_i_andi(p, pte, pte, 0xffc); /* load delay */
+ 	uasm_i_addu(p, ptr, ptr, pte);
++#endif
+ 	uasm_i_lw(p, pte, 0, ptr);
+ 	uasm_i_tlbp(p); /* load delay */
+ }
+Index: linux-6.18.31/arch/mips/vdso/Makefile
+===================================================================
+--- linux-6.18.31.orig/arch/mips/vdso/Makefile
++++ linux-6.18.31/arch/mips/vdso/Makefile
+@@ -16,6 +16,7 @@ ccflags-vdso := \
+ 	$(filter -mno-loongson-%,$(KBUILD_CFLAGS)) \
+ 	$(filter -ffile-prefix-map=%,$(KBUILD_CFLAGS)) \
+ 	$(filter -fdebug-prefix-map=%,$(KBUILD_CFLAGS)) \
++	$(filter -mno-branch-likely,$(KBUILD_CFLAGS)) \
+ 	$(CLANG_FLAGS) \
+ 	-D__VDSO__
+ 
+Index: linux-6.18.31/arch/mips/include/asm/pgtable-bits.h
+===================================================================
+--- linux-6.18.31.orig/arch/mips/include/asm/pgtable-bits.h
++++ linux-6.18.31/arch/mips/include/asm/pgtable-bits.h
+@@ -241,6 +241,19 @@ static inline uint64_t pte_to_entrylo(un
+ 
+ #define _CACHE_CACHABLE_NONCOHERENT 0
+ #define _CACHE_UNCACHED_ACCELERATED _CACHE_UNCACHED
++/*
++ * The R3000-style TLB has no multi-bit cache-coherency field in EntryLo, only
++ * the single "uncached" bit defined above, so there is no _CACHE_SHIFT here.
++ * The R4000 cache-attribute variants all collapse to plain cacheable (0);
++ * define them so the generic _CACHE_SHIFT-based fallbacks below are skipped.
++ * (Needed by the RLX hybrid, which pairs this TLB layout with the r4k cache
++ * code that references these names.)
++ */
++#define _CACHE_CACHABLE_NO_WA	0
++#define _CACHE_CACHABLE_WA	0
++#define _CACHE_CACHABLE_CE	0
++#define _CACHE_CACHABLE_COW	0
++#define _CACHE_CACHABLE_CUW	0
+ 
+ #elif defined(CONFIG_CPU_SB1)
+ 

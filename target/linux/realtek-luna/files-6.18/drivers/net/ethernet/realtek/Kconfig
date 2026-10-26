@@ -1,0 +1,215 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Realtek device configuration
+#
+#
+# OpenWrt/realtek-luna -- WHOLE-FILE OVERLAY, migrated out of a patch.
+#
+# This is Linux 6.18.31's own file plus the realtek-luna GPON/ETH wiring
+# that used to live in patches-6.18/103-realtek-luna-gpon.patch.  The patch
+# and this file are mutually exclusive: files- overlays are copied into the
+# kernel tree BEFORE patches are applied (include/quilt.mk:93-107), so with
+# both present patch 103 applies to this file, its context no longer matches
+# and the build FAILS LOUDLY.  That is the intended direction -- but it means
+# patch 103 must be deleted in the SAME commit that adds this file.
+#
+# WHY the migration is a prerequisite and not a cleanup: the shared GPON
+# core (target/linux/gpon-common) is reached by `select GPON_CORE` from the
+# vendor Kconfig, and every later move changes luna's obj-y lines.  Both
+# edits land in files that only existed inside a forbidden patch.
+# Operator hard rule: driver wiring is a browsable source file, never a
+# patches-<ver>/*.patch -- not even for Kconfig/Makefile.
+#
+# Content is byte-identical to what patch 103 produced (verified 2026-08-05
+# against build_dir/target-mips_mips32_musl/.../linux-6.18.31),
+# plus `select GPON_CORE` on the two GPON symbols.  Nothing else changed.
+#
+
+config NET_VENDOR_REALTEK
+	bool "Realtek devices"
+	default y
+	depends on PCI || (PARPORT && X86) || REALTEK_LUNA
+	help
+	  If you have a network (Ethernet) card belonging to this class, say Y.
+
+	  Note that the answer to this question doesn't directly affect the
+	  kernel: saying N will just cause the configurator to skip all
+	  the questions about Realtek devices. If you say Y, you will be asked for
+	  your specific card in the following questions.
+
+config LUNA_ETH_MIB
+	tristate
+
+config RTL9602C_ETH
+	tristate "Realtek RTL9602C (Luna) GMAC + switch"
+	depends on REALTEK_LUNA
+	select LUNA_ETH_MIB
+	default y
+	help
+	  Clean-room driver for the RTL9602C GMAC + on-chip switch core.
+
+config RTL9602C_FLOWOFFLOAD
+	bool "Realtek RTL9602C (Luna) hardware flow offload"
+	depends on RTL9602C_ETH
+	default y
+	select GPON_FLOW_OFFLOAD	# the COMMON TC lifecycle, drivers/net/gpon/
+	help
+	  Drive the Luna L34/TC flow engine as an nf_flow_table hardware
+	  offload backend, through the shared lifecycle in drivers/net/gpon/.
+
+	  This symbol exists so the accelerator can be turned OFF (2026-09-08).
+	  RTL9602C_ETH used to select the core itself, which welded the two
+	  together: the Luna boards could not be built without the offload, so
+	  the offload-vs-AQM comparison -- an operator decision taken with
+	  NUMBERS -- had no second state to measure on this family. Cortina had
+	  a prompted symbol and Luna had none; now both do.
+
+	  Say Y unless you are measuring the software path deliberately.
+
+config LUNA_GPON
+	tristate "Realtek Luna GPON MAC"
+	depends on REALTEK_LUNA
+	select GPON_CORE	# shared core: drivers/net/gpon/Kconfig
+	default y
+	help
+	  Clean-room GPON MAC foundation driver for the Luna family. Maps the
+	  GPON MAC register block (SWCORE + 0x700000) and exposes /proc/gpon.
+
+	  It gates the family-tier luna_gpon.o and luna_ponmac.o plus their
+	  flowcore logic halves, on the RTL9601D.
+
+config LUNA_DEBUG
+	bool "Luna family bring-up diagnostics (boot markers, frame dumps, link diag, PHY survey)"
+	default n
+	help
+	  Bring-up aids: the early boot markers ([P] [M] [L] [T] [I] [i]),
+	  the first OMCI TX descriptor prints and the per-frame DHCP RX check
+	  in rtl9602c_eth.c. Off, their knobs are constant 0 and the code is
+	  not built.
+
+if NET_VENDOR_REALTEK
+
+config ATP
+	tristate "AT-LAN-TEC/RealTek pocket adapter support"
+	depends on PARPORT && X86
+	select CRC32
+	help
+	  This is a network (Ethernet) device which attaches to your parallel
+	  port. Read the file <file:drivers/net/ethernet/realtek/atp.c>
+	  if you want to use this.  If you intend to use this driver, you
+	  should have said N to the "Parallel printer support", because the two
+	  drivers don't like each other.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called atp.
+
+config 8139CP
+	tristate "RealTek RTL-8139 C+ PCI Fast Ethernet Adapter support"
+	depends on PCI
+	select CRC32
+	select MII
+	help
+	  This is a driver for the Fast Ethernet PCI network cards based on
+	  the RTL8139C+ chips. If you have one of those, say Y here.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called 8139cp.  This is recommended.
+
+config 8139TOO
+	tristate "RealTek RTL-8129/8130/8139 PCI Fast Ethernet Adapter support"
+	depends on PCI
+	select CRC32
+	select MII
+	help
+	  This is a driver for the Fast Ethernet PCI network cards based on
+	  the RTL 8129/8130/8139 chips. If you have one of those, say Y here.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called 8139too.  This is recommended.
+
+config 8139TOO_PIO
+	bool "Use PIO instead of MMIO"
+	default y
+	depends on 8139TOO && !NO_IOPORT_MAP
+	help
+	  This instructs the driver to use programmed I/O ports (PIO) instead
+	  of PCI shared memory (MMIO).  This can possibly solve some problems
+	  in case your mainboard has memory consistency issues.  If unsure,
+	  say N.
+
+config 8139TOO_TUNE_TWISTER
+	bool "Support for uncommon RTL-8139 rev. K (automatic channel equalization)"
+	depends on 8139TOO
+	help
+	  This implements a function which might come in handy in case you
+	  are using low quality on long cabling. It is required for RealTek
+	  RTL-8139 revision K boards, and totally unused otherwise.  It tries
+	  to match the transceiver to the cable characteristics. This is
+	  experimental since hardly documented by the manufacturer.
+	  If unsure, say Y.
+
+config 8139TOO_8129
+	bool "Support for older RTL-8129/8130 boards"
+	depends on 8139TOO
+	help
+	  This enables support for the older and uncommon RTL-8129 and
+	  RTL-8130 chips, which support MII via an external transceiver,
+	  instead of an internal one.  Disabling this option will save some
+	  memory by making the code size smaller.  If unsure, say Y.
+
+config 8139_OLD_RX_RESET
+	bool "Use older RX-reset method"
+	depends on 8139TOO
+	help
+	  The 8139too driver was recently updated to contain a more rapid
+	  reset sequence, in the face of severe receive errors.  This "new"
+	  RX-reset method should be adequate for all boards.  But if you
+	  experience problems, you can enable this option to restore the
+	  old RX-reset behavior.  If unsure, say N.
+
+config R8169
+	tristate "Realtek 8169/8168/8101/8125 ethernet support"
+	depends on PCI
+	select FW_LOADER
+	select CRC32
+	select PHYLIB
+	select REALTEK_PHY
+	help
+	  Say Y here if you have a Realtek Ethernet adapter belonging to
+	  the following families:
+	  RTL8169 Gigabit Ethernet
+	  RTL8168 Gigabit Ethernet
+	  RTL8101 Fast Ethernet
+	  RTL8125 2.5GBit Ethernet
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called r8169.  This is recommended.
+
+config R8169_LEDS
+	bool "Support for controlling the NIC LEDs"
+	depends on R8169 && LEDS_TRIGGER_NETDEV
+	depends on !(R8169=y && LEDS_CLASS=m)
+	help
+	  Optional support for controlling the NIC LED's with the netdev
+	  LED trigger.
+
+config RTASE
+	tristate "Realtek Automotive Switch 9054/9068/9072/9075/9068/9071 PCIe Interface support"
+	depends on PCI
+	select CRC32
+	select PAGE_POOL
+	help
+	  Say Y here and it will be compiled and linked with the kernel
+	  if you have a Realtek Ethernet adapter belonging to the
+	  following families:
+	  RTL9054 5GBit Ethernet
+	  RTL9068 5GBit Ethernet
+	  RTL9072 5GBit Ethernet
+	  RTL9075 5GBit Ethernet
+	  RTL9068 5GBit Ethernet
+	  RTL9071 5GBit Ethernet
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called rtase. This is recommended.
+
+endif # NET_VENDOR_REALTEK

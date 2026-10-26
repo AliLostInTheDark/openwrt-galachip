@@ -1,0 +1,33 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] gpio: add Realtek Luna GPIO driver
+
+Hook the target-local gpio-luna.c (files-6.18) into the GPIO Kconfig
+and Makefile.
+
+--- a/drivers/gpio/Kconfig
++++ b/drivers/gpio/Kconfig
+@@ -599,6 +599,14 @@
+ 	help
+ 	  Say Y here to support RDA Micro GPIO controller.
+ 
++config GPIO_LUNA
++	bool "Realtek Luna (RTL960x) GPIO support"
++	depends on REALTEK_LUNA
++	default REALTEK_LUNA
++	help
++	  The GPIO controller on the Realtek Luna PON SoCs: 64 lines in two
++	  32-bit banks, without interrupts.
++
+ config GPIO_REALTEK_OTTO
+ 	tristate "Realtek Otto GPIO support"
+ 	depends on MACH_REALTEK_RTL
+--- a/drivers/gpio/Makefile
++++ b/drivers/gpio/Makefile
+@@ -100,6 +100,7 @@
+ obj-$(CONFIG_GPIO_LP87565)		+= gpio-lp87565.o
+ obj-$(CONFIG_GPIO_LPC18XX)		+= gpio-lpc18xx.o
+ obj-$(CONFIG_GPIO_LPC32XX)		+= gpio-lpc32xx.o
++obj-$(CONFIG_GPIO_LUNA)			+= gpio-luna.o
+ obj-$(CONFIG_GPIO_MACSMC)		+= gpio-macsmc.o
+ obj-$(CONFIG_GPIO_MADERA)		+= gpio-madera.o
+ obj-$(CONFIG_GPIO_MAX3191X)		+= gpio-max3191x.o
