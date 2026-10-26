@@ -214,7 +214,8 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 		members = s->lan_mask | BIT(2) | BIT(3);
 		/* Keep the service VID on CPU copies for accurate forwarding marks. */
 		untag = s->untagged ? s->lan_mask : 0;
-		w[0] = BIT(11) | (untag << 4) | members;
+		/* IVL, as for the WAN VIDs: a shared FID drops unicast replies. */
+		w[0] = BIT(11) | SW_VLAN_IVL | (untag << 4) | members;
 		rc = v2802_l2_table(1, s->vid, w, 1, true);
 		if (rc)
 			goto rollback;
