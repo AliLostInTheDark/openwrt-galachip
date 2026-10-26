@@ -24,6 +24,8 @@ static struct {
 	u32 pvid, cfg, flood[3], management_vlan, piso[2];
 	u64 marked[3], trapped[3];
 	u32 last_reason[3];
+	u8 own_mac[2][ETH_ALEN];
+	unsigned int own_macs;
 	bool management_saved, isolation_saved;
 	unsigned int count, generation, retries;
 	int error;
@@ -79,6 +81,97 @@ static int v2802_l2_table(u8 type, u16 addr, u32 *words, unsigned int n,
 	}
 	spin_unlock_irqrestore(&ep->sw_table_lock, flags);
 	return rc;
+}
+
+/* RTL9602C L2_UC, as rtl9602c_lutStToTblData packs it: MAC [47:0], VID
+ * [59:48], STATIC 62, IVL 63, SPA [66:65], AGE [69:67], VALID 77. */
+#define V2802_L2UC_VID_LSP	48
+#define V2802_L2UC_IVL_LSP	63
+
+/* Insert or delete by the MAC hash; an insert is read back the same way. */
+static int v2802_l2_own_entry(const u8 *mac, u16 vid, bool add)
+{
+	struct rtl9602c_eth *ep = v2802_l2.ep;
+	struct hwio io = luna_sw_io(ep->sw);
+	static const u8 bcast[ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+	u32 w[L34_WORDS_L2UC] = { 0 }, mask[L34_WORDS_L2UC] = { 0 };
+	u32 check[L34_WORDS_L2UC];
+	unsigned long flags;
+	unsigned int i;
+	int rc;
+
+	/* the fields set below, for the read-back */
+	l34_mac48_set(mask, L2UC_MAC_LSP, bcast);
+	l34_field_set(mask, V2802_L2UC_VID_LSP, 12, 0xfff);
+	l34_field_set(mask, V2802_L2UC_IVL_LSP, 1, 1);
+	l34_field_set(mask, L2UC_STATIC_LSP, L2UC_STATIC_W, 1);
+	l34_field_set(mask, L2UC_SPA_LSP, L2UC_SPA_W, 3);
+	l34_field_set(mask, L2UC_VALID_LSP, L2UC_VALID_W, 1);
+
+	l34_mac48_set(w, L2UC_MAC_LSP, mac);
+	l34_field_set(w, V2802_L2UC_VID_LSP, 12, vid);
+	l34_field_set(w, V2802_L2UC_IVL_LSP, 1, 1);
+	if (add) {
+		l34_field_set(w, L2UC_STATIC_LSP, L2UC_STATIC_W, 1);
+		l34_field_set(w, L2UC_SPA_LSP, L2UC_SPA_W, ep->swm->cpu_port);
+		l34_field_set(w, L2UC_AGE_LSP, L2UC_AGE_W, 1);
+		l34_field_set(w, L2UC_VALID_LSP, L2UC_VALID_W, 1);
+	}
+	spin_lock_irqsave(&ep->sw_table_lock, flags);
+	rc = gpon_ind_poll(&io, reg_make(SW_TBL_STS), SW_TBL_BUSY,
+			   SW_TBL_TRIES, rtl9602c_sw_tbl_pause);
+	for (i = 0; !rc && i < L34_WORDS_L2UC; i++)
+		iowrite32(w[i], ep->sw + SW_TBL_WRDATA + 4 * i);
+	if (!rc) {
+		iowrite32(L2_CMD_WR | (L2_METHOD_MAC << L2_CMD_METHOD_SH), ep->sw + SW_TBL_CTRL);
+		rc = gpon_ind_poll(&io, reg_make(SW_TBL_STS), SW_TBL_BUSY,
+				   SW_TBL_TRIES, rtl9602c_sw_tbl_pause);
+	}
+	if (!rc && add) {
+		iowrite32(L2_METHOD_MAC << L2_CMD_METHOD_SH, ep->sw + SW_TBL_CTRL);
+		rc = gpon_ind_poll(&io, reg_make(SW_TBL_STS), SW_TBL_BUSY,
+				   SW_TBL_TRIES, rtl9602c_sw_tbl_pause);
+		for (i = 0; !rc && i < L34_WORDS_L2UC; i++)
+			check[i] = ioread32(ep->sw + L2_RDATA + 4 * i);
+		if (!rc && l34_l2uc_sts_index(ioread32(ep->sw + SW_TBL_STS)) < 0)
+			rc = -EIO;
+		for (i = 0; !rc && i < L34_WORDS_L2UC; i++)
+			if ((check[i] ^ w[i]) & mask[i])
+				rc = -EIO;
+	}
+	spin_unlock_irqrestore(&ep->sw_table_lock, flags);
+	return rc;
+}
+
+/* LAN frames for the ONU itself arrive in a service VLAN, but the switch
+ * learns the CPU's own MAC only in the untagged VLAN its frames leave in.
+ * Under IVL they would miss, flood to the PON as unknown unicast and be cut
+ * to about 1 Mbit/s by the storm meter: give each service VID a static
+ * entry to the CPU. Called under RTNL. */
+static int v2802_l2_own_macs(const struct luna_l2_service *service, int count, bool add)
+{
+	struct net_device *br = netdev_master_upper_dev_get(v2802_l2.ep->ndev);
+	unsigned int m;
+	int i, rc, err = 0;
+
+	if (add) {
+		v2802_l2.own_macs = 0;
+		if (br)
+			ether_addr_copy(v2802_l2.own_mac[v2802_l2.own_macs++], br->dev_addr);
+		if (!br || !ether_addr_equal(br->dev_addr, v2802_l2.ep->ndev->dev_addr))
+			ether_addr_copy(v2802_l2.own_mac[v2802_l2.own_macs++],
+					v2802_l2.ep->ndev->dev_addr);
+	}
+	for (m = 0; m < v2802_l2.own_macs; m++)
+		for (i = 0; i < count; i++) {
+			rc = v2802_l2_own_entry(v2802_l2.own_mac[m], service[i].vid, add);
+			if (rc && add)
+				return rc;
+			err = err ?: rc;
+		}
+	if (!add && !err)
+		v2802_l2.own_macs = 0;
+	return err;
 }
 
 /* RTL9602C isolationEntry_set: two 11-bit physical+extension masks per word.
@@ -214,6 +307,9 @@ static int v2802_l2_clear(void)
 			return rc;
 		__clear_bit(i, v2802_l2.rules);
 	}
+	rc = v2802_l2_own_macs(v2802_l2.service, v2802_l2.count, false);
+	if (rc)
+		return rc;
 	for (i = 0; i < v2802_l2.count; i++) {
 		u16 vid = v2802_l2.service[i].vid;
 
@@ -411,6 +507,9 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 			}
 		}
 	}
+	rc = v2802_l2_own_macs(service, count, true);
+	if (rc)
+		goto rollback;
 	iowrite32(pvid, ep->sw + SW_VLAN_PB_VID);
 	iowrite32(v2802_l2.flood[0] | BIT(2), ep->sw + ep->swm->bc_flood);
 	iowrite32(v2802_l2.flood[1] | BIT(2), ep->sw + ep->swm->unkn_mc_flood);
@@ -592,6 +691,13 @@ static int v2802_l2_netdev_event(struct notifier_block *nb, unsigned long event,
 	struct net_device *br;
 	bool changed;
 
+	/* Only what v2802_l2_bridge_ready() and the own-MAC entries read;
+	 * bridge and port attributes arrive through switchdev. Carrier or MTU
+	 * events would otherwise withdraw and flush the offload for nothing. */
+	if (event != NETDEV_UP && event != NETDEV_GOING_DOWN &&
+	    event != NETDEV_CHANGEUPPER && event != NETDEV_UNREGISTER &&
+	    event != NETDEV_CHANGEADDR)
+		return NOTIFY_DONE;
 	rcu_read_lock();
 	br = netdev_master_upper_dev_get_rcu(ep->ndev);
 	changed = dev == ep->ndev || dev == ep->wan_ndev || dev == br;
@@ -641,7 +747,7 @@ static bool v2802_l2_forwarded(struct sk_buff *skb, unsigned int port,
 	u16 tci;
 	bool tagged, forwarded = false;
 
-	if (!READ_ONCE(v2802_l2.ep) || port > 2)
+	if (!READ_ONCE(v2802_l2.ep) || !READ_ONCE(v2802_l2.saved) || port > 2)
 		return false;
 	tagged = !__vlan_get_tag(skb, &tci);
 	spin_lock_irqsave(&v2802_l2_lock, flags);
