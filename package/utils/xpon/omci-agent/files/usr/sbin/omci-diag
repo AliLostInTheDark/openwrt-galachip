@@ -1,11 +1,14 @@
 #!/bin/sh
 # Collect what is needed to debug OMCI provisioning against an OLT.
 #   omci-diag          print status, the PON driver's state and log, the
-#                      recorded exchange and the OMCI log
+#                      OLT <-> ONU summary and the OMCI log
+#   omci-diag report   the decoded OLT <-> ONU conversation (omci-report):
+#                      PLOAM and OMCI both ways, failures, the datapath
 #   omci-diag trace    start or stop recording every OMCI exchange
 #   omci-diag full [S] record S seconds (default 60) of OMCI, then print
-#                      everything, the OLT's PLOAM capture included; a
-#                      recording started earlier with "trace" is kept
+#                      everything, the full report included; a recording
+#                      started earlier with "trace" (or at boot with
+#                      omci.main.trace=1) is kept
 trace=/tmp/omcid-trace.txt
 
 trace_toggle() {
@@ -24,6 +27,9 @@ section() {
 }
 
 case "$1" in
+report)
+	exec omci-report
+	;;
 trace)
 	trace_toggle
 	echo "OMCI trace toggled: a recording goes to $trace and stops at 1 MiB"
@@ -55,13 +61,8 @@ if [ "$1" = full ]; then
 	section "PLOAM not understood" /proc/ploam_unknown
 	section "OMCI not understood" /proc/gpon_unknown
 fi
-if [ -s "$trace" ]; then
-	echo "== exchanges ($trace)"
-	if command -v omci-monitor >/dev/null; then
-		omci-monitor -r "$trace" | tail -n 200
-	else
-		echo "install omci-monitor to decode it"
-	fi
-fi
+echo
+if [ "$1" = full ]; then omci-report; else omci-report -b; fi
+echo
 echo "== log"
 logread | grep -i "omci\|gpon\|xpon\|Alloc-ID" | tail -n 200

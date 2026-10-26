@@ -4,7 +4,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=omci-agent
 PKG_VERSION:=0.9.2
-PKG_RELEASE:=28
+PKG_RELEASE:=29
 PKG_MAINTAINER:=Matheus Sampaio Queiroga <srherobrine20@gmail.com>
 PKG_LICENSE:=GPL-2.0-only
 
@@ -47,6 +47,8 @@ define Package/omci-agent/install
 	$(INSTALL_DIR) $(1)/usr/share/ucode/omci
 	$(INSTALL_DATA) ./files/usr/share/ucode/omci/mib.uc \
 		$(1)/usr/share/ucode/omci/mib.uc
+	$(INSTALL_DATA) ./files/usr/share/ucode/omci/g988.uc \
+		$(1)/usr/share/ucode/omci/g988.uc
 
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/ucode
 	$(INSTALL_BIN) ./files/usr/share/rpcd/ucode/omci.agent \
@@ -55,6 +57,7 @@ define Package/omci-agent/install
 	$(INSTALL_DIR) $(1)/usr/sbin
 	$(INSTALL_BIN) ./files/usr/sbin/omcictl $(1)/usr/sbin/omcictl
 	$(INSTALL_BIN) ./files/usr/sbin/omci-diag $(1)/usr/sbin/omci-diag
+	$(INSTALL_BIN) ./files/usr/sbin/omci-report $(1)/usr/sbin/omci-report
 
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./files/etc/config/omci $(1)/etc/config/omci
