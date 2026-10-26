@@ -3168,22 +3168,6 @@ static u32 gpon_gem_ds_fwd_cnt(u8 flow)
 /* The first of the flows luna_xpon_hw_gem_install() hands omcid's GEMs. */
 #define LUNA_XPON_FLOW_BASE	4
 
-/* Per-flow US Ethernet frames the GEM block took from the PON-IP
- * (GPON_GEM_US_ETH_GEM_RX_CNTR, clear-on-read). */
-static u32 gpon_gem_us_eth_cnt(u8 flow)
-{
-	u32 cnt;
-	unsigned long flags;
-	int rc;
-
-	spin_lock_irqsave(&gpon_ind_lock, flags);
-	rc = gpon_gtc_cntr_read(&gpon_io, (struct reg)REG_AT(0x6048),
-				(struct reg)REG_AT(0x604c), flow, &cnt,
-				gpon_cam_delay_us);
-	spin_unlock_irqrestore(&gpon_ind_lock, flags);
-	return rc < 0 ? 0xffffffffu : cnt;
-}
-
 /* PONIP_DBG_CTRL_US strobe -- ONE spelling of a sequence this */
 static int pi_sid_page_cnt(u32 sid, u32 *cnt)
 {
@@ -3637,15 +3621,24 @@ static int v2802rh_gpon_show_locked(struct seq_file *s)
 
 			if (c < 0 || !(c & BIT(16)))
 				continue;
-			seq_printf(s, "xflow%u: gem=%u tcfg=0x%x ds_rx=%u ds_fwd=%u us_eth=%u | sidvld=%u s2q=%u usmap=0x%x\n",
+			seq_printf(s, "xflow%u: gem=%u tcfg=0x%x ds_rx=%u ds_fwd=%u us_bytes=%u | sidvld=%u s2q=%u usmap=0x%x\n",
 				   f, c & 0xfff,
 				   gpon_rd(GPON_GTC_DS_TRAFFIC_CFG + f * DS_TRAFFIC_CFG_STRIDE) & 0x1f,
 				   gpon_gem_ds_rx_cnt(f), gpon_gem_ds_fwd_cnt(f),
-				   gpon_gem_us_eth_cnt(f),
+				   gpon_rd(GPON_GEM_US_BYTE_STAT + f * 8),
 				   pi_packed_get(PI_PON_SIDVALID, f, 1),
 				   pi_packed_get(PI_PON_SID2QID, f, 7),
 				   gpon_rd(GPON_GEM_US_PORT_MAP + f * GEM_US_PORT_MAP_STRIDE));
 		}
+	}
+	{
+		struct luna_xpon_pm pm;
+
+		luna_xpon_hw_pm(&pm);
+		seq_printf(s, "pm: fec ds=%d us=%d corrected_bytes=%llu corrected_cw=%llu uncorrectable_cw=%llu total_cw=%llu fec_seconds=%llu bip_errors=%llu\n",
+			   pm.ds_fec, pm.us_fec, pm.fec_corrected_bytes,
+			   pm.fec_corrected_codewords, pm.fec_uncorrectable_codewords,
+			   pm.fec_total_codewords, pm.fec_seconds, pm.bip_errors);
 	}
 	/* Full per-flow de-encap sweep: does ANY flow de-encapsulate a GEM frame?
 	 * If some flow > 0 => the OLT IS sending de-encodable GEM (find the OMCI

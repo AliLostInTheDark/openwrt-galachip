@@ -614,9 +614,15 @@ static void rtl9602c_sw_tbl_pause(void)
 	udelay(1);
 }
 
-/* One VLAN 4k-table entry: ext[17:11] | untag[7:4] | mbr[3:0], IVL and FID 0 as the L34 lookups
- * expect. The extension ports are the CPU's: without them the VLAN filter drops its traffic. */
-static int rtl9602c_vlan_write(struct rtl9602c_eth *ep, u16 vid, u32 mbr, u32 untag, u32 ext)
+/* One VLAN 4k-table entry: ext[17:11] | IVL[10] | untag[7:4] | mbr[3:0], FID 0. The extension
+ * ports are the CPU's: without them the VLAN filter drops its traffic. Bit 10 clear is SVL, one
+ * MAC table for every VLAN (the SDK's fidMode_set writes it inverted): a WAN VLAN needs IVL, or
+ * a reply to a LAN host is looked up where that host was learned, a LAN port outside the VLAN,
+ * and dropped. */
+#define SW_VLAN_IVL	BIT(10)
+
+static int rtl9602c_vlan_write(struct rtl9602c_eth *ep, u16 vid, u32 mbr, u32 untag, u32 ext,
+			       bool ivl)
 {
 	struct hwio io = luna_sw_io(ep->sw);
 	unsigned long flags;
@@ -626,7 +632,8 @@ static int rtl9602c_vlan_write(struct rtl9602c_eth *ep, u16 vid, u32 mbr, u32 un
 	rc = gpon_ind_poll(&io, reg_make(SW_TBL_STS), SW_TBL_BUSY,
                     SW_TBL_TRIES, rtl9602c_sw_tbl_pause);
 	if (!rc) {
-		iowrite32((ext << 11) | (untag << 4) | mbr, ep->sw + SW_TBL_WRDATA);
+		iowrite32((ext << 11) | (ivl ? SW_VLAN_IVL : 0) | (untag << 4) | mbr,
+			  ep->sw + SW_TBL_WRDATA);
 		iowrite32(SW_TBL_VLAN_WR(vid), ep->sw + SW_TBL_CTRL);
 		rc = gpon_ind_poll(&io, reg_make(SW_TBL_STS), SW_TBL_BUSY,
                      SW_TBL_TRIES, rtl9602c_sw_tbl_pause);
@@ -716,13 +723,13 @@ static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 		u32 lan_ext = 0x7, pon = BIT(ep->swm->pon_port) | BIT(ep->swm->cpu_port);
 
 		/* As stock's 4005: every port and the CPU's extension ports, all untagged */
-		rc = rtl9602c_vlan_write(ep, SW_DEFAULT_VID, 0xf, 0xf, lan_ext);
+		rc = rtl9602c_vlan_write(ep, SW_DEFAULT_VID, 0xf, 0xf, lan_ext, false);
 		if (rc < 0)
 			netdev_warn(ep->ndev,
 				    "swcore VLAN 4k-table engine still BUSY after %u tries (rc=%d): default VLAN %u may not be installed, LAN egress may stay filtered\n",
 				    SW_TBL_TRIES, rc, SW_DEFAULT_VID);
 		/* As stock's 4025: the PON floods to the CPU only */
-		if (pon_vid && rtl9602c_vlan_write(ep, pon_vid, pon, pon, 0x1) < 0)
+		if (pon_vid && rtl9602c_vlan_write(ep, pon_vid, pon, pon, 0x1, true) < 0)
 			netdev_warn(ep->ndev,
 				    "swcore VLAN table BUSY writing the PON VLAN %u: WAN broadcasts may reach the LAN ports\n",
 				    pon_vid);
@@ -751,7 +758,7 @@ static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 				u32 mbr = BIT(p) | BIT(ep->swm->cpu_port);
 
 				vid = SW_PORT_VID_BASE + p;
-				if (rtl9602c_vlan_write(ep, vid, mbr, BIT(p), lan_ext) < 0)
+				if (rtl9602c_vlan_write(ep, vid, mbr, BIT(p), lan_ext, false) < 0)
 					netdev_warn(ep->ndev,
 						    "swcore VLAN table BUSY writing per-port VLAN %u for port %u: that socket will not be separable\n",
 						    vid, p);
@@ -1154,7 +1161,8 @@ static int rtl9602c_wan_vid(struct rtl9602c_eth *ep, u16 vid, bool add)
 
 	if (!ep->sw || !pon_vid || !vid || vid == SW_DEFAULT_VID || vid == pon_vid)
 		return 0;
-	return rtl9602c_vlan_write(ep, vid, add ? mbr : 0, 0, add ? 0x1 : 0) < 0 ? -EBUSY : 0;
+	return rtl9602c_vlan_write(ep, vid, add ? mbr : 0, 0, add ? 0x1 : 0, add) < 0 ?
+	       -EBUSY : 0;
 }
 
 static int rtl9602c_wan_vid_add(struct net_device *ndev, __be16 proto, u16 vid)
