@@ -1,0 +1,11 @@
+#!/bin/sh
+
+# Stop an older collector on package upgrades as well as disabling its boot link.
+ubus call service delete '{"name":"omci-optstat"}' >/dev/null 2>&1 || true
+case "$(readlink /etc/rc.d/S99omci-optstat)" in
+	../init.d/omci-optstat|/etc/init.d/omci-optstat)
+		rm -f /etc/rc.d/S99omci-optstat
+		;;
+esac
+
+exit 0

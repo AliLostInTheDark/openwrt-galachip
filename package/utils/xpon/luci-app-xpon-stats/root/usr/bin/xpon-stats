@@ -1,0 +1,257 @@
+#!/bin/sh
+# Live status of the GPON or EPON ONU in front of this router running
+# OpenWrt, read from its read-only ubus API over HTTP.
+#
+#   xpon-stats                show everything once
+#   xpon-stats -w [SEC]       refresh every SEC seconds (default 5), Ctrl+C to stop
+#   xpon-stats --json         the raw data, for scripts and LuCI
+#   xpon-stats --json --live  the same without the ONU's configuration reads
+#
+# The ONU address is xpon-stats.main.host (default 192.168.1.1). This router
+# needs an address in the ONU's management subnet on the port the ONU is
+# connected to.
+
+HOST=$(uci -q get xpon-stats.main.host)
+HOST=${HOST:-192.168.1.1}
+TIMEOUT=$(uci -q get xpon-stats.main.timeout)
+TIMEOUT=${TIMEOUT:-3}
+SID=00000000000000000000000000000000
+
+call() {
+	local req reply
+
+	req="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"call\",\"params\":[\"$SID\",\"$1\",\"$2\",{}]}"
+	reply=$(uclient-fetch -q -T "$TIMEOUT" -O - --post-data "$req" \
+		"http://$HOST/ubus" 2>/dev/null) || return 1
+	jsonfilter -s "$reply" -e '@.result[1]' 2>/dev/null
+}
+
+get() {
+	jsonfilter -s "$1" -e "$2" 2>/dev/null
+}
+
+# xpon.public names the mode; an ONU without it runs GPON only.
+fetch() {
+	local method=${1:-status}
+
+	PUBLIC=$(call xpon.public status)
+	MODE=$(get "$PUBLIC" '@.mode')
+	MODE=${MODE:-gpon}
+	STATUS= VLAN=
+	if [ "$MODE" = gpon ]; then
+		STATUS=$(call omci.agent "$method") && STATUS=$(get "$STATUS" '@.status')
+		VLAN=$(call omci.vlan status)
+	fi
+	[ -n "$PUBLIC" ] || [ -n "$STATUS" ]
+}
+
+print_json() {
+	if ! fetch "$1"; then
+		printf '{"host":"%s","error":"unreachable"}\n' "$HOST"
+		return 1
+	fi
+	printf '{"host":"%s","mode":"%s","public":%s,"status":%s,"vlan":%s}\n' \
+		"$HOST" "$MODE" "${PUBLIC:-null}" "${STATUS:-null}" "${VLAN:-null}"
+}
+
+scaled() {
+	awk -v n="$1" -v d="$2" -v f="$3" \
+		'BEGIN { if (n == "") print "-"; else printf f, n / d }'
+}
+
+dbm() {
+	awk -v n="$1" 'BEGIN {
+		if (n == "" || n <= 0) print "-"
+		else printf "%.2f dBm", 10 * log(n / 1e6) / log(10)
+	}'
+}
+
+state_name() {
+	case $1 in
+	1) echo "O1 initial" ;;
+	2) echo "O2 standby" ;;
+	3) echo "O3 serial number" ;;
+	4) echo "O4 ranging" ;;
+	5) echo "O5 operation" ;;
+	6) echo "O6 intermittent LODS" ;;
+	7) echo "O7 emergency stop" ;;
+	*) echo "${1:--}" ;;
+	esac
+}
+
+# OPTICAL_FRONTEND_ALARM_* bits
+alarm_names() {
+	local bits=$(( ${1:-0} )) names="" i=0
+
+	for name in "TX low power" "TX high power" "TX low bias" "TX high bias" \
+		    "RX low power (LOS)" "RX high power" "low voltage" \
+		    "high voltage" "low temperature" "high temperature"; do
+		[ $(( (bits >> i) & 1 )) = 1 ] && names="$names${names:+, }$name"
+		i=$((i + 1))
+	done
+	echo "${names:-none}"
+}
+
+# Alarms the ONU reports to the OLT, from omcid's status
+omci_alarm_line() {
+	local s=$1 i=0 class entity names out=""
+
+	[ -n "$(get "$s" '@.omci_alarms')" ] || { echo "-"; return; }
+	while class=$(get "$s" "@.omci_alarms[$i].class"); [ -n "$class" ]; do
+		entity=$(get "$s" "@.omci_alarms[$i].entity")
+		names=$(get "$s" "@.omci_alarms[$i].alarms[*]" | tr '\n' ',')
+		if [ "$class" = 263 ]; then
+			out="$out${out:+; }ANI-G: ${names%,}"
+		else
+			out="$out${out:+; }UNI $(( 0x$entity & 0xff )): ${names%,}"
+		fi
+		[ "$(get "$s" "@.omci_alarms[$i].reported")" = true ] ||
+			out="$out (held by ARC)"
+		i=$((i + 1))
+	done
+	echo "${out:-none}"
+}
+
+vlan_line() {
+	local mode vid prio port source error
+
+	[ -n "$VLAN" ] || { echo "-"; return; }
+	mode=$(get "$VLAN" '@.mode')
+	vid=$(get "$VLAN" '@.vid')
+	prio=$(get "$VLAN" '@.prio')
+	port=$(get "$VLAN" '@.port')
+	source=$(get "$VLAN" '@.source')
+	error=$(get "$VLAN" '@.error')
+
+	if [ -n "$error" ]; then
+		echo "$mode: error: $error ($port)"
+	elif [ "$source" = pending ]; then
+		echo "$mode: waiting for the OLT VLAN rule ($port)"
+	elif [ -n "$vid" ]; then
+		echo "$mode: VLAN $vid, priority ${prio:-0} ($port)"
+	else
+		echo "$mode: untagged ($port)"
+	fi
+}
+
+# GPON optics come with omcid's status; EPON's from xpon.public.
+optics() {
+	local d
+
+	d=$(get "$PUBLIC" '@.ddm')
+	if [ -n "$STATUS" ]; then
+		printf '  %-10s RX %s   TX %s   bias %s   supply %s   %s\n' "Optics" \
+			"$(dbm "$(get "$STATUS" '@.bosa_rx_power_nw')")" \
+			"$(dbm "$(get "$STATUS" '@.bosa_tx_power_nw')")" \
+			"$(scaled "$(get "$STATUS" '@.bosa_bias_ua')" 1000 '%.2f mA')" \
+			"$(scaled "$(get "$STATUS" '@.bosa_voltage_uv')" 1000000 '%.3f V')" \
+			"$(scaled "$(get "$STATUS" '@.bosa_temperature_mc')" 1000 '%.1f C')"
+		printf '  %-10s %s\n' "Alarms" "$(alarm_names "$(get "$STATUS" '@.bosa_alarms')")"
+	else
+		printf '  %-10s RX %s   TX %s   bias %s   supply %s   %s\n' "Optics" \
+			"$(dbm "$(get "$d" '@.rx_nw')")" "$(dbm "$(get "$d" '@.tx_nw')")" \
+			"$(scaled "$(get "$d" '@.bias_ua')" 1000 '%.2f mA')" \
+			"$(scaled "$(get "$d" '@.vcc_uv')" 1000000 '%.3f V')" \
+			"$(scaled "$(get "$d" '@.temp_mc')" 1000 '%.1f C')"
+		printf '  %-10s %s\n' "Alarms" "$(alarm_names "$(get "$d" '@.alarms')")"
+	fi
+}
+
+# enum omci_fec_status; upstream FEC is switched per burst by the OLT.
+fec_name() {
+	case $1 in
+	1) echo off ;;
+	2) echo on ;;
+	"") echo "${2:--}" ;;
+	*) echo unknown ;;
+	esac
+}
+
+# omcid reports flags as 1/0, older agents as true/false.
+is_set() {
+	[ "$1" = 1 ] || [ "$1" = true ]
+}
+
+print_gpon() {
+	local s=$STATUS
+
+	printf '  %-10s %s, ONU-ID %s, OMCC GEM %s, FEC down/up %s/%s\n' "GPON" \
+		"$(state_name "$(get "$s" '@.state')")" "$(get "$s" '@.onu_id')" \
+		"$(get "$s" '@.gem_port')" "$(fec_name "$(get "$s" '@.fec_downstream')")" \
+		"$(fec_name "$(get "$s" '@.fec_upstream')" "set by OLT")"
+	printf '  %-10s %s, OLT profile %s, MIB sync %s (%s objects)\n' "OMCI" \
+		"$(is_set "$(get "$s" '@.agent_operational')" && echo operational || echo "not operational")" \
+		"$(get "$s" '@.olt_profile_effective_name')" "$(get "$s" '@.mib_sync')" \
+		"$(get "$s" '@.mib_objects')"
+	printf '  %-10s rx %s, tx %s, responses %s, dropped %s, tx errors %s\n' "" \
+		"$(get "$s" '@.rx_packets')" "$(get "$s" '@.tx_packets')" \
+		"$(get "$s" '@.responses')" "$(get "$s" '@.rx_dropped')" \
+		"$(get "$s" '@.tx_errors')"
+	printf '  %-10s %s, %s, %s, sw %s / %s\n' "Identity" \
+		"$(get "$s" '@.identity.serial')" "$(get "$s" "@.identity['vendor-id']")" \
+		"$(get "$s" "@.identity['equipment-id']")" \
+		"$(get "$s" "@.identity['software-version-0']")" \
+		"$(get "$s" "@.identity['software-version-1']")"
+	printf '  %-10s %s\n\n' "LAN VLAN" "$(vlan_line)"
+	optics
+	printf '  %-10s %s\n' "OLT alarms" "$(omci_alarm_line "$s")"
+}
+
+print_epon() {
+	local e o reg
+
+	e=$(get "$PUBLIC" '@.epon.mac')
+	o=$(get "$PUBLIC" '@.epon.oam')
+	reg=$(get "$e" '@.registered')
+	printf '  %-10s signal %s, sync %s, MPCP %s, holdover %s ms, transmitter %s\n' "EPON" \
+		"$( [ "$(get "$e" '@.signal')" = 1 ] && echo present || echo lost)" \
+		"$( [ "$(get "$e" '@.sync')" = 1 ] && echo yes || echo no)" \
+		"$( [ $(( ${reg:-0} & 1 )) = 1 ] && echo registered || echo "not registered")" \
+		"$(get "$e" '@.holdover_ms')" \
+		"$( [ "$(get "$PUBLIC" '@.epon.tx_hold')" = true ] && echo "held off" || echo allowed)"
+	printf '  %-10s %s, CTC %s %s, LOID authentication %s, OLT %s\n' "OAM" \
+		"$(get "$o" '@.oam')" "$(get "$o" '@.ctc')" "$(get "$o" '@.ctc_version')" \
+		"$(get "$o" '@.auth')" "$(get "$o" '@.olt_mac')"
+	printf '  %-10s ONU MAC %s, VLAN mode %s default %s, OAM frames rx %s / tx %s\n\n' "" \
+		"$(get "$o" '@.onu_mac')" "$(get "$o" '@.vlan_mode')" "$(get "$o" '@.vlan_default')" \
+		"$(get "$o" '@.rx_pdus')" "$(get "$o" '@.tx_pdus')"
+	optics
+}
+
+print_text() {
+	if ! fetch; then
+		echo "ONU at $HOST is not reachable: check xpon-stats.main.host and that"
+		echo "this router has an address in its subnet on the port it is connected to."
+		return 1
+	fi
+	printf '%s ONU %s  (%s)\n\n' "$(echo "$MODE" | tr a-z A-Z)" "$HOST" "$(date '+%Y-%m-%d %H:%M:%S')"
+	if [ "$MODE" = epon ]; then
+		print_epon
+	else
+		print_gpon
+	fi
+}
+
+case "${1:-} ${2:-}" in
+"--json --live")
+	print_json status_live
+	;;
+"--json ")
+	print_json
+	;;
+"-w "*|"--watch "*)
+	interval=${2:-5}
+	while :; do
+		out=$(print_text)
+		printf '\033[H\033[2J%s\n' "$out"
+		sleep "$interval"
+	done
+	;;
+" ")
+	print_text
+	;;
+*)
+	sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+	exit 2
+	;;
+esac

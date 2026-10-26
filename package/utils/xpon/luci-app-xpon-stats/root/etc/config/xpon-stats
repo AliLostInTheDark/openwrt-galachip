@@ -1,0 +1,5 @@
+config xpon-stats 'main'
+	# Management address of the ONU
+	option host '192.168.1.1'
+	# Seconds to wait for each request
+	option timeout '3'

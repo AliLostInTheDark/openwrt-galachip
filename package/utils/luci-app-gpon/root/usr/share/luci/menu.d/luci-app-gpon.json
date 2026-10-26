@@ -1,0 +1,24 @@
+{
+	"admin/network/gpon": {
+		"title": "PON",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "gpon/pon"
+		},
+		"depends": {
+			"acl": [ "luci-app-gpon" ]
+		}
+	},
+	"admin/status/crash": {
+		"title": "Crash",
+		"order": 90,
+		"action": {
+			"type": "view",
+			"path": "gpon/crash"
+		},
+		"depends": {
+			"acl": [ "luci-app-gpon" ]
+		}
+	}
+}
