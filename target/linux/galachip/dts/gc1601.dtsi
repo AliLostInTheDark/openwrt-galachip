@@ -1,0 +1,140 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+#include <dt-bindings/clock/galachip,gc1601-clock.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+
+/ {
+	compatible = "galachip,gc1601";
+	#address-cells = <1>;
+	#size-cells = <1>;
+	interrupt-parent = <&intc>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "faraday,fa626te";
+			reg = <0>;
+			clocks = <&scu GC1601_CLK_CPU>;
+		};
+	};
+
+	osc: oscillator {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <25000000>;
+	};
+
+	soc {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		packet_engine: packet-engine@90e00000 {
+			compatible = "galachip,gc1601-eth", "galachip,gc1601-packet-engine";
+			reg = <0x90e00000 0x820>, <0x90dc0000 0x78>,
+			      <0x90dd0000 0x68>, <0x90dd4000 0x3c>,
+			      <0x90ddc040 0x0c>, <0x90ddc080 0x20>,
+			      <0x90dcc054 0x04>, <0x90de81ac 0x10>,
+			      <0x90dc4000 0x04>, <0x90dc8000 0x04>,
+			      <0x90ddc000 0x18>, <0x90dec000 0x54>;
+			reg-names = "gmac", "buffers", "descriptors", "rx", "tx-ring",
+				    "rx-pending", "tx-space", "scheduler-ready",
+				    "buffer-control", "buffer-enable", "tx-config", "statistics";
+			interrupts = <20 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
+		mdio: mdio@90100000 {
+			compatible = "galachip,gc1601-mdio";
+			reg = <0x90100000 0x18>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		timer: timer@90200000 {
+			compatible = "galachip,gc1601-timer";
+			reg = <0x90200000 0x100>;
+			interrupts = <7 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&scu GC1601_CLK_APB>;
+			clock-names = "PCLK";
+		};
+
+		uart0: serial@90400000 {
+			compatible = "ns16550a";
+			reg = <0x90400000 0x1000>;
+			interrupts = <12 IRQ_TYPE_LEVEL_HIGH>;
+			clock-frequency = <33000000>;
+			reg-shift = <2>;
+			status = "disabled";
+		};
+
+		watchdog: watchdog@90800000 {
+			compatible = "faraday,ftwdt010";
+			reg = <0x90800000 0x1000>;
+			interrupts = <13 IRQ_TYPE_EDGE_RISING>;
+		};
+
+		gpio: gpio@90900000 {
+			compatible = "faraday,ftgpio010";
+			reg = <0x90900000 0x1000>;
+			interrupts = <1 IRQ_TYPE_LEVEL_HIGH>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			status = "disabled";
+		};
+
+		i2c0: i2c@90600000 {
+			compatible = "faraday,ftiic010";
+			reg = <0x90600000 0x1000>;
+			clocks = <&scu GC1601_CLK_APB>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		scu: clock-controller@90a00000 {
+			compatible = "galachip,gc1601-scu";
+			reg = <0x90a00000 0x20000>;
+			#clock-cells = <1>;
+			clocks = <&osc>;
+			clock-names = "osc";
+		};
+
+		pon: pon@90cc0000 {
+			compatible = "galachip,gc1601-pon";
+			reg = <0x90cc0000 0x24000>, <0x91000000 0x300000>,
+			      <0x91300000 0x100>, <0x90a00800 0x20>,
+			      <0x90c40020 0x4>, <0x90c00000 0x10>,
+			      <0x90c40000 0x20>, <0x90c80000 0x2000>;
+			reg-names = "mac", "serdes", "serdes-ctrl", "scu", "txpwr",
+				    "top", "global", "emac";
+			status = "disabled";
+		};
+
+		intc: interrupt-controller@96000000 {
+			compatible = "galachip,gc1601-intc";
+			reg = <0x96000000 0x1000>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			#address-cells = <0>;
+			faraday,cpu-match-id = <1>;
+		};
+
+		spi: spi@a0000000 {
+			compatible = "faraday,ftspi020";
+			reg = <0xa0000000 0x1000>;
+			interrupts = <14 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&scu GC1601_CLK_SPI>;
+			clock-names = "spiclk";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+	};
+};

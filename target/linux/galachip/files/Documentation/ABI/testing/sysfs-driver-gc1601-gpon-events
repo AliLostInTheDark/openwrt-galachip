@@ -1,0 +1,36 @@
+What:		/sys/class/net/pon0/device/gpon_events
+Date:		October 2026
+Contact:	Linux PON developers <netdev@vger.kernel.org>
+Description:
+		GC1601 GPON diagnostic counters. DBRu fields are sampled by the
+		O5 watchdog, normally once per second. Reading this file uses
+		cached values and does not read or clear hardware counters.
+
+		dbru_detected counts watchdog samples with a nonzero DBRu flag.
+		dbru_busy counts flagged samples skipped because upstream traffic
+		was at least 2 kbit/s. The first sample after entering O5 primes
+		the measurement and performs no recovery.
+
+		dbru_fixes is the legacy name for recovery passes, including
+		passes where all T-CONT rewrites were skipped. It is not a count
+		of successful repairs. Each pass pulses the vendor flag-clear
+		register, preserving the existing recovery sequence.
+
+		dbru_rewrites counts T-CONT report-load attempts.
+		dbru_buffer_skips counts T-CONTs skipped for insufficient free
+		buffers or an unavailable packet engine. dbru_qmu_errors counts
+		failed queue-manager threshold helper calls.
+
+		dbru_flag_clears counts passes whose immediate readback contains
+		none of the original flags. dbru_flag_persists counts passes where
+		any original flag remains. Clearing the latch does not prove
+		that upstream traffic resumed; correlate byte counters and
+		connectivity. A flag may also recur after this readback.
+
+		dbru_last_before, dbru_last_rewritten, dbru_last_skipped and
+		dbru_last_after are hexadecimal T-CONT masks for the last recovery
+		pass. dbru_last_rate_kbps is that pass's integer upstream rate
+		in bits per millisecond. These last-pass fields remain unchanged
+		when a later sample is unflagged, busy or only primes the timer.
+
+		Counters accumulate over the lifetime of the driver instance.

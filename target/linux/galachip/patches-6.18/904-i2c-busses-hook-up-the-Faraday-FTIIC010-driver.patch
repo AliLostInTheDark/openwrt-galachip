@@ -1,0 +1,48 @@
+From 680a6117c41d4104c7cbacea93f0bd6515e4d531 Mon Sep 17 00:00:00 2001
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Date: Mon, 12 Oct 2026 23:38:45 +0530
+Subject: [PATCH] i2c: busses: hook up the Faraday FTIIC010 driver
+
+The GC1601 reaches the BOSA's SFF-8472 EEPROMs through an FTIIC010
+controller.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+ drivers/i2c/busses/Kconfig  | 7 +++++++
+ drivers/i2c/busses/Makefile | 1 +
+ 2 files changed, 8 insertions(+)
+
+diff --git a/drivers/i2c/busses/Kconfig b/drivers/i2c/busses/Kconfig
+index 4515ded43..f27a79e16 100644
+--- a/drivers/i2c/busses/Kconfig
++++ b/drivers/i2c/busses/Kconfig
+@@ -688,6 +688,13 @@ config I2C_EXYNOS5
+ 	  Exynos5433, Exynos7, Exynos850 and ExynosAutoV9.
+ 	  Choose Y here only if you build for such Samsung SoC.
+ 
++config I2C_FTIIC010
++	tristate "Faraday FTIIC010 I2C controller"
++	depends on ARCH_GALACHIP || COMPILE_TEST
++	help
++	  Polled master driver for the Faraday FTIIC010 I2C controller found
++	  in the GalaChip GC1601 SoC.
++
+ config I2C_GPIO
+ 	tristate "GPIO-based bitbanging I2C"
+ 	depends on GPIOLIB || COMPILE_TEST
+diff --git a/drivers/i2c/busses/Makefile b/drivers/i2c/busses/Makefile
+index fb985769f..ecf680e31 100644
+--- a/drivers/i2c/busses/Makefile
++++ b/drivers/i2c/busses/Makefile
+@@ -65,6 +65,7 @@ obj-$(CONFIG_I2C_DIGICOLOR)	+= i2c-digicolor.o
+ obj-$(CONFIG_I2C_EG20T)		+= i2c-eg20t.o
+ obj-$(CONFIG_I2C_EMEV2)		+= i2c-emev2.o
+ obj-$(CONFIG_I2C_EXYNOS5)	+= i2c-exynos5.o
++obj-$(CONFIG_I2C_FTIIC010)	+= i2c-ftiic010.o
+ obj-$(CONFIG_I2C_GPIO)		+= i2c-gpio.o
+ obj-$(CONFIG_I2C_HIGHLANDER)	+= i2c-highlander.o
+ obj-$(CONFIG_I2C_HISI)		+= i2c-hisi.o
+-- 
+2.43.0
+
