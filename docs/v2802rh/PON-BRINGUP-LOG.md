@@ -70,7 +70,26 @@ and the LAN PC pings the ISP gateway through VLAN 100. What it took:
   the VLAN, and dropped.
 
 Debug only: `base-files/etc/uci-defaults/99-v2802rh-debug-isp` bakes in the
-bench ISP's settings; delete it before a release image. Still open: the
-OLT deactivates a few times after ranging before it settles, LuCI does not
-show the FEC/BIP counters (`/proc/gpon` pm line has them), hardware L2
-offload is off, and NOR flashing waits until all of this is stable.
+bench ISP's settings; delete it before a release image. Still open: LuCI
+does not show the FEC/BIP counters (`/proc/gpon` pm line has them),
+hardware L2 offload is off, and NOR flashing waits until all of this is
+stable.
+
+## 2026-10-26: traffic 36 s after boot (was 64 s)
+
+`omci-diag report` (omci-report) decodes the boot's PLOAM and OMCI both
+ways, with answer timing; `omci.main.trace=1` records from boot.
+
+| boot            | laser on | OMCI answer (median) | provisioning | traffic |
+|-----------------|----------|----------------------|--------------|---------|
+| before          | 34.6 s   | 203 ms               | 23 s, 2 deactivations | 64 s |
+| after           | 19.5 s   | 1 ms                 | 4.3 s, none  | 36 s    |
+
+- omcid wrote its 233 KB checkpoint before every answer (~200 ms on this
+  CPU). The OLT gave up on the slow early answers: that was the
+  deactivate-after-ranging loop. The checkpoint is now deferred.
+- The identity is in the kernel from S09 (`/etc/config/omci`, the only
+  identity config) and omcid releases the transmitter itself; omci.agent
+  no longer re-sets unchanged keys (10 s).
+- Remaining before the laser: preinit (~8.5 s on a RAM boot) and init
+  scripts up to omcid (S11, ~19 s).
