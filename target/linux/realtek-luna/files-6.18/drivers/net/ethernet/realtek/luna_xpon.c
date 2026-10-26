@@ -741,29 +741,42 @@ void luna_xpon_service_vids(unsigned long *vids)
 }
 EXPORT_SYMBOL(luna_xpon_service_vids);
 
-/* SFF-8472 A2h alarm flags, bytes 112-113 as one big-endian word. */
-static const struct {
-	u16 bit;
-	u32 alarm;
-} luna_xpon_alarms[] = {
-	{ BIT(15), OPTICAL_FRONTEND_ALARM_HIGH_TEMP },
-	{ BIT(14), OPTICAL_FRONTEND_ALARM_LOW_TEMP },
-	{ BIT(13), OPTICAL_FRONTEND_ALARM_HIGH_VOLTAGE },
-	{ BIT(12), OPTICAL_FRONTEND_ALARM_LOW_VOLTAGE },
-	{ BIT(11), OPTICAL_FRONTEND_ALARM_TX_HIGH_BIAS },
-	{ BIT(10), OPTICAL_FRONTEND_ALARM_TX_LOW_BIAS },
-	{ BIT(9), OPTICAL_FRONTEND_ALARM_TX_HIGH_POWER },
-	{ BIT(8), OPTICAL_FRONTEND_ALARM_TX_LOW_POWER },
-	{ BIT(7), OPTICAL_FRONTEND_ALARM_RX_HIGH_POWER },
-	{ BIT(6), OPTICAL_FRONTEND_ALARM_RX_LOW_POWER },
-};
+/* The GN25L95 keeps chip registers where SFF-8472 has its levels and alarm
+ * flags (A2h 0x18-0x27, 112-113). These are the BOSA's, in nW: a 2.5G PIN
+ * receiver holds about -30 dBm and overloads near -7 dBm; the laser is set
+ * for the class B+ 0.5 to 5 dBm launch. */
+#define LUNA_BOSA_RX_ALARM_LOW	1000		/* -30 dBm */
+#define LUNA_BOSA_RX_WARN_LOW	1585		/* -28 dBm */
+#define LUNA_BOSA_RX_WARN_HIGH	158489		/* -8 dBm */
+#define LUNA_BOSA_RX_ALARM_HIGH	199526		/* -7 dBm */
+#define LUNA_BOSA_TX_ALARM_LOW	1000000		/* 0 dBm */
+#define LUNA_BOSA_TX_WARN_LOW	1122018		/* 0.5 dBm */
+#define LUNA_BOSA_TX_WARN_HIGH	3162278		/* 5 dBm */
+#define LUNA_BOSA_TX_ALARM_HIGH	3981072		/* 6 dBm */
+
+static u32 luna_xpon_optics_alarms(const struct luna_xpon_optics *o)
+{
+	u32 a = 0;
+
+	if (o->rx_nw < LUNA_BOSA_RX_ALARM_LOW)
+		a |= OPTICAL_FRONTEND_ALARM_RX_LOW_POWER;
+	if (o->rx_nw > LUNA_BOSA_RX_ALARM_HIGH)
+		a |= OPTICAL_FRONTEND_ALARM_RX_HIGH_POWER;
+	/* Burst mode: the laser reads dark between grants and before O5. */
+	if (luna_xpon_hw_state() == GPON_O5) {
+		if (o->tx_nw < LUNA_BOSA_TX_ALARM_LOW)
+			a |= OPTICAL_FRONTEND_ALARM_TX_LOW_POWER;
+		if (o->tx_nw > LUNA_BOSA_TX_ALARM_HIGH)
+			a |= OPTICAL_FRONTEND_ALARM_TX_HIGH_POWER;
+	}
+	return a;
+}
 
 static int luna_xpon_get_telemetry(struct omci_device *odev,
 				   struct omci_telemetry *t)
 {
 	struct luna_xpon_optics o;
 	struct luna_xpon_pm pm;
-	unsigned int i;
 
 	luna_xpon_hw_pm(&pm);
 	t->downstream_fec = pm.ds_fec ? OMCI_FEC_STATUS_UP : OMCI_FEC_STATUS_DOWN;
@@ -786,9 +799,7 @@ static int luna_xpon_get_telemetry(struct omci_device *odev,
 	t->bosa_bias_ua = o.bias_ua;
 	t->bosa_tx_power_nw = o.tx_nw;
 	t->bosa_rx_power_nw = o.rx_nw;
-	for (i = 0; i < ARRAY_SIZE(luna_xpon_alarms); i++)
-		if (o.alarms & luna_xpon_alarms[i].bit)
-			t->bosa_alarms |= luna_xpon_alarms[i].alarm;
+	t->bosa_alarms = luna_xpon_optics_alarms(&o);
 	t->valid |= OMCI_TELEMETRY_F_BOSA_TEMPERATURE |
 		    OMCI_TELEMETRY_F_BOSA_VOLTAGE |
 		    OMCI_TELEMETRY_F_BOSA_BIAS |
@@ -1297,17 +1308,17 @@ static DEVICE_ATTR_RW(allow_tx);
 static ssize_t bosa_ddm_show(struct device *dev, struct device_attribute *attr,
 			     char *buf)
 {
-	u8 d[18];
+	u8 d[10];
 	int rc = luna_xpon_hw_a2h(0x60, d, sizeof(d));
 
 	if (rc)
 		return rc;
 	return sysfs_emit(buf,
-			  "temp_mc=%d vcc_uv=%u bias_ua=%u tx_nw=%u rx_nw=%u alarms=%#06x raw=%*phN\n",
+			  "temp_mc=%d vcc_uv=%u bias_ua=%u tx_nw=%u rx_nw=%u raw=%*phN\n",
 			  (s16)get_unaligned_be16(d) * 1000 / 256,
 			  get_unaligned_be16(d + 2) * 100, get_unaligned_be16(d + 4) * 2,
 			  get_unaligned_be16(d + 6) * 100, get_unaligned_be16(d + 8) * 100,
-			  get_unaligned_be16(d + 16), 10, d);
+			  10, d);
 }
 static DEVICE_ATTR_RO(bosa_ddm);
 
@@ -1316,18 +1327,13 @@ static DEVICE_ATTR_RO(bosa_ddm);
 static ssize_t bosa_thresholds_show(struct device *dev,
 				    struct device_attribute *attr, char *buf)
 {
-	u8 d[16];
-	int rc = luna_xpon_hw_a2h(0x18, d, sizeof(d));
-
-	if (rc)
-		return rc;
 	return sysfs_emit(buf,
 			  "tx_alarm_high_nw=%u tx_alarm_low_nw=%u tx_warn_high_nw=%u tx_warn_low_nw=%u "
 			  "rx_alarm_high_nw=%u rx_alarm_low_nw=%u rx_warn_high_nw=%u rx_warn_low_nw=%u\n",
-			  get_unaligned_be16(d) * 100, get_unaligned_be16(d + 2) * 100,
-			  get_unaligned_be16(d + 4) * 100, get_unaligned_be16(d + 6) * 100,
-			  get_unaligned_be16(d + 8) * 100, get_unaligned_be16(d + 10) * 100,
-			  get_unaligned_be16(d + 12) * 100, get_unaligned_be16(d + 14) * 100);
+			  LUNA_BOSA_TX_ALARM_HIGH, LUNA_BOSA_TX_ALARM_LOW,
+			  LUNA_BOSA_TX_WARN_HIGH, LUNA_BOSA_TX_WARN_LOW,
+			  LUNA_BOSA_RX_ALARM_HIGH, LUNA_BOSA_RX_ALARM_LOW,
+			  LUNA_BOSA_RX_WARN_HIGH, LUNA_BOSA_RX_WARN_LOW);
 }
 static DEVICE_ATTR_RO(bosa_thresholds);
 

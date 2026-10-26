@@ -20,7 +20,6 @@ struct luna_xpon_optics {
 	u32 bias_ua;
 	u32 tx_nw;
 	u32 rx_nw;
-	u16 alarms;	/* SFF-8472 A2h bytes 112-113 */
 };
 
 /* Downstream PON counters since boot, folded from clear-on-read registers. */

@@ -3165,6 +3165,25 @@ static u32 gpon_gem_ds_fwd_cnt(u8 flow)
 	return rc < 0 ? 0xffffffffu : cnt;
 }
 
+/* The first of the flows luna_xpon_hw_gem_install() hands omcid's GEMs. */
+#define LUNA_XPON_FLOW_BASE	4
+
+/* Per-flow US Ethernet frames the GEM block took from the PON-IP
+ * (GPON_GEM_US_ETH_GEM_RX_CNTR, clear-on-read). */
+static u32 gpon_gem_us_eth_cnt(u8 flow)
+{
+	u32 cnt;
+	unsigned long flags;
+	int rc;
+
+	spin_lock_irqsave(&gpon_ind_lock, flags);
+	rc = gpon_gtc_cntr_read(&gpon_io, (struct reg)REG_AT(0x6048),
+				(struct reg)REG_AT(0x604c), flow, &cnt,
+				gpon_cam_delay_us);
+	spin_unlock_irqrestore(&gpon_ind_lock, flags);
+	return rc < 0 ? 0xffffffffu : cnt;
+}
+
 /* PONIP_DBG_CTRL_US strobe -- ONE spelling of a sequence this */
 static int pi_sid_page_cnt(u32 sid, u32 *cnt)
 {
@@ -3606,6 +3625,26 @@ static int v2802rh_gpon_show_locked(struct seq_file *s)
 					   c0 & 0xfff, !!(c0 & BIT(16)),
 					   GPON_DATA_FLOW, c1 & 0xfff, !!(c1 & BIT(16)),
 					   gpon_rd(GPON_GTC_DS_TRAFFIC_CFG + GPON_DATA_FLOW * 4) & 0x1f);
+		}
+	}
+	/* The omcid GEM flows: CAM, AES and routing, then frames each way since
+	 * the last read (the counters clear on read). */
+	{
+		unsigned int f;
+
+		for (f = LUNA_XPON_FLOW_BASE; f < LUNA_XPON_FLOW_BASE + LUNA_XPON_GEMS; f++) {
+			int c = gpon_ds_cam_read(f);
+
+			if (c < 0 || !(c & BIT(16)))
+				continue;
+			seq_printf(s, "xflow%u: gem=%u tcfg=0x%x ds_rx=%u ds_fwd=%u us_eth=%u | sidvld=%u s2q=%u usmap=0x%x\n",
+				   f, c & 0xfff,
+				   gpon_rd(GPON_GTC_DS_TRAFFIC_CFG + f * DS_TRAFFIC_CFG_STRIDE) & 0x1f,
+				   gpon_gem_ds_rx_cnt(f), gpon_gem_ds_fwd_cnt(f),
+				   gpon_gem_us_eth_cnt(f),
+				   pi_packed_get(PI_PON_SIDVALID, f, 1),
+				   pi_packed_get(PI_PON_SID2QID, f, 7),
+				   gpon_rd(GPON_GEM_US_PORT_MAP + f * GEM_US_PORT_MAP_STRIDE));
 		}
 	}
 	/* Full per-flow de-encap sweep: does ANY flow de-encapsulate a GEM frame?
@@ -6958,7 +6997,6 @@ fail:
  * Data T-CONTs 8..15 share PON queue group 1, one queue each. Their GEM flows
  * start at 4: flows 1-3 belong to the in-kernel data path, and
  * gpon_install_omcc() cleans flows 1 and 2 on every OMCC install. */
-#define LUNA_XPON_FLOW_BASE	4
 
 u8 luna_xpon_hw_state(void)
 {
@@ -7109,7 +7147,7 @@ bool luna_xpon_hw_mic_valid(const u8 *msg, unsigned int len)
 int luna_xpon_hw_optics(struct luna_xpon_optics *o)
 {
 	struct gpon_ddm_a2h d;
-	int rc, hi = -1, lo = -1;
+	int rc;
 
 	mutex_lock(&bosa_lock);
 	if (!bosa_cal_ready) {
@@ -7117,14 +7155,9 @@ int luna_xpon_hw_optics(struct luna_xpon_optics *o)
 		return -EAGAIN;	/* uncalibrated A2h readings are noise */
 	}
 	rc = bosa_a2h_read(&d);
-	if (rc == GPON_DDM_OK) {
-		hi = bosa_i2c_read8(0x51, 112);
-		lo = bosa_i2c_read8(0x51, 113);
-	}
 	mutex_unlock(&bosa_lock);
 	if (rc != GPON_DDM_OK)
 		return -EIO;
-	o->alarms = hi < 0 || lo < 0 ? 0 : (hi << 8) | lo;
 	o->temp_mc = (s16)d.temp * 1000 / 256;
 	o->vcc_uv = gpon_ddm_vcc_mv(d.vcc) * 1000;
 	o->bias_ua = gpon_ddm_bias_ua(d.bias);
