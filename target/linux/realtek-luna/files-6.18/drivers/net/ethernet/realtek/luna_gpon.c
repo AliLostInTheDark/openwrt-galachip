@@ -3924,6 +3924,9 @@ static u32 pi_packed_get(u32 base, unsigned int idx, unsigned int bits)
 	return pi_packed_extract(pi_rd(slot.reg), &slot);
 }
 
+/* The classify SIDs of the GEMs omcid installed (luna_xpon_hw_gem_install). */
+static DECLARE_BITMAP(luna_xpon_sids, LUNA_CLASSIFY_SID_MAX);
+
 /* Faithful port of the stock PON-MAC GPON mode-set */
 static void rtl9602c_ponmac_modeset_gpon(bool keep_data)
 {
@@ -3939,6 +3942,7 @@ static void rtl9602c_ponmac_modeset_gpon(bool keep_data)
 		__set_bit(GPON_DATA_FLOW, keep);
 		if (luna_ctrl_flow_wanted())
 			__set_bit(GPON_CTRL_FLOW, keep);
+		bitmap_or(keep, keep, luna_xpon_sids, LUNA_CLASSIFY_SID_MAX);
 	}
 	pi_packed_fill(PI_PON_SIDVALID, swc->classify_sid_num, 1, 0, keep);
 	pi_packed_fill(PI_PON_SID2QID, swc->classify_sid_num, 7, swc->scratch_phys_qid & 0x7f, keep);
@@ -7099,6 +7103,7 @@ void luna_xpon_hw_gem_remove(unsigned int slot)
 	u8 flow = luna_xpon_hw_gem_flow(slot);
 
 	spin_lock_bh(&luna_fsm_lock);
+	__clear_bit(flow, luna_xpon_sids);
 	pi_packed_set(PI_PON_SIDVALID, flow, 1, 0);
 	gpon_gtc_us_gem_stamp(&gpon_io, &luna_gpon_chip.gtc, flow, 0);
 	luna_cam_xact(false, GPON_GTC_CAM_OP_CLEAN, flow, NULL, NULL);
@@ -7127,8 +7132,10 @@ int luna_xpon_hw_gem_install(unsigned int slot, u16 gem, int qid)
 	}
 	pi_packed_set(PI_PON_SID_Q_MAP_DS, flow, 2, 0);
 	rc = luna_xpon_sid_commit(flow, qid);
-	if (!rc)
+	if (!rc) {
+		__set_bit(flow, luna_xpon_sids);
 		rtl9602c_ponmac_modeset_gpon(true);
+	}
 out:
 	spin_unlock_bh(&luna_fsm_lock);
 	if (rc < 0) {
