@@ -394,6 +394,11 @@ function apply_uci_section(section, device) {
 			value = profile_value(value);
 		else if (spec.name == 'veip-slot' && (value == 'auto' || value == 'default' || value == 'unspecified'))
 			value = 0;
+		/* gpon_provision put most of it in place at boot, and every write
+		 * costs omcid a checkpoint: set only what differs. */
+		let current = omci.config_get(device, spec.key);
+		if (current != null && `${current.value}` == `${value}`)
+			continue;
 		if (omci.config_set(device, spec.key, value) == null)
 			return native_failure(`apply ${spec.name}`);
 		push(applied, spec.name);
@@ -898,10 +903,18 @@ function wait_for_omcid() {
 		sleep(200);
 }
 
+/* Startup steps in the kernel log, for boot-to-O5 timing. */
+function boot_mark(what) {
+	writefile('/dev/kmsg', `omci.agent: ${what}\n`);
+}
+
 /* Best-effort boot-time UCI application with no external execution. */
 if (!pon_mode_epon()) {
+	boot_mark('loaded');
 	wait_for_omcid();
+	boot_mark('omcid ready');
 	auto_apply('startup');
+	boot_mark('identity applied');
 }
 
 /*
@@ -913,6 +926,7 @@ if (readfile(identity_wait) != null)
 	writefile(identity_wait, '0');
 
 sync_transmit(true);
+boot_mark('transmitter released');
 migrate_pon_vlan_ports();
 if (!pon_mode_epon()) {
 	sync_untag_vlan(true);

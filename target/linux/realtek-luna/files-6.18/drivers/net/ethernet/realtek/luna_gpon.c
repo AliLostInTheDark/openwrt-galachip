@@ -283,14 +283,23 @@ static u32 luna_ds_irqs, luna_ds_unsignalled, luna_ds_parks;	/* interrupts; drai
 static void luna_ploam_capture(enum gpon_olt_dir dir, const u8 *m, unsigned int len)
 {
 #ifdef CONFIG_GPON_OLT_DIAG
+	/* The OLT repeats its PON-ID every 10 s: keep only a change, or the
+	 * ring loses the activation it was holding within the hour. */
+	static u8 pon_id[12];
 	unsigned long flags;
 
+	if (dir == GPON_OLT_DS && len >= sizeof(pon_id) && m[1] == PLM_DS_PON_ID) {
+		if (!memcmp(pon_id, m, sizeof(pon_id)))
+			goto mon;
+		memcpy(pon_id, m, sizeof(pon_id));
+	}
 	spin_lock_irqsave(&luna_ploam_cap_lock, flags);
 	gpon_olt_capture_add(&luna_ploam_cap,
 			     div_u64(dir == GPON_OLT_DS && luna_ds_rx_ns ? luna_ds_rx_ns :
 				     ktime_get_boottime_ns(), 1000),
 			     (u8)luna_ploam.state, dir, m, len);
 	spin_unlock_irqrestore(&luna_ploam_cap_lock, flags);
+mon:
 #endif
 	luna_mon_frame(GPON_MON_PLOAM, dir == GPON_OLT_US, m, len);
 }
@@ -7182,6 +7191,7 @@ int luna_xpon_hw_set_allow_tx(bool on)
 	} else if (READ_ONCE(gpon_hold) == on) {
 		WRITE_ONCE(gpon_hold, !on);
 		WRITE_ONCE(luna_ploam_cfg_live.hold, !on);	/* the PLOAM core's copy */
+		pr_info("luna-gpon: transmitter %s\n", on ? "released" : "held");
 		/* An activation that cannot run yet (no serial) retries later. */
 		if (luna_driver_ready)
 			luna_activate_locked(false);

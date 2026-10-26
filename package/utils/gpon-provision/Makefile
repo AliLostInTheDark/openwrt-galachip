@@ -6,7 +6,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gpon-provision
 PKG_VERSION:=1
-PKG_RELEASE:=4
+PKG_RELEASE:=5
 PKG_LICENSE:=GPL-2.0-or-later
 PKG_MAINTAINER:=Confiared <brule.herman@confiared.com>
 
@@ -42,8 +42,6 @@ define Package/gpon-provision/install
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/rtk_factory $(1)/usr/sbin/rtk_factory
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/gpon_provision.init $(1)/etc/init.d/gpon_provision
-	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_CONF) ./files/gpon.config $(1)/etc/config/gpon
 endef
 
 $(eval $(call BuildPackage,gpon-provision))

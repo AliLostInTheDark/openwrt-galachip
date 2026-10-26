@@ -352,6 +352,7 @@ static int tx(struct omci_device *odev, struct sk_buff *skb, u16 gem_port)
 	struct omcid *ctx = odev->priv;
 	struct omcid_transport *t = &ctx->transport;
 	struct omcid_request q;
+	unsigned long start, saved;
 	unsigned int retries;
 	int ret;
 
@@ -365,12 +366,10 @@ static int tx(struct omci_device *odev, struct sk_buff *skb, u16 gem_port)
 		ctx->error = -ENOMEM;
 		return ctx->error;
 	}
-	ret = omcid_checkpoint_save(ctx);
+	start = omci_native_now();
+	omcid_checkpoint_defer(ctx);
+	saved = omci_native_now();
 
-	if (ret) {
-		ctx->error = ret;
-		return ret;
-	}
 	for (retries = 0; ; retries++) {
 		omcid_request_init(&q, t->family, OMCI_CMD_TX);
 		omcid_put(&q, OMCI_ATTR_DEV_ID, &t->device, sizeof(t->device));
@@ -383,6 +382,10 @@ static int tx(struct omci_device *odev, struct sk_buff *skb, u16 gem_port)
 		usleep(2000);
 	}
 	if (!ret) {
+		/* Where an answer's time goes, for omci-report. */
+		if (ctx->trace)
+			fprintf(ctx->trace, "# tx checkpoint %lu send %lu retries %u\n",
+				saved - start, omci_native_now() - saved, retries);
 		omcid_trace(ctx, "tx", 0, 0, skb->data, skb->len);
 		kfree_skb(skb);
 	}

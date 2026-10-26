@@ -225,11 +225,8 @@ int omcid_control(struct omcid *ctx, const struct nlmsghdr *request,
 	}
 	if (!ret && ctx->error)
 		ret = ctx->error;
-	if (!ret && mutating) {
-		ret = omcid_checkpoint_save(ctx);
-		if (ret)
-			ctx->error = ret;
-	}
+	if (!ret && mutating)
+		omcid_checkpoint_defer(ctx);
 	if (ret)
 		return ret;
 	if (mutating) {

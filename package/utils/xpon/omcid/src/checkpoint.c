@@ -76,6 +76,7 @@ int omcid_checkpoint_save(struct omcid *ctx)
 		return ctx->error;
 	if (ctx->restoring)
 		return 0;
+	ctx->save_due = 0;
 	/* Keep the last accepted identity checkpoint until its retry succeeds. */
 	if (ctx->pending_identity.valid)
 		return 0;
@@ -174,6 +175,41 @@ int omcid_checkpoint_save(struct omcid *ctx)
 		unlink(temporary);
 	free(blob);
 	return ret;
+}
+
+/*
+ * Saving takes ~200 ms on this CPU, so an answer must not wait for it: save
+ * once the OLT has been quiet for a second, and at least every 5 s while it
+ * is not. A crash loses at most that much; the OLT's MIB data sync audit
+ * then reprovisions.
+ */
+#define CHECKPOINT_IDLE_MS 1000
+#define CHECKPOINT_MAX_DELAY_MS 5000
+
+void omcid_checkpoint_defer(struct omcid *ctx)
+{
+	unsigned long now = omci_native_now();
+
+	if (!ctx->save_due)
+		ctx->save_first = now;
+	ctx->save_due = min(now + CHECKPOINT_IDLE_MS,
+			    ctx->save_first + CHECKPOINT_MAX_DELAY_MS);
+}
+
+/* Saves a due checkpoint; returns ms until the next one, or -1 for none. */
+long omcid_checkpoint_poll(struct omcid *ctx, unsigned long now)
+{
+	int ret;
+
+	if (!ctx->save_due)
+		return -1;
+	if ((long)(ctx->save_due - now) > 0)
+		return ctx->save_due - now;
+	ctx->save_due = 0;
+	ret = omcid_checkpoint_save(ctx);
+	if (ret)
+		ctx->error = ret;
+	return -1;
 }
 
 static bool object_valid(const u8 *raw)

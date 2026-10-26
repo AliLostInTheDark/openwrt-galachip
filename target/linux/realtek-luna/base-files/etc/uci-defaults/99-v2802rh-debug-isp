@@ -17,6 +17,7 @@ set omci.main.dba_status_reporting='1'
 set omci.main.onu_type='2'
 set omci.main.uni_count='4'
 set omci.main.untag_vlan='100'
+set omci.main.trace='1'
 set omci.vlan=vlan
 set omci.vlan.mode='tagged'
 set omci.vlan.vid='100'
