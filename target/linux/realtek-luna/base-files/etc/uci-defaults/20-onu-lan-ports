@@ -1,0 +1,25 @@
+#!/bin/sh
+# The jacks have netdevs of their own (lan1, lan2) since the per-port driver
+# change; a configuration kept across that upgrade still bridges eth0, which
+# the driver keeps working as one port for both jacks. Move such a bridge to
+# the jacks, once, where the jacks exist. The user's other settings stay.
+[ -d /sys/class/net/lan1 ] && [ -d /sys/class/net/lan2 ] || exit 0
+
+moved=0
+for sec in $(uci -q show network 2>/dev/null |
+	     sed -n "s/^network\.\([^.=]*\)\.type='bridge'\$/\1/p"); do
+	ports=$(uci -q get "network.$sec.ports")
+	case " $ports " in
+	*" eth0 "*) ;;
+	*) continue ;;
+	esac
+	case " $ports " in
+	*" lan1 "*|*" lan2 "*) continue ;;
+	esac
+	uci -q del_list "network.$sec.ports=eth0"
+	uci -q add_list "network.$sec.ports=lan1"
+	uci -q add_list "network.$sec.ports=lan2"
+	moved=1
+done
+[ "$moved" = 1 ] && uci -q commit network
+exit 0

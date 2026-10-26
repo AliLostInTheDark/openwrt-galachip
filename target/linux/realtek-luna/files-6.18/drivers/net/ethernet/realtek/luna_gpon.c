@@ -176,6 +176,7 @@ static bool bosa_gn_identified, bosa_cal_ready;
 static int bosa_cal_error;
 static int luna_optical_init_error;
 static int luna_health_los = -1;
+static int luna_los_reported = -1;	/* the last value net/xpon was told; -1 = none */
 static struct proc_dir_entry *luna_health_proc;
 static int luna_activate_locked(bool identity_changed);
 static int luna_quiesce_locked(void);
@@ -6577,6 +6578,12 @@ static void gpon_fsm_poll(struct timer_list *t)
 	WRITE_ONCE(luna_health_los,
 		   !!(gpon_rd(GPON_GTC_DS_LOS_CFG_STS) & GPON_OPTIC_LOS_SIG));
 	gpon_led_los_set(READ_ONCE(luna_health_los));
+	/* The LOS lamp a board puts on a GPIO is net/xpon's: told on change,
+	 * from this tick's own sample (luna_health_los is -1 while quiesced). */
+	if (READ_ONCE(luna_health_los) != luna_los_reported) {
+		luna_los_reported = READ_ONCE(luna_health_los);
+		luna_xpon_report_los(luna_los_reported == 1);
+	}
 	/* The serial was (re)provisioned after ranging began. Drop to O1 and re-offer
 	 * the new Serial_Number. */
 	gpon_apply_identity_change();
@@ -7008,6 +7015,13 @@ fail:
 u8 luna_xpon_hw_state(void)
 {
 	return READ_ONCE(gpon_fsm_state);
+}
+
+/* The receiver's optical LOS as last sampled: 1 lost, 0 light, -1 not
+ * sampled (the activation machine is quiesced). */
+int luna_xpon_hw_los(void)
+{
+	return READ_ONCE(luna_health_los);
 }
 
 u8 luna_xpon_hw_onu_id(void)

@@ -24,12 +24,15 @@ static struct {
 	u32 pvid, cfg, flood[3], management_vlan, piso[2];
 	u64 marked[3], trapped[3];
 	u32 last_reason[3];
-	u8 own_mac[2][ETH_ALEN];
+	u8 own_mac[2 + LAN_PORTS][ETH_ALEN];
 	unsigned int own_macs;
 	bool management_saved, isolation_saved;
 	unsigned int count, generation, retries;
 	int error;
-	bool requested, active, ports_offloaded, saved, gated, stopping;
+	bool requested, active, saved, gated, stopping;
+	/* The bridge ports offloaded: pon0 and the LAN side (eth0, or the jacks). */
+	struct net_device *offloaded[2 + LAN_PORTS];
+	unsigned int n_offloaded;
 	DECLARE_BITMAP(rules, V2802_L2_RULES);
 	DECLARE_BITMAP(netdev_vids, VLAN_N_VID);
 	DECLARE_BITMAP(dirty_vids, VLAN_N_VID);
@@ -143,6 +146,37 @@ static int v2802_l2_own_entry(const u8 *mac, u16 vid, bool add)
 	return rc;
 }
 
+/* The bridge, seen from the PON port: pon0 is its member in either topology,
+ * eth0 + pon0 (a configuration from before the jacks had netdevs) or
+ * lan1 + lan2 + pon0. */
+static struct net_device *v2802_l2_bridge(struct rtl9602c_eth *ep)
+{
+	return ep->wan_ndev ? netdev_master_upper_dev_get(ep->wan_ndev) : NULL;
+}
+
+/* The LAN side of the bridge: eth0, or a jack's netdev. */
+static bool v2802_l2_lan_member(struct rtl9602c_eth *ep, const struct net_device *dev)
+{
+	unsigned int p;
+
+	if (dev == ep->ndev)
+		return true;
+	for (p = 0; p < LAN_PORTS; p++)
+		if (ep->lan_ndev[p] && dev == ep->lan_ndev[p])
+			return true;
+	return false;
+}
+
+static void v2802_l2_own_mac_add(const u8 *mac)
+{
+	unsigned int m;
+
+	for (m = 0; m < v2802_l2.own_macs; m++)
+		if (ether_addr_equal(v2802_l2.own_mac[m], mac))
+			return;
+	ether_addr_copy(v2802_l2.own_mac[v2802_l2.own_macs++], mac);
+}
+
 /* LAN frames for the ONU itself arrive in a service VLAN, but the switch
  * learns the CPU's own MAC only in the untagged VLAN its frames leave in.
  * Under IVL they would miss, flood to the PON as unknown unicast and be cut
@@ -150,17 +184,19 @@ static int v2802_l2_own_entry(const u8 *mac, u16 vid, bool add)
  * entry to the CPU. Called under RTNL. */
 static int v2802_l2_own_macs(const struct luna_l2_service *service, int count, bool add)
 {
-	struct net_device *br = netdev_master_upper_dev_get(v2802_l2.ep->ndev);
-	unsigned int m;
+	struct rtl9602c_eth *ep = v2802_l2.ep;
+	struct net_device *br = v2802_l2_bridge(ep);
+	unsigned int m, p;
 	int i, rc, err = 0;
 
 	if (add) {
 		v2802_l2.own_macs = 0;
 		if (br)
-			ether_addr_copy(v2802_l2.own_mac[v2802_l2.own_macs++], br->dev_addr);
-		if (!br || !ether_addr_equal(br->dev_addr, v2802_l2.ep->ndev->dev_addr))
-			ether_addr_copy(v2802_l2.own_mac[v2802_l2.own_macs++],
-					v2802_l2.ep->ndev->dev_addr);
+			v2802_l2_own_mac_add(br->dev_addr);
+		v2802_l2_own_mac_add(ep->ndev->dev_addr);
+		for (p = 0; p < LAN_PORTS; p++)
+			if (ep->lan_ndev[p])
+				v2802_l2_own_mac_add(ep->lan_ndev[p]->dev_addr);
 	}
 	for (m = 0; m < v2802_l2.own_macs; m++)
 		for (i = 0; i < count; i++) {
@@ -240,9 +276,15 @@ static bool v2802_l2_gate_supported(struct rtl9602c_eth *ep)
 	return true;
 }
 
+/* A jack's steering VLAN (rtl9602c_eth.c): the switch table owns it. */
+static bool v2802_l2_steer_vid(u16 vid)
+{
+	return vid >= SW_LAN_STEER_VID_BASE && vid < SW_LAN_STEER_VID_BASE + LAN_PORTS;
+}
+
 static bool v2802_l2_managed_vid(u16 vid)
 {
-	return vid && vid != SW_DEFAULT_VID && vid != pon_vid;
+	return vid && vid != SW_DEFAULT_VID && vid != pon_vid && !v2802_l2_steer_vid(vid);
 }
 
 static u32 v2802_l2_cpu_vlan(bool present)
@@ -342,6 +384,8 @@ static int v2802_l2_clear(void)
 		v2802_l2.saved = false;
 		v2802_l2.management_saved = false;
 		v2802_l2.count = 0;
+		/* The steering VLAN entries are back as they were. */
+		WRITE_ONCE(ep->lan_steer_blocked, false);
 	}
 	spin_unlock_irqrestore(&v2802_l2_lock, flags);
 	return rc;
@@ -439,6 +483,16 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 	}
 	for (i = 0; i < count; i++) {
 		management_service |= service[i].vid == SW_DEFAULT_VID;
+		/* A service on a jack's steering VLAN takes that entry: a
+		 * steered frame would then reach the PON too. Plain frames
+		 * until it is withdrawn (v2802_l2_clear restores the entry). */
+		if (v2802_l2_steer_vid(service[i].vid)) {
+			if (!READ_ONCE(ep->lan_steer_blocked))
+				netdev_warn(ep->ndev,
+					    "service VLAN %u is a jack's steering VLAN: lanN frames go plain while it is provisioned\n",
+					    service[i].vid);
+			WRITE_ONCE(ep->lan_steer_blocked, true);
+		}
 		rc = v2802_l2_table(1, service[i].vid, &v2802_l2.vlan[i], 1, false);
 		if (rc)
 			goto out;
@@ -543,30 +597,99 @@ static bool v2802_l2_flags(const struct net_device *dev, unsigned long flags)
 	return true;
 }
 
+/* One bridge port as the offload needs it. A jack with no cable, or one
+ * taken down (the switch then holds its link down too), carries nothing the
+ * offload could leak, so it may be DISABLED; anything else must forward. */
+static bool v2802_l2_port_ready(const struct net_device *dev, bool jack)
+{
+	unsigned long required = BR_LEARNING | BR_FLOOD | BR_MCAST_FLOOD | BR_BCAST_FLOOD;
+	u8 state;
+
+	if (!v2802_l2_flags(dev, required) ||
+	    br_port_flag_is_set(dev, BR_ISOLATED | BR_PORT_LOCKED | BR_HAIRPIN_MODE))
+		return false;
+	state = br_port_get_stp_state(dev);
+	if (state == BR_STATE_FORWARDING)
+		return netif_running(dev);
+	return jack && state == BR_STATE_DISABLED &&
+	       (!netif_running(dev) || !netif_carrier_ok(dev));
+}
+
+/* The bridge is pon0 and the LAN side: eth0 (a configuration from before the
+ * jacks had netdevs) or every jack's netdev, never both, nothing else. Every
+ * jack belongs to it: a jack outside the bridge is still a switch port the
+ * offload would forward through. */
 static bool v2802_l2_bridge_ready(struct rtl9602c_eth *ep)
 {
-	struct net_device *br = netdev_master_upper_dev_get(ep->ndev);
-	unsigned long required = BR_LEARNING | BR_FLOOD | BR_MCAST_FLOOD | BR_BCAST_FLOOD;
+	struct net_device *br = v2802_l2_bridge(ep);
 	struct net_device *lower;
 	struct list_head *iter;
+	bool eth0 = false, jacks = false;
+	unsigned int p;
 
-	if (!br)
+	if (!br || !netif_is_bridge_master(br) || !ep->wan_ndev)
 		return false;
-	netdev_for_each_lower_dev(br, lower, iter)
-		if (lower != ep->ndev && lower != ep->wan_ndev)
+	netdev_for_each_lower_dev(br, lower, iter) {
+		if (lower == ep->wan_ndev)
+			continue;
+		if (lower == ep->ndev)
+			eth0 = true;
+		else if (v2802_l2_lan_member(ep, lower))
+			jacks = true;
+		else
 			return false;
+	}
+	if (eth0 == jacks)
+		return false;
+	if (!ep->hw_up || ep->closing || ep->in_recovery ||
+	    br_vlan_enabled(br) || br_multicast_enabled(br) ||
+	    !v2802_l2_port_ready(ep->wan_ndev, false))
+		return false;
+	if (eth0)
+		return v2802_l2_port_ready(ep->ndev, false);
+	for (p = 0; p < LAN_PORTS; p++) {
+		if (!ep->lan_ndev[p])
+			continue;
+		if (netdev_master_upper_dev_get(ep->lan_ndev[p]) != br ||
+		    !v2802_l2_port_ready(ep->lan_ndev[p], true))
+			return false;
+	}
+	return true;
+}
 
-	return br && netif_is_bridge_master(br) && ep->wan_ndev &&
-	       netdev_master_upper_dev_get(ep->wan_ndev) == br &&
-	       netif_running(ep->ndev) && netif_running(ep->wan_ndev) &&
-	       ep->hw_up && !ep->closing && !ep->in_recovery &&
-	       !br_vlan_enabled(br) && !br_multicast_enabled(br) &&
-	       br_port_get_stp_state(ep->ndev) == BR_STATE_FORWARDING &&
-	       br_port_get_stp_state(ep->wan_ndev) == BR_STATE_FORWARDING &&
-	       v2802_l2_flags(ep->ndev, required) &&
-	       v2802_l2_flags(ep->wan_ndev, required) &&
-	       !br_port_flag_is_set(ep->ndev, BR_ISOLATED | BR_PORT_LOCKED | BR_HAIRPIN_MODE) &&
-	       !br_port_flag_is_set(ep->wan_ndev, BR_ISOLATED | BR_PORT_LOCKED | BR_HAIRPIN_MODE);
+/* The bridge ports, offloaded for their FDB notifications. */
+static void v2802_l2_unoffload(struct rtl9602c_eth *ep)
+{
+	while (v2802_l2.n_offloaded)
+		switchdev_bridge_port_unoffload(v2802_l2.offloaded[--v2802_l2.n_offloaded],
+						ep, &v2802_l2.switchdev_nb, NULL);
+}
+
+static int v2802_l2_offload_port(struct rtl9602c_eth *ep, struct net_device *dev)
+{
+	int rc = switchdev_bridge_port_offload(dev, dev, ep, &v2802_l2.switchdev_nb,
+					       NULL, false, NULL);
+
+	if (!rc)
+		v2802_l2.offloaded[v2802_l2.n_offloaded++] = dev;
+	return rc;
+}
+
+static int v2802_l2_offload(struct rtl9602c_eth *ep)
+{
+	struct net_device *br = v2802_l2_bridge(ep);
+	unsigned int p;
+	int rc;
+
+	rc = v2802_l2_offload_port(ep, ep->wan_ndev);
+	if (!rc && netdev_master_upper_dev_get(ep->ndev) == br)
+		rc = v2802_l2_offload_port(ep, ep->ndev);
+	for (p = 0; !rc && p < LAN_PORTS; p++)
+		if (ep->lan_ndev[p] && netdev_master_upper_dev_get(ep->lan_ndev[p]) == br)
+			rc = v2802_l2_offload_port(ep, ep->lan_ndev[p]);
+	if (rc)
+		v2802_l2_unoffload(ep);
+	return rc;
 }
 
 /* The VLAN filter drops a VID the table does not hold, the OLT's service
@@ -635,11 +758,7 @@ static void v2802_l2_work(struct work_struct *work)
 	rc = v2802_l2_clear();
 	if (rc)
 		goto out;
-	if (v2802_l2.ports_offloaded) {
-		switchdev_bridge_port_unoffload(ep->ndev, ep, &v2802_l2.switchdev_nb, NULL);
-		switchdev_bridge_port_unoffload(ep->wan_ndev, ep, &v2802_l2.switchdev_nb, NULL);
-		v2802_l2.ports_offloaded = false;
-	}
+	v2802_l2_unoffload(ep);
 	rc = v2802_l2_sync_vids(ep);
 	retry = !!rc;
 	if (rc || !READ_ONCE(v2802_l2.requested))
@@ -653,23 +772,12 @@ static void v2802_l2_work(struct work_struct *work)
 		rc = count;
 		goto out;
 	}
-	rc = switchdev_bridge_port_offload(ep->ndev, ep->ndev, ep,
-					 &v2802_l2.switchdev_nb, NULL, false, NULL);
+	rc = v2802_l2_offload(ep);
 	if (rc)
 		goto out;
-	rc = switchdev_bridge_port_offload(ep->wan_ndev, ep->wan_ndev, ep,
-					 &v2802_l2.switchdev_nb, NULL, false, NULL);
-	if (rc) {
-		switchdev_bridge_port_unoffload(ep->ndev, ep, &v2802_l2.switchdev_nb, NULL);
-		goto out;
-	}
-	v2802_l2.ports_offloaded = true;
 	rc = v2802_l2_install(services, count, generation);
-	if (rc && !v2802_l2.saved) {
-		switchdev_bridge_port_unoffload(ep->ndev, ep, &v2802_l2.switchdev_nb, NULL);
-		switchdev_bridge_port_unoffload(ep->wan_ndev, ep, &v2802_l2.switchdev_nb, NULL);
-		v2802_l2.ports_offloaded = false;
-	}
+	if (rc && !v2802_l2.saved)
+		v2802_l2_unoffload(ep);
 	if (!rc)
 		netdev_info(ep->ndev, "V2802RH L2 offload: %d PON/LAN services\n", count);
 out:
@@ -699,8 +807,8 @@ static int v2802_l2_netdev_event(struct notifier_block *nb, unsigned long event,
 	    event != NETDEV_CHANGEADDR)
 		return NOTIFY_DONE;
 	rcu_read_lock();
-	br = netdev_master_upper_dev_get_rcu(ep->ndev);
-	changed = dev == ep->ndev || dev == ep->wan_ndev || dev == br;
+	br = ep->wan_ndev ? netdev_master_upper_dev_get_rcu(ep->wan_ndev) : NULL;
+	changed = v2802_l2_lan_member(ep, dev) || dev == ep->wan_ndev || dev == br;
 	if (event == NETDEV_CHANGEUPPER) {
 		struct netdev_notifier_changeupper_info *info = ptr;
 
@@ -731,10 +839,24 @@ static int v2802_l2_switchdev_event(struct notifier_block *nb, unsigned long eve
 	} else if (event != SWITCHDEV_PORT_ATTR_SET) {
 		return NOTIFY_DONE;
 	}
+	if (event == SWITCHDEV_PORT_ATTR_SET && info->dev != ep->ndev &&
+	    v2802_l2_lan_member(ep, info->dev)) {
+		const struct switchdev_notifier_port_attr_info *ai = ptr;
+
+		/* A jack's cable: its bridge port is DISABLED without carrier
+		 * and FORWARDING with it, and the offload is fine with either
+		 * (v2802_l2_port_ready). Withdrawing and reinstalling the
+		 * services on every plug would flush the LAN for nothing. */
+		if (ai->attr->id == SWITCHDEV_ATTR_ID_PORT_STP_STATE &&
+		    READ_ONCE(v2802_l2.active) &&
+		    v2802_l2_port_ready(info->dev, true))
+			return NOTIFY_DONE;
+	}
 	rcu_read_lock();
-	br = netdev_master_upper_dev_get_rcu(ep->ndev);
+	br = ep->wan_ndev ? netdev_master_upper_dev_get_rcu(ep->wan_ndev) : NULL;
 	rcu_read_unlock();
-	if (info->dev == ep->ndev || info->dev == ep->wan_ndev || info->dev == br)
+	if (v2802_l2_lan_member(ep, info->dev) || info->dev == ep->wan_ndev ||
+	    info->dev == br)
 		rtl9601d_l2_changed();
 	return NOTIFY_DONE;
 }
@@ -882,10 +1004,7 @@ static void v2802_l2_fini(void *data)
 	v2802_l2_want_vids();
 	if (v2802_l2_clear())
 		netdev_err(ep->ndev, "L2 offload teardown incomplete; data isolation retained\n");
-	if (v2802_l2.ports_offloaded) {
-		switchdev_bridge_port_unoffload(ep->ndev, ep, &v2802_l2.switchdev_nb, NULL);
-		switchdev_bridge_port_unoffload(ep->wan_ndev, ep, &v2802_l2.switchdev_nb, NULL);
-	}
+	v2802_l2_unoffload(ep);
 	spin_lock_irqsave(&v2802_l2_lock, flags);
 	v2802_l2.ep = NULL;
 	spin_unlock_irqrestore(&v2802_l2_lock, flags);
@@ -899,7 +1018,7 @@ static int v2802_l2_init(struct rtl9602c_eth *ep)
 
 	if (!of_machine_is_compatible("vsol,v2802rh") || !luna_xpon_active())
 		return 0;
-	if (hw_nat || port_vlans || !ep->sw || !ep->wan_ndev)
+	if (hw_nat || !ep->sw || !ep->wan_ndev)
 		return -EOPNOTSUPP;
 	memset(&v2802_l2, 0, sizeof(v2802_l2));
 	v2802_l2.requested = true;

@@ -2,7 +2,6 @@
 /dts-v1/;
 
 #include "rtl9602c.dtsi"
-
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/leds/common.h>
 
@@ -51,12 +50,17 @@
 		};
 	};
 
-	/* Pins found by blinking each GPIO on a RAM-booted unit. LAN1 is on GPIO
-	 * 40 too, but stock lights it from the LED controller (see &gpon), which
-	 * follows LAN1's own link. LAN2 is the 2.5G PHY's own LED and WAN did not
-	 * respond. Polarity is unconfirmed.
-	 * PON and LOS stay plain lamps until the GPON driver's LED engine
-	 * indices for this board are known. */
+	/* The panel, left to right: SYS, PON, LOS, UN, LAN2, LAN1. Pins found
+	 * by blinking each GPIO on a RAM-booted unit. LAN1 is on GPIO 40 too,
+	 * but stock lights it from the LED controller (see &gpon), which follows
+	 * LAN1's own link. LAN2 is the 2.5G PHY's own LED. UN is an unpopulated
+	 * pad pair whose line is not known; a lamp fitted there has no node
+	 * until it is (export a GPIO at a time under /sys/class/gpio to find
+	 * it). Polarity is unconfirmed: a lamp that is lit while its
+	 * brightness reads 0 wants GPIO_ACTIVE_HIGH.
+	 * PON and LOS are net/xpon's, through &nic below: PON solid at O5,
+	 * blinking while ranging, off otherwise; LOS blinking while the
+	 * downstream light is lost. */
 	leds {
 		compatible = "gpio-leds";
 
@@ -67,13 +71,15 @@
 			default-state = "on";
 		};
 
-		led-pon {
-			label = "green:pon";
+		led_pon: led-pon {
+			function = "pon";
+			color = <LED_COLOR_ID_GREEN>;
 			gpios = <&gpio 35 GPIO_ACTIVE_LOW>;
 		};
 
-		led-los {
-			label = "red:los";
+		led_los: led-los {
+			function = "los";
+			color = <LED_COLOR_ID_RED>;
 			gpios = <&gpio 26 GPIO_ACTIVE_LOW>;
 		};
 	};
@@ -120,6 +126,28 @@
 	/* The RTL8221B's MDIO, bit-banged as stock does it: MDC, MDIO. */
 	realtek,ext-mdio-gpios = <&gpio 5 GPIO_ACTIVE_HIGH>, <&gpio 10 GPIO_ACTIVE_HIGH>;
 	realtek,ext-phy-addr = <7>;
+
+	/* The PON and LOS lamps, for net/xpon: this node is the xPON device's
+	 * parent, so the lookup is made here. */
+	leds = <&led_pon>, <&led_los>;
+	led-names = "pon", "los";
+
+	/* The two jacks as netdevs, by switch port: LAN1 is port 1, the
+	 * internal GE PHY; LAN2 is port 0, the SerDes to the 2.5G RTL8221B. */
+	ethernet-ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+			label = "lan2";
+		};
+
+		port@1 {
+			reg = <1>;
+			label = "lan1";
+		};
+	};
 };
 
 /* Zbit ZB25VQ32, 4 MiB. The uImage sits at 0x27000, which is not 64 KiB

@@ -38,6 +38,7 @@ struct luna_xpon_pm {
 };
 
 u8 luna_xpon_hw_state(void);
+int luna_xpon_hw_los(void);
 u8 luna_xpon_hw_onu_id(void);
 int luna_xpon_hw_omcc_gem(void);
 bool luna_xpon_hw_alloc_known(u16 alloc);
@@ -68,12 +69,16 @@ void luna_xpon_report_onu_id(u8 onu_id);
 void luna_xpon_report_channel(u16 gem);
 void luna_xpon_report_alloc(void);
 void luna_xpon_report_identity(void);
+/* The receiver's optical loss of signal, as the GTC samples it: net/xpon
+ * shows it on the LOS lamp and reports it to omcid. */
+void luna_xpon_report_los(bool los);
 #else
 static inline void luna_xpon_report_state(u8 state) { }
 static inline void luna_xpon_report_onu_id(u8 onu_id) { }
 static inline void luna_xpon_report_channel(u16 gem) { }
 static inline void luna_xpon_report_alloc(void) { }
 static inline void luna_xpon_report_identity(void) { }
+static inline void luna_xpon_report_los(bool los) { }
 #endif
 
 #endif /* _LUNA_XPON_HW_H */
