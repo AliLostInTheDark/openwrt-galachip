@@ -265,3 +265,52 @@ a local loss/backpressure symptom requiring further diagnosis; quiet local
 counters still would not identify which external endpoint or network caused
 the variation. Use the same client, server and test settings for any stock
 comparison. No forwarding-code change or new firmware is justified yet.
+
+## Timed speed capture result, 2026-10-26
+
+`/home/ali/Desktop/l2-speed.log` has SHA-256
+`a09b78d86c5ab4e02fc518d44664fd359b5d12f4a6d4f0e1572dafb38906a8e3`.
+All 60 samples parse, spanning uptime 673.70–739.35 seconds (65.65 seconds).
+Every sample has `requested=1 active=1 services=2 error=0 gated=0
+generation=366 retries=0`: there is no recorded offload withdrawal, replay
+or retry. The user confirms moving the cable from LAN1 to LAN2 during
+the capture, consistent with the port-counter transition.
+
+| Counter delta | LAN1 (port 1) | LAN2 (port 0) | PON (port 2) | CPU (port 3) |
+|---|---:|---:|---:|---:|
+| RX bytes | 598,664,558 | 78,702,931 | 1,199,687,430 | 16,800 |
+| TX bytes | 608,994,259 | 585,989,611 | 679,857,147 | 16,806 |
+| RX CRC/symbol errors | 0 | 0 | 0 | 0 |
+| RX drop events | 0 | 0 | 0 | 0 |
+| TX discards | 0 | 0 | 0 | 0 |
+| TX pause frames | 0 | 22 | 0 | 0 |
+| `tx_bridge_discards` | 0 | 0 | 145 | 33 |
+
+The LAN ports move 1,872,351,359 bytes total, versus 33,606 combined CPU-port
+bytes (about 0.0018% of that amount). Linux eth0 gains 14 RX and 37 TX
+packets; pon0 gains 33 RX and 14 TX packets. Its 33 received service copies
+are marked as hardware-forwarded, with no increase in `cpu_only` on any
+port. CPU utilization averages 11.6%, including the capture overhead.
+
+LAN1's download and upload intervals (samples 4–33) have zero CPU-port byte
+increments. The upload has no recorded drop/pause increments. The PON
+bridge-discard counter rises by 145 during download, mostly 99 in sample 6;
+the counter does not identify the affected frames or establish TCP loss.
+LAN2's main download interval (samples 44–56) is also free of drop/pause
+increments, with only 388 combined CPU-port bytes in sample 45. The observed
+throughput variations do not track bulk CPU traffic.
+
+All 22 LAN2 pause frames appear in sample 58, at upload onset. These are
+frames sent toward the client, indicating local flow-control activity;
+their pause durations and the client's response are not captured. They
+may contribute to a transient dip, but their count alone does not prove
+the cause. This upload is observed for only 2.21 seconds (samples 58–59)
+before the capture ends.
+
+This rules out sustained CPU forwarding and offload cycling as the cause
+in this capture. It does not justify attributing every dip to the server:
+the PON bridge-discard and LAN2 pause events remain local observations.
+To examine the full LAN2 upload, repeat the same capture with the cable
+left on LAN2 for the whole speed test. No firmware change is made from
+these measurements; bypass, generation stability and both physical ports
+are now supported by timed board evidence.
