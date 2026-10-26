@@ -50,3 +50,27 @@ remain with the user; the earlier live results do not validate these changes.
 The follow-up [omcid provider audit](OMCID-RTL9601D.md) removes fixed
 reference-service creation from RTL9601D and reports implemented backend
 resources. The kernel and OMCI packages now require matching ABI 17 builds.
+
+## 2026-10-26, traffic passes (tag `v2802rh-traffic-ok`)
+
+RAM-booted 7b9623b182 against the Nokia ALCL OLT: O5, full OMCI
+provisioning (MIB sync 26-33), GEM 256 / VLAN 100 and GEM 257 / VLAN 660,
+and the LAN PC pings the ISP gateway through VLAN 100. What it took:
+
+- AES on the GEM ports the OLT marks encrypted, the OMCC included
+  (DS_TRAFFIC_CFG bit 4, stock's dsGemPort aes_en). Without it OMCI went
+  dark as soon as Nokia switched encryption on.
+- 64 service slots: the OLT maps eight p-bits plus a default to each GEM.
+- Each service VLAN in the switch VLAN table (PON + CPU, tagged); the VLAN
+  filter otherwise drops it.
+- The PON-MAC mode-set keeps omcid's classify SIDs; it used to invalidate
+  each GEM flow right after installing it.
+- WAN VLAN entries use IVL (bit 10 set; the SDK writes it inverted). With
+  SVL a reply to a LAN host was looked up on the host's LAN port, outside
+  the VLAN, and dropped.
+
+Debug only: `base-files/etc/uci-defaults/99-v2802rh-debug-isp` bakes in the
+bench ISP's settings; delete it before a release image. Still open: the
+OLT deactivates a few times after ranging before it settles, LuCI does not
+show the FEC/BIP counters (`/proc/gpon` pm line has them), hardware L2
+offload is off, and NOR flashing waits until all of this is stable.
