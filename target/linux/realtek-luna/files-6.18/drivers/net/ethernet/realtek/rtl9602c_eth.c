@@ -421,6 +421,7 @@ struct rtl9602c_eth {
 	bool		port0_serdes;
 	bool		stock_switch;
 	struct delayed_work port0_link_work;
+	u32		port1_sts;	/* last logged GPHY link/speed/duplex */
 
 	/* The external PHY's MDIO bus, bit-banged on two GPIOs as stock does it
 	 * (DT realtek,ext-mdio-gpios = MDC, MDIO; realtek,ext-phy-addr). */
@@ -2870,6 +2871,50 @@ static int rtl9602c_ext_phy_init(struct rtl9602c_eth *ep)
 	return 0;
 }
 
+/* Link changes in phylink's words, per LAN jack: LAN1 is the GPHY port,
+ * LAN2 the SerDes one. Pause is the ability word's TX (b5) / RX (b6). */
+static void rtl9602c_link_log(struct rtl9602c_eth *ep, unsigned int lan,
+			      const char *speed, bool full, u32 ablty)
+{
+	static const char * const pause[] = { "off", "tx", "rx", "rx/tx" };
+
+	if (!speed) {
+		dev_info(ep->dev, "lan%u: Link is Down\n", lan);
+		return;
+	}
+	dev_info(ep->dev, "lan%u: Link is Up - %s/%s - flow control %s\n", lan,
+		 speed, full ? "Full" : "Half", pause[(ablty >> 5) & 0x3]);
+}
+
+/* RTL8221B PHYSR (VEND2 0xa434): duplex bit 3, speed bits 10:9 and 5:4. */
+static const char *rtl9602c_port0_speed(struct rtl9602c_eth *ep, bool *full)
+{
+	int sr = ext_mdio_read_c45(ep, MDIO_MMD_VEND2_RTL, 0xa434);
+
+	*full = sr >= 0 && (sr & BIT(3));
+	switch (sr < 0 ? -1 : sr & 0x630) {
+	case 0x000: return "10Mbps";
+	case 0x010: return "100Mbps";
+	case 0x020: return "1Gbps";
+	case 0x210: return "2.5Gbps";
+	default: return "Unknown";
+	}
+}
+
+/* The GPHY port links on its own; report it as port 0's poll does. */
+static void rtl9602c_port1_link_log(struct rtl9602c_eth *ep)
+{
+	static const char * const speed[] = { "10Mbps", "100Mbps", "1Gbps", "Unknown" };
+	u32 sts = ioread32(ep->sw + ep->swm->p_ablty + 4) &
+		  (ABLTY_LINK | BIT(2) | BIT(5) | BIT(6) | 0x3);
+
+	if (sts == ep->port1_sts)
+		return;
+	ep->port1_sts = sts;
+	rtl9602c_link_log(ep, 1, sts & ABLTY_LINK ? speed[sts & 0x3] : NULL,
+			  sts & BIT(2), sts);
+}
+
 /* Mirror the external PHY's link into port 0's forced link, so a LAN2 jack
  * with no cable is a down port to the switch, as a copper port would be. An
  * administrative lock keeps it down whatever the cable does. BMSR's link bit
@@ -2892,11 +2937,16 @@ static void rtl9602c_port0_link_work(struct work_struct *work)
 	cur = ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, 0));
 	if (cur != want) {
 		iowrite32(want, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
-		if ((cur ^ want) & ABLTY_LINK)
-			dev_info(ep->dev, "port 0 (SerDes) link %s\n",
-				 want & ABLTY_LINK ? "up" : "down");
+		if ((cur ^ want) & ABLTY_LINK) {
+			bool full = false;
+			const char *speed = want & ABLTY_LINK ?
+				rtl9602c_port0_speed(ep, &full) : NULL;
+
+			rtl9602c_link_log(ep, 2, speed, full, want);
+		}
 	}
 	mutex_unlock(&rtl9602c_gphy_lock);
+	rtl9602c_port1_link_log(ep);
 	schedule_delayed_work(&ep->port0_link_work, HZ);
 }
 

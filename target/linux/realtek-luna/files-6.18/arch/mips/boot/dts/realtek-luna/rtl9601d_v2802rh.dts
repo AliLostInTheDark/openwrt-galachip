@@ -26,7 +26,7 @@
 		/* The family line without earlycon: EARLY_PRINTK's early0 already
 		 * prints from the first instruction, and with both every line up to
 		 * the 8250 console came out twice. */
-		bootargs = "console=ttyS0,115200 ignore_loglevel";
+		bootargs = "console=ttyS0,115200";
 	};
 
 	/* 32 MiB DDR2 (U-Boot: "DRAM: 32 MB"), laid out as the X100DG's. */
