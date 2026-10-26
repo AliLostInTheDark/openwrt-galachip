@@ -52,10 +52,11 @@ define Device/vsol_v2802rh
   DEVICE_DTS_DIR := $(DTS_DIR)/realtek-luna
   SOC := rtl9601d
   # 4 MiB Zbit ZB25VQ32 with the stock bootloader, env and hardware MIB below
-  # 0x27000 and the RTOS's OSK1FS files above 0x3e0000. U-Boot boots the uImage
-  # at 0x27000 in place; the firmware partition (0x3b9000, 3812k) holds it, the
-  # rootfs right behind it and the overlay in what is left.
-  IMAGE_SIZE := 3812k
+  # 0x27000, the chainloaded U-Boot at 0x3c0000 and the RTOS's OSK1FS files
+  # above 0x3e0000. U-Boot boots the uImage at 0x27000 in place; the firmware
+  # partition (0x399000, 3684k) holds it, the rootfs right behind it and the
+  # overlay in what is left.
+  IMAGE_SIZE := 3684k
   # The flash erases in 4k. The jffs2 marker lets the first boot from flash
   # format the free space as the overlay instead of falling back to tmpfs.
   BLOCKSIZE := 4k

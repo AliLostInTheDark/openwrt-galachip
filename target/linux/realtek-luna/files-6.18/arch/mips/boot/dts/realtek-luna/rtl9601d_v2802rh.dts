@@ -122,11 +122,12 @@
 	realtek,ext-phy-addr = <7>;
 };
 
-/* Zbit ZB25VQ32, 4 MiB. U-Boot boots the uImage at 0x27000 (bootcmd bootm
- * 9fc27000), which is not 64 KiB aligned, hence 4 KiB erase. Everything stock
- * keeps outside the firmware stays read-only: the hardware MIB at 0x25000 (GPON
- * serial, MAC) and, from 0x3e0000, the OSK1FS files (GN25L95 calibration, OMCI)
- * and the RTOS config. */
+/* Zbit ZB25VQ32, 4 MiB. The uImage sits at 0x27000, which is not 64 KiB
+ * aligned, hence 4 KiB erase. Stock U-Boot boots it in place (bootcmd bootm
+ * 9fc27000) or starts the chainloaded U-Boot at 0x3c0000, which boots it.
+ * Everything stock keeps outside the firmware stays read-only: the hardware
+ * MIB at 0x25000 (GPON serial, MAC) and, from 0x3e0000, the OSK1FS files
+ * (GN25L95 calibration, OMCI) and the RTOS config. */
 &spi_nor {
 	compatible = "realtek,luna-spi-nor";
 	reg = <0x14000000 0x400000>, <0x18001200 0x10>;
@@ -163,7 +164,18 @@
 		partition@27000 {
 			compatible = "denx,uimage";
 			label = "firmware";
-			reg = <0x027000 0x3b9000>;
+			reg = <0x027000 0x399000>;
+		};
+		/* Mainline U-Boot, chainloaded by the stock one, and its env */
+		partition@3c0000 {
+			label = "u-boot";
+			reg = <0x3c0000 0x01f000>;
+			read-only;
+		};
+		partition@3df000 {
+			label = "u-boot-env";
+			reg = <0x3df000 0x001000>;
+			read-only;
 		};
 		partition@3e0000 {
 			label = "osk";

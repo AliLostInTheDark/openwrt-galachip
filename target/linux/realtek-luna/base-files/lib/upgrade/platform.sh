@@ -25,10 +25,17 @@ platform_check_image() {
 		echo "This ONU runs from RAM, not from its flash: the flash is not ours to replace."
 		return 1
 	}
-	if onu_mtd firmware >/dev/null; then
+	if dev=$(onu_mtd firmware); then
 		[ "$(dd if="$img" bs=4 count=1 2>/dev/null | hexdump -v -e '1/1 "%02x"')" = 27051956 ] &&
 			dd if="$img" bs=1 skip=32 count=32 2>/dev/null | grep -qs OpenWrt || {
 			echo "Not an ONU firmware image: it does not start with an OpenWrt uImage."
+			return 1
+		}
+		# An image built for a larger firmware partition would run into
+		# the chainloaded U-Boot behind it (the metadata trailer counts too).
+		size=$(wc -c < "$img")
+		[ "$size" -le "$(cat "$dev/size")" ] || {
+			echo "The image ($size bytes) is larger than the firmware partition."
 			return 1
 		}
 		return 0
