@@ -1,0 +1,361 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] spi: add the ZTE Sanechips ZX279125 SPI flash controller
+
+Add a SPI driver for the ZX279125 SPI flash controller.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+diff --git a/drivers/spi/Kconfig b/drivers/spi/Kconfig
+index 007ad5e7..02a4b5d7 100644
+--- a/drivers/spi/Kconfig
++++ b/drivers/spi/Kconfig
+@@ -587,6 +587,13 @@ config STM32_SPI
+ 	  SoCs. This uses driver model and requires a device tree binding to
+ 	  operate.
+ 
++config ZX279125_SPIFC
++	bool "ZTE Sanechips ZX279125 SPI Flash Controller (SPIFC)"
++	depends on DM_SPI && SPI_MEM
++	help
++	  Enable support for the SPI Flash Controller found on ZTE Sanechips
++	  ZX279125 SoCs (e.g. VSOL V2801SG).
++
+ config TEGRA114_SPI
+ 	bool "nVidia Tegra114 SPI driver"
+ 	depends on ARCH_TEGRA
+diff --git a/drivers/spi/Makefile b/drivers/spi/Makefile
+index 13d9c5dc..ad5e40ee 100644
+--- a/drivers/spi/Makefile
++++ b/drivers/spi/Makefile
+@@ -89,3 +89,4 @@ obj-$(CONFIG_XILINX_SPI) += xilinx_spi.o
+ obj-$(CONFIG_ZYNQ_SPI) += zynq_spi.o
+ obj-$(CONFIG_ZYNQ_QSPI) += zynq_qspi.o
+ obj-$(CONFIG_ZYNQMP_GQSPI) += zynqmp_gqspi.o
++obj-$(CONFIG_ZX279125_SPIFC) += zx279125_spifc.o
+diff --git a/drivers/spi/zx279125_spifc.c b/drivers/spi/zx279125_spifc.c
+new file mode 100644
+index 00000000..87e7c87a
+--- /dev/null
++++ b/drivers/spi/zx279125_spifc.c
+@@ -0,0 +1,321 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * ZTE Sanechips ZX279125 SPI Flash Controller (SPIFC) Driver
++ *
++ * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
++ */
++
++#include <dm.h>
++#include <spi.h>
++#include <spi-mem.h>
++#include <asm/io.h>
++#include <linux/iopoll.h>
++#include <linux/sizes.h>
++#include <asm/unaligned.h>
++
++#define SPIFC_REG_START			0x04
++#define  SPIFC_START_BIT		BIT(0)
++
++#define SPIFC_REG_RESET			0x08
++#define  SPIFC_RESET_FLUSH_FIFO		BIT(0)
++#define  SPIFC_RESET_FIFO_BUSY		BIT(1)
++#define  SPIFC_RESET_CLR_BIT2		BIT(2)
++
++#define SPIFC_REG_CMD_CFG		0x0c
++#define  SPIFC_CMD_CFG_FLAGS		0x1c440
++
++#define SPIFC_REG_PHASE_EN		0x10
++#define  SPIFC_PHASE_TX_DATA		BIT(0)
++#define  SPIFC_PHASE_RX_DATA		BIT(1)
++#define  SPIFC_PHASE_DUMMY		BIT(2)
++#define  SPIFC_PHASE_ADDR		BIT(4)
++
++#define SPIFC_REG_MODE			0x14
++#define  SPIFC_MODE_ADDR_LEN_SHIFT	5
++#define  SPIFC_MODE_DUMMY_LEN_SHIFT	12
++
++#define SPIFC_REG_DATALEN		0x18
++
++#define SPIFC_REG_ADDR			0x1c
++
++#define SPIFC_REG_OPCODE		0x20
++
++#define SPIFC_REG_STATUS		0x2c
++#define  SPIFC_STATUS_DONE		BIT(0)
++#define  SPIFC_STATUS_FORMAT_ERR	BIT(1)
++
++#define SPIFC_REG_INT_STATUS_CLR	0x30
++#define  SPIFC_INT_CLEAR_ALL		0x3f
++
++#define SPIFC_REG_FIFO_STATUS		0x34
++#define  SPIFC_FIFO_RX_AVAIL_MASK	0x00001f00
++#define  SPIFC_FIFO_TX_FREE_MASK	0x001f0000
++
++#define SPIFC_REG_FIFO_DATA		0x38
++
++#define SPIFC_MAX_CHUNK_SIZE		256
++
++struct zx279125_spifc_plat {
++	void __iomem *base;
++};
++
++static void zx279125_spifc_reset_fifo(void __iomem *base)
++{
++	u32 val;
++
++	val = readl(base + SPIFC_REG_RESET);
++	val &= ~SPIFC_RESET_CLR_BIT2;
++	writel(val, base + SPIFC_REG_RESET);
++
++	val = readl(base + SPIFC_REG_RESET);
++	if (!(val & SPIFC_RESET_FIFO_BUSY)) {
++		val |= SPIFC_RESET_FLUSH_FIFO;
++		writel(val, base + SPIFC_REG_RESET);
++	}
++}
++
++static int zx279125_spifc_write_fifo(void __iomem *base,
++				     const u8 *buf, size_t len)
++{
++	size_t words = len >> 2;
++	size_t rem = len & 3;
++	size_t i;
++	u32 val;
++	int ret;
++
++	for (i = 0; i < words; i++) {
++		ret = readl_poll_timeout(base + SPIFC_REG_FIFO_STATUS, val,
++					 (val & SPIFC_FIFO_TX_FREE_MASK),
++					 50000);
++		if (ret)
++			return ret;
++
++		writel(get_unaligned_le32(buf + i * 4), base + SPIFC_REG_FIFO_DATA);
++
++		if (i == 0) {
++			val = readl(base + SPIFC_REG_START);
++			if (!(val & SPIFC_START_BIT))
++				writel(val | SPIFC_START_BIT, base + SPIFC_REG_START);
++		}
++	}
++
++	if (rem) {
++		u32 tmp = 0;
++
++		ret = readl_poll_timeout(base + SPIFC_REG_FIFO_STATUS, val,
++					 (val & SPIFC_FIFO_TX_FREE_MASK),
++					 50000);
++		if (ret)
++			return ret;
++
++		memcpy(&tmp, buf + words * 4, rem);
++		writel(tmp, base + SPIFC_REG_FIFO_DATA);
++
++		val = readl(base + SPIFC_REG_START);
++		if (!(val & SPIFC_START_BIT))
++			writel(val | SPIFC_START_BIT, base + SPIFC_REG_START);
++	}
++
++	return 0;
++}
++
++static int zx279125_spifc_read_fifo(void __iomem *base,
++				    u8 *buf, size_t len)
++{
++	size_t words = len >> 2;
++	size_t rem = len & 3;
++	size_t i;
++	u32 val;
++	int ret;
++
++	for (i = 0; i < words; i++) {
++		ret = readl_poll_timeout(base + SPIFC_REG_FIFO_STATUS, val,
++					 (val & SPIFC_FIFO_RX_AVAIL_MASK),
++					 50000);
++		if (ret)
++			return ret;
++
++		put_unaligned_le32(readl(base + SPIFC_REG_FIFO_DATA), buf + i * 4);
++	}
++
++	if (rem) {
++		u32 tmp;
++
++		ret = readl_poll_timeout(base + SPIFC_REG_FIFO_STATUS, val,
++					 (val & SPIFC_FIFO_RX_AVAIL_MASK),
++					 50000);
++		if (ret)
++			return ret;
++
++		tmp = readl(base + SPIFC_REG_FIFO_DATA);
++		memcpy(buf + words * 4, &tmp, rem);
++	}
++
++	return 0;
++}
++
++static int zx279125_spifc_adjust_op_size(struct spi_slave *slave,
++					 struct spi_mem_op *op)
++{
++	if (op->data.dir != SPI_MEM_NO_DATA &&
++	    op->data.nbytes > SPIFC_MAX_CHUNK_SIZE)
++		op->data.nbytes = SPIFC_MAX_CHUNK_SIZE;
++
++	return 0;
++}
++
++static bool zx279125_spifc_supports_op(struct spi_slave *slave,
++				       const struct spi_mem_op *op)
++{
++	if (op->cmd.buswidth > 1 || op->addr.buswidth > 1 ||
++	    op->dummy.buswidth > 1 || op->data.buswidth > 1)
++		return false;
++
++	if (op->addr.nbytes > 4)
++		return false;
++
++	if (op->dummy.nbytes > 15)
++		return false;
++
++	return spi_mem_default_supports_op(slave, op);
++}
++
++static int zx279125_spifc_exec_op(struct spi_slave *slave,
++				   const struct spi_mem_op *op)
++{
++	struct zx279125_spifc_plat *plat = dev_get_plat(slave->dev->parent);
++	void __iomem *base = plat->base;
++	u32 phase_en = 0;
++	u32 mode = 0;
++	u32 status;
++	int ret;
++
++	zx279125_spifc_reset_fifo(base);
++
++	/* Set Opcode */
++	writel(op->cmd.opcode, base + SPIFC_REG_OPCODE);
++
++	/* Set Address if present */
++	if (op->addr.nbytes) {
++		phase_en |= SPIFC_PHASE_ADDR;
++		mode |= ((op->addr.nbytes - 1) & 0x7) << SPIFC_MODE_ADDR_LEN_SHIFT;
++		writel((u32)op->addr.val, base + SPIFC_REG_ADDR);
++	} else {
++		mode |= (2 & 0x7) << SPIFC_MODE_ADDR_LEN_SHIFT;
++		writel(0, base + SPIFC_REG_ADDR);
++	}
++
++	/* Set Dummy cycles if present */
++	if (op->dummy.nbytes) {
++		phase_en |= SPIFC_PHASE_DUMMY;
++		mode |= (op->dummy.nbytes & 0xf) << SPIFC_MODE_DUMMY_LEN_SHIFT;
++	}
++	writel(mode, base + SPIFC_REG_MODE);
++
++	/* Set Data phase if present */
++	if (op->data.nbytes) {
++		if (op->data.dir == SPI_MEM_DATA_IN)
++			phase_en |= SPIFC_PHASE_RX_DATA;
++		else if (op->data.dir == SPI_MEM_DATA_OUT)
++			phase_en |= SPIFC_PHASE_TX_DATA;
++
++		writel(op->data.nbytes - 1, base + SPIFC_REG_DATALEN);
++	} else {
++		writel(0, base + SPIFC_REG_DATALEN);
++	}
++	writel(phase_en, base + SPIFC_REG_PHASE_EN);
++
++	/* Command Config Flags (0x1c440 includes bit 16 as required by hardware) */
++	writel(readl(base + SPIFC_REG_CMD_CFG) | SPIFC_CMD_CFG_FLAGS,
++	       base + SPIFC_REG_CMD_CFG);
++
++	/* Acknowledge / clear any pending status flags */
++	writel(SPIFC_INT_CLEAR_ALL, base + SPIFC_REG_INT_STATUS_CLR);
++
++	/* If writing data, write FIFO (starts transaction on first word) */
++	if (op->data.dir == SPI_MEM_DATA_OUT && op->data.nbytes) {
++		ret = zx279125_spifc_write_fifo(base, op->data.buf.out,
++						op->data.nbytes);
++		if (ret)
++			return ret;
++	} else {
++		/* Start transaction for operations with no TX data (or READ) */
++		writel(readl(base + SPIFC_REG_START) | SPIFC_START_BIT,
++		       base + SPIFC_REG_START);
++	}
++
++	/* If reading data, drain FIFO as words arrive from the SPI bus */
++	if (op->data.dir == SPI_MEM_DATA_IN && op->data.nbytes) {
++		ret = zx279125_spifc_read_fifo(base, op->data.buf.in,
++					       op->data.nbytes);
++		if (ret)
++			return ret;
++	}
++
++	/* Wait for command done */
++	ret = readl_poll_timeout(base + SPIFC_REG_STATUS, status,
++				 (status & SPIFC_STATUS_DONE), 500000);
++	if (ret)
++		return ret;
++
++	return 0;
++}
++
++static const struct spi_controller_mem_ops zx279125_spifc_mem_ops = {
++	.adjust_op_size = zx279125_spifc_adjust_op_size,
++	.supports_op = zx279125_spifc_supports_op,
++	.exec_op = zx279125_spifc_exec_op,
++};
++
++static int zx279125_spifc_claim_bus(struct udevice *dev)
++{
++	return 0;
++}
++
++static int zx279125_spifc_release_bus(struct udevice *dev)
++{
++	return 0;
++}
++
++static int zx279125_spifc_set_speed(struct udevice *bus, uint speed)
++{
++	return 0;
++}
++
++static int zx279125_spifc_set_mode(struct udevice *bus, uint mode)
++{
++	return 0;
++}
++
++static const struct dm_spi_ops zx279125_spifc_ops = {
++	.claim_bus = zx279125_spifc_claim_bus,
++	.release_bus = zx279125_spifc_release_bus,
++	.set_speed = zx279125_spifc_set_speed,
++	.set_mode = zx279125_spifc_set_mode,
++	.mem_ops = &zx279125_spifc_mem_ops,
++};
++
++static int zx279125_spifc_of_to_plat(struct udevice *bus)
++{
++	struct zx279125_spifc_plat *plat = dev_get_plat(bus);
++
++	plat->base = dev_read_addr_ptr(bus);
++	if (!plat->base)
++		return -EINVAL;
++
++	return 0;
++}
++
++static const struct udevice_id zx279125_spifc_ids[] = {
++	{ .compatible = "zte,zx279125-spifc" },
++	{ }
++};
++
++U_BOOT_DRIVER(zx279125_spifc) = {
++	.name = "zx279125_spifc",
++	.id = UCLASS_SPI,
++	.of_match = zx279125_spifc_ids,
++	.ops = &zx279125_spifc_ops,
++	.of_to_plat = zx279125_spifc_of_to_plat,
++	.plat_auto = sizeof(struct zx279125_spifc_plat),
++};
