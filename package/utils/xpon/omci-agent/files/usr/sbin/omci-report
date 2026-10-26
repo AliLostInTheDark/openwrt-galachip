@@ -1,0 +1,530 @@
+#!/usr/bin/ucode
+'use strict';
+
+/*
+ * The OLT's side of the conversation and ours, decoded: what the OLT sent
+ * (PLOAM and OMCI), what this ONU answered, what failed or went unanswered,
+ * and the datapath the OLT provisioned. Reads files only, so a copy of a
+ * trace can be analysed off the board too.
+ *
+ *   omci-report [-t omcid-trace] [-p ploamcap] [-b] [-q]
+ *     -b  brief: leave out the message-by-message conversation
+ *     -q  no PLOAM section (OMCI only)
+ *
+ * Identity fields that authenticate the ONU are redacted.
+ */
+
+import { readfile } from 'fs';
+import * as g from 'omci.g988';
+
+let trace_path = '/tmp/omcid-trace.txt', ploam_path = '/proc/ploamcap';
+let brief = false, with_ploam = true;
+
+for (let i = 0; i < length(ARGV); i++) {
+	switch (ARGV[i]) {
+	case '-t': trace_path = ARGV[++i]; break;
+	case '-p': ploam_path = ARGV[++i]; break;
+	case '-b': brief = true; break;
+	case '-q': with_ploam = false; break;
+	default:
+		warn('usage: omci-report [-t omcid-trace] [-p ploamcap] [-b] [-q]\n');
+		exit(2);
+	}
+}
+
+function lines(path) {
+	let data = path ? readfile(path) : null;
+
+	return data ? split(trim(data), '\n') : null;
+}
+
+function secs(ms, base) {
+	return sprintf('%8.3f', (ms - base) / 1000.0);
+}
+
+function attr_text(attrs) {
+	return join(' ', map(attrs, (a) => `${a.name}=${a.value}`));
+}
+
+/* "median/p95/max ms" of a list of delays. */
+function spread(list) {
+	if (!length(list))
+		return '-';
+
+	let v = sort([ ...list ], (a, b) => a - b), n = length(v);
+
+	return sprintf('%d/%d/%d ms (median/p95/max)', v[n >> 1], v[min(n - 1, int(n * 0.95))], v[n - 1]);
+}
+
+function me(p) {
+	return sprintf('%s 0x%04x', g.class_name(p.class_id), p.entity);
+}
+
+/* ---- PLOAM ---- */
+
+let ploam = { records: [], onu_id: null, eqd: null, alloc: {}, ports: {},
+	      encrypted: {}, counts: {}, dropped: 0 };
+
+function load_ploam() {
+	let l = lines(ploam_path);
+
+	for (let line in l ?? []) {
+		let f = split(line, ' ');
+
+		if (f[0] == 'olt1-hdr') {
+			ploam.dropped = +(split(f[2] ?? '', '=')[1] ?? 0);
+			continue;
+		}
+		if (f[0] != 'olt1' || length(f) < 8)
+			continue;
+
+		let down = f[3] == 'd', m = g.ploam(down, f[7]);
+
+		if (!m)
+			continue;
+		m.down = down;
+		m.ms = +f[2] / 1000.0;
+		m.state = m.last_state = +f[4];
+		m.hex = f[7];
+
+		/* The OLT sends each message up to three times, and the ONU answers each. */
+		let n = length(ploam.records), prev = null;
+
+		for (let j = n - 1; j >= max(0, n - 3) && !prev; j--)
+			if (ploam.records[j].down == down && ploam.records[j].hex == m.hex &&
+			    m.ms - ploam.records[j].ms < 50)
+				prev = ploam.records[j];
+		if (prev) {
+			prev.repeats = (prev.repeats ?? 1) + 1;
+			prev.last_state = m.state;
+			continue;
+		}
+		push(ploam.records, m);
+
+		let key = (down ? 'OLT ' : 'ONU ') + m.name;
+
+		ploam.counts[key] = (ploam.counts[key] ?? 0) + 1;
+		if (!down)
+			continue;
+		let d = g.bytes(substr(f[7], 4, 20));
+
+		switch (m.id) {
+		case 3: ploam.onu_id = d[0]; break;
+		case 4: ploam.eqd = m.info; break;
+		case 10: {
+			let id = (d[0] << 4) | (d[1] >> 4);
+
+			if (d[2] == 255)
+				delete ploam.alloc[id];
+			else
+				ploam.alloc[id] = true;
+			break;
+		}
+		case 14: ploam.ports[(d[1] << 4) | (d[2] >> 4)] = !!(d[0] & 1); break;
+		case 8: ploam.encrypted[(d[1] << 4) | (d[2] >> 4)] = !!(d[0] & 1); break;
+		}
+	}
+	return l != null;
+}
+
+/* ---- OMCI ---- */
+
+let omci = {
+	exchanges: [], notifications: [], pending: {}, failures: [],
+	unanswered: [], retransmits: 0, resets: [], loss: 0,
+	classes: {}, objects: {}, olt: null, identity: {}, uploads: 0,
+	checkpoint_ms: [], send_ms: [],
+	upload_classes: {}
+};
+
+function class_stats(class_id) {
+	return omci.classes[class_id] ??= { ops: {}, failed: 0 };
+}
+
+function decode_request(p) {
+	let b = p.b, at = p.at, end = p.end;
+
+	switch (p.action) {
+	case 4: {
+		let mask = g.create_mask(p.class_id);
+
+		if (mask != null)
+			return g.attributes(p.class_id, mask, b, at, end);
+		return { attrs: [ { name: 'data', value: '0x' + join('', map(slice(b, at, end),
+						(x) => sprintf('%02x', x))) } ], complete: false };
+	}
+	case 8: {
+		let mask = (b[at] << 8) | b[at + 1];
+
+		return { mask, ...g.attributes(p.class_id, mask, b, at + 2, end) };
+	}
+	case 9: case 28: case 26:
+		return { mask: (b[at] << 8) | b[at + 1] };
+	case 14:
+		return { seq: (b[at] << 8) | b[at + 1] };
+	case 29:
+		return g.attributes(p.class_id, (b[at] << 8) | b[at + 1], b, at + 2, end);
+	}
+	return {};
+}
+
+function decode_response(p, req) {
+	let b = p.b, at = p.at, end = p.end, r = { result: b[at] };
+
+	switch (p.action) {
+	case 4:
+		if (r.result == 9)
+			r.failed = (b[at + 1] << 8) | b[at + 2];
+		break;
+	case 8:
+		r.unsupported = (b[at + 1] << 8) | b[at + 2];
+		r.failed = (b[at + 3] << 8) | b[at + 4];
+		break;
+	case 9: case 28: case 26: {
+		let mask = (b[at + 1] << 8) | b[at + 2];
+
+		r.attrs = g.attributes(p.class_id, mask, b, at + 3,
+				       p.extended ? end : at + 28, true).attrs;
+		if (!p.extended) {
+			r.unsupported = (b[at + 28] << 8) | b[at + 29];
+			r.failed = (b[at + 30] << 8) | b[at + 31];
+		}
+		break;
+	}
+	case 13:
+		r = { result: 0, count: (b[at] << 8) | b[at + 1] };
+		break;
+	case 14: {
+		let cls = (b[at] << 8) | b[at + 1], ent = (b[at + 2] << 8) | b[at + 3];
+		let mask = (b[at + 4] << 8) | b[at + 5];
+
+		r = { result: 0, class_id: cls, entity: ent };
+		r.attrs = g.attributes(cls, mask, b, at + 6, end).attrs;
+		break;
+	}
+	case 11:
+		r = { result: 0, count: (b[at] << 8) | b[at + 1] };
+		break;
+	}
+	return r;
+}
+
+/* The final state of what the OLT created or set, as far as it succeeded. */
+function apply(req, resp) {
+	let key = `${req.class_id}:${req.entity}`;
+
+	if (resp.result != 0 && resp.result != 9)
+		return;
+	switch (req.action) {
+	case 4:
+		omci.objects[key] = { class_id: req.class_id, entity: req.entity,
+				      created: true, attrs: {}, rules: {} };
+		/* fall through */
+	case 8: case 29: {
+		let o = omci.objects[key] ??= { class_id: req.class_id, entity: req.entity,
+						attrs: {}, rules: {} };
+
+		for (let a in req.decoded.attrs ?? []) {
+			if (req.class_id == 171 && a.name == 'rule') {
+				let row = join('', map(slice(req.b, a.at, a.at + 8), (x) => sprintf('%02x', x)));
+
+				if (g.ext_vlan_rule_deleted(req.b, a.at))
+					delete o.rules[row];
+				else
+					o.rules[row] = a.value;
+				continue;
+			}
+			o.attrs[a.name] = a.value;
+		}
+		if (req.class_id == 131)
+			omci.olt = o.attrs;
+		break;
+	}
+	case 6:
+		delete omci.objects[key];
+		break;
+	}
+}
+
+function note_identity(req, resp) {
+	if (req.action != 9 || resp.result != 0)
+		return;
+	for (let a in resp.attrs ?? [])
+		if (req.class_id == 256 || req.class_id == 257)
+			omci.identity[a.name] = a.value;
+}
+
+function load_trace() {
+	let l = lines(trace_path), ms = 0;
+
+	if (!l)
+		return false;
+	for (let line in l) {
+		let f = split(line, ' ');
+
+		if (f[0] == '#') {
+			if (f[1] == 'ms')
+				ms = +f[2];
+			else if (f[1] == 'tx' && f[2] == 'checkpoint') {
+				push(omci.checkpoint_ms, +f[3]);
+				push(omci.send_ms, +f[5]);
+			}
+			else if (f[1] == 'loss')
+				omci.loss++;
+			continue;
+		}
+		if ((f[0] != 'rx' && f[0] != 'tx') || length(f) < 5)
+			continue;
+
+		let p = g.omci_pdu(f[4]);
+
+		if (!p)
+			continue;
+		p.ms = ms;
+		if (f[0] == 'rx') {
+			let prev = omci.pending[p.tci];
+			let last = omci.exchanges[length(omci.exchanges) - 1]?.req;
+
+			/* The same request again: the OLT missed or rejected our answer. */
+			let again = (prev?.hex == f[4]) ? prev : (last?.hex == f[4]) ? last : null;
+
+			if (again) {
+				omci.retransmits++;
+				again.retries = (again.retries ?? 0) + 1;
+				continue;
+			}
+			if (prev)
+				push(omci.unanswered, prev);
+			p.hex = f[4];
+			p.decoded = decode_request(p);
+			omci.pending[p.tci] = p;
+			if (p.action == 15)
+				push(omci.resets, ms);
+			let s = class_stats(p.class_id);
+
+			s.ops[p.action] = (s.ops[p.action] ?? 0) + 1;
+			continue;
+		}
+
+		/* An ONU-initiated message: alarm, AVC or test result. */
+		if (!p.ak) {
+			let n = { p, ms };
+
+			if (p.action == 17) {
+				let mask = (p.b[p.at] << 8) | p.b[p.at + 1];
+
+				n.attrs = g.attributes(p.class_id, mask, p.b, p.at + 2, p.end).attrs;
+			}
+			push(omci.notifications, n);
+			continue;
+		}
+
+		let req = omci.pending[p.tci];
+
+		if (!req)
+			continue;
+		delete omci.pending[p.tci];
+
+		let resp = decode_response(p, req);
+		let x = { req, resp, ms };
+
+		push(omci.exchanges, x);
+		apply(req, resp);
+		note_identity(req, resp);
+		if (req.action == 14) {
+			omci.uploads++;
+			omci.upload_classes[resp.class_id] = (omci.upload_classes[resp.class_id] ?? 0) + 1;
+		}
+		if (resp.result || resp.failed || resp.unsupported) {
+			push(omci.failures, x);
+			class_stats(req.class_id).failed++;
+		}
+	}
+	for (let tci, p in omci.pending)
+		push(omci.unanswered, p);
+	return true;
+}
+
+/* ---- output ---- */
+
+function request_text(p) {
+	let d = p.decoded, s = `${g.action_name(p.action)} ${me(p)}`;
+
+	if (d.mask != null && p.action != 8)
+		s += ` {${g.mask_names(p.class_id, d.mask)}}`;
+	if (d.seq != null)
+		s += ` #${d.seq}`;
+	if (d.attrs)
+		s += ` {${attr_text(d.attrs)}}` + (d.complete ? '' : ' (layout unknown)');
+	if (p.retries)
+		s += ` [repeated ${p.retries}x]`;
+	return s;
+}
+
+function response_text(x) {
+	let r = x.resp, req = x.req, s = g.result_name(r.result);
+
+	if (r.count != null)
+		s += `, ${r.count} ${req.action == 13 ? 'records' : 'alarms'}`;
+	if (r.class_id != null)
+		s = `${g.class_name(r.class_id)} 0x${sprintf('%04x', r.entity)}`;
+	if (r.attrs && length(r.attrs))
+		s += ` {${attr_text(r.attrs)}}`;
+	if (r.unsupported)
+		s += ` unsupported {${g.mask_names(req.class_id, r.unsupported)}}`;
+	if (r.failed)
+		s += ` failed {${g.mask_names(req.class_id, r.failed)}}`;
+	return s;
+}
+
+let have_ploam = with_ploam && load_ploam();
+let have_trace = load_trace();
+let base = 0;
+
+if (length(omci.exchanges))
+	base = omci.exchanges[0].req.ms;
+
+print('== OLT <-> ONU summary\n');
+if (omci.olt)
+	printf('OLT            vendor %s, equipment %s, version %s (OLT-G)\n',
+	       omci.olt.vendor_id ?? '?', omci.olt.equipment_id ?? '?', omci.olt.version ?? '?');
+else
+	print('OLT            not identified: no OLT-G Set in the trace\n');
+if (length(omci.identity))
+	printf('ONU told OLT   %s\n', join(' ', map(filter(keys(omci.identity),
+	       (k) => k in { vendor_id: 1, version: 1, serial: 1, equipment_id: 1,
+			    omcc_version: 1, traffic_management: 1, security_capability: 1 }),
+	       (k) => `${k}=${omci.identity[k]}`)));
+if (have_ploam) {
+	printf('PLOAM          onu-id %s, %s; alloc-ids %s; port-ids %s; encrypted %s\n',
+	       ploam.onu_id ?? '?', ploam.eqd ?? 'no ranging time',
+	       join(',', keys(ploam.alloc)) || '-',
+	       join(',', filter(keys(ploam.ports), (k) => ploam.ports[k])) || '-',
+	       join(',', filter(keys(ploam.encrypted), (k) => ploam.encrypted[k])) || '-');
+	for (let k in [ 'OLT Deactivate_ONU-ID', 'OLT Disable_Serial_Number',
+			'OLT Request_Password', 'OLT Request_Key', 'ONU Dying_Gasp' ])
+		if (ploam.counts[k])
+			printf('               ! %s x%d\n', k, ploam.counts[k]);
+	for (let k, n in ploam.counts)
+		if (index(k, 'unknown') >= 0)
+			printf('               ! %s x%d (not understood)\n', k, n);
+	for (let i, m in ploam.records) {
+		if (!m.down || (m.id != 5 && m.id != 6))
+			continue;
+
+		let before = filter(slice(ploam.records, max(0, i - 8), i),
+				    (r) => r.down && r.id != 11 && r.id != 21);
+		let cause = before[length(before) - 1];
+
+		printf('               ! %.3fs %s after %s (%.0f ms earlier)\n', m.ms / 1000.0,
+		       m.name, cause ? `${cause.name} ${cause.info}` : 'nothing',
+		       cause ? m.ms - cause.ms : 0);
+	}
+	if (ploam.dropped)
+		printf('               (%d older PLOAM records were overwritten)\n', ploam.dropped);
+} else if (with_ploam)
+	printf('PLOAM          no capture at %s\n', ploam_path);
+if (have_trace) {
+	printf('OMCI           %d exchanges, %d MIB upload records, %d failed, %d unanswered, %d repeated by the OLT\n',
+	       length(omci.exchanges), omci.uploads, length(omci.failures),
+	       length(omci.unanswered), omci.retransmits);
+	printf('               %d MIB reset(s)%s, %d ONU notifications\n', length(omci.resets),
+	       length(omci.resets) > 1 ? ' - the OLT restarted provisioning' : '',
+	       length(omci.notifications));
+	if (omci.loss)
+		printf('               ! trace lost records %d time(s)\n', omci.loss);
+
+	/* Who is slow: our answer time, and the OLT's wait before its next request. */
+	let ours = [], theirs = [], first = null, last = null;
+
+	for (let i, x in omci.exchanges) {
+		push(ours, x.ms - x.req.ms);
+		if (i + 1 < length(omci.exchanges))
+			push(theirs, omci.exchanges[i + 1].req.ms - x.ms);
+	}
+	for (let x in omci.exchanges) {
+		first ??= x.req.ms;
+		last = x.ms;
+	}
+	if (length(ours))
+		printf('Timing         ONU answers in %s; OLT waits %s before its next request; %.1f s in all\n',
+		       spread(ours), spread(theirs), (last - first) / 1000.0);
+	if (length(omci.send_ms))
+		printf('               of an answer: state save %s, kernel send %s\n',
+		       spread(omci.checkpoint_ms), spread(omci.send_ms));
+} else
+	printf('OMCI           no trace at %s (omci-diag full records one)\n', trace_path);
+
+if (length(omci.failures) || length(omci.unanswered) ||
+    length(filter(omci.exchanges, (x) => x.ms - x.req.ms >= 500))) {
+	print('\n== Problems (what the OLT asked for and did not get)\n');
+	for (let x in omci.failures)
+		printf('%ss  %s\n           -> %s\n', secs(x.ms, base), request_text(x.req), response_text(x));
+	for (let x in omci.exchanges)
+		if (x.ms - x.req.ms >= 500)
+			printf('%ss  %s\n           -> answered after %d ms\n', secs(x.ms, base),
+			       request_text(x.req), x.ms - x.req.ms);
+	for (let p in omci.unanswered)
+		printf('%ss  %s\n           -> no answer\n', secs(p.ms, base), request_text(p));
+}
+
+if (length(omci.resets) > 1) {
+	print('\n== Before each repeated MIB reset (the OLT gave up on something here)\n');
+	for (let i = 1; i < length(omci.resets); i++) {
+		let before = filter(omci.exchanges, (x) => x.ms < omci.resets[i]);
+
+		printf('-- reset at %ss\n', secs(omci.resets[i], base));
+		for (let x in slice(before, -6))
+			printf('%ss  %s -> %s\n', secs(x.ms, base), request_text(x.req), response_text(x));
+	}
+}
+
+if (have_trace)
+	print('\n== MEs the OLT touched\n');
+for (let id in sort(map(keys(omci.classes), (k) => +k), (a, b) => a - b)) {
+	let s = omci.classes[id];
+
+	printf('%5d %-48s %s%s%s\n', id, substr(g.class_name(id), 0, 48),
+	       join(' ', map(keys(s.ops), (a) => `${g.action_name(a)}x${s.ops[a]}`)),
+	       s.failed ? `  ! ${s.failed} failed` : '',
+	       g.vendor_class(id) ? '  (vendor)' : '');
+}
+
+if (have_trace)
+	print('\n== Provisioned datapath (final state)\n');
+for (let id in [ 131, 262, 268, 266, 281, 130, 45, 47, 84, 171, 78, 280, 277, 278, 134, 309, 310 ]) {
+	for (let key, o in omci.objects) {
+		if (o.class_id != id)
+			continue;
+		printf('%s 0x%04x%s {%s}\n', g.class_name(id), o.entity, o.created ? '' : ' (set)',
+		       join(' ', map(keys(o.attrs), (k) => `${k}=${o.attrs[k]}`)));
+		for (let row, rule in o.rules)
+			printf('    rule %s\n', rule);
+	}
+}
+
+if (length(omci.notifications)) {
+	print('\n== ONU -> OLT notifications\n');
+	for (let n in omci.notifications)
+		printf('%ss  %s %s%s\n', secs(n.ms, base), g.action_name(n.p.action), me(n.p),
+		       n.attrs ? ` {${attr_text(n.attrs)}}` : '');
+}
+
+if (brief)
+	exit(0);
+
+if (have_ploam && length(ploam.records)) {
+	print('\n== PLOAM conversation (time since PON driver start)\n');
+	for (let m in ploam.records)
+		printf('%9.3fs %-5s %s onu %3d %-22s %s%s\n', m.ms / 1000.0,
+		       m.state == m.last_state ? `O${m.state}` : `O${m.state}>${m.last_state}`,
+		       m.down ? 'OLT->ONU' : 'ONU->OLT', m.onu, m.name, m.info,
+		       m.repeats ? ` x${m.repeats}` : '');
+}
+
+if (have_trace)
+	print('\n== OMCI conversation (OLT request -> ONU answer)\n');
+for (let x in omci.exchanges)
+	printf('%ss %04x %s\n%s-> %s\n', secs(x.ms, base), x.req.tci, request_text(x.req),
+	       x.resp.result || x.resp.failed || x.resp.unsupported ? '      !!  ' : '          ',
+	       response_text(x));

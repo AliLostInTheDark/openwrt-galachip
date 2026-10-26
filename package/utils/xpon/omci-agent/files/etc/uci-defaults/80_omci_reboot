@@ -1,0 +1,6 @@
+#!/bin/sh
+# Configurations from before the OLT reboot option keep refusing OLT reboots.
+[ -n "$(uci -q get omci.main)" ] || exit 0
+[ -n "$(uci -q get omci.main.reboot)" ] && exit 0
+uci set omci.main.reboot='0'
+uci commit omci

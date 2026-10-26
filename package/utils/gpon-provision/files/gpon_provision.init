@@ -1,0 +1,214 @@
+#!/bin/sh /etc/rc.common
+# Per-board GPON ONU provisioning. The unit's MAC and BOSA calibration come from
+# its factory (apmib) config partition; the GPON/OMCI identity comes from
+# /etc/config/omci, the one place LuCI saves it, and is in the driver before
+# omcid starts. A field left empty there stays empty. Factory flash is read-only.
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+START=09
+USE_PROCD=1
+
+RTK=/usr/sbin/rtk_factory
+BOSA_CAL_DST=/lib/firmware/vsol/v2802rh-gn25l95.bin
+BOSA_CAL_TYPE_DST=/lib/firmware/vsol/v2802rh-gn25l95-lan-type
+GPON_SN_PARAM=/sys/module/luna_gpon/parameters/onu_sn
+OMCI_SYSFS=/sys/class/xpon/pon0/omci
+# omci.main options that are attributes of the same name under $OMCI_SYSFS
+OMCI_KEYS="vendor_id equipment_id hardware_version software_version_0 software_version_1
+	loid loid_password omcc_version traffic_management_option onu_type uni_count
+	olt_profile olt_profile_force"
+CONFIG_PART=config
+BASE_IFNAME=eth0
+KMSG=/dev/kmsg
+
+. /lib/functions/gpon-cal.sh
+. /lib/functions/onu-identity.sh
+
+# logd starts after this START=09 script, so the kernel log keeps the boot-time lines.
+log() {
+	logger -t gpon_provision "$@"
+	echo "gpon_provision: $*" >> "$KMSG" 2>/dev/null
+}
+
+# Every factory field from ONE rtk_factory read (the fields cost ~0.12 s each when
+# asked one by one): RTK_<verb>, and RTK_HAS_<verb>=1 when the unit has the key.
+rtk_load() {
+	local k v out
+	for k in ${RTK_LOADED:-}; do unset "RTK_$k" "RTK_HAS_$k"; done
+	RTK_LOADED=
+	out=$("$RTK" -p "$1" all 2>/dev/null) ||
+		log "factory read of '$1' failed (rc $?); a re-read says: $("$RTK" -p "$1" all 2>&1 >/dev/null)"
+	while IFS='=' read -r k v; do
+		case "$k" in ''|*[!a-z0-9_]*) continue ;; esac
+		eval "RTK_$k=\$v; RTK_HAS_$k=1"
+		RTK_LOADED="$RTK_LOADED $k"
+	done <<EOF
+$out
+EOF
+}
+
+rtk_need() { [ -n "${RTK_LOADED:-}" ] || rtk_load "$1"; }
+
+apply_mac() {
+	local ifname="$1" mac="$2"
+	[ -n "$mac" ] || return 1
+	if [ ! -d "/sys/class/net/$ifname" ]; then
+		log "iface $ifname absent; MAC $mac not applied yet"
+		return 1
+	fi
+	# Idempotent: skip if already set.
+	[ "$(cat /sys/class/net/$ifname/address 2>/dev/null)" = "$mac" ] && return 0
+	# Set the MAC LIVE, without a down/up: eth0 is the SHARED GMAC that carries the
+	# GPON upstream OMCI TX. Bringing it down tears down the GMAC rings and the
+	# GPON-specific TX setup (done once at driver probe, not re-done on ndo_open),
+	# permanently killing the US-OMCI path -> the OLT keeps issuing Deactivate /
+	# "Laser out" and the ONU churns O5<->O1. The driver sets IFF_LIVE_ADDR_CHANGE
+	# so a live address write just reprograms the RX-filter IDR (TX untouched).
+	ip link set dev "$ifname" address "$mac" && log "set $ifname MAC $mac (live)"
+}
+
+provision() {
+	local part=$CONFIG_PART base=$BASE_IFNAME mac
+
+	[ -x "$RTK" ] && rtk_load "$part"
+	mac=${RTK_mac:-}
+
+	mac=$(echo "$mac" | tr 'A-F' 'a-f')
+	if [ -n "$mac" ] && ! unit_mac_valid "$mac"; then
+		log "factory MAC '$mac' on '$part' is a placeholder or not unicast - not this unit's identity"
+		mac=""
+	fi
+	if [ -z "$mac" ]; then
+		# The driver may have taken the MAC from a mac= boot parameter.
+		mac=$(cmdline_mac)
+		if unit_mac_valid "$mac"; then
+			log "no factory MAC on '$part' - using $mac from the mac= boot parameter; PROVISIONING MISSING on this unit"
+		else
+			mac=""
+			# No identity from any source: none is invented (operator, 2026-10-01).
+			log "NO factory MAC on '$part' and no mac= boot parameter - no MAC is invented; PROVISIONING MISSING on this unit"
+		fi
+	fi
+
+	log "provisioned: MAC=${mac:-?}"
+
+	apply_mac "$base" "$mac"
+
+	# netifd builds br-lan after this script and resets the bridge MAC to the
+	# driver's: pin this unit's MAC on the bridge sections in UCI too.
+	if [ -n "$mac" ] && [ -f /etc/config/network ]; then
+		local sec
+		for sec in $(uci -q show network 2>/dev/null | \
+			     sed -n "s/^network\.\([^.=]*\)\.type='bridge'\$/\1/p"); do
+			uci -q set "network.$sec.macaddr=$mac"
+		done
+		uci -q commit network 2>/dev/null
+	fi
+}
+
+# The RTOS temperature correction selects one of two tables using LAN_TYPE.
+stage_lan_type() {
+	local tmp="$1" lan_type
+	[ -n "${RTK_lan_type:-}" ] || return 1
+	lan_type=$(printf '%d' "$RTK_lan_type") || return 1
+	[ "$lan_type" -ge 0 ] && [ "$lan_type" -le 255 ] || return 1
+	printf '%u\n' "$lan_type" > "$tmp/lan-type" || return 1
+	gpon_cal_stage "$tmp/lan-type" "" "$BOSA_CAL_TYPE_DST" \
+		"$(wc -c < "$tmp/lan-type")"
+}
+
+# GN25L95: the host calibrates the part from this unit's rtkbosa file. A failed
+# stage must not leave older bytes available to request_firmware.
+stage_gn_cal() {
+	local part="$1" tmp why=
+	tmp=$(mktemp -d /tmp/gpon-cal.XXXXXX) || return 1
+	if ! stage_lan_type "$tmp" 2>"$tmp/err"; then
+		why="missing or invalid factory LAN_TYPE, or staging failed"
+	fi
+	if [ -z "$why" ] && {
+	   ! "$RTK" -p "$part" bosa_cal "$tmp/cal" 2>"$tmp/err" ||
+	   ! gpon_cal_stage "$tmp/cal" "$tmp/cal.md5" "$BOSA_CAL_DST" 1024 2>>"$tmp/err"; }; then
+		why=$(cat "$tmp/err")
+		why=${why:-no reason given}
+	fi
+	rm -f "$tmp/cal" "$tmp/cal.new" "$tmp/cal.md5" "$tmp/cal.md5.new" "$tmp/err" "$tmp/lan-type" ||
+		log "could not remove calibration candidate files in $tmp"
+	rmdir "$tmp" || log "could not remove calibration candidate directory $tmp"
+	[ -n "$why" ] || return 0
+	rm -f "$BOSA_CAL_DST" || {
+		log "cannot withdraw stale GN25L95 calibration; not activating GPON"
+		return 1
+	}
+	rm -f "$BOSA_CAL_TYPE_DST" || return 1
+	log "GN25L95 calibration unavailable ($why); GPON activation waits for it"
+	return 1
+}
+
+# The OMCI identity, into the kernel's config that omcid takes over when it
+# starts: nothing is left for userspace to apply after the ONU ranges.
+set_omci_identity() {
+	local key val
+
+	[ -d "$OMCI_SYSFS" ] || { log "no $OMCI_SYSFS: omci.agent applies the identity"; return 0; }
+	for key in $OMCI_KEYS; do
+		val=$(uci -q get "omci.main.$key")
+		[ -n "$val" ] || continue
+		printf '%s\n' "$val" > "$OMCI_SYSFS/$key" 2>/dev/null ||
+			log "the driver refused omci.main.$key '$val'"
+	done
+}
+
+try_identity() {
+	local part=$CONFIG_PART calpart sn
+
+	# The VSOL RTOS boards keep the calibration in their "osk" partition.
+	grep -qs '"osk"$' /proc/mtd && calpart=osk || calpart=$part
+	rtk_need "$part"
+	# The saved serial; this unit's factory one only when none was saved.
+	sn=$(uci -q get omci.main.serial)
+	[ -n "$sn" ] || sn=${RTK_sn:-}
+	[ -n "$sn" ] || { log "no GPON serial available; will retry"; return 1; }
+
+	stage_gn_cal "$calpart" || return 1
+	# The PLOAM password is omci.agent's: few ISPs use one.
+	set_omci_identity
+
+	if [ ! -w "$GPON_SN_PARAM" ]; then
+		log "GPON serial endpoint not ready; will retry"
+		return 1
+	fi
+	printf '%s\n' "$sn" > "$OMCI_SYSFS/serial_number" 2>/dev/null
+	if printf '%s' "$sn" > "$GPON_SN_PARAM"; then
+		log "GPON serial $sn accepted by driver"
+		return 0
+	fi
+	log "GPON activation rejected; will retry"
+	return 1
+}
+
+retry_identity() {
+	local interval=5
+	while :; do
+		sleep "$interval"
+		try_identity && return 0
+		interval=$((interval * 2))
+		[ "$interval" -le 300 ] || interval=300
+	done
+}
+
+start_service() {
+	provision
+	try_identity && return 0
+	procd_open_instance identity
+	procd_set_param command /bin/sh /etc/init.d/gpon_provision --retry-identity
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+# The worker bypasses rc.common: sourcing procd.sh would retain its service
+# lock throughout retries and prevent stop/reload from acquiring that lock.
+if [ "${1:-}" = --retry-identity ]; then
+	. /lib/functions.sh
+	retry_identity
+fi

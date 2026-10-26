@@ -1,0 +1,4 @@
+#!/bin/sh
+# Remove the obsolete OMCI dying gasp switch; PLOAM belongs to the MAC driver.
+uci -q delete omci.main.dying_gasp && uci commit omci
+exit 0

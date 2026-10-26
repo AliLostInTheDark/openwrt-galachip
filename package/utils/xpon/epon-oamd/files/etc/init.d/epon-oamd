@@ -1,0 +1,59 @@
+#!/bin/sh /etc/rc.common
+# EPON OAM on pon0, only while the PON MAC runs in EPON mode.
+
+START=60
+USE_PROCD=1
+
+start_service() {
+	local enabled active mode onu_mac info_oui info_vendor chipset_id ident loid password vendor model hw sw ext_model secret vlan_mode vlan_id debug vlan
+
+	mode=$(uci -q get xpon.main.mode)
+	[ "$mode" = epon ] || return 0
+
+	config_load epon
+	config_get_bool enabled main enabled 1
+	[ "$enabled" = 1 ] || return 0
+	config_get onu_mac main onu_mac
+	config_get_bool active main active_discovery 0
+	config_get info_oui main oam_oui
+	config_get info_vendor main oam_vendor_info
+	config_get chipset_id main chipset_id
+	ident=
+	[ -n "$info_oui" ] && ident="$ident -O $info_oui"
+	[ -n "$info_vendor" ] && ident="$ident -I $info_vendor"
+	[ -n "$chipset_id" ] && ident="$ident -C $chipset_id"
+	config_get loid main loid
+	config_get password main loid_password
+	config_get vendor main vendor_id TPLG
+	config_get model main model XZG7
+	config_get hw main hardware_version V1.0
+	config_get sw main software_version OpenWrt
+	config_get ext_model main extended_model XZ000-G7
+	config_get secret main interauth_secret
+	config_get vlan_mode main vlan_mode olt
+	config_get vlan_id main vlan_id
+	config_get debug main debug 0
+
+	vlan=$vlan_mode
+	[ "$vlan_mode" = tag ] && vlan="tag:${vlan_id:-0}"
+
+	# The LLID 0 MAC the OLT registers and, on many OLTs, authorises.
+	[ -n "$onu_mac" ] && echo "$onu_mac" > /sys/class/net/pon0/device/epon_mac
+
+	# Who (re)starts the daemon, and with what, next to its own kernel log lines.
+	echo "<5>epon-oamd init: ${action:-?} by $(cat /proc/$PPID/comm 2>/dev/null) ($PPID), active=$active vlan=$vlan debug=$debug loid=${loid:+set} ident=${ident:-none}" > /dev/kmsg 2>/dev/null
+
+	procd_open_instance
+	procd_set_param command /usr/sbin/epon-oamd -i pon0 \
+		-L "$loid" -P "$password" -V "$vendor" -M "$model" \
+		-H "$hw" -S "$sw" -E "$ext_model" -A "$secret" \
+		$([ "$active" = 1 ] && echo -a) $ident \
+		-v "$vlan" -d "$debug"
+	procd_set_param respawn 3600 5 0
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+service_triggers() {
+	procd_add_reload_trigger epon xpon
+}

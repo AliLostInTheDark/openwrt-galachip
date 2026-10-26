@@ -1,0 +1,47 @@
+config agent 'main'
+	option device '0'
+	option enabled '1'
+	option permissive '1'
+	option fake_omci '0'
+	# Reboot when the OLT sends an ONU-G Reboot. Off: the request is refused.
+	option reboot '0'
+	option reset_mib '0'
+	# Turn the laser on at boot and let the ONU range. Off: it only listens.
+	option transmit '1'
+	# VLAN the LAN side sends untagged, added and removed by the PON driver (0: none).
+	# Set by omci-vlan from the LAN VLAN mode; edit omci.vlan instead.
+	option untag_vlan '0'
+	# LAN VLAN -> network VLAN, 'WAN:LAN', e.g. '100:10' (repeat the list).
+	#list vlan_translate '100:10'
+	# Stack a network S-tag over a LAN C-tag, 'S:C'.
+	#list vlan_stack '200:30'
+
+	# OLT interoperability policy: auto, generic, nokia-alcl, dasan,
+	# huawei, fiberhome, zte, or unspecified.
+	option olt_profile 'auto'
+	option olt_profile_force 'unspecified'
+
+	# ONU identity. Empty values leave the kernel/driver source unchanged.
+	option serial ''
+	option vendor_id ''
+	option hardware_version ''
+	option software_version_0 ''
+	option software_version_1 ''
+	option equipment_id ''
+	option password ''
+	# Logical ONU ID and password (ONU-G, G.988), for OLTs that authenticate by LOID.
+	option loid ''
+	option loid_password ''
+
+	# Legacy combined version, retained for older configurations only.
+	option version ''
+
+	# Optional scalar identity/capability overrides.
+	option omcc_version ''
+	option traffic_management_option ''
+	# ANI-G SR indication: 1 (default) reports valid DBRu queue status, 0 does not
+	option dba_status_reporting ''
+	option onu_type ''
+	option uni_count ''
+	# VEIP slot: empty learns it from the OLT's provisioning; 3, 6 or 10 fixes it
+	option veip_slot ''
