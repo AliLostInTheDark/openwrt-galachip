@@ -5317,9 +5317,11 @@ omci_agent_evaluate_alarms_locked(struct omci_device *odev,
 		if (!test_bit(i, &in->uni_known))
 			continue;
 
-		/* An administratively locked UNI raises no alarms. */
+		/* An administratively locked UNI raises no alarms. A spare LAN
+		 * port is not a fault while another one carries the service:
+		 * LAN LOS is raised only once every UNI has lost its link. */
 		alarms = object->data[OMCI_PPTP_ADMIN_STATE_OFFSET] ||
-			 test_bit(i, &in->uni_up) ?
+			 in->uni_up ?
 			 0 : OMCI_ALARM(OMCI_PPTP_ALARM_LAN_LOS);
 		omci_agent_update_alarms_locked(agent, object, alarms, pdus,
 						&count);
