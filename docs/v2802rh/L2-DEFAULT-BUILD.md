@@ -16,8 +16,9 @@ can still prevent activation, for example by explicitly enabling snooping.
 passed 196,608 TCAM comparisons and injected failures at 109 install and
 18 withdrawal transaction positions, plus isolation, VLAN ownership,
 readback, flush retry, generation and teardown-producer checks. These are
-host checks with mocked hardware; default activation after boot still
-needs the board test below.
+host checks with mocked hardware. The subsequent boot capture confirms
+default activation, and the user has tested traffic on both LANs; see
+[L2-OFFLOAD.md](L2-OFFLOAD.md#default-boot-and-speed-variation-audit-2026-10-26).
 
 The prepared kernel source matches the committed driver. uImage header
 and data CRCs, load/entry at `0x80000000`, kernel diagnostic strings,

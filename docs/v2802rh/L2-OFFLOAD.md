@@ -168,8 +168,9 @@ throughput measurements. Disabled forwarding resumes but performs poorly
 and has substantial PON bridge-discard counter increments. Average CPU
 load does not establish saturation; the fallback failure needs diagnosis.
 
-LAN1 counters are zero throughout, so LAN1 and simultaneous-port behavior
-remain untested. Management/OMCI under load, MAC moves, service replacement,
+LAN1 counters are zero throughout this capture. The later user test below
+covers traffic on each LAN; simultaneous-port behavior remains untested.
+Management/OMCI under load, MAC moves, service replacement,
 re-ranging and higher-rate capacity also remain pending. This result does
 not complete the full validation gate. The user subsequently requested
 default enablement for the V2802RH branch with these checks still open;
@@ -193,3 +194,74 @@ The exact-board stock capture has isolation leaks disabled.
 Hardware QoS remains unapplied. It follows the L2 hardware validation gate
 in [L2-QOS-PLAN.md](L2-QOS-PLAN.md); this repair does not change the tested
 advertised capabilities, identity, optical calibration or queue mapping.
+
+## Default boot and speed variation audit, 2026-10-26
+
+The subsequent boot capture (attachment `7ab7e5ce-f2e1-462e-ae0e-cbe91ea594a1`)
+has SHA-256 `b805e0343ccb8785858fcfe4baae4a89cf180c791451b5a06991b6be1019ad71`.
+It boots revision `r37655+139-6db25ee835` and reports
+`requested=1 active=1 services=2 error=0 gated=0 generation=366 retries=0`.
+Default activation is therefore confirmed. The user reports successful
+traffic tests on both LAN1 and LAN2, with initial 275–280 Mbps download
+and burst/dip/recovery on upload, reaching the 300 Mbps plan rate. This
+pattern repeats while online, beyond initial boot or a cable move.
+
+Source audit at `c0bea668e5`:
+
+- `rtl9601d_l2.c` classifies all EtherTypes and all p-bits for each accepted
+  single-GEM binding. There is no TCP/session warm-up path, periodic traffic
+  sampling or 275–300 Mbps rate setting. Normal learned unicast is switched
+  directly; keeping CPU VLAN membership permits management, flooded and
+  trapped frames without forcing a copy of every learned unicast frame.
+- L2 table updates follow configuration/topology/recovery events. The
+  100 ms retry is conditional on an incomplete/error state. All 12 install
+  messages in this capture fall between 37.207619 and 37.842419 seconds,
+  during provisioning. None later appears in the supplied log. The port-0
+  link-down message at 92.014801 seconds is a separate link event.
+- `luna_xpon_replace_service()` skips identical service replays; omci.agent
+  also compares VLAN settings before writing them. Its normal configuration
+  poll does not continually tear down unchanged offload bindings.
+- `luna_xpon_hw_tcont_install()` selects maximum raw PIR `0x3ffff`, CIR 0
+  and one queue per T-CONT. OMCI queue/rate callbacks remain unapplied.
+  No plan-specific 275/280/300 Mbps cap is programmed by this path. This
+  does not establish equivalence to stock's queue/buffer policy.
+- Stock-derived unknown-unicast/broadcast/multicast/DHCP storm meters and
+  Ethernet flow control remain enabled. Unknown destinations can be flooded
+  to CPU until learned. Drop/pause deltas during the dip are needed before
+  blaming or changing these controls.
+
+No sustained CPU leak or rate-limit defect is established by this source
+audit. The earlier LAN2 capture proved CPU bypass during its measured
+interval; this new boot capture contains no traffic counters from a dip.
+It cannot distinguish local drops/flow control from client, TCP, ISP/OLT
+or test-server behavior. TCP startup and congestion recovery can also
+change the sending rate ([RFC 5681, section 3.1](https://www.rfc-editor.org/rfc/rfc5681.html#section-3.1)).
+
+For the next test, leave offload enabled and start this capture on the ONU,
+then run a speed test from the LAN client. It samples about once a second
+for one minute and changes no network settings:
+
+```sh
+(
+    d=/sys/class/net/pon0/device
+    i=0
+    while [ "$i" -lt 60 ]; do
+        echo "=== sample $i ==="
+        cat /proc/uptime
+        cat "$d/l2_offload" "$d/l2_offload_counters"
+        ethtool -S eth0 | grep -E 'p[0-3]_(rx_octets|tx_octets|rx_drop_events|rx_crc_align_err|rx_symbol_err|rx_pause|tx_pause|tx_discards|tx_bridge_discards):'
+        cat /proc/net/dev
+        grep '^cpu ' /proc/stat
+        i=$((i + 1))
+        sleep 1
+    done
+) > /tmp/l2-speed.log 2>&1
+```
+
+Retrieve `/tmp/l2-speed.log` after completion. Stable generation/active state
+and CPU-port traffic small relative to LAN/PON data would exclude bulk CPU
+forwarding during that interval. Rising drop/pause counters would identify
+a local loss/backpressure symptom requiring further diagnosis; quiet local
+counters still would not identify which external endpoint or network caused
+the variation. Use the same client, server and test settings for any stock
+comparison. No forwarding-code change or new firmware is justified yet.
