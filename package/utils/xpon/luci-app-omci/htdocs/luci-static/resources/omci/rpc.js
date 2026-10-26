@@ -25,7 +25,5 @@ return baseclass.extend({
 	configSet: declare('config_set', [ 'device', 'key', 'value' ], {}),
 	mibList: declare('mib_list', [ 'device' ], { objects: [] }),
 	apply: declare('apply', [ 'device' ], {}),
-	profileList: declare('profile_list', [], { profiles: [] }),
-	profileApply: declare('profile_apply', [ 'device', 'profile', 'serial', 'password' ], {}),
 	vlanStatus: rpc.declare({ object: 'omci.vlan', method: 'status', expect: { '': {} } })
 });

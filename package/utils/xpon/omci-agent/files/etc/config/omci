@@ -46,5 +46,3 @@ config agent 'main'
 	# VEIP slot: empty learns it from the OLT's provisioning; 3, 6 or 10 fixes it
 	option veip_slot ''
 
-	# Last built-in profile applied through RPC/LuCI.
-	option profile ''

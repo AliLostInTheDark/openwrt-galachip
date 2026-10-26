@@ -33,9 +33,7 @@ function usage(exitcode) {
 		'  mib delete CLASS_ID ENTITY_ID\n' +
 		'  mib reset\n' +
 		'  raw-tx HEX_PDU\n' +
-		'  apply\n' +
-		'  profile list\n' +
-		'  profile apply PROFILE_ID GPON_SN [SLID]\n';
+		'  apply\n';
 
 	if (exitcode)
 		warn(text);
@@ -223,16 +221,6 @@ function print_objects(objects) {
 	}
 }
 
-function print_profiles(profiles) {
-	for (let p in (profiles || [])) {
-		printf('%s\n  %s\n', p.id, p.name);
-		if (p.description)
-			printf('  %s\n', p.description);
-		if (length(p.inputs || []))
-			printf('  inputs: %s\n', join(', ', map(p.inputs, i => i.name)));
-	}
-}
-
 while (length(ARGV)) {
 	if (ARGV[0] == '--json') {
 		json_output = true;
@@ -397,24 +385,6 @@ case 'apply':
 	kind = 'object';
 	break;
 
-case 'profile': {
-	if (!length(ARGV)) usage(2);
-	let sub = shift(ARGV);
-	if (sub == 'list' && !length(ARGV)) {
-		result = rpc('profile_list', {}, 'profiles');
-		kind = 'profiles';
-	}
-	else if (sub == 'apply' && (length(ARGV) == 2 || length(ARGV) == 3)) {
-		let profile = shift(ARGV);
-		let serial = shift(ARGV);
-		let password = length(ARGV) ? shift(ARGV) : '';
-		result = rpc('profile_apply', { device, profile, serial, password });
-		kind = 'object';
-	}
-	else usage(2);
-	break;
-}
-
 default:
 	usage(2);
 }
@@ -431,6 +401,5 @@ case 'config-details': print_config_details(result); break;
 case 'classes': print_classes(result); break;
 case 'mib': print_mib(result); break;
 case 'objects': print_objects(result); break;
-case 'profiles': print_profiles(result); break;
 default: print_pairs(result || {}, []); break;
 }

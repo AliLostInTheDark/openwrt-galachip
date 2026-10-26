@@ -11,7 +11,6 @@
 					"config_get",
 					"config_inspect",
 					"mib_list",
-					"profile_list",
 					"status_live"
 				],
 				"omci.vlan": [
@@ -28,8 +27,7 @@
 				"omci.agent": [
 					"agent_set",
 					"config_set",
-					"apply",
-					"profile_apply"
+					"apply"
 				]
 			},
 			"file": {

@@ -107,54 +107,6 @@ const class_flag_bits = [
 	[ 1 << 6, 'datapath' ],
 ];
 
-/* Profiles are data, not executable scripts. */
-const profiles = [
-	{
-		id: 'jio-sercomm',
-		name: 'Jio - Sercomm',
-		description: 'Reliance Jio: the Sercomm vendor ID with your GPON SN.',
-		inputs: [
-			{ name: 'serial', label: 'GPON SN', required: true }
-		],
-		values: {
-			enabled: '1', permissive: '1', fake_omci: '0', reboot: '0',
-			vendor_id: 'SCOM',
-			olt_profile: 'generic', olt_profile_force: 'generic'
-		}
-	},
-	{
-		id: 'vivo-sp1-mitrastar-gpt2741gnac-n1',
-		name: 'Vivo SP1 - Mitrastar GPT-2741GNAC-N1',
-		description: 'Vivo São Paulo capital profile using the MitraStar identity.',
-		inputs: [
-			{ name: 'serial', label: 'GPON SN', required: true },
-			{ name: 'password', label: 'SLID / GPON password', required: true }
-		],
-		values: {
-			enabled: '1', permissive: '1', fake_omci: '0',
-			vendor_id: 'MSTC', equipment_id: 'GPT-2741GNAC-N1-SV',
-			olt_profile: 'nokia-alcl', olt_profile_force: 'nokia-alcl'
-		}
-	},
-	{
-		id: 'vivo2-askey-rtf8225vw',
-		name: 'Vivo 2 - Askey RTF8225VW',
-		description: 'TLCM/RTF8225VW identity. Vivo 2 does not require a SLID.',
-		inputs: [
-			{ name: 'serial', label: 'GPON SN', required: true }
-		],
-		values: {
-			enabled: '1', permissive: '1', fake_omci: '0',
-			vendor_id: 'TLCM', hardware_version: 'RTF8225VW',
-			software_version_0: 'R8225VWTEF004',
-			software_version_1: 'P8225VWTEF004',
-			equipment_id: 'RTF8225VW-SV', password: '00000000000000000000',
-			traffic_management_option: '2', omcc_version: '161',
-			olt_profile: 'nokia-alcl', olt_profile_force: 'nokia-alcl'
-		}
-	}
-];
-
 function device_arg(request) {
 	let d = request?.args?.device;
 	return d == null ? DEVICE_DEFAULT : d;
@@ -480,13 +432,6 @@ function config_change(type, data) {
 		auto_apply('config.change');
 }
 
-function profile_by_id(id) {
-	for (let p in profiles)
-		if (p.id == id)
-			return p;
-	return null;
-}
-
 const methods = {
 	family: {
 		call: function(request) {
@@ -702,49 +647,6 @@ const methods = {
 		args: { device: 0 },
 		call: function(request) {
 			return apply_uci_values(request, device_arg(request));
-		}
-	},
-
-	profile_list: {
-		call: function() {
-			return { profiles: profiles };
-		}
-	},
-
-	profile_apply: {
-		args: { device: 0, profile: '', serial: '', password: '' },
-		call: function(request) {
-			let p = profile_by_id(request.args.profile);
-			if (!p) {
-				request.reply({ error: 'unknown OMCI profile' }, UBUS_STATUS_INVALID_ARGUMENT);
-				return null;
-			}
-			let values = {};
-			for (let spec in config_specs)
-				if (p.values[spec.option] != null)
-					values[spec.option] = p.values[spec.option];
-			if (`${request.args.serial || ''}` != '')
-				values.serial = request.args.serial;
-			if (`${request.args.password || ''}` != '')
-				values.password = request.args.password;
-
-			for (let input in p.inputs) {
-				if (!input.required)
-					continue;
-				if (`${values[input.name] || ''}` == '') {
-					request.reply({ error: `missing profile input: ${input.name}` },
-						      UBUS_STATUS_INVALID_ARGUMENT);
-					return null;
-				}
-			}
-
-			set_uci_options(values);
-			uci.set('omci', 'main', 'profile', p.id);
-			uci.commit('omci');
-			let result = apply_uci_values(request, device_arg(request));
-			if (result == null)
-				return null;
-			return { success: true, profile: p.id, apply: result };
 		}
 	}
 };

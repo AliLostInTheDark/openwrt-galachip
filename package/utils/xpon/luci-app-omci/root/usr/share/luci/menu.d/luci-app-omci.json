@@ -41,14 +41,6 @@
 			"path": "omci/config"
 		}
 	},
-	"admin/network/omci/config/profiles": {
-		"title": "Profiles",
-		"order": 20,
-		"action": {
-			"type": "view",
-			"path": "omci/profiles"
-		}
-	},
 	"admin/network/omci/mib": {
 		"title": "MIB",
 		"order": 30,
