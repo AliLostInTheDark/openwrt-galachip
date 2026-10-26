@@ -663,7 +663,10 @@ static void rtl9602c_sw_stock_config(struct rtl9602c_eth *ep)
 	iowrite32(0xeaa, sw + SW_STORM_CTRL_BC_METER_IDX);
 	iowrite32(0xc88, sw + SW_STORM_CTRL_DHCP_METER_IDX);
 	iowrite32(0x7, sw + SW_STORM_CTRL_UM_CTRL);
-	iowrite32(0x7, sw + SW_STORM_CTRL_UC_CTRL);
+	/* Not on the PON: its meters run at 0x100 x 8 Kbps, about 2 Mbit/s, and
+	 * downstream frames to LAN clients the switch has not learned in the
+	 * service VLAN (all of them while the CPU forwards) are unknown unicast. */
+	iowrite32(0x7 & ~BIT(ep->swm->pon_port), sw + SW_STORM_CTRL_UC_CTRL);
 	iowrite32(0x7, sw + SW_STORM_CTRL_BC_CTRL);
 	iowrite32(0x7, sw + SW_STORM_CTRL_DHCP_CTRL);
 
