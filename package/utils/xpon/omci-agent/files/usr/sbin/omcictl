@@ -9,6 +9,7 @@
  */
 
 let ubus = require('ubus').connect();
+let math = require('math');
 let json_output = false;
 let device = 0;
 
@@ -78,6 +79,27 @@ function maybe(value) {
 	return value == null || `${value}` == '' ? 'unavailable' : `${value}`;
 }
 
+function optical_power(nw) {
+	return nw > 0 ? sprintf('%.2f dBm / %.4f mW', 10 * math.log(nw / 1e6) / math.log(10), nw / 1e6) : 'no light';
+}
+
+/* The agent reports integer milli/micro/nano units; print readable ones. */
+const optics = [
+	[ 'bosa_temperature_mc', 'bosa_temperature', (v) => sprintf('%.1f °C / %.1f °F', v / 1000.0, v * 9 / 5000.0 + 32) ],
+	[ 'bosa_voltage_uv', 'bosa_voltage', (v) => sprintf('%.2f V', v / 1e6) ],
+	[ 'bosa_bias_ua', 'bosa_bias', (v) => sprintf('%.1f mA', v / 1000.0) ],
+	[ 'bosa_tx_power_nw', 'bosa_tx_power', optical_power ],
+	[ 'bosa_rx_power_nw', 'bosa_rx_power', optical_power ]
+];
+
+function format_optics(status) {
+	for (let o in optics) {
+		if (status[o[0]] != null)
+			status[o[1]] = o[2](status[o[0]]);
+		delete status[o[0]];
+	}
+}
+
 function print_pairs(object, preferred) {
 	let seen = {};
 
@@ -109,11 +131,12 @@ function print_status(status) {
 		'olt_profile_forced_name', 'mib_sync', 'mib_objects', 'rx_packets',
 		'rx_bytes', 'rx_dropped', 'tx_packets', 'tx_bytes', 'tx_errors',
 		'responses', 'duplicates', 'unsupported', 'fake_responses',
-		'fec_downstream', 'fec_upstream', 'bosa_temperature_mc',
-		'bosa_voltage_uv', 'bosa_bias_ua', 'bosa_tx_power_nw',
-		'bosa_rx_power_nw', 'bosa_alarms', 'loid_status_name'
+		'fec_downstream', 'fec_upstream', 'bosa_temperature',
+		'bosa_voltage', 'bosa_bias', 'bosa_tx_power',
+		'bosa_rx_power', 'bosa_alarms', 'loid_status_name'
 	];
 
+	format_optics(status);
 	print_pairs(status, fields);
 
 	if (status.olt_profile_quirk_names != null)

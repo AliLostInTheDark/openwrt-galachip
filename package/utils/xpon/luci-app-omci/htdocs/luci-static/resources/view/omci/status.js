@@ -58,14 +58,14 @@ function power(value) {
 	var n = Number(value);
 	if (!Number.isFinite(n) || n <= 0)
 		return '-';
-	return '%s nW (%s dBm)'.format(n, (10 * Math.log10(n / 1000000)).toFixed(2));
+	return '%s dBm / %s mW'.format((10 * Math.log10(n / 1e6)).toFixed(2), (n / 1e6).toFixed(4));
 }
 
 function temperature(value) {
 	if (value == null || value === '')
 		return '-';
 	var n = Number(value);
-	return Number.isFinite(n) ? (n / 1000).toFixed(3) + ' °C' : '-';
+	return Number.isFinite(n) ? '%s °C / %s °F'.format((n / 1000).toFixed(1), (n * 9 / 5000 + 32).toFixed(1)) : '-';
 }
 
 function vlanText(vlan) {
@@ -300,8 +300,8 @@ function values(status) {
 		olt_vendor: text(olt.vendor_id || olt.vendor), olt_equipment: text(olt.equipment_id || olt.model),
 		olt_version: text(olt.version),
 		fec_downstream: fec(status.fec_downstream), fec_upstream: fec(status.fec_upstream),
-		bosa_temperature: temperature(status.bosa_temperature_mc), bosa_voltage: scaled(status.bosa_voltage_uv, 1e6, 3, 'V'),
-		bosa_bias: scaled(status.bosa_bias_ua, 1e3, 2, 'mA'),
+		bosa_temperature: temperature(status.bosa_temperature_mc), bosa_voltage: scaled(status.bosa_voltage_uv, 1e6, 2, 'V'),
+		bosa_bias: scaled(status.bosa_bias_ua, 1e3, 1, 'mA'),
 		bosa_tx_power: power(status.bosa_tx_power_nw), bosa_rx_power: power(status.bosa_rx_power_nw),
 		bosa_alarms: alarms(status.bosa_alarms)
 	};

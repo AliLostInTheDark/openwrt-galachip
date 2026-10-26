@@ -4,7 +4,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=omci-agent
 PKG_VERSION:=0.9.2
-PKG_RELEASE:=29
+PKG_RELEASE:=30
 PKG_MAINTAINER:=Matheus Sampaio Queiroga <srherobrine20@gmail.com>
 PKG_LICENSE:=GPL-2.0-only
 
@@ -15,7 +15,7 @@ define Package/omci-agent
   CATEGORY:=Utilities
   SUBMENU:=xPON
   TITLE:=OMCI userspace control plane
-  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125||TARGET_realtek_luna) +ucode +libucode +ucode-mod-ubus +ucode-mod-uci +ucode-mod-uloop +rpcd +rpcd-mod-ucode +libuci +libubus
+  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125||TARGET_realtek_luna) +ucode +libucode +ucode-mod-math +ucode-mod-ubus +ucode-mod-uci +ucode-mod-uloop +rpcd +rpcd-mod-ucode +libuci +libubus
 endef
 
 define Package/omci-agent/description
