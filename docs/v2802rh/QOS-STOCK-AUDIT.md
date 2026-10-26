@@ -1,5 +1,9 @@
 # V2802RH stock comparison and hardware QoS status, 2026-10-26
 
+The subsequent exact-RTOS queue/rate trace is recorded in
+[HARDWARE-QOS-AUDIT.md](HARDWARE-QOS-AUDIT.md), including newly recovered
+rate conversions, priority packing and the bounded allocator design.
+
 ## Two-server result
 
 The replacement `/home/ali/Desktop/l2-speed.log` has SHA-256

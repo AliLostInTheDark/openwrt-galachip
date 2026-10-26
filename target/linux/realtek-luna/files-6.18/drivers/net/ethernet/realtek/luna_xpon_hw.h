@@ -13,6 +13,9 @@
 /* Data T-CONT slots the backend may bind, and their GEM flows. */
 #define LUNA_XPON_TCONTS	8
 #define LUNA_XPON_GEMS		16
+/* Their shared upstream queue bank: one queue per slot, then a pool. */
+#define LUNA_XPON_BANK_QUEUES	32
+#define LUNA_XPON_PIR_MAX	0x3ffff
 
 struct luna_xpon_optics {
 	s32 temp_mc;
@@ -45,6 +48,11 @@ void luna_xpon_hw_tcont_remove(unsigned int slot);
 u8 luna_xpon_hw_gem_flow(unsigned int slot);
 int luna_xpon_hw_gem_install(unsigned int slot, u16 gem, int qid);
 void luna_xpon_hw_gem_remove(unsigned int slot);
+u8 luna_xpon_hw_bank_qid(void);
+int luna_xpon_hw_queue_set(u8 qid, bool wfq, u16 weight, u32 pir);
+int luna_xpon_hw_queue_drain(u8 qid);
+void luna_xpon_hw_tcont_queues(unsigned int slot, u32 mask);
+int luna_xpon_hw_gem_queue(unsigned int slot, u8 qid);
 bool luna_xpon_hw_mic_valid(const u8 *msg, unsigned int len);
 int luna_xpon_hw_optics(struct luna_xpon_optics *o);
 void luna_xpon_hw_pm(struct luna_xpon_pm *pm);

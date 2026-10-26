@@ -7149,6 +7149,61 @@ out:
 	return 0;
 }
 
+/* The shared queue bank of data T-CONTs 8..15; SCH_QMAP bits are relative
+ * to it. Each slot's own queue is the bank's first eight. */
+u8 luna_xpon_hw_bank_qid(void)
+{
+	return luna_tcont_phys_qid(GPON_DATA_TCONT);
+}
+
+/* One queue's scheduling: WFQ_TYPE 0 is strict, and among a T-CONT's strict
+ * queues the higher QID wins (stock packs its highest priority last). PIR is
+ * in the scheduler's 1024 B/s units, stock's OMCI bytes/s >> 10. */
+int luna_xpon_hw_queue_set(u8 qid, bool wfq, u16 weight, u32 pir)
+{
+	u32 rate = PI_PON_QID_PIR_RATE + qid * PI_QID_RATE_STRIDE;
+	int rc = 0;
+
+	spin_lock_bh(&luna_fsm_lock);
+	pi_field(rate, 17, 0, pir);
+	pi_field(PI_PON_QID_CIR_RATE + qid * PI_QID_RATE_STRIDE, 17, 0, 0);
+	pi_packed_set(PI_PON_WFQ_TYPE, qid, 1, wfq);
+	pi_packed_set(PI_PON_WFQ_WEIGHT, qid, 10, weight);
+	if ((pi_rd(rate) & 0x3ffff) != pir ||
+	    pi_packed_get(PI_PON_WFQ_TYPE, qid, 1) != wfq ||
+	    pi_packed_get(PI_PON_WFQ_WEIGHT, qid, 10) != weight)
+		rc = -EIO;
+	spin_unlock_bh(&luna_fsm_lock);
+	return rc;
+}
+
+int luna_xpon_hw_queue_drain(u8 qid)
+{
+	int rc;
+
+	spin_lock_bh(&luna_fsm_lock);
+	rc = luna_queue_drain(qid);
+	spin_unlock_bh(&luna_fsm_lock);
+	return rc;
+}
+
+void luna_xpon_hw_tcont_queues(unsigned int slot, u32 mask)
+{
+	spin_lock_bh(&luna_fsm_lock);
+	pi_packed_set(PI_PON_SCH_QMAP, GPON_DATA_TCONT + slot, swc->sch_qmap_bits, mask);
+	spin_unlock_bh(&luna_fsm_lock);
+}
+
+int luna_xpon_hw_gem_queue(unsigned int slot, u8 qid)
+{
+	int rc;
+
+	spin_lock_bh(&luna_fsm_lock);
+	rc = luna_xpon_sid_commit(luna_xpon_hw_gem_flow(slot), qid);
+	spin_unlock_bh(&luna_fsm_lock);
+	return rc;
+}
+
 bool luna_xpon_hw_mic_valid(const u8 *msg, unsigned int len)
 {
 	return gpon_omci_mic_conv(msg, len) == GPON_MIC_CONV_AAL5_BE;

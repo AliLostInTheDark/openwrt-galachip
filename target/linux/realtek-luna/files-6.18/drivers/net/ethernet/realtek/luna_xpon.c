@@ -42,6 +42,7 @@ struct luna_xpon_tcont {
 	u16 entity;
 	u16 alloc;
 	u8 qid;
+	u32 pool;	/* bank-relative queues taken beyond its own */
 	bool hw;	/* a data T-CONT installed in the MAC */
 	bool omcc;	/* the ONU-ID's own Alloc-ID: data shares the OMCC queue */
 	bool valid;
@@ -52,7 +53,16 @@ struct luna_xpon_gem {
 	u16 gem;
 	u16 tcont;
 	u8 dir;
+	u8 qid;		/* the queue its SID drains to */
 	bool hw;
+	bool valid;
+};
+
+/* A bank queue as last programmed. */
+struct luna_xpon_queue {
+	u32 pir;
+	u16 weight;
+	bool wfq;
 	bool valid;
 };
 
@@ -64,6 +74,7 @@ struct luna_xpon_service {
 	u16 uni_vid;
 	u8 flow;
 	u8 pcp;
+	u8 queue;
 	u8 uni_mode;
 	u8 direction;
 	bool vlan_valid;
@@ -84,6 +95,14 @@ static struct {
 	struct mutex lock;
 	struct luna_xpon_tcont tcont[LUNA_XPON_TCONTS];
 	struct luna_xpon_gem gem[LUNA_XPON_GEMS];
+	/* The OLT's scheduling survives OMCC reinstalls: omcid replays it in
+	 * any order with the T-CONTs and GEMs it applies to. */
+	struct omci_tcont_qos tcont_qos[LUNA_XPON_TCONTS];
+	struct {
+		u16 gem;
+		u32 rate;
+	} gem_rate[LUNA_XPON_GEMS];
+	struct luna_xpon_queue queue[LUNA_XPON_BANK_QUEUES];
 	spinlock_t svc_lock;
 	struct luna_xpon_service svc[LUNA_XPON_SERVICES];
 	u16 uni_entity[LUNA_XPON_UNIS];
@@ -184,6 +203,7 @@ static void luna_xpon_forget(void)
 	rtl9601d_l2_changed();
 	memset(luna_xpon.tcont, 0, sizeof(luna_xpon.tcont));
 	memset(luna_xpon.gem, 0, sizeof(luna_xpon.gem));
+	memset(luna_xpon.queue, 0, sizeof(luna_xpon.queue));
 	WRITE_ONCE(luna_xpon.data_up, false);
 	WRITE_ONCE(luna_xpon.operational, false);
 	spin_lock_bh(&luna_xpon.svc_lock);
@@ -224,6 +244,8 @@ static int luna_xpon_backend_reset(struct omci_device *odev)
 		if (luna_xpon.tcont[i].hw)
 			luna_xpon_hw_tcont_remove(i);
 	luna_xpon_forget();
+	memset(luna_xpon.tcont_qos, 0, sizeof(luna_xpon.tcont_qos));
+	memset(luna_xpon.gem_rate, 0, sizeof(luna_xpon.gem_rate));
 	return 0;
 }
 
@@ -318,6 +340,228 @@ static struct luna_xpon_tcont *luna_xpon_tcont_find(u16 entity)
 	return t->valid ? t : NULL;
 }
 
+/* ---- upstream QoS: the OLT's priority queues on the T-CONT queue bank ----
+ *
+ * A GEM drains to one queue through its SID. GEMs of a T-CONT sharing an
+ * OMCI priority share a queue; a GEM with a peak rate gets one of its own,
+ * since a queue shaper limits everything on it. The least urgent queue is
+ * the slot's own, the others come from the pool above the eight slot queues
+ * in ascending QID order, so a strict T-CONT's most urgent queue wins.
+ */
+struct luna_xpon_qgroup {
+	u8 prio;	/* G.988 related-port priority, 0 most urgent */
+	u8 owner;	/* GEM slot of a rated GEM, else LUNA_XPON_GEMS */
+	u32 rate;	/* bytes/s, 0 unlimited */
+	u8 qid;
+};
+
+static u32 luna_xpon_gem_rate(u16 gem)
+{
+	unsigned int i;
+
+	for (i = 0; i < LUNA_XPON_GEMS; i++)
+		if (luna_xpon.gem_rate[i].rate && luna_xpon.gem_rate[i].gem == gem)
+			return luna_xpon.gem_rate[i].rate;
+	return 0;
+}
+
+/* omcid resolves one priority queue per GEM; an unclassified GEM is least urgent. */
+static u8 luna_xpon_gem_priority(u16 gem)
+{
+	unsigned int i;
+	u8 prio = 7;
+
+	spin_lock_bh(&luna_xpon.svc_lock);
+	for (i = 0; i < LUNA_XPON_SERVICES; i++) {
+		const struct luna_xpon_service *s = &luna_xpon.svc[i];
+
+		if (s->used && s->gem == gem && !s->multicast &&
+		    (s->direction & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI)) {
+			prio = s->queue & 7;
+			break;
+		}
+	}
+	spin_unlock_bh(&luna_xpon.svc_lock);
+	return prio;
+}
+
+static int luna_xpon_queue_program(u8 qid, bool wfq, u16 weight, u32 pir)
+{
+	struct luna_xpon_queue *q = &luna_xpon.queue[qid - luna_xpon_hw_bank_qid()];
+	int rc;
+
+	if (q->valid && q->wfq == wfq && q->weight == weight && q->pir == pir)
+		return 0;
+	rc = luna_xpon_hw_queue_set(qid, wfq, weight, pir);
+	*q = (struct luna_xpon_queue) {
+		.pir = pir, .weight = weight, .wfq = wfq, .valid = !rc,
+	};
+	if (!rc)
+		pr_info("luna-xpon: queue %u: %s weight %u, PIR %u\n", qid,
+			wfq ? "WFQ" : "strict", weight, pir);
+	return rc;
+}
+
+/* Back to the install defaults, drained, for whichever T-CONT takes it next. */
+static void luna_xpon_queue_free(u8 qid)
+{
+	luna_xpon_hw_queue_drain(qid);
+	luna_xpon_queue_program(qid, false, 1, LUNA_XPON_PIR_MAX);
+}
+
+static void luna_xpon_qos_release(struct luna_xpon_tcont *t)
+{
+	u8 base = luna_xpon_hw_bank_qid();
+	unsigned long pool = t->pool;
+	unsigned int bit;
+
+	luna_xpon_hw_tcont_queues(t - luna_xpon.tcont, BIT(t->qid - base));
+	for_each_set_bit(bit, &pool, LUNA_XPON_BANK_QUEUES)
+		luna_xpon_queue_free(base + bit);
+	t->pool = 0;
+}
+
+static u32 luna_xpon_pool_free(const struct luna_xpon_tcont *self)
+{
+	u32 used = GENMASK(LUNA_XPON_TCONTS - 1, 0);
+	unsigned int i;
+
+	for (i = 0; i < LUNA_XPON_TCONTS; i++)
+		if (&luna_xpon.tcont[i] != self)
+			used |= luna_xpon.tcont[i].pool;
+	return ~used;
+}
+
+static u32 luna_xpon_pir(u32 rate)
+{
+	return rate ? clamp_t(u32, rate >> 10, 1, LUNA_XPON_PIR_MAX) : LUNA_XPON_PIR_MAX;
+}
+
+static int luna_xpon_qos_tcont(struct luna_xpon_tcont *t)
+{
+	const struct omci_tcont_qos *qos = &luna_xpon.tcont_qos[t - luna_xpon.tcont];
+	struct luna_xpon_qgroup grp[LUNA_XPON_GEMS];
+	u8 gem_grp[LUNA_XPON_GEMS], ord[LUNA_XPON_GEMS];
+	u8 base = luna_xpon_hw_bank_qid();
+	u32 avail = luna_xpon_pool_free(t), pool = 0;
+	unsigned long gone;
+	unsigned int i, j, n = 0, bit;
+	bool wfq;
+	int rc;
+
+	for (i = 0; i < LUNA_XPON_GEMS; i++) {
+		const struct luna_xpon_gem *g = &luna_xpon.gem[i];
+		struct luna_xpon_qgroup want = { .owner = LUNA_XPON_GEMS };
+
+		gem_grp[i] = LUNA_XPON_GEMS;
+		if (!g->hw || g->tcont != t->entity ||
+		    !(g->dir & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI))
+			continue;
+		want.prio = qos->enabled ? luna_xpon_gem_priority(g->gem) : 0;
+		want.rate = luna_xpon_gem_rate(g->gem);
+		if (want.rate)
+			want.owner = i;
+		for (j = 0; j < n; j++)
+			if (grp[j].prio == want.prio && grp[j].owner == want.owner)
+				break;
+		if (j == n)
+			grp[n++] = want;
+		gem_grp[i] = j;
+	}
+
+	/* Least urgent first; it keeps the slot's own queue. */
+	for (i = 0; i < n; i++) {
+		for (j = i; j && grp[ord[j - 1]].prio < grp[i].prio; j--)
+			ord[j] = ord[j - 1];
+		ord[j] = i;
+	}
+	/* Keep the queues it holds, so a release elsewhere moves nothing live. */
+	for (i = 1; i < n; i++) {
+		u32 from = avail & t->pool ? avail & t->pool : avail;
+
+		if (!from) {
+			pr_warn_once("luna-xpon: upstream queue bank exhausted, sharing queues\n");
+			break;
+		}
+		bit = __ffs(from);
+		avail &= ~BIT(bit);
+		pool |= BIT(bit);
+	}
+	avail = pool;
+	for (i = 0; i < n; i++) {
+		struct luna_xpon_qgroup *q = &grp[ord[i]];
+
+		q->qid = t->qid;
+		if (i && avail) {
+			bit = __ffs(avail);
+			avail &= ~BIT(bit);
+			q->qid = base + bit;
+		}
+	}
+
+	wfq = n > 1 && !(qos->enabled && qos->policy == 1);
+	for (i = 0; i < n; i++) {
+		const struct luna_xpon_qgroup *q = &grp[ord[i]];
+		u16 weight = wfq && qos->enabled ? max_t(u16, qos->weight[q->prio], 1) : 1;
+
+		/* merged groups keep the least urgent one's settings */
+		if (i && q->qid == t->qid)
+			continue;
+		if (q->qid != t->qid && !(t->pool & BIT(q->qid - base))) {
+			rc = luna_xpon_hw_queue_drain(q->qid);
+			if (rc)
+				return rc;
+		}
+		rc = luna_xpon_queue_program(q->qid, wfq, weight, luna_xpon_pir(q->rate));
+		if (rc)
+			return rc;
+	}
+
+	/* Old and new queues both schedule while SIDs move. */
+	luna_xpon_hw_tcont_queues(t - luna_xpon.tcont, BIT(t->qid - base) | t->pool | pool);
+	for (i = 0; i < LUNA_XPON_GEMS; i++) {
+		struct luna_xpon_gem *g = &luna_xpon.gem[i];
+		u8 qid;
+
+		if (gem_grp[i] == LUNA_XPON_GEMS)
+			continue;
+		qid = grp[gem_grp[i]].qid;
+		if (g->qid == qid)
+			continue;
+		rc = luna_xpon_hw_gem_queue(i, qid);
+		if (rc)
+			return rc;
+		pr_info("luna-xpon: GEM %u -> queue %u (priority %u)\n", g->gem, qid,
+			grp[gem_grp[i]].prio);
+		g->qid = qid;
+	}
+	luna_xpon_hw_tcont_queues(t - luna_xpon.tcont, BIT(t->qid - base) | pool);
+	gone = t->pool & ~pool;
+	t->pool = pool;
+	for_each_set_bit(bit, &gone, LUNA_XPON_BANK_QUEUES)
+		luna_xpon_queue_free(base + bit);
+	return 0;
+}
+
+/* Data keeps flowing on whatever queue it had: a failure is logged, never
+ * reported to the OLT as a provisioning error. */
+static void luna_xpon_qos_sync(void)
+{
+	unsigned int i;
+	int rc;
+
+	for (i = 0; i < LUNA_XPON_TCONTS; i++) {
+		struct luna_xpon_tcont *t = &luna_xpon.tcont[i];
+
+		if (!t->hw)
+			continue;
+		rc = luna_xpon_qos_tcont(t);
+		if (rc)
+			pr_warn_ratelimited("luna-xpon: T-CONT %#x QoS not applied: %d\n",
+					    t->entity, rc);
+	}
+}
+
 static void luna_xpon_gem_unbind(unsigned int slot)
 {
 	struct luna_xpon_gem *g = &luna_xpon.gem[slot];
@@ -342,8 +586,10 @@ static void luna_xpon_tcont_unbind(struct luna_xpon_tcont *t)
 	for (i = 0; i < LUNA_XPON_GEMS; i++)
 		if (luna_xpon.gem[i].valid && luna_xpon.gem[i].tcont == t->entity)
 			luna_xpon_gem_unbind(i);
-	if (t->hw)
+	if (t->hw) {
+		luna_xpon_qos_release(t);
 		luna_xpon_hw_tcont_remove(t - luna_xpon.tcont);
+	}
 	t->hw = false;
 	t->omcc = false;
 }
@@ -379,6 +625,10 @@ static int luna_xpon_tcont_bind(struct luna_xpon_tcont *t)
 		return rc;
 	t->hw = true;
 	t->qid = luna_xpon_hw_tcont_qid(slot);
+	/* what the install programmed */
+	luna_xpon.queue[t->qid - luna_xpon_hw_bank_qid()] = (struct luna_xpon_queue) {
+		.pir = LUNA_XPON_PIR_MAX, .weight = 1, .valid = true,
+	};
 	return 0;
 }
 
@@ -459,6 +709,7 @@ static int luna_xpon_set_gem_port(struct omci_device *odev, u16 entity,
 	}
 	if (!valid) {
 		luna_xpon_update_data();
+		luna_xpon_qos_sync();
 		return 0;
 	}
 	if (slot == LUNA_XPON_GEMS)
@@ -486,25 +737,52 @@ static int luna_xpon_set_gem_port(struct omci_device *odev, u16 entity,
 		return rc;
 	}
 	g->hw = true;
+	g->qid = t ? t->qid : 0;
 	luna_xpon_update_data();
+	luna_xpon_qos_sync();
 	return 0;
 }
 
-/* Each T-CONT drains one hardware queue at full rate: the OLT's queue
- * weights and GEM rate limits are not applied yet. */
 static int luna_xpon_set_tcont_qos(struct omci_device *odev, u16 entity,
 				   const struct omci_tcont_qos *qos)
 {
-	if (qos->enabled)
-		pr_info_once("luna-xpon: T-CONT QoS from the OLT is not applied\n");
+	if (entity < LUNA_XPON_TCONT_BASE ||
+	    entity >= LUNA_XPON_TCONT_BASE + LUNA_XPON_TCONTS)
+		return -ERANGE;
+	luna_xpon.tcont_qos[entity - LUNA_XPON_TCONT_BASE] = *qos;
+	luna_xpon_qos_sync();
 	return 0;
 }
 
+/* Upstream peak rates shape the GEM's queue; downstream policing and burst
+ * sizes have no hardware path here and run unlimited. */
 static int luna_xpon_set_gem_rate(struct omci_device *odev, u16 gem,
 				  bool upstream, u32 rate, u32 burst)
 {
-	if (rate || burst)
-		pr_info_once("luna-xpon: GEM rate limits from the OLT are not applied\n");
+	unsigned int i, slot = LUNA_XPON_GEMS;
+
+	if (!upstream) {
+		if (rate)
+			pr_info_once("luna-xpon: downstream GEM rate limits are not applied\n");
+		return 0;
+	}
+	if (burst)
+		pr_info_once("luna-xpon: GEM burst sizes are not applied\n");
+	for (i = 0; i < LUNA_XPON_GEMS; i++) {
+		if (luna_xpon.gem_rate[i].rate && luna_xpon.gem_rate[i].gem == gem) {
+			slot = i;
+			break;
+		}
+		if (slot == LUNA_XPON_GEMS && !luna_xpon.gem_rate[i].rate)
+			slot = i;
+	}
+	if (slot == LUNA_XPON_GEMS) {
+		pr_warn_once("luna-xpon: too many rate-limited GEMs, GEM %u unlimited\n", gem);
+		return 0;
+	}
+	luna_xpon.gem_rate[slot].gem = gem;
+	luna_xpon.gem_rate[slot].rate = rate;
+	luna_xpon_qos_sync();
 	return 0;
 }
 
@@ -565,7 +843,7 @@ static bool luna_xpon_service_same(const struct luna_xpon_service *a,
 {
 	return a->used && a->uni_entity == b->uni_entity && a->gem == b->gem &&
 	       a->vlan == b->vlan && a->uni_vid == b->uni_vid &&
-	       a->flow == b->flow && a->pcp == b->pcp &&
+	       a->flow == b->flow && a->pcp == b->pcp && a->queue == b->queue &&
 	       a->uni_mode == b->uni_mode && a->direction == b->direction &&
 	       a->vlan_valid == b->vlan_valid && a->pcp_valid == b->pcp_valid &&
 	       a->default_service == b->default_service &&
@@ -614,6 +892,7 @@ record:
 		.uni_vid = s->uni_vlan_id,
 		.flow = flow < 0 ? 0 : flow,
 		.pcp = s->pcp & 7,
+		.queue = s->queue & 7,
 		.uni_mode = s->uni_vlan_mode,
 		.direction = s->direction,
 		.vlan_valid = s->vlan_valid,
@@ -635,6 +914,7 @@ record:
 	if (!changed)
 		return 0;
 	luna_xpon_update_data();
+	luna_xpon_qos_sync();
 	pr_info("luna-xpon: service %u: GEM %u flow %d VLAN %u%s\n", s->cookie,
 		s->gem_port_id, flow, s->vlan_valid ? s->vlan_id : 0,
 		s->multicast ? " multicast" : "");
@@ -653,6 +933,7 @@ static int luna_xpon_delete_service(struct omci_device *odev, u32 cookie)
 		}
 	spin_unlock_bh(&luna_xpon.svc_lock);
 	luna_xpon_update_data();
+	luna_xpon_qos_sync();
 	return 0;
 }
 

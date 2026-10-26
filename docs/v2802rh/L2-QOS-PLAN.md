@@ -7,7 +7,9 @@ LANs. The two-server capture confirms stable offload without new drop/error
 counters. Hardware QoS remains unapplied; the next stage is queue allocation,
 selection and scheduling, followed by verified rate conversion. The current
 stock comparison and evidence gaps are in
-[QOS-STOCK-AUDIT.md](QOS-STOCK-AUDIT.md). Recovery and disabled-path issues
+[QOS-STOCK-AUDIT.md](QOS-STOCK-AUDIT.md). The deeper exact-RTOS findings
+and implementation sequence are in [HARDWARE-QOS-AUDIT.md](HARDWARE-QOS-AUDIT.md).
+Recovery and disabled-path issues
 remain separate open L2 checks. The baseline and staged plan below record
 the original starting point.
 
