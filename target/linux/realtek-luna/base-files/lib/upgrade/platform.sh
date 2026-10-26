@@ -66,6 +66,7 @@ platform_do_upgrade() {
 	local kernel root
 
 	if onu_mtd firmware >/dev/null; then
+		PART_NAME=firmware
 		default_do_upgrade "$1"
 		return
 	fi
