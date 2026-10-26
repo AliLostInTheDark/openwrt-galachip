@@ -1,5 +1,16 @@
 # V2802RH L2 offload and hardware QoS plan
 
+## Current status, 2026-10-26
+
+L2 offload is now enabled by default and CPU bypass is demonstrated on both
+LANs. The two-server capture confirms stable offload without new drop/error
+counters. Hardware QoS remains unapplied; the next stage is queue allocation,
+selection and scheduling, followed by verified rate conversion. The current
+stock comparison and evidence gaps are in
+[QOS-STOCK-AUDIT.md](QOS-STOCK-AUDIT.md). Recovery and disabled-path issues
+remain separate open L2 checks. The baseline and staged plan below record
+the original starting point.
+
 ## Baseline and scope
 
 Start from `v2802rh-boot-36s`, commit `def58e73759a73d9a19a08f6c7e0208a42268da0`,
