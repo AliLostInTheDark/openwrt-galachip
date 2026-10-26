@@ -154,8 +154,9 @@ int main(void)
 	{
 		char line[256];
 
-		/* One omci-monitor -r record: a time comment, then direction/generation/hex. */
+		/* Timing comments precede the omci-monitor record. */
 		rewind(ctx.trace);
+		CHECK(fgets(line, sizeof(line), ctx.trace) && !strncmp(line, "# tx checkpoint ", 16));
 		CHECK(fgets(line, sizeof(line), ctx.trace) && !strncmp(line, "# ms ", 5));
 		CHECK(fgets(line, sizeof(line), ctx.trace) && !strncmp(line, "tx 9 0 0 0001", 13));
 		fclose(ctx.trace);
@@ -163,6 +164,8 @@ int main(void)
 	}
 	CHECK(!omci_agent_mib_get(&ctx.engine, OMCI_CLASS_TCONT, 0x8000, &object));
 	CHECK(get_unaligned_be16(object.data) == 256 && !ctx.error);
+	CHECK(ctx.save_due && omcid_checkpoint_poll(&ctx, ctx.save_due - 1) == 1);
+	CHECK(omcid_checkpoint_poll(&ctx, ctx.save_due) == -1 && !ctx.error && !ctx.save_due);
 	CHECK(!omcid_checkpoint_load(&ctx));
 	CHECK(ctx.engine.agent.last_response && !ctx.engine.agent.services.count);
 	ctx.engine.agent.topology.gem_port_count--;
