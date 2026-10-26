@@ -1,5 +1,8 @@
 # V2802RH L2 repair build, 2026-10-26
 
+This records the earlier opt-in build. The subsequent default-enabled
+images are recorded in [L2-DEFAULT-BUILD.md](L2-DEFAULT-BUILD.md).
+
 Built and copied to TFTP. Firmware source commit: `3c2bc7c1f9`.
 Image revision: `r37655+136-6db25ee835`, Linux 6.18.55.
 L2 offload remains disabled by default. The subsequent LAN2 off/on/off
