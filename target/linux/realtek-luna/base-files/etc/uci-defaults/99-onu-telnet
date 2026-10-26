@@ -1,0 +1,6 @@
+#!/bin/sh
+# Enable + start the telnet management service (busybox telnetd) on first boot,
+# so a technician can `telnet <onu-ip>` and run onu-diag. LAN-only via firewall.
+/etc/init.d/telnet enable 2>/dev/null
+/etc/init.d/telnet start 2>/dev/null
+exit 0

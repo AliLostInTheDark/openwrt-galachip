@@ -1,0 +1,24 @@
+# VSOL V2802RH: an L2 bridge. eth0 carries both LAN jacks through the switch;
+# pon0 is the GPON side, whose VLANs omcid and omci-vlan manage.
+
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config globals 'globals'
+	option ula_prefix 'auto'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	option igmp_snooping '0'
+	list ports 'eth0'
+	list ports 'pon0'
+
+config interface 'lan'
+	option device 'br-lan'
+	option proto 'static'
+	option ipaddr '192.168.1.1'
+	option netmask '255.255.255.0'

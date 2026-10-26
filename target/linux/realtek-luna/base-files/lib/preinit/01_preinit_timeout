@@ -1,0 +1,6 @@
+# Shrink the "press f to enter failsafe" wait from 4s to 1s (operator-approved
+# 2026-07-08): preinit runs this window twice, costing ~6-8s of every boot on
+# the RLX core, and the serial console is lab/recovery-only. Failsafe stays
+# reachable — just a shorter window. Set here (sourced after 00_preinit.conf)
+# because the CONFIG_TARGET_PREINIT_TIMEOUT default resets on `make defconfig`.
+fs_failsafe_wait_timeout=1

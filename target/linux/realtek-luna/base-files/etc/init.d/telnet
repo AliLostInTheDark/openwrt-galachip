@@ -1,0 +1,23 @@
+#!/bin/sh /etc/rc.common
+# Busybox telnetd for ONU management/diagnostics. Listens on all interfaces;
+# the OpenWrt firewall drops WAN input by default (same posture as dropbear),
+# so it is reachable only from the LAN/Wi-Fi side. A field technician (e.g. over
+# AnyDesk to a LAN host) can then `telnet <onu-ip>` and run `onu-diag`.
+# SPDX-License-Identifier: GPL-2.0-or-later
+START=51
+USE_PROCD=1
+
+start_service() {
+	# Resolve a telnetd entry point: a symlink if busybox installed one, else the
+	# busybox telnetd applet directly (works without the /usr/sbin/telnetd symlink).
+	# Require the applet to exist (busybox built with CONFIG_BUSYBOX_CONFIG_TELNETD)
+	# to avoid a procd respawn storm on SSH-only images.
+	local td=/usr/sbin/telnetd
+	[ -x "$td" ] || td="$(command -v telnetd)"
+	[ -n "$td" ] || { busybox 2>&1 | grep -qw telnetd && td="busybox telnetd"; }
+	[ -n "$td" ] || return 0
+	procd_open_instance
+	procd_set_param command $td -F -l /bin/login
+	procd_set_param respawn
+	procd_close_instance
+}

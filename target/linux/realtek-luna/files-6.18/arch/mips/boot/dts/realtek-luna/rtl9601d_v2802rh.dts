@@ -1,0 +1,200 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/dts-v1/;
+
+#include "rtl9602c.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/leds/common.h>
+
+/* The RTL9601D runs the RTL9602C platform map (see rtl9601d_x100dg.dts). Stock
+ * on this board is Realtek's RTOS SDK ("8671x", SDK V1.3.1), not Linux, so what
+ * follows comes from its U-Boot env, its boot console and a full flash dump. */
+/ {
+	model = "VSOL V2802RH";
+	compatible = "vsol,v2802rh", "realtek,rtl9601d";
+
+	aliases {
+		serial0 = &uart0;
+		led-boot = &led_power;
+		led-failsafe = &led_power;
+		led-running = &led_power;
+		led-upgrade = &led_power;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+		/* The family line without earlycon: EARLY_PRINTK's early0 already
+		 * prints from the first instruction, and with both every line up to
+		 * the 8250 console came out twice. */
+		bootargs = "console=ttyS0,115200";
+	};
+
+	/* 32 MiB DDR2 (U-Boot: "DRAM: 32 MB"), laid out as the X100DG's. */
+	memory@0 {
+		device_type = "memory";
+		reg = <0x00000000 0x016ff000>, <0x01800000 0x006ff000>;
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		pbo_ds: pon-pool@16ff000 {
+			no-map;
+			reg = <0x016ff000 0x00101000>;
+		};
+
+		pbo_us: pon-pool@1eff000 {
+			no-map;
+			reg = <0x01eff000 0x00101000>;
+		};
+	};
+
+	/* Pins found by blinking each GPIO on a RAM-booted unit. LAN1 is on GPIO
+	 * 40 too, but stock lights it from the LED controller (see &gpon), which
+	 * follows LAN1's own link. LAN2 is the 2.5G PHY's own LED and WAN did not
+	 * respond. Polarity is unconfirmed.
+	 * PON and LOS stay plain lamps until the GPON driver's LED engine
+	 * indices for this board are known. */
+	leds {
+		compatible = "gpio-leds";
+
+		led_power: led-power {
+			function = LED_FUNCTION_POWER;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&gpio 41 GPIO_ACTIVE_LOW>;
+			default-state = "on";
+		};
+
+		led-pon {
+			label = "green:pon";
+			gpios = <&gpio 35 GPIO_ACTIVE_LOW>;
+		};
+
+		led-los {
+			label = "red:los";
+			gpios = <&gpio 26 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	/* Semtech GN25L95, host-calibrated from the stock rtl-25l95-backup.bin.
+	 * Stock drives TX_DISABLE on GPIO 13 ("debug gpio set pin 13"). Bus 0
+	 * fails every access (RAM boot: GN calibration err=-5 at the first
+	 * write), so it is taken to be on bus 1, as on the X100DG. */
+	pon-optics {
+		realtek,i2c-bus = <1>;
+		realtek,tx-disable-pin = <13>;
+	};
+
+	/* As stock's MIB on the OLT reports them: PPTP 0x0101 is LAN1, the
+	 * internal GE PHY on switch port 1 (type 47); 0x0102 is LAN2, the
+	 * RTL8221B on the port 0 SerDes (type 50, 2.5G). */
+	omci-uni {
+		ethernet-uni-instances = /bits/ 16 <0x0101 0x0102>;
+		ethernet-uni-ports = /bits/ 8 <1 0>;
+		ethernet-uni-types = /bits/ 8 <47 50>;
+		uni-g-instances = /bits/ 16 <0x0101 0x0102 0x0601>;
+		uni-g-management-capability = /bits/ 8 <1 1 0>;
+		circuit-packs = /bits/ 16 <
+			0x0101 47 2 8 0 0
+			0x0106 48 1 8 0 0
+			0x0180 248 1 128 16 16>;
+		ip-host-instances = /bits/ 16 <0x0000 0x0001 0x0002>;
+		ip-host-wan-mac = /bits/ 8 <0 0 0>;
+		onu-capacity = /bits/ 16 <16 128 16 64>;
+		downstream-queue-ports = /bits/ 16 <0x0101 0x0102 0x0601>;
+	};
+};
+
+/* LAN2 is port 0 over the SerDes to the 2.5G PHY. Stock powers the internal
+ * GPHY 0 down and forces the port 0 MAC up (FORCE_P_ABLTY 0x76, mode 0xfff);
+ * doing the same on a RAM boot carried traffic at 2.5G. */
+/* 128 RX buffers: each 2k buffer takes a 4k slab object, and 256 of them
+ * were a quarter of this board's slab (measured, kmalloc-4k 1 MB) for more
+ * burst than its CPU path can forward. */
+&nic {
+	realtek,rx-ring-entries = <128>;
+	realtek,port0-serdes;
+	realtek,stock-switch-config;
+	/* The RTL8221B's MDIO, bit-banged as stock does it: MDC, MDIO. */
+	realtek,ext-mdio-gpios = <&gpio 5 GPIO_ACTIVE_HIGH>, <&gpio 10 GPIO_ACTIVE_HIGH>;
+	realtek,ext-phy-addr = <7>;
+};
+
+/* Zbit ZB25VQ32, 4 MiB. The uImage sits at 0x27000, which is not 64 KiB
+ * aligned, hence 4 KiB erase. Stock U-Boot boots it in place (bootcmd bootm
+ * 9fc27000) or starts the chainloaded U-Boot at 0x3c0000, which boots it.
+ * Everything stock keeps outside the firmware stays read-only: the hardware
+ * MIB at 0x25000 (GPON serial, MAC) and, from 0x3e0000, the OSK1FS files
+ * (GN25L95 calibration, OMCI) and the RTOS config. */
+&spi_nor {
+	compatible = "realtek,luna-spi-nor";
+	reg = <0x14000000 0x400000>, <0x18001200 0x10>;
+	erase-size = <0x1000>;
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		partition@0 {
+			label = "boot";
+			reg = <0x000000 0x021000>;
+			read-only;
+		};
+		partition@21000 {
+			label = "env";
+			reg = <0x021000 0x002000>;
+			read-only;
+		};
+		partition@23000 {
+			label = "env2";
+			reg = <0x023000 0x002000>;
+			read-only;
+		};
+		partition@25000 {
+			label = "config";
+			reg = <0x025000 0x002000>;
+			read-only;
+		};
+		/* Stock's k0 and r0 as one partition: U-Boot still boots the uImage
+		 * at 0x27000, and the rootfs starts right after the kernel, so
+		 * every byte the kernel does not use becomes overlay. */
+		partition@27000 {
+			compatible = "denx,uimage";
+			label = "firmware";
+			reg = <0x027000 0x399000>;
+		};
+		/* Mainline U-Boot, chainloaded by the stock one, and its env */
+		partition@3c0000 {
+			label = "u-boot";
+			reg = <0x3c0000 0x01f000>;
+			read-only;
+		};
+		partition@3df000 {
+			label = "u-boot-env";
+			reg = <0x3df000 0x001000>;
+			read-only;
+		};
+		partition@3e0000 {
+			label = "osk";
+			reg = <0x3e0000 0x020000>;
+			read-only;
+		};
+	};
+};
+
+&gpio {
+	status = "okay";
+};
+
+/* LAN1: LED index 1, hardware link/activity of its own port, as stock
+ * programs it (DATA_CFG 0x20f78). Its pad (GPIO 40) must stay out of GPIO
+ * mode, so no gpio-leds node claims it. */
+&gpon {
+	memory-region = <&pbo_us>, <&pbo_ds>;
+	realtek,port-leds = <1 2>;
+	/* Userspace OMCI through the RTL9601D net/xpon backend. */
+	realtek,omci-userspace;
+};
