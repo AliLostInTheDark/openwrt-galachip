@@ -18,6 +18,21 @@ onu_mtd() {
 	return 1
 }
 
+onu_chainload_image() {
+	local metadata keys key device
+
+	metadata=$(fwtool -q -i /dev/stdout "$1") || return 1
+	. /usr/share/libubox/jshn.sh
+	json_load "$metadata" || return 1
+	json_select supported_devices || return 1
+	json_get_keys keys
+	for key in $keys; do
+		json_get_var device "$key"
+		[ "$device" = "vsol,v2802rh-chainload-v1" ] && return 0
+	done
+	return 1
+}
+
 platform_check_image() {
 	local img="$1" kernel root part dev size
 
@@ -38,6 +53,11 @@ platform_check_image() {
 			echo "The image ($size bytes) is larger than the firmware partition."
 			return 1
 		}
+		if [ "$(cat /tmp/sysinfo/board_name)" = "vsol,v2802rh" ] &&
+		   ! onu_chainload_image "$img"; then
+			echo "This image does not declare the reserved V2802RH U-Boot layout."
+			return 1
+		fi
 		return 0
 	fi
 	kernel=$(onu_member "$img" kernel)

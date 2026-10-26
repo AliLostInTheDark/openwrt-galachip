@@ -51,6 +51,7 @@ define Device/vsol_v2802rh
   DEVICE_DTS := rtl9601d_v2802rh
   DEVICE_DTS_DIR := $(DTS_DIR)/realtek-luna
   SOC := rtl9601d
+  SUPPORTED_DEVICES := vsol,v2802rh vsol,v2802rh-chainload-v1
   # 4 MiB Zbit ZB25VQ32 with the stock bootloader, env and hardware MIB below
   # 0x27000, the chainloaded U-Boot at 0x3c0000 and the RTOS's OSK1FS files
   # above 0x3e0000. U-Boot boots the uImage at 0x27000 in place; the firmware
