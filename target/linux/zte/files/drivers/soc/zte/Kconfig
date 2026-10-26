@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config ZX279125_PON
+	tristate "ZTE Sanechips ZX279125 GPON MAC and Optical Controller"
+	depends on ARCH_ZX || COMPILE_TEST
+	depends on OF && HAS_IOMEM && I2C
+	depends on XPON
+	depends on XPON_OMCI
+	select ZX279125_PP
+	select ZX279125_TAGPARAM
+	default ARCH_ZX
+	help
+	  Driver for the integrated ITU-T G.984 GPON MAC and UX3320S/GN25L95
+	  optical burst transceiver controller on the ZTE Sanechips ZX279125
+	  SoC (VSOL V2801SG). Provides the Linux xPON network device (pon0)
+	  and manages ONU states O1 through O7.
+
+config ZX279125_PP
+	bool "ZTE Sanechips ZX279125 CPU packet transport"
+	depends on NET
+	help
+	  Shared packet transport between the LAN packet processor driver and
+	  the xPON control plane. Subscriber traffic uses the hardware bridge.
+
+config ZX279125_TAGPARAM
+	bool
+	depends on MTD=y

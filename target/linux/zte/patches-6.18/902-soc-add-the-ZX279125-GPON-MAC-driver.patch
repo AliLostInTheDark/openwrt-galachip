@@ -1,0 +1,29 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH 902/903] soc: zte: add the ZX279125 GPON MAC driver
+
+Add hardware GPON MAC controller and optical transceiver telemetry driver
+for the ZTE Sanechips ZX279125 SoC, implementing ITU-T G.984 state machine
+management and integration with the Linux xPON subsystem.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+ drivers/soc/Kconfig  | 1 +
+ drivers/soc/Makefile | 1 +
+ 2 files changed, 2 insertions(+)
+
+--- a/drivers/soc/Kconfig
++++ b/drivers/soc/Kconfig
+@@ -31,5 +31,6 @@ source "drivers/soc/ux500/Kconfig"
+ source "drivers/soc/versatile/Kconfig"
+ source "drivers/soc/vt8500/Kconfig"
+ source "drivers/soc/xilinx/Kconfig"
++source "drivers/soc/zte/Kconfig"
+ 
+ endmenu
+--- a/drivers/soc/Makefile
++++ b/drivers/soc/Makefile
+@@ -37,3 +37,4 @@ obj-$(CONFIG_ARCH_U8500)	+= ux500/
+ obj-y				+= versatile/
+ obj-y				+= vt8500/
+ obj-y				+= xilinx/
++obj-y				+= zte/

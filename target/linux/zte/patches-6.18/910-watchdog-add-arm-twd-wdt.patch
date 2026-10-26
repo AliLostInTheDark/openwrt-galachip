@@ -1,0 +1,38 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] watchdog: add ARM Cortex-A9 private watchdog driver
+
+Add Kconfig and Makefile entries for the Cortex-A9 private (TWD) watchdog,
+which the ZTE Sanechips ZX279125 uses as its system watchdog.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+--- a/drivers/watchdog/Kconfig
++++ b/drivers/watchdog/Kconfig
+@@ -949,6 +949,17 @@
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called arm_smc_wdt.
+ 
++config ARM_TWD_WATCHDOG
++	tristate "ARM Cortex-A9 private watchdog support"
++	depends on ARM || COMPILE_TEST
++	depends on OF
++	select WATCHDOG_CORE
++	help
++	  Say Y here to include support for the per-core watchdog in the
++	  Cortex-A9 private memory region on uniprocessor systems.
++	  To compile this driver as a module, choose M here: the
++	  module will be called arm_twd_wdt.
++
+ config LPC18XX_WATCHDOG
+ 	tristate "LPC18xx/43xx Watchdog"
+ 	depends on ARCH_LPC18XX || COMPILE_TEST
+--- a/drivers/watchdog/Makefile
++++ b/drivers/watchdog/Makefile
+@@ -96,6 +96,7 @@
+ obj-$(CONFIG_SPRD_WATCHDOG) += sprd_wdt.o
+ obj-$(CONFIG_PM8916_WATCHDOG) += pm8916_wdt.o
+ obj-$(CONFIG_ARM_SMC_WATCHDOG) += arm_smc_wdt.o
++obj-$(CONFIG_ARM_TWD_WATCHDOG) += arm_twd_wdt.o
+ obj-$(CONFIG_GXP_WATCHDOG) += gxp-wdt.o
+ obj-$(CONFIG_VISCONTI_WATCHDOG) += visconti_wdt.o
+ obj-$(CONFIG_MSC313E_WATCHDOG) += msc313e_wdt.o

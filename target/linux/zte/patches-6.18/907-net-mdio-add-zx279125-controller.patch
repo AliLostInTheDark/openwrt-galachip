@@ -1,0 +1,38 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] net: mdio: add ZTE ZX279125 controller support
+
+Add the Clause 22 MDIO bus independently of the shared packet engine.
+This controller does not initialize the Ethernet packet engine or optics.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+--- a/drivers/net/mdio/Kconfig
++++ b/drivers/net/mdio/Kconfig
+@@ -191,6 +191,17 @@
+ 	  ThunderX SoCs when the MDIO bus device appears as a PCI
+ 	  device.
+ 
++config MDIO_ZX279125
++	tristate "ZTE Sanechips ZX279125 MDIO bus controller"
++	depends on ARCH_ZX || COMPILE_TEST
++	depends on OF_MDIO && HAS_IOMEM
++	help
++	  Clause 22 PHY management bus on ZTE Sanechips ZX279125 SoCs.
++	  Transactions use the custom controller with bounded completion polls.
++	  This does not initialize the packet engine, LAN MAC or optics.
++
++	  If unsure, say N.
++
+ comment "MDIO Multiplexers"
+ 
+ config MDIO_BUS_MUX
+--- a/drivers/net/mdio/Makefile
++++ b/drivers/net/mdio/Makefile
+@@ -25,6 +25,7 @@
+ obj-$(CONFIG_MDIO_SUN4I)		+= mdio-sun4i.o
+ obj-$(CONFIG_MDIO_THUNDER)		+= mdio-thunder.o
+ obj-$(CONFIG_MDIO_XGENE)		+= mdio-xgene.o
++obj-$(CONFIG_MDIO_ZX279125)		+= mdio-zx279125.o
+ 
+ obj-$(CONFIG_MDIO_BUS_MUX)		+= mdio-mux.o
+ obj-$(CONFIG_MDIO_BUS_MUX_BCM6368)	+= mdio-mux-bcm6368.o

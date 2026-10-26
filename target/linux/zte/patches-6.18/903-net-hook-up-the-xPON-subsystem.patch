@@ -1,0 +1,32 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH 903/903] net: hook up the xPON subsystem
+
+net/xpon carries the PON link core, the OMCI agent (G-PON) and the
+802.3ah OAM transport (EPON) used by the GPON drivers.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+ net/Kconfig  | 1 +
+ net/Makefile | 1 +
+ 2 files changed, 2 insertions(+)
+
+--- a/net/Kconfig
++++ b/net/Kconfig
+@@ -87,6 +87,7 @@ config NET_CRC32C
+ 
+ menu "Networking options"
+ 
++source "net/xpon/Kconfig"
+ source "net/packet/Kconfig"
+ source "net/psp/Kconfig"
+ source "net/unix/Kconfig"
+--- a/net/Makefile
++++ b/net/Makefile
+@@ -21,6 +21,7 @@ obj-$(CONFIG_UNIX)		+= unix/
+ obj-$(CONFIG_INET_PSP)		+= psp/
+ obj-y				+= ipv6/
+ obj-$(CONFIG_PACKET)		+= packet/
++obj-$(CONFIG_XPON)		+= xpon/
+ obj-$(CONFIG_NET_KEY)		+= key/
+ obj-$(CONFIG_BRIDGE)		+= bridge/
+ obj-$(CONFIG_NET_DEVLINK)	+= devlink/

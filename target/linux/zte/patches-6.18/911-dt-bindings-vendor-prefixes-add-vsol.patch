@@ -1,0 +1,19 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] dt-bindings: vendor-prefixes: add Guangzhou V-Solution Telecommunication Technology
+
+Add the prefix "vsol" for Guangzhou V-Solution Telecommunication
+Technology Co., Ltd., a supplier of PON equipment such as the V2801SG ONU.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+--- a/Documentation/devicetree/bindings/vendor-prefixes.yaml
++++ b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+@@ -1755,6 +1755,8 @@ patternProperties:
+     description: Voltafield Technology Corp.
+   "^vot,.*":
+     description: Vision Optical Technology Co., Ltd.
++  "^vsol,.*":
++    description: Guangzhou V-Solution Telecommunication Technology Co., Ltd.
+   "^vscom,.*":
+     description: VS Visions Systems GmbH
+   "^vxt,.*":

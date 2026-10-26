@@ -1,0 +1,178 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/*
+ * Device Tree Source for ZTE Sanechips ZX279125 SoC
+ *
+ * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
+ */
+
+#include <dt-bindings/clock/zte,zx279125-clock.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+
+/ {
+	compatible = "zte,zx279125";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a9";
+			reg = <0>;
+			clocks = <&crm ZX279125_CLK_CPU>;
+			clock-names = "cpu";
+		};
+	};
+
+	osc: oscillator {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <25000000>;
+		clock-output-names = "osc";
+	};
+
+	/* Cortex-A9 PERIPHCLK; the private watchdog counts 300 MHz on hardware. */
+	periphclk: periphclk {
+		compatible = "fixed-factor-clock";
+		#clock-cells = <0>;
+		clocks = <&crm ZX279125_CLK_CPU>;
+		clock-div = <2>;
+		clock-mult = <1>;
+		clock-output-names = "periphclk";
+	};
+
+	soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "simple-bus";
+		interrupt-parent = <&gic>;
+		ranges;
+
+		gic: interrupt-controller@801000 {
+			compatible = "arm,cortex-a9-gic";
+			#interrupt-cells = <3>;
+			interrupt-controller;
+			reg = <0x00801000 0x1000>,
+			      <0x00800100 0x100>;
+		};
+
+		watchdog@800620 {
+			compatible = "arm,cortex-a9-twd-wdt";
+			reg = <0x00800620 0x20>;
+			interrupts = <GIC_PPI 14 (GIC_CPU_MASK_SIMPLE(1) | IRQ_TYPE_LEVEL_HIGH)>;
+			clocks = <&periphclk>;
+		};
+
+		timer@94401000 {
+			compatible = "zte,zx279125-timer";
+			reg = <0x94401000 0x100>, <0x94402000 0x100>;
+			reg-names = "event", "source";
+			interrupts = <GIC_SPI 17 IRQ_TYPE_EDGE_RISING>;
+			clocks = <&crm ZX279125_CLK_TIMER0>,
+				 <&crm ZX279125_CLK_TIMER1>;
+			clock-names = "event", "source";
+		};
+
+		crm: clock-controller@94000000 {
+			compatible = "zte,zx279125-crm";
+			reg = <0x94000000 0x1000>, <0x94400000 0x100>,
+			      <0x9a100000 0x100>;
+			reg-names = "crm", "peripheral", "network";
+			#clock-cells = <1>;
+			clocks = <&osc>;
+			clock-names = "osc";
+		};
+
+		uart0: serial@94405000 {
+			compatible = "zte,zx279125-uart";
+			reg = <0x94405000 0x1000>;
+			interrupts = <GIC_SPI 11 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&crm ZX279125_CLK_UART0>;
+			status = "disabled";
+		};
+
+		uart1: serial@94406000 {
+			compatible = "zte,zx279125-uart";
+			reg = <0x94406000 0x1000>;
+			interrupts = <GIC_SPI 10 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&crm ZX279125_CLK_UART1>;
+			status = "disabled";
+		};
+
+		spifc: spi@94407000 {
+			compatible = "zte,zx279125-spifc";
+			reg = <0x94407000 0x1000>;
+			interrupts = <GIC_SPI 9 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&crm ZX279125_CLK_SPIFC>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		mdio: mdio@9a101000 {
+			compatible = "zte,zx279125-mdio";
+			reg = <0x9a101000 0x1000>;
+			clocks = <&crm ZX279125_CLK_MDIO>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		gpio: gpio@94404000 {
+			compatible = "zte,zx279125-gpio";
+			reg = <0x94404000 0x1000>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			status = "disabled";
+		};
+
+		i2c0: i2c@9a102000 {
+			compatible = "zte,zx279125-i2c", "zte,zx296718-i2c";
+			reg = <0x9a102000 0x1000>;
+			interrupts = <GIC_SPI 28 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&crm ZX279125_CLK_I2C>;
+			clock-frequency = <100000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		pon: pon@92040000 {
+			compatible = "zte,zx279125-pon";
+			reg = <0x92040000 0x100>,
+			      <0x92080000 0x1000>,
+			      <0x920c0000 0x1000>,
+			      <0x920c4000 0x1000>,
+			      <0x920c8000 0x1000>,
+			      <0x920cc000 0x4000>,
+			      <0x920d0000 0x1000>,
+			      <0x920d4000 0x1000>,
+			      <0x920d8000 0x1000>,
+			      <0x92100000 0x1000>;
+			reg-names = "intc", "epon", "gpon", "rx", "drs", "ports", "gem", "onu", "tx", "aes";
+			interrupts = <GIC_SPI 30 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&crm ZX279125_CLK_GMAC>;
+			status = "disabled";
+		};
+
+		ethernet: ethernet@92144000 {
+			compatible = "zte,zx279125-ethernet";
+			reg = <0x92144000 0x100>, <0x92168000 0x100>,
+			      <0x92154000 0x100>, <0x92200000 0x5000>,
+			      <0x92164000 0x200>, <0x92040000 0x100>,
+			      <0x92140000 0x100>, <0x92308000 0x200>,
+			      <0x9214c000 0x100>, <0x92310000 0x1000>,
+			      <0x92314000 0x100>, <0x9232c000 0x100>,
+			      <0x92304000 0x4>, <0x921c0000 0x4>,
+			      <0x92000000 0x4>;
+			reg-names = "pp", "bmu", "mailbox", "mac", "dma", "intc",
+			            "global", "spa", "cla", "bridge", "sadm",
+			            "swglb", "sip", "mac0", "reset";
+			interrupts = <GIC_SPI 30 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+	};
+};

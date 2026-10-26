@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: ((GPL-2.0 WITH Linux-syscall-note) OR BSD-3-Clause)
+---
+name: xpon
+protocol: genetlink
+
+doc: |
+  State and mode of passive optical network (xPON) interfaces. Mode changes
+  require CAP_NET_ADMIN. State changes are announced on the "events" group.
+
+definitions:
+  -
+    type: enum
+    name: mode
+    entries: [gpon, epon, xgspon]
+  -
+    type: enum
+    name: registration-state
+    entries: [down, discovery, registering, operational]
+
+attribute-sets:
+  -
+    name: xpon
+    attributes:
+      -
+        name: ifindex
+        type: u32
+        value: 1
+      -
+        name: mode
+        type: u8
+        enum: mode
+      -
+        name: available-modes
+        type: u32
+        doc: Bitmask of supported modes, bit n for mode value n.
+      -
+        name: registration
+        type: u8
+        enum: registration-state
+      -
+        name: carrier
+        type: u8
+      -
+        name: signal-detect
+        type: u8
+      -
+        name: los
+        type: u8
+      -
+        name: changed
+        type: u32
+        doc: Bitmask of the state attributes that changed.
+
+operations:
+  list:
+    -
+      name: get
+      value: 1
+      attribute-set: xpon
+      do:
+        request:
+          attributes: [ifindex]
+        reply: &state
+          attributes:
+            - ifindex
+            - mode
+            - available-modes
+            - registration
+            - carrier
+            - signal-detect
+            - los
+    -
+      name: get-state
+      value: 3
+      attribute-set: xpon
+      do:
+        request:
+          attributes: [ifindex]
+        reply: *state
+    -
+      name: set-mode
+      value: 4
+      attribute-set: xpon
+      flags: [admin-perm]
+      do:
+        request:
+          attributes: [ifindex, mode]
+    -
+      name: event
+      value: 5
+      attribute-set: xpon
+      event:
+        attributes:
+          - ifindex
+          - mode
+          - available-modes
+          - registration
+          - carrier
+          - signal-detect
+          - los
+          - changed
+      mcgrp: events
+
+mcast-groups:
+  list:
+    -
+      name: events

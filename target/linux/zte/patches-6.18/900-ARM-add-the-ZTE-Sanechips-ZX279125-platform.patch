@@ -1,0 +1,36 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] ARM: add the ZTE Sanechips ZX279125 platform
+
+Add ARCH_ZX machine support for the ZTE Sanechips ZX279125 ARMv7
+platform with its custom timer and GIC interrupt controller.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+ arch/arm/Kconfig.platforms |  8 ++++++++
+ arch/arm/Makefile          |  1 +
+ 2 files changed, 9 insertions(+)
+
+diff --git a/arch/arm/Kconfig.platforms b/arch/arm/Kconfig.platforms
+--- a/arch/arm/Kconfig.platforms
++++ b/arch/arm/Kconfig.platforms
+@@ -206,3 +206,11 @@ config ARCH_UNIPHIER
+ 	help
+ 	  Support for UniPhier SoC family developed by Socionext Inc.
+ 	  (formerly, System LSI Business Division of Panasonic Corporation)
++
++config ARCH_ZX
++	bool "ZTE Sanechips SoCs"
++	depends on ARCH_MULTI_V7
++	select ARM_GIC
++	select ZX279125_TIMER
++	help
++	  Support for ZTE Sanechips ARMv7 SoCs including ZX279125.
+diff --git a/arch/arm/Makefile b/arch/arm/Makefile
+--- a/arch/arm/Makefile
++++ b/arch/arm/Makefile
+@@ -225,4 +225,5 @@
+ machine-$(CONFIG_ARCH_VT8500)		+= vt8500
+ machine-$(CONFIG_ARCH_ZYNQ)		+= zynq
++machine-$(CONFIG_ARCH_ZX)		+= zx
+ machine-$(CONFIG_PLAT_VERSATILE)	+= versatile
+ machine-$(CONFIG_PLAT_SPEAR)		+= spear

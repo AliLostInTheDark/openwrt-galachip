@@ -1,0 +1,50 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] serial: add the ZX279125 UART
+
+Wire up the stock-layout serial driver and early console for ZX279125.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+diff --git a/drivers/tty/serial/Kconfig b/drivers/tty/serial/Kconfig
+--- a/drivers/tty/serial/Kconfig
++++ b/drivers/tty/serial/Kconfig
+@@ -5,6 +5,28 @@
+ 
+ menu "Serial drivers"
+ 	depends on HAS_IOMEM
++
++config SERIAL_ZX279125
++	bool "ZTE Sanechips ZX279125 UART"
++	depends on ARCH_ZX || COMPILE_TEST
++	depends on OF && HAS_IOMEM
++	select SERIAL_CORE
++	select SERIAL_EARLYCON
++	help
++	  Serial driver for the custom UART in the ZX279125 SoC.
++	  Registers its ports as ttyS devices with interrupt-driven RX/TX.
++	  The initial driver supports the stock console format, 8N1,
++	  without UART DMA or hardware modem-control signals.
++
++config SERIAL_ZX279125_CONSOLE
++	bool "Console on the ZX279125 UART"
++	depends on SERIAL_ZX279125
++	select SERIAL_CORE_CONSOLE
++	help
++	  Support ttyS consoles on ZX279125 UARTs.
++	  Select console=ttyS0,115200n8 for the first UART.
++	  With a matching device tree, earlycon provides polling output
++	  using the baud and pinmux inherited from the bootloader.
+ 
+ config SERIAL_EARLYCON
+ 	bool
+diff --git a/drivers/tty/serial/Makefile b/drivers/tty/serial/Makefile
+--- a/drivers/tty/serial/Makefile
++++ b/drivers/tty/serial/Makefile
+@@ -4,6 +4,7 @@
+ #
+ 
+ obj-$(CONFIG_SERIAL_CORE) += serial_base.o
++obj-$(CONFIG_SERIAL_ZX279125) += zx279125-uart.o
+ serial_base-y := serial_core.o serial_base_bus.o serial_ctrl.o serial_port.o
+ 
+ obj-$(CONFIG_SERIAL_EARLYCON) += earlycon.o

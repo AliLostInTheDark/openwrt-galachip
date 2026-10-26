@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/arm/zte.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: ZTE Sanechips platforms
+
+maintainers:
+  - Ifran Ali <khanu.i.i.k.2000@gmail.com>
+
+properties:
+  $nodename:
+    const: /
+  compatible:
+    oneOf:
+      - description: ZX279125 based boards
+        items:
+          - enum:
+              - vsol,v2801sg
+          - const: zte,zx279125
+
+additionalProperties: true

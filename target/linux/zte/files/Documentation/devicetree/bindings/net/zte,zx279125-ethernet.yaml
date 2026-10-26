@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/net/zte,zx279125-ethernet.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: ZTE Sanechips ZX279125 Ethernet CPU packet engine
+
+maintainers:
+  - Ifran Ali <khanu.i.i.k.2000@gmail.com>
+
+description: |
+  The shared packet engine owns the UNI management traffic and optical control
+  queues. Subscriber forwarding is performed by the hardware bridge. Packet
+  buffers and rings must remain outside the Linux allocator, including during
+  an adopted bootloader handoff. The interrupt mask is shared with the PON MAC.
+
+allOf:
+  - $ref: ethernet-controller.yaml#
+
+properties:
+  compatible:
+    const: zte,zx279125-ethernet
+
+  reg:
+    minItems: 8
+    maxItems: 15
+
+  reg-names:
+    minItems: 8
+    items:
+      - const: pp
+      - const: bmu
+      - const: mailbox
+      - const: mac
+      - const: dma
+      - const: intc
+      - const: global
+      - const: spa
+      - const: cla
+      - const: bridge
+      - const: sadm
+      - const: swglb
+      - const: sip
+      - const: mac0
+      - const: reset
+    description: |
+      The last seven ranges are only used to initialize the engine from reset;
+      some are shared with other blocks and are mapped without being claimed.
+
+  interrupts:
+    maxItems: 1
+
+  phy-handle: true
+
+  memory-region:
+    minItems: 1
+    items:
+      - description: |
+          The 10 MiB no-map packet pool: buffers at +0, buffer-pointer table at
+          +0x800000, auxiliary table at +0x820000, local cursor table at
+          +0x840000 and sixteen 64 KiB descriptor rings at +0x900000.
+      - description: A no-map region holding a cursor table outside the pool
+
+  zte,bootloader-cursors:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description: |
+      Physical address of the verified bootloader's CPU-only queue handoff
+      table, inside the reserved packet memory. Sixteen pairs of little-endian
+      u32 values contain ring bases and consumer indices. This address depends
+      on the bootloader build and relocation and must be independently verified
+      for another board. The source-built monitor uses pool + 0x840000 and updates
+      this property in an external Linux FDT after checking a stopped, idle
+      engine. A DTB appended to the kernel cannot receive that runtime fixup.
+      Reset-state initialization creates the table itself.
+
+required:
+  - compatible
+  - reg
+  - reg-names
+  - interrupts
+  - phy-handle
+  - memory-region
+  - zte,bootloader-cursors
+
+unevaluatedProperties: false

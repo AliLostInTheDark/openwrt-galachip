@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/net/zte,zx279125-pon.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: ZTE Sanechips ZX279125 GPON/EPON MAC
+
+maintainers:
+  - Ifran Ali <khanu.i.i.k.2000@gmail.com>
+
+description: |
+  The xPON MAC: GPON framing, PLOAM, GEM ports and ranging, the EPON MPCP
+  engine and the line AES engine. The top interrupt controller at "intc" is
+  shared with the Ethernet packet engine.
+
+properties:
+  compatible:
+    const: zte,zx279125-pon
+
+  reg:
+    maxItems: 10
+
+  reg-names:
+    items:
+      - const: intc
+      - const: epon
+      - const: gpon
+      - const: rx
+      - const: drs
+      - const: ports
+      - const: gem
+      - const: onu
+      - const: tx
+      - const: aes
+
+  interrupts:
+    maxItems: 1
+
+  clocks:
+    maxItems: 1
+
+  zte,bosa-i2c:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description:
+      I2C bus of the optical transceiver's diagnostic interface (address 0x51).
+
+required:
+  - compatible
+  - reg
+  - reg-names
+  - interrupts
+  - clocks
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/clock/zte,zx279125-clock.h>
+    #include <dt-bindings/interrupt-controller/arm-gic.h>
+
+    pon@92040000 {
+        compatible = "zte,zx279125-pon";
+        reg = <0x92040000 0x100>, <0x92080000 0x1000>, <0x920c0000 0x1000>,
+              <0x920c4000 0x1000>, <0x920c8000 0x1000>, <0x920cc000 0x4000>,
+              <0x920d0000 0x1000>, <0x920d4000 0x1000>, <0x920d8000 0x1000>,
+              <0x92100000 0x1000>;
+        reg-names = "intc", "epon", "gpon", "rx", "drs", "ports", "gem",
+                    "onu", "tx", "aes";
+        interrupts = <GIC_SPI 30 IRQ_TYPE_LEVEL_HIGH>;
+        clocks = <&crm ZX279125_CLK_GMAC>;
+        zte,bosa-i2c = <&i2c0>;
+    };
