@@ -55,6 +55,9 @@ for dev in /sys/class/xpon/*; do
 done
 section "PON driver" /proc/gpon
 section "PON driver log" /proc/gpon_log 120
+for attr in l2_offload l2_offload_bindings l2_offload_counters; do
+	section "L2 $attr" "/sys/class/net/pon0/device/$attr"
+done
 if [ "$1" = full ]; then
 	section "OLT PLOAM capture" /proc/ploamcap
 	section "OLT OMCI capture" /proc/oltcap
