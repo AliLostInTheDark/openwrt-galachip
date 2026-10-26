@@ -725,6 +725,22 @@ out:
 }
 EXPORT_SYMBOL(luna_xpon_l2_services);
 
+/* Sets the network VLAN of every provisioned service in @vids. */
+void luna_xpon_service_vids(unsigned long *vids)
+{
+	unsigned int i;
+
+	spin_lock_bh(&luna_xpon.svc_lock);
+	for (i = 0; i < LUNA_XPON_SERVICES; i++) {
+		const struct luna_xpon_service *s = &luna_xpon.svc[i];
+
+		if (s->used && s->vlan_valid && s->vlan && s->vlan < VLAN_N_VID - 1)
+			__set_bit(s->vlan, vids);
+	}
+	spin_unlock_bh(&luna_xpon.svc_lock);
+}
+EXPORT_SYMBOL(luna_xpon_service_vids);
+
 /* SFF-8472 A2h alarm flags, bytes 112-113 as one big-endian word. */
 static const struct {
 	u16 bit;

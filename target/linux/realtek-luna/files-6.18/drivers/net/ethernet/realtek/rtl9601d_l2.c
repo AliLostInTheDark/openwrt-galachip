@@ -20,7 +20,11 @@ static struct {
 	unsigned int count, generation;
 	int error;
 	bool requested, active, ports_offloaded, saved;
+	DECLARE_BITMAP(want_vids, VLAN_N_VID);
+	DECLARE_BITMAP(wan_vids, VLAN_N_VID);
 } v2802_l2;
+
+static int rtl9602c_wan_vid(struct rtl9602c_eth *ep, u16 vid, bool add);
 
 /* Caller owns sw_table_lock, shared with the NIC's VLAN callbacks. */
 static int v2802_l2_table(u8 type, u16 addr, u32 *words, unsigned int n,
@@ -275,6 +279,24 @@ static bool v2802_l2_bridge_ready(struct rtl9602c_eth *ep)
 	       !br_port_flag_is_set(ep->wan_ndev, BR_ISOLATED | BR_PORT_LOCKED | BR_HAIRPIN_MODE);
 }
 
+/* The VLAN filter drops a VID the table does not hold, the OLT's service
+ * VLANs included: give each the PON and the CPU, as a pon0.<vid> would. The
+ * offload saves these entries and restores them when it stops. */
+static void v2802_l2_sync_vids(struct rtl9602c_eth *ep)
+{
+	unsigned long *want = v2802_l2.want_vids, *have = v2802_l2.wan_vids;
+	unsigned int vid;
+
+	bitmap_zero(want, VLAN_N_VID);
+	luna_xpon_service_vids(want);
+	for_each_set_bit(vid, want, VLAN_N_VID)
+		if (!test_bit(vid, have) && !rtl9602c_wan_vid(ep, vid, true))
+			__set_bit(vid, have);
+	for_each_set_bit(vid, have, VLAN_N_VID)
+		if (!test_bit(vid, want) && !rtl9602c_wan_vid(ep, vid, false))
+			__clear_bit(vid, have);
+}
+
 static void v2802_l2_work(struct work_struct *work)
 {
 	struct luna_l2_service services[LUNA_L2_SERVICES];
@@ -292,6 +314,7 @@ static void v2802_l2_work(struct work_struct *work)
 		rc = -EIO;
 		goto out;
 	}
+	v2802_l2_sync_vids(ep);
 	if (!v2802_l2.requested)
 		goto out;
 	if (!v2802_l2_bridge_ready(ep)) {

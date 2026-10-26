@@ -38,6 +38,7 @@ struct net_device;
 struct sk_buff;
 #if IS_ENABLED(CONFIG_XPON_OMCI)
 int luna_xpon_l2_services(struct luna_l2_service *services);
+void luna_xpon_service_vids(unsigned long *vids);
 bool luna_xpon_wanted(void);
 bool luna_xpon_active(void);
 bool luna_xpon_data_ready(void);
@@ -54,6 +55,7 @@ static inline int luna_xpon_l2_services(struct luna_l2_service *services)
 {
 	return -EOPNOTSUPP;
 }
+static inline void luna_xpon_service_vids(unsigned long *vids) { }
 static inline bool luna_xpon_wanted(void) { return false; }
 static inline bool luna_xpon_active(void) { return false; }
 static inline bool luna_xpon_data_ready(void) { return false; }
