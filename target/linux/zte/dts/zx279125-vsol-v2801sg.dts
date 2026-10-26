@@ -1,0 +1,146 @@
+// SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+/*
+ * Device Tree Source for VSOL V2801SG
+ *
+ * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
+ */
+
+/dts-v1/;
+#include "zx279125.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+
+/ {
+	model = "VSOL V2801SG";
+	compatible = "vsol,v2801sg", "zte,zx279125";
+
+	aliases {
+		serial0 = &uart0;
+		i2c0 = &i2c0;
+	};
+
+	chosen {
+		bootargs = "console=ttyS0,115200n8 earlycon initramfs_async=0";
+		stdout-path = "serial0:115200n8";
+	};
+
+	memory@40000000 {
+		device_type = "memory";
+		reg = <0x40000000 0x02000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		/*
+		 * Packet buffers, buffer-pointer and auxiliary tables, and the
+		 * sixteen descriptor rings the CPU queues use.
+		 */
+		packet_pool: packet-pool@41000000 {
+			reg = <0x41000000 0x00a00000>;
+			no-map;
+		};
+
+		/*
+		 * The engine also writes a descriptor ring at 0x41a00000 that no
+		 * bootloader programs, and the full extent of its DMA is unknown.
+		 * Keep the rest of the top 16 MiB away from Linux.
+		 */
+		engine-guard@41a00000 {
+			reg = <0x41a00000 0x005ef000>;
+			no-map;
+		};
+
+		/* Page holding the stock U-Boot's relocated cursor table. */
+		stock_cursors: stock-cursors@41fef000 {
+			reg = <0x41fef000 0x1000>;
+			no-map;
+		};
+
+		engine-guard@41ff0000 {
+			reg = <0x41ff0000 0x00010000>;
+			no-map;
+		};
+	};
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&i2c0 {
+	status = "okay";
+
+	bosa: optical-transceiver@51 {
+		compatible = "atmel,24c02";
+		reg = <0x51>;
+	};
+};
+
+&pon {
+	status = "okay";
+	zte,bosa-i2c = <&i2c0>;
+};
+
+&mdio {
+	status = "okay";
+
+	lan_phy: ethernet-phy@1 {
+		reg = <1>;
+	};
+};
+
+&ethernet {
+	status = "okay";
+	phy-handle = <&lan_phy>;
+	memory-region = <&packet_pool>, <&stock_cursors>;
+	/* Relocated cursor table in the March 2025 stock U-Boot. */
+	zte,bootloader-cursors = <0x41fef75c>;
+};
+
+&spifc {
+	status = "okay";
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "u-boot";
+				reg = <0x000000 0x040000>;
+				read-only;
+			};
+
+			partition@40000 {
+				compatible = "openwrt,uimage", "denx,uimage";
+				openwrt,offset = <320>;
+				openwrt,partition-magic = <0x99999999>;
+				label = "firmware";
+				reg = <0x040000 0x740000>;
+			};
+
+			partition@780000 {
+				label = "others";
+				reg = <0x780000 0x010000>;
+			};
+
+			partition@790000 {
+				label = "tagparam";
+				reg = <0x790000 0x010000>;
+			};
+
+			partition@7a0000 {
+				label = "usercfg";
+				reg = <0x7a0000 0x060000>;
+			};
+		};
+	};
+};

@@ -1,0 +1,134 @@
+# GPON bridge ONU with management LuCI and the OMCI control plane.
+# Save the current .config before selecting this seed.
+CONFIG_TARGET_zte=y
+CONFIG_TARGET_zte_zx279125=y
+CONFIG_TARGET_zte_zx279125_DEVICE_vsol_v2801sg=y
+CONFIG_TARGET_ROOTFS_INITRAMFS=y
+CONFIG_TARGET_INITRAMFS_COMPRESSION_GZIP=y
+CONFIG_TARGET_ROOTFS_SQUASHFS=y
+CONFIG_PACKAGE_luci-base=y
+CONFIG_PACKAGE_luci-mod-network=y
+CONFIG_PACKAGE_luci-mod-status=y
+CONFIG_PACKAGE_luci-mod-system=y
+CONFIG_PACKAGE_luci-theme-slate=y
+CONFIG_PACKAGE_luci-app-omci=y
+CONFIG_PACKAGE_luci-app-xpon=y
+CONFIG_PACKAGE_omci-agent=y
+CONFIG_PACKAGE_omcid=y
+CONFIG_PACKAGE_xpon-report=y
+CONFIG_PACKAGE_bosa-tools=y
+CONFIG_PACKAGE_uhttpd=y
+CONFIG_PACKAGE_uhttpd-mod-ubus=y
+CONFIG_PACKAGE_uhttpd-mod-ucode=y
+# GPON bridge ONU: IPv4 management only, no routed subscriber stack.
+# CONFIG_IPV6 is not set
+# CONFIG_KERNEL_IP_MROUTE is not set
+# CONFIG_KERNEL_IPV6_MROUTE is not set
+# CONFIG_KERNEL_SWAP is not set
+# CONFIG_KERNEL_KEXEC is not set
+# CONFIG_KERNEL_CRASH_DUMP is not set
+# CONFIG_KERNEL_DEBUG_FS is not set
+CONFIG_KERNEL_KALLSYMS=y
+CONFIG_KERNEL_DEVMEM=y
+CONFIG_BUSYBOX_CUSTOM=y
+CONFIG_BUSYBOX_CONFIG_DEVMEM=y
+# Same applet trimming as the G7: no DHCP client, routing or interactive tools.
+# CONFIG_BUSYBOX_CONFIG_BRCTL is not set
+# CONFIG_BUSYBOX_CONFIG_CHGRP is not set
+# CONFIG_BUSYBOX_CONFIG_CHROOT is not set
+# CONFIG_BUSYBOX_CONFIG_CLEAR is not set
+# CONFIG_BUSYBOX_CONFIG_CMP is not set
+# CONFIG_BUSYBOX_CONFIG_DU is not set
+# CONFIG_BUSYBOX_CONFIG_FSYNC is not set
+# CONFIG_BUSYBOX_CONFIG_IFCONFIG is not set
+# CONFIG_BUSYBOX_CONFIG_LESS is not set
+# CONFIG_BUSYBOX_CONFIG_NETMSG is not set
+# CONFIG_BUSYBOX_CONFIG_NICE is not set
+# CONFIG_BUSYBOX_CONFIG_NSLOOKUP is not set
+# CONFIG_BUSYBOX_CONFIG_RESET is not set
+# CONFIG_BUSYBOX_CONFIG_RESIZE is not set
+# CONFIG_BUSYBOX_CONFIG_ROUTE is not set
+# CONFIG_BUSYBOX_CONFIG_SHA256SUM is not set
+# CONFIG_BUSYBOX_CONFIG_TASKSET is not set
+# CONFIG_BUSYBOX_CONFIG_TEE is not set
+# CONFIG_BUSYBOX_CONFIG_TIME is not set
+# CONFIG_BUSYBOX_CONFIG_TRACEROUTE6 is not set
+# CONFIG_BUSYBOX_CONFIG_UDHCPC is not set
+# CONFIG_BUSYBOX_CONFIG_VI is not set
+# CONFIG_BUSYBOX_CONFIG_WHICH is not set
+# CONFIG_BUSYBOX_CONFIG_YES is not set
+CONFIG_BUSYBOX_CONFIG_HEXDUMP=y
+CONFIG_BUSYBOX_CONFIG_BASE64=y
+CONFIG_BUSYBOX_CONFIG_TIMEOUT=y
+CONFIG_BUSYBOX_CONFIG_NC=y
+CONFIG_BUSYBOX_CONFIG_NC_SERVER=y
+CONFIG_BUSYBOX_CONFIG_NC_EXTRA=y
+CONFIG_BUSYBOX_CONFIG_TFTP=y
+CONFIG_BUSYBOX_CONFIG_FEATURE_TFTP_GET=y
+CONFIG_BUSYBOX_CONFIG_FEATURE_TFTP_PUT=y
+CONFIG_BUSYBOX_CONFIG_FEATURE_TFTP_BLOCKSIZE=y
+CONFIG_BUSYBOX_CONFIG_NETSTAT=y
+CONFIG_BUSYBOX_CONFIG_FEATURE_NETSTAT_WIDE=y
+CONFIG_BUSYBOX_CONFIG_FEATURE_NETSTAT_PRG=y
+CONFIG_BUSYBOX_CONFIG_FEATURE_IP_NEIGH=y
+# CONFIG_BUSYBOX_CONFIG_CROND is not set
+# CONFIG_BUSYBOX_CONFIG_CRONTAB is not set
+# CONFIG_BUSYBOX_CONFIG_NTPD is not set
+# CONFIG_BUSYBOX_CONFIG_SWAPON is not set
+# CONFIG_BUSYBOX_CONFIG_SWAPOFF is not set
+# CONFIG_BUSYBOX_CONFIG_MKSWAP is not set
+CONFIG_DROPBEAR_ED25519=y
+# CONFIG_DROPBEAR_RSA is not set
+CONFIG_PACKAGE_kmod-zx279125-ethernet=y
+CONFIG_PACKAGE_ethtool=y
+# CONFIG_PACKAGE_dnsmasq is not set
+# CONFIG_PACKAGE_odhcpd is not set
+# CONFIG_PACKAGE_odhcpd-ipv6only is not set
+# CONFIG_PACKAGE_odhcp6c is not set
+# CONFIG_PACKAGE_firewall is not set
+# CONFIG_PACKAGE_firewall4 is not set
+# CONFIG_PACKAGE_uci-firewall is not set
+# CONFIG_PACKAGE_iptables is not set
+# CONFIG_PACKAGE_nftables is not set
+# CONFIG_PACKAGE_ppp is not set
+# CONFIG_PACKAGE_ppp-mod-pppoe is not set
+# CONFIG_PACKAGE_kmod-nf-conntrack is not set
+# CONFIG_PACKAGE_kmod-nf-nat is not set
+# CONFIG_PACKAGE_kmod-nf-ipt is not set
+# CONFIG_PACKAGE_kmod-nf-reject is not set
+# CONFIG_PACKAGE_kmod-nf-log is not set
+# CONFIG_PACKAGE_kmod-ipt-core is not set
+# CONFIG_PACKAGE_kmod-ipt-conntrack is not set
+# CONFIG_PACKAGE_kmod-ipt-nat is not set
+# CONFIG_PACKAGE_kmod-zram is not set
+# CONFIG_PACKAGE_zram-swap is not set
+# CONFIG_PACKAGE_epon-oamd is not set
+# CONFIG_PACKAGE_luci-app-epon is not set
+# CONFIG_PACKAGE_luci-app-xpon-stats is not set
+# CONFIG_PACKAGE_luci-app-firewall is not set
+# CONFIG_PACKAGE_luci-app-package-manager is not set
+# CONFIG_PACKAGE_luci-proto-ipv6 is not set
+# CONFIG_PACKAGE_luci-proto-ppp is not set
+# CONFIG_PACKAGE_luci is not set
+# CONFIG_PACKAGE_luci-light is not set
+# CONFIG_PACKAGE_luci-mod-admin-full is not set
+# CONFIG_PACKAGE_rpcd-mod-iwinfo is not set
+# CONFIG_PACKAGE_rpcd-mod-rrdns is not set
+# CONFIG_PACKAGE_luci-lib-uqr is not set
+# CONFIG_PACKAGE_libiwinfo is not set
+# CONFIG_PACKAGE_libiwinfo-data is not set
+# CONFIG_PACKAGE_u-boot-vsol_v2801sg is not set
+CONFIG_PREINITOPT=y
+CONFIG_TARGET_PREINIT_SUPPRESS_FAILSAFE_NETMSG=y
+CONFIG_TARGET_PREINIT_TIMEOUT=1
+# Fixed-purpose ONU: package downloads/upgrades are handled off-device.
+# CONFIG_PACKAGE_apk-mbedtls is not set
+# CONFIG_PACKAGE_apk-openssl is not set
+# CONFIG_PACKAGE_opkg is not set
+# CONFIG_PACKAGE_libmbedtls is not set
+# CONFIG_PACKAGE_libustream-mbedtls is not set
+# CONFIG_PACKAGE_libuclient is not set
+# CONFIG_PACKAGE_uclient-fetch is not set
+# CONFIG_PACKAGE_ca-bundle is not set
+# CONFIG_PACKAGE_urandom-seed is not set
+# CONFIG_PACKAGE_urngd is not set

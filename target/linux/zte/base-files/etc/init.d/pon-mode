@@ -1,0 +1,15 @@
+#!/bin/sh /etc/rc.common
+# Start the GPON MAC controller once during boot.
+
+START=15
+
+boot() {
+	start
+}
+
+start() {
+	# The driver waits for this signal before enabling the MAC (30s fallback).
+	for start in /sys/class/xpon/*/device/pon_start; do
+		[ -w "$start" ] && echo 1 > "$start"
+	done
+}

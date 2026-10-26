@@ -1,0 +1,12 @@
+. /lib/functions/uci-defaults.sh
+
+board_config_update
+
+case "$(board_name)" in
+vsol,v2801sg)
+	ucidef_set_interface_lan "lan0 pon0"
+	;;
+esac
+
+board_config_flush
+exit 0
