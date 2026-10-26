@@ -29,7 +29,7 @@
 #define OMCI_EXTENDED_ID	0x0b
 #define OMCI_EXT_HEADER_LEN	10
 #define OMCI_MIC_LEN	4
-#define LUNA_XPON_SERVICES	16
+#define LUNA_XPON_SERVICES	64	/* omcid installs one per p-bit and GEM */
 #define LUNA_XPON_UNIS		4
 #define LUNA_XPON_VLAN_MAPS	8
 #define LUNA_XPON_TCONT_BASE	0x8000
@@ -559,12 +559,25 @@ static struct luna_xpon_gem *luna_xpon_gem_find(u16 gem)
 	return NULL;
 }
 
+static bool luna_xpon_service_same(const struct luna_xpon_service *a,
+				   const struct luna_xpon_service *b)
+{
+	return a->used && a->uni_entity == b->uni_entity && a->gem == b->gem &&
+	       a->vlan == b->vlan && a->uni_vid == b->uni_vid &&
+	       a->flow == b->flow && a->pcp == b->pcp &&
+	       a->uni_mode == b->uni_mode && a->direction == b->direction &&
+	       a->vlan_valid == b->vlan_valid && a->pcp_valid == b->pcp_valid &&
+	       a->default_service == b->default_service &&
+	       a->multicast == b->multicast;
+}
+
 static int luna_xpon_replace_service(struct omci_device *odev,
 				     const struct omci_service_config *s)
 {
-	struct luna_xpon_service *svc = NULL;
+	struct luna_xpon_service *svc = NULL, n;
 	struct luna_xpon_gem *g = luna_xpon_gem_find(s->gem_port_id);
 	struct luna_xpon_tcont *t = luna_xpon_tcont_find(s->tcont_entity_id);
+	bool changed;
 	int flow;
 	unsigned int i;
 
@@ -592,26 +605,32 @@ record:
 		if (!svc && !luna_xpon.svc[i].used)
 			svc = &luna_xpon.svc[i];
 	}
-	if (svc)
-		*svc = (struct luna_xpon_service) {
-			.uni_entity = s->uni_entity_id,
-			.cookie = s->cookie,
-			.gem = s->gem_port_id,
-			.vlan = s->vlan_id,
-			.uni_vid = s->uni_vlan_id,
-			.flow = flow < 0 ? 0 : flow,
-			.pcp = s->pcp & 7,
-			.uni_mode = s->uni_vlan_mode,
-			.direction = s->direction,
-			.vlan_valid = s->vlan_valid,
-			.pcp_valid = s->pcp_valid,
-			.default_service = s->default_service,
-			.multicast = s->multicast,
-			.used = true,
-		};
+	n = (struct luna_xpon_service) {
+		.uni_entity = s->uni_entity_id,
+		.cookie = s->cookie,
+		.gem = s->gem_port_id,
+		.vlan = s->vlan_id,
+		.uni_vid = s->uni_vlan_id,
+		.flow = flow < 0 ? 0 : flow,
+		.pcp = s->pcp & 7,
+		.uni_mode = s->uni_vlan_mode,
+		.direction = s->direction,
+		.vlan_valid = s->vlan_valid,
+		.pcp_valid = s->pcp_valid,
+		.default_service = s->default_service,
+		.multicast = s->multicast,
+		.used = true,
+	};
+	/* omcid replays every service on each change: only a new or changed
+	 * one reaches the hardware and the log. */
+	changed = svc && !luna_xpon_service_same(svc, &n);
+	if (changed)
+		*svc = n;
 	spin_unlock_bh(&luna_xpon.svc_lock);
 	if (!svc)
 		return -ENOSPC;
+	if (!changed)
+		return 0;
 	luna_xpon_update_data();
 	pr_info("luna-xpon: service %u: GEM %u flow %d VLAN %u%s\n", s->cookie,
 		s->gem_port_id, flow, s->vlan_valid ? s->vlan_id : 0,
