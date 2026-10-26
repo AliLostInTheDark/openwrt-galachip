@@ -323,6 +323,7 @@ static void luna_xpon_gem_unbind(unsigned int slot)
 	struct luna_xpon_gem *g = &luna_xpon.gem[slot];
 	unsigned int i;
 
+	rtl9601d_l2_changed();
 	if (g->hw)
 		luna_xpon_hw_gem_remove(slot);
 	g->hw = false;
@@ -624,8 +625,10 @@ record:
 	/* omcid replays every service on each change: only a new or changed
 	 * one reaches the hardware and the log. */
 	changed = svc && !luna_xpon_service_same(svc, &n);
-	if (changed)
+	if (changed) {
+		rtl9601d_l2_changed();
 		*svc = n;
+	}
 	spin_unlock_bh(&luna_xpon.svc_lock);
 	if (!svc)
 		return -ENOSPC;
@@ -644,8 +647,10 @@ static int luna_xpon_delete_service(struct omci_device *odev, u32 cookie)
 
 	spin_lock_bh(&luna_xpon.svc_lock);
 	for (i = 0; i < LUNA_XPON_SERVICES; i++)
-		if (luna_xpon.svc[i].used && luna_xpon.svc[i].cookie == cookie)
+		if (luna_xpon.svc[i].used && luna_xpon.svc[i].cookie == cookie) {
+			rtl9601d_l2_changed();
 			luna_xpon.svc[i].used = false;
+		}
 	spin_unlock_bh(&luna_xpon.svc_lock);
 	luna_xpon_update_data();
 	return 0;
@@ -883,6 +888,8 @@ static void luna_xpon_post(unsigned int ev, u8 state, u8 onu_id, u16 gem)
 
 void luna_xpon_report_state(u8 state)
 {
+	if (state != GPON_O5)
+		rtl9601d_l2_changed();
 	luna_xpon_post(LUNA_XPON_EV_STATE, state, 0, 0);
 }
 

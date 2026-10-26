@@ -4006,6 +4006,7 @@ static int gpon_install_omcc(u16 gem)
 {
 	int rc;
 
+	rtl9601d_l2_changed();
 	/* the 12-bit G.984.3 wire width is the core's, once (gpon_gem_us.h):
 	 * this site spelled it by hand, so a change to the field would have
 	 * had to be made in two places to be made at all. */

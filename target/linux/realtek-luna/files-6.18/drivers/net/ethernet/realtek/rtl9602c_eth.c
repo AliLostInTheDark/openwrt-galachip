@@ -1159,6 +1159,8 @@ static int rtl9602c_wan_vid(struct rtl9602c_eth *ep, u16 vid, bool add)
 {
 	u32 mbr = BIT(ep->swm->pon_port) | BIT(ep->swm->cpu_port);
 
+	if (ep == READ_ONCE(v2802_l2.ep) && !READ_ONCE(v2802_l2.stopping))
+		return v2802_l2_netdev_vid(ep, vid, add);
 	if (!ep->sw || !pon_vid || !vid || vid == SW_DEFAULT_VID || vid == pon_vid)
 		return 0;
 	return rtl9602c_vlan_write(ep, vid, add ? mbr : 0, 0, add ? 0x1 : 0, add) < 0 ?
@@ -1463,7 +1465,9 @@ static int rtl9602c_eth_rx(struct rtl9602c_eth *ep, int budget, bool napi_ctx)
 			/* The switch CPU port prepends a 2-byte offset word ahead */
 			skb_pull(skb, RX_CPU_PREFIX);
 			skb->offload_fwd_mark = v2802_l2_forwarded(skb,
-				luna_gmac_rx_src_port(ep->swm->rx_layout, ep->rx_ring[i].opts3));
+				luna_gmac_rx_src_port(ep->swm->rx_layout, ep->rx_ring[i].opts3),
+				luna_gmac_rx_reason(ep->swm->rx_layout, ep->rx_ring[i].opts2,
+						    ep->rx_ring[i].opts3));
 			if (!netif_running(rdev)) {
 				rdev->stats.rx_dropped++;
 				dev_kfree_skb_any(skb);
