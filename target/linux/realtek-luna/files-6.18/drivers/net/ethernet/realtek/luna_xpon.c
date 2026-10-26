@@ -707,8 +707,13 @@ int luna_xpon_l2_services(struct luna_l2_service *services)
 				goto out;
 			}
 		}
-		if (j == n)
+		if (j == n) {
+			if (n == LUNA_L2_SERVICES) {
+				rc = -ENOSPC;
+				goto out;
+			}
 			services[n++] = d;
+		}
 		priorities[j] |= s->pcp_valid ? BIT(s->pcp) : 0xff;
 	}
 	/* A single-GEM mapper can collapse all eight p-bits into one rule. */
