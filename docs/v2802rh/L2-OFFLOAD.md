@@ -3,8 +3,11 @@
 The RTL9601D SFU path in `rtl9601d_l2.c` programs upstream classification
 and switch VLAN forwarding from omcid's installed services. It is specific
 to `vsol,v2802rh`; the other Realtek boards keep their existing paths.
-It starts disabled. The 2026-10-26 off/on/off capture demonstrates LAN2
-CPU bypass in both directions; the remaining checks are recorded below.
+It is requested by default on V2802RH and activates when the bridge and
+installed services pass the checks below. Fresh images disable bridge
+multicast snooping in the network defaults. The 2026-10-26 off/on/off capture
+demonstrates LAN2 CPU bypass in both directions; remaining checks are
+recorded below.
 
 ## Forwarding
 
@@ -38,13 +41,25 @@ The backend advertises `OMCI_TOPOLOGY_F_FULL_UNI_ENTITY`, so omcid preserves
 full UNI IDs for service and administrative operations. Profile truncation
 would otherwise turn both VEIP 0x0601 and PPTP 0x0101 into 1.
 
-## Enable after rebuilding
+## Default enablement and runtime control
+
+No enable command is needed on a fresh image. After O5 and provisioning,
+check the state:
+
+```sh
+cat /sys/class/net/pon0/device/l2_offload
+```
+
+An upgrade that preserves `/etc/config/network` also preserves its bridge
+settings. If snooping is enabled there, offload remains inactive until that
+setting is changed. `requested=1` alone does not mean forwarding is active.
 
 The existing `br-lan` must contain only `eth0` and `pon0`, with both ports
 forwarding, bridge VLAN filtering off and multicast snooping off. This first
 path does not program the bridge MDB. The L34 NAT engine and per-port VLAN
 mode must also be off. Non-local user FDB entries and enabled isolation-leak
 settings prevent offload; their forwarding policies are not implemented.
+To enable it again after a runtime disable, with a compatible bridge:
 
 ```sh
 echo 0 > /sys/class/net/br-lan/bridge/multicast_snooping
@@ -56,7 +71,8 @@ cat /sys/class/net/pon0/device/l2_offload
 it does not prove that traffic crossed the hardware. Capture port MIBs and
 CPU load during traffic in both directions to establish that.
 
-Disable and restore the previous VLANs, LAN PVIDs and flood settings:
+Disable until reboot and restore the previous VLANs, LAN PVIDs and flood
+settings:
 
 ```sh
 echo 0 > /sys/class/net/pon0/device/l2_offload
@@ -155,7 +171,9 @@ load does not establish saturation; the fallback failure needs diagnosis.
 LAN1 counters are zero throughout, so LAN1 and simultaneous-port behavior
 remain untested. Management/OMCI under load, MAC moves, service replacement,
 re-ranging and higher-rate capacity also remain pending. This result does
-not complete the full validation gate or justify a default-enable change.
+not complete the full validation gate. The user subsequently requested
+default enablement for the V2802RH branch with these checks still open;
+other boards retain their existing behavior.
 
 The 2026-10-26 repair additionally passed 196,608 TCAM comparisons, failures
 at all 109 install and 18 withdrawal table-transaction positions, readback

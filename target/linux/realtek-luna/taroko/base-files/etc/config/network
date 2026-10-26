@@ -13,6 +13,7 @@ config globals 'globals'
 config device
 	option name 'br-lan'
 	option type 'bridge'
+	option igmp_snooping '0'
 	list ports 'eth0'
 	list ports 'pon0'
 

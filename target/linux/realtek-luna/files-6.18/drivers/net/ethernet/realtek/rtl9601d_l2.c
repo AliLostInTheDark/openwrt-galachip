@@ -796,6 +796,7 @@ static int v2802_l2_init(struct rtl9602c_eth *ep)
 	if (hw_nat || port_vlans || !ep->sw || !ep->wan_ndev)
 		return -EOPNOTSUPP;
 	memset(&v2802_l2, 0, sizeof(v2802_l2));
+	v2802_l2.requested = true;
 	INIT_DELAYED_WORK(&v2802_l2.work, v2802_l2_work);
 	spin_lock_irqsave(&v2802_l2_lock, flags);
 	v2802_l2.ep = ep;
