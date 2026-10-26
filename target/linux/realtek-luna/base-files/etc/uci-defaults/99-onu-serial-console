@@ -1,0 +1,4 @@
+#!/bin/sh
+# Repair the empty-device shell entry left by older ONU images.
+sed -i 's|^::respawn:/bin/sh$|::askconsole:/usr/libexec/login.sh|' /etc/inittab
+exit 0
