@@ -3,6 +3,7 @@
 'require dom';
 'require ui';
 'require omci.rpc as omci';
+'require xpon.widgets as widgets';
 
 /*
  * The agent's MIB, one table per object with the fields omci.agent decodes;
@@ -79,6 +80,7 @@ return view.extend({
 	},
 
 	render: function(objects) {
+		widgets.style();
 		var root = E('div', {}, render(objects));
 		var search = E('input', {
 			'class': 'cbi-input-text',

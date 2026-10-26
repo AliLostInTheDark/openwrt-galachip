@@ -2,6 +2,7 @@
 'require view';
 'require ui';
 'require omci.rpc as omci';
+'require xpon.widgets as widgets';
 
 function notifyError(err) {
 	ui.addNotification(null, E('p', {}, _('Failed to apply OMCI profile: %s').format(err)), 'error');
@@ -38,6 +39,7 @@ return view.extend({
 	},
 
 	render: function(profiles) {
+		widgets.style();
 		profiles = profiles || [];
 		if (!profiles.length)
 			return E([], [ E('h2', {}, _('OMCI profiles')), E('p', {}, _('No built-in profiles are available.')) ]);

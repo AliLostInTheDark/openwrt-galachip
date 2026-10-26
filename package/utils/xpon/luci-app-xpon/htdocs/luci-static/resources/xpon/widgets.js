@@ -49,6 +49,10 @@ var CSS = [
 	'.xpon-card>strong{display:block;margin-bottom:4px;font-size:15px}',
 	'.xpon-card>p{margin:2px 0;font-size:13px;color:var(--text-2,var(--text-color-medium,#555));overflow-wrap:anywhere}',
 	'.xpon-lead{margin:0 0 12px;overflow-wrap:anywhere}',
+	/* The PON pages are read-outs: an arrow, not the text I-beam, except where one types. */
+	'body:is([data-page^="admin-network-omci"],[data-page^="admin-network-xpon"],[data-page^="admin-network-epon"]) #maincontent{cursor:default}',
+	'body:is([data-page^="admin-network-omci"],[data-page^="admin-network-xpon"],[data-page^="admin-network-epon"]) #maincontent :is(input:not([type=checkbox],[type=radio],[type=button],[type=submit],[type=reset]),textarea){cursor:text}',
+	'body:is([data-page^="admin-network-omci"],[data-page^="admin-network-xpon"],[data-page^="admin-network-epon"]) #maincontent :is(a[href],button,select,summary,label[for],.cbi-button,.btn){cursor:pointer}',
 	/* Stage names need about 80px each; below that the sentence says where it stands. */
 	'@container (max-width:420px){.xpon-stage span{display:none}.xpon-stage{padding:8px 2px}}',
 	'@media (max-width:600px){.xpon-panel{padding:14px}.xpon-gauge-value{font-size:28px}}'
