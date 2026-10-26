@@ -61,14 +61,13 @@ size `00399000`, U-Boot `0001f000`, U-Boot environment `00001000` and
 rootfs_data `00075000`. Inittab contains
 `::askconsole:/usr/libexec/login.sh`. The required layout gate has passed.
 
-Next proposed write: stock U-Boot erases 0x19000 bytes at flash offset
-0x3c0000 and programs the tested `67fe7286` image (0x1893f bytes), then
-compares it against RAM and boots it directly. The erase ends at 0x3d9000,
-below the new environment at 0x3df000. Staged image SHA-256:
-`e05a279a09e825c28e35ad574938ea6faab3c542a1a7af88e2e4e63e46dbce8f`.
-Header/payload CRCs, decompression, type, load/entry and size were rechecked.
-Erase and programming need the user's approval before execution; persisting
-stock bootcmd is a later, separately approved environment write.
+The proposed installation of `67fe7286` was deferred when the user asked
+to validate all recovery/update paths first. The subsequent audit produced
+U-Boot `4447ad1c` and companion OpenWrt +158 with additional guards.
+See [the recovery test checklist](UBOOT-RECOVERY-TESTS.md) for current files,
+hashes, host results and RAM tests. These builds have not been installed;
+the user's verified +155 remains the running baseline. Erase/programming
+and environment saves still need explicit approval before execution.
 No board access or flash write was performed by the agent.
 
 Rollback source tag: `codex/v2802rh-before-uboot-layout-20261026` at
