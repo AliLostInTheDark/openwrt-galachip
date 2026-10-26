@@ -54,6 +54,28 @@ Local harnesses and logs, intentionally uncommitted:
 `tmp/v2802rh/uboot-audit-20261026/`. Existing OpenWrt modpost warnings
 about the disabled full-SerDes-reinit path remain; no GPON code was changed.
 
+## Blink hang follow-up
+
+Hardware results for `4447ad1c`: two pings, flash read/compare, firmware
+TFTP, validation and an HTTP RAM upload with the power LED steady all
+passed. The uploaded 3,293,188 bytes matched the TFTP reference and CRC32
+`6aab80ca`. With software blinking enabled, HTTP stalled at the start of
+GMAC shutdown. A separate `led green:power blink 250` followed by `sleep 3`
+also hung after one blink. This reproduces the failure without Ethernet;
+the exact failing operation remains unknown.
+
+Temporary diagnostic commit `4dc8c0c5e259` traces the first four scheduler
+passes and LED callbacks and enables the cyclic console command. This is
+instrumentation, not a confirmed fix; remove it after diagnosis. Its
+separately staged image `v2802rh-u-boot-blink-debug.img` is 103,594 bytes,
+CRC32 `082bf77d`, SHA-256
+`8630bc0ebac049c093f9fbe4d395c3ed3f48e3a75c9575c9cc37366c2982071d`.
+The ordinary staged images in the table below remain unchanged.
+
+Chainload this diagnostic from stock U-Boot, interrupt its countdown,
+and capture the trace from `led green:power blink 250` then `sleep 3`.
+Do not continue installation while this hang remains unresolved.
+
 ## Staged files
 
 | TFTP filename | Bytes (hex) | Whole-file CRC32 | SHA-256 |
