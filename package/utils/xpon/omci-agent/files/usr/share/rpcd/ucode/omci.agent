@@ -723,6 +723,9 @@ function migrate_pon_vlan_ports() {
 	net.foreach('network', 'device', (section) => {
 		let ports = section.ports, out = [], hit = false;
 
+		if (section.vlan_filtering == '1')
+			return;
+
 		if (type(ports) != 'array')
 			return;
 		for (let port in ports) {
