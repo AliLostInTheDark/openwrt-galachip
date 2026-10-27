@@ -24,7 +24,7 @@
 import * as uloop from 'uloop';
 import * as ubus from 'ubus';
 import { cursor } from 'uci';
-import { readfile } from 'fs';
+import { readfile, writefile } from 'fs';
 
 const PON = 'pon0';
 const BRIDGE = 'br-lan';
@@ -139,7 +139,23 @@ function olt_vlan() {
 	return { vid: null, prio: null };
 }
 
+function bridge_section(uci) {
+	let name;
+
+	uci.foreach('network', 'device', (s) => {
+		if (s.name == BRIDGE)
+			name = s['.name'];
+	});
+
+	return name;
+}
+
 function resolve() {
+	let net = cursor(), bridge = bridge_section(net);
+
+	if (bridge && net.get('network', bridge, 'vlan_filtering') == '1' &&
+	    readfile(`/sys/class/net/${PON}/device/l2_port_priority`) != null)
+		return { mode: 'bridge', source: 'network', port: PON };
 	let config = read_config();
 
 	switch (config.mode) {
@@ -162,17 +178,6 @@ function resolve() {
 		return { mode: 'transparent', source: 'config', vid: null,
 			 prio: null };
 	}
-}
-
-function bridge_section(uci) {
-	let name;
-
-	uci.foreach('network', 'device', (s) => {
-		if (s.name == BRIDGE)
-			name = s['.name'];
-	});
-
-	return name;
 }
 
 function set_option(uci, section, option, value) {
@@ -258,13 +263,34 @@ function apply(vid, prio) {
 	return port;
 }
 
+function sync_port_priority() {
+	let path = `/sys/class/net/${PON}/device/l2_port_priority`;
+	let current = readfile(path);
+	if (current == null)
+		return;
+	let net = cursor(), bridge = bridge_section(net), values = [];
+	for (let port in [ 'lan2', 'lan1' ]) {
+		let pcp = number(net.get('network', bridge, `omci_pcp_${port}`) ?? '-1');
+		push(values, pcp != null && pcp >= -1 && pcp <= 7 ? pcp : -1);
+	}
+	let wanted = join(' ', values);
+	if (trim(current) != wanted && writefile(path, wanted) == null)
+		warn('omci-vlan: could not apply LAN priority\n');
+}
+
 function update() {
 	let next = resolve();
 
-	if (next.error || next.source == 'pending')
+	if (next.mode == 'bridge')
+		sync_port_priority();
+	else if (next.error || next.source == 'pending')
 		next.port = current_port();
-	else
+	else {
 		next.port = apply(next.vid, next.prio);
+		let path = `/sys/class/net/${PON}/device/l2_port_priority`;
+		if (trim(readfile(path) ?? '-1 -1') != '-1 -1')
+			writefile(path, '-1 -1');
+	}
 
 	if (next.error && next.error != state.error)
 		warn(`omci-vlan: ${next.error}, network config left unchanged\n`);
@@ -301,7 +327,9 @@ let object = conn.publish('omci.vlan', {
 		call: () => {
 			let supported = readfile(`/sys/class/net/${PON}/device/sfu_lan_tagged`) != null;
 
-			return { ...state, port_tagging: supported,
+			let reserved = map(match(readfile(`/sys/class/net/${PON}/device/l2_vlan_reserved`) ?? '', /[0-9]+/g) ?? [], (v) => int(v[0]));
+			return { ...state, port_vlan: readfile(`/sys/class/net/${PON}/device/l2_port_priority`) != null,
+				 reserved_vids: reserved, port_tagging: supported,
 				 port_tagging_ports: supported ? tagging_ports() : [] };
 		}
 	}
@@ -309,7 +337,7 @@ let object = conn.publish('omci.vlan', {
 
 update();
 
-if (state.mode == 'olt') {
+if (state.mode == 'olt' || state.mode == 'bridge') {
 	let timer;
 	timer = uloop.timer(POLL * 1000, function() {
 		update();

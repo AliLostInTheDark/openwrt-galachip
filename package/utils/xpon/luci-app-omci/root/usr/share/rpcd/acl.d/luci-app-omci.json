@@ -42,7 +42,8 @@
 				]
 			},
 			"uci": [
-				"omci"
+				"omci",
+				"network"
 			]
 		}
 	}

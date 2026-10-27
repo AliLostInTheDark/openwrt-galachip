@@ -418,6 +418,8 @@ return view.extend({
 		o.description = _('Slot of the Virtual Ethernet Interface Point (VEIP). The ONU starts on slot 6 under the Nokia/ALCL profile and slot 10 otherwise, then moves the VEIP to the slot the OLT provisions. Nokia ISAM OLTs mostly use slot 6; some, such as Airtel India, use slot 3. Fix the slot only when the OLT rejects the uploaded one before provisioning.');
 
 		s = m.section(form.NamedSection, 'vlan', 'vlan', _('LAN VLAN mode'),
+			data[3].mode == 'bridge' ?
+			_('Per-port bridge VLAN filtering is active. Configure membership under LAN port VLANs. These global defaults apply when per-port control is disabled.') :
 			_('How the bridge carries the service VLAN between the OLT and the LAN port.'));
 		s.addremove = false;
 		s.tab('mode', _('LAN VLAN'));
