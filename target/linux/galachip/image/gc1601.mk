@@ -57,7 +57,7 @@ define Device/tplink_xz000-g7
   IMAGE/sysupgrade.bin := append-kernel | pad-to $$(BLOCKSIZE) | \
     append-rootfs | pad-rootfs | check-size | append-metadata
   DEVICE_PACKAGES := kmod-gc1601-gpon-diag kmod-gc1601-epon-diag xpon-report \
-    omci-agent omcid luci-app-omci luci-theme-slate uhttpd-mod-ucode \
+    omci-agent omcid luci-app-omci luci-app-onu-system luci-theme-slate uhttpd-mod-ucode \
     epon-oamd luci-app-epon \
     -uclient-fetch -urandom-seed -urngd -ca-bundle \
     -libustream-mbedtls -rpcd-mod-iwinfo -libiwinfo-data -libiwinfo \
