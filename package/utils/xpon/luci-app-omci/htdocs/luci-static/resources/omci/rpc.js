@@ -23,7 +23,13 @@ return baseclass.extend({
 	configGet: declare('config_get', [ 'device', 'key' ], { config: {} }),
 	configInspect: declare('config_inspect', [ 'device', 'key' ], { config: {} }),
 	configSet: declare('config_set', [ 'device', 'key', 'value' ], {}),
+	classList: declare('class_list', [ 'device' ], { classes: [] }),
+	classGet: declare('class_get', [ 'device', 'class_id' ], { class: {} }),
 	mibList: declare('mib_list', [ 'device' ], { objects: [] }),
+	mibGet: declare('mib_get', [ 'device', 'class_id', 'entity_id' ], { object: {} }),
+	mibSet: declare('mib_set', [ 'device', 'class_id', 'entity_id', 'attr_mask', 'data' ], {}),
+	mibDelete: declare('mib_delete', [ 'device', 'class_id', 'entity_id' ], {}),
+	mibReset: declare('mib_reset', [ 'device' ], {}),
 	apply: declare('apply', [ 'device' ], {}),
 	vlanStatus: rpc.declare({ object: 'omci.vlan', method: 'status', expect: { '': {} } })
 });

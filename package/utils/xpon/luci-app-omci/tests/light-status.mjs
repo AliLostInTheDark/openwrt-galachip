@@ -243,14 +243,22 @@ const xponAcl = JSON.parse(read(path.join(xpon, 'luci-app-xpon/root/usr/share/rp
 assert.deepEqual(Object.keys(xponAcl.write.file), ['/usr/sbin/xpon-report -o -']);
 
 const menu = JSON.parse(read(path.join(pkg, 'root/usr/share/luci/menu.d/luci-app-omci.json')));
-// The MIB page reads the MIB once when opened; it must not poll.
+// MIB reads and edits are on demand; the page must not poll.
 assert.deepEqual(Object.keys(menu).filter(k => k.includes('/mib')), ['admin/network/omci/mib']);
 assert(!/\bpoll\b/.test(read(path.join(pkg, 'htdocs/luci-static/resources/view/omci/mib.js'))));
 assert(!Object.keys(menu).some(k => k.endsWith('/line')));
 const acl = JSON.parse(read(path.join(pkg, 'root/usr/share/rpcd/acl.d/luci-app-omci.json')))['luci-app-omci'];
 assert(acl.read.ubus['omci.agent'].includes('status_live'));
 assert(acl.read.ubus['omci.agent'].includes('mib_list')); // Explicit VLAN configuration reads.
-assert(!acl.write.ubus['omci.agent'].some(m => /^(mib_|raw_tx)/.test(m)));
+for (const method of ['class_list', 'class_get', 'mib_list', 'mib_get']) {
+  assert(acl.read.ubus['omci.agent'].includes(method));
+  assert(declarations.some(d => d.method === method));
+}
+for (const method of ['mib_set', 'mib_delete', 'mib_reset']) {
+  assert(acl.write.ubus['omci.agent'].includes(method));
+  assert(declarations.some(d => d.method === method));
+}
+assert(!acl.write.ubus['omci.agent'].includes('raw_tx'));
 assert(!acl.read.file);
 assert(!acl.write.ubus.file);
 assert(!Object.keys(acl.write.file).some(p => /tx_hold|xpon-rogue/.test(p)));
