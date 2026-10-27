@@ -287,9 +287,8 @@ static int ftspi020_firecmd(struct ftspi020_priv *ctrl, u32 cmd3, const struct s
 	return 0;
 }
 
-static int ftspi020_decode_proto(struct spi_mem *mem, const struct spi_mem_op *op)
+static int ftspi020_decode_proto(const struct spi_mem_op *op)
 {
-	struct ftspi020_priv *ctrl = spi_controller_get_devdata(mem->spi->controller);
 	int cmd_width, addr_width, data_width, ret;
 	u32 proto;
 
@@ -322,8 +321,6 @@ static int ftspi020_decode_proto(struct spi_mem *mem, const struct spi_mem_op *o
 		ret = CMD3_PROTO_OPCODE_4BIT;
 		break;
 	default:
-		dev_err(ctrl->dev, "Decode protocol %d-%d-%d error\n",
-			cmd_width, addr_width, data_width);
 		ret = -EINVAL;
 	}
 
@@ -394,7 +391,7 @@ static int ftspi020_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
 		op->dummy.buswidth, op->data.buswidth,
 		op->addr.val, op->addr.nbytes, op->data.nbytes);
 
-	proto = ftspi020_decode_proto(mem, op);
+	proto = ftspi020_decode_proto(op);
 	if (proto < 0) {
 		err = proto;
 		goto error;
@@ -408,39 +405,19 @@ error:
 	return err;
 }
 
-static int ftspi020_check_buswidth(struct ftspi020_priv *ctrl, u8 width)
-{
-	switch (width) {
-	case 1:
-	case 2:
-	case 4:
-		return 0;
-	}
-
-	return -ENOTSUPP;
-}
-
 static bool ftspi020_supports_op(struct spi_mem *mem,
 				 const struct spi_mem_op *op)
 {
-	struct ftspi020_priv *ctrl = spi_controller_get_devdata(mem->spi->controller);
-	int ret;
-
-	ret = ftspi020_check_buswidth(ctrl, op->cmd.buswidth);
-
-	if (op->addr.nbytes)
-		ret |= ftspi020_check_buswidth(ctrl, op->addr.buswidth);
-
-	if (op->dummy.nbytes)
-		ret |= ftspi020_check_buswidth(ctrl, op->dummy.buswidth);
-
-	if (op->data.nbytes)
-		ret |= ftspi020_check_buswidth(ctrl, op->data.buswidth);
-
-	if (ret)
+	if (!spi_mem_default_supports_op(mem, op))
 		return false;
 
-	if (op->addr.nbytes > 4)
+	if (op->addr.nbytes > 4 || ftspi020_decode_proto(op) < 0)
+		return false;
+
+	/* Dummy clocks use the address phase's bus width in the command engine. */
+	if (op->dummy.nbytes &&
+	    op->dummy.buswidth != (op->addr.nbytes ? op->addr.buswidth :
+							 op->cmd.buswidth))
 		return false;
 
 	if (op->dummy.nbytes &&
