@@ -49,6 +49,7 @@ var CSS = [
 	'.xpon-card>strong{display:block;margin-bottom:4px;font-size:15px}',
 	'.xpon-card>p{margin:2px 0;font-size:13px;color:var(--text-2,var(--text-color-medium,#555));overflow-wrap:anywhere}',
 	'.xpon-lead{margin:0 0 12px;overflow-wrap:anywhere}',
+	'.xpon-report-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;padding-bottom:12px}',
 	/* The PON pages are read-outs: an arrow, not the text I-beam, except where one types. */
 	'body:is([data-page^="admin-network-omci"],[data-page^="admin-network-xpon"],[data-page^="admin-network-epon"]) #maincontent{cursor:default}',
 	'body:is([data-page^="admin-network-omci"],[data-page^="admin-network-xpon"],[data-page^="admin-network-epon"]) #maincontent :is(input:not([type=checkbox],[type=radio],[type=button],[type=submit],[type=reset]),textarea){cursor:text}',
@@ -216,14 +217,15 @@ return baseclass.extend({
 		return E('div', { 'class': 'cbi-section' }, [
 			E('h3', {}, _('Diagnostics')),
 			E('p', {}, _('Collects the PON state, settings and the kernel log into one text file to attach to a bug report. Serial numbers, passwords and LOIDs are masked.')),
-			E('button', {
+			E('div', { 'class': 'xpon-report-actions' }, E('button', {
 				'class': 'cbi-button cbi-button-action',
+				'type': 'button',
 				'click': ui.createHandlerFn(this, function() {
 					return fs.exec_direct('/usr/sbin/xpon-report', [ '-o', '-' ]).then(save).catch(function(e) {
 						ui.addNotification(null, E('p', _('Could not collect the report: %s').format(e.message || e)), 'error');
 					});
 				})
-			}, _('Download diagnostic report'))
+			}, _('Download diagnostic report')))
 		]);
 	},
 
