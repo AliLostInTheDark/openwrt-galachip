@@ -212,7 +212,7 @@ var applyCost = {
 	enabled: 'drop', serial: 'drop', vendor_id: 'drop',
 	permissive: 'live', fake_omci: 'live', reboot: 'live', transmit: 'next',
 	vlan_translate: 'live', vlan_stack: 'live', olt_profile: 'live', olt_profile_force: 'live',
-	mode: 'live', vid: 'live', prio: 'live',
+	mode: 'live', vid: 'live', prio: 'live', lan1_tagged: 'live', lan2_tagged: 'live',
 	password: 'next', loid: 'next', loid_password: 'next',
 	hardware_version: 'next', software_version_0: 'next', software_version_1: 'next',
 	equipment_id: 'next', omcc_version: 'next', traffic_management_option: 'next',
@@ -223,7 +223,8 @@ return view.extend({
 	load: function() {
 		/* The MIB list is slow to read: the VLAN table fills in after rendering. */
 		return Promise.all([ uci.load('omci'), [],
-				     L.resolveDefault(uci.load('network'), null) ]);
+				     L.resolveDefault(uci.load('network'), null),
+				     L.resolveDefault(omci.vlanStatus(), {}) ]);
 	},
 
 	render: function(data) {
@@ -447,6 +448,17 @@ return view.extend({
 		});
 		o.default = '0';
 		o.depends('mode', 'tagged');
+
+		if (data[3].port_tagging) {
+			[ 'lan1', 'lan2' ].forEach(function(port) {
+				o = s.taboption('mode', form.ListValue, port + '_tagged', _('%s service VLAN').format(port.toUpperCase()));
+				o.value('0', _('Follow LAN VLAN mode'));
+				o.value('1', _('Keep service VLAN tagged'));
+				o.default = '0';
+				o.rmempty = false;
+				o.description = _('Choose independently for each port. Keep tagged retains the VLAN that the LAN VLAN mode or OLT otherwise removes; the connected router must tag that VLAN. Other tagged services pass unchanged. This requires one native service VLAN.');
+			});
+		}
 
 		o = s.taboption('scan', form.Value, 'scan_vids', _('Extra VLAN IDs to scan'));
 		o.placeholder = '100 200';

@@ -276,7 +276,7 @@ let object = conn.publish('omci.vlan', {
 	status: {
 		/* rpcd adds the session to every call made over HTTP */
 		args: { ubus_rpc_session: '' },
-		call: () => state
+		call: () => ({ ...state, port_tagging: readfile(`/sys/class/net/${PON}/device/sfu_lan_tagged`) != null })
 	}
 });
 

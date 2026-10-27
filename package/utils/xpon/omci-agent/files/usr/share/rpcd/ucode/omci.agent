@@ -692,6 +692,22 @@ function sync_untag_vlan(fresh) {
 		writefile(path, `${vid}`);
 }
 
+/* V2802RH physical port 1 is LAN1, port 0 is LAN2. */
+function sync_lan_tagged(fresh) {
+	let path = `${PON_SYSFS}/sfu_lan_tagged`;
+	let current = readfile(path);
+	if (current == null)
+		return;
+	if (fresh)
+		uci.unload('omci');
+	let config = uci.get_all('omci', 'vlan') || {};
+	let mask = (config.lan1_tagged == '1' ? 2 : 0) |
+		   (config.lan2_tagged == '1' ? 1 : 0);
+
+	if (int(trim(current)) != mask)
+		writefile(path, `${mask}`);
+}
+
 /*
  * A bridge port pon0.N means "the LAN sends VLAN N untagged". With a driver
  * that offloads that (sfu_untag_vlan), pon0.N would tag the switch's frames
@@ -792,6 +808,7 @@ const config_poll = interval(CONFIG_POLL_MS, () => {
 		return;
 	sync_untag_vlan(false);
 	sync_vlan_map(false);
+	sync_lan_tagged(false);
 });
 
 /*
@@ -833,6 +850,7 @@ migrate_pon_vlan_ports();
 if (!pon_mode_epon()) {
 	sync_untag_vlan(true);
 	sync_vlan_map(true);
+	sync_lan_tagged(true);
 }
 
 return { 'omci.agent': methods };
