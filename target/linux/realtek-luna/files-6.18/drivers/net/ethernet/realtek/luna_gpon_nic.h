@@ -28,6 +28,7 @@ struct luna_l2_service {
 	u16 vid;
 	u8 flow;
 	u8 lan_mask;
+	u8 untag_mask;
 	bool untagged;
 };
 void rtl9601d_l2_changed(void);
@@ -40,6 +41,8 @@ struct led_classdev;
 #if IS_ENABLED(CONFIG_XPON_OMCI)
 int luna_xpon_l2_services(struct luna_l2_service *services);
 void luna_xpon_service_vids(unsigned long *vids);
+u8 luna_xpon_lan_tagged(void);
+int luna_xpon_native_vlan(void);
 bool luna_xpon_wanted(void);
 bool luna_xpon_active(void);
 bool luna_xpon_data_ready(void);
@@ -60,6 +63,8 @@ static inline int luna_xpon_l2_services(struct luna_l2_service *services)
 	return -EOPNOTSUPP;
 }
 static inline void luna_xpon_service_vids(unsigned long *vids) { }
+static inline u8 luna_xpon_lan_tagged(void) { return 0; }
+static inline int luna_xpon_native_vlan(void) { return 0; }
 static inline bool luna_xpon_wanted(void) { return false; }
 static inline bool luna_xpon_active(void) { return false; }
 static inline bool luna_xpon_data_ready(void) { return false; }

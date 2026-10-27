@@ -1115,6 +1115,11 @@ static netdev_tx_t rtl9602c_eth_wan_xmit(struct sk_buff *skb, struct net_device 
 
 	/* omcid's services: the frame's GEM flow, with the network-side tag */
 	if (luna_xpon_active()) {
+		if (!v2802_l2_wan_allowed(ep, skb)) {
+			dev_kfree_skb_any(skb);
+			ndev->stats.tx_dropped++;
+			return NETDEV_TX_OK;
+		}
 		flow = luna_xpon_tx_flow(&skb);
 		if (flow < 0) {
 			if (skb)
@@ -2204,12 +2209,12 @@ static int rtl9602c_eth_hw_start(struct rtl9602c_eth *ep)
 	desnum = luna_gmac_rxdesnum_pack(ep->rx_n, TH_ON_VAL, TH_OFF_VAL);
 	ep_wr(ep, R_RxDesNum, desnum);
 	ep_wr(ep, R_RxCDO, luna_gmac_rxcdo_pack(ep->rx_n));
-
+	
 	ep_wr(ep, R_RCR, 0x0000000E);
 	ep_wr(ep, R_TCR, 0x00000C00);
 	ep_wr(ep, R_CONFIG, 0x20000000);
 	iowrite8(0x0A, ep->base + R_CMD);	/* CMD = RxChkSum|RxJumboSupport (keep working-RX baseline) */
-
+	
 	rtl9602c_cpu_tag_arm(ep);
 	/* GMAC config regs that a LIVE stock ONU at O5 SETS but */
 	ep_wr(ep, R_RXOKMUL, 0x010c0000);	/* stock O5 counter snapshot -- a MIB word, not config; see rtl9602c_hw_program() */
@@ -2368,6 +2373,13 @@ static netdev_tx_t rtl9602c_eth_lan_submit(struct rtl9602c_eth *ep,
 		netif_stop_queue(ndev);
 		return NETDEV_TX_BUSY;
 	}
+	if (port >= 0 && v2802_l2_lan_prepare(ep, skb, port)) {
+		spin_unlock_irqrestore(&ep->tx_lock, flags);
+		ndev->stats.tx_dropped++;
+		dev_kfree_skb_any(skb);
+		return NETDEV_TX_OK;
+	}
+	len = skb->len;
 	if (len < ETH_ZLEN) {
 		if (skb_padto(skb, ETH_ZLEN)) {
 			spin_unlock_irqrestore(&ep->tx_lock, flags);
@@ -2438,7 +2450,8 @@ static netdev_tx_t rtl9602c_lan_xmit(struct sk_buff *skb,
 	unsigned int p;
 
 	for (p = 0; p < LAN_PORTS; p++) {
-		if (ep->lan_ndev[p] && skb->skb_iif == ep->lan_ndev[p]->ifindex) {
+		if (ep->lan_ndev[p] && skb->skb_iif == ep->lan_ndev[p]->ifindex &&
+		    (!luna_xpon_lan_tagged() || READ_ONCE(v2802_l2.active))) {
 			ep->dbg_lan_relay_skipped++;
 			dev_kfree_skb_any(skb);
 			return NETDEV_TX_OK;
