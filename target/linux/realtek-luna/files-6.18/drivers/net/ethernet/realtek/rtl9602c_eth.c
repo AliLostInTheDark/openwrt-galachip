@@ -3296,7 +3296,9 @@ static void rtl9602c_ext_phy_leds(struct rtl9602c_eth *ep)
 		ext_mdio_write_c45(ep, MDIO_MMD_VEND2_RTL, rtl8221b_stock_leds[i].reg,
 				   rtl8221b_stock_leds[i].val);
 	v = ext_mdio_read_c45(ep, MDIO_MMD_VEND2_RTL, 0xd044);
-	if (v != 0x00f8)
+	if (v < 0)
+		dev_warn_ratelimited(ep->dev, "RTL8221B LED setup read failed: %d\n", v);
+	else if (v != 0x00f8)
 		dev_warn(ep->dev, "RTL8221B LED setup read back %04x, not 00f8\n", v);
 }
 
@@ -3337,20 +3339,24 @@ static int rtl9602c_ext_phy_serdes_option(struct rtl9602c_eth *ep, unsigned int 
 	return 0;
 }
 
-/* Reset clears both the SerDes option and the lamp configuration. Keep the
- * target on failure so link polling retries even before copper links again. */
+/* Reset once per target change. The PHY can answer MDIO before its vendor
+ * registers are ready; resetting on every retry restarts that initialization. */
 static int rtl9602c_ext_phy_setup(struct rtl9602c_eth *ep, unsigned int option)
 {
-	int rc = 0;
+	int rc;
 
 	if (option) {
-		ep->ext_phy_target = option;
-		ep->ext_phy_option = 0;
-		rtl9602c_ext_phy_reset(ep);
+		if (ep->ext_phy_target != option) {
+			ep->ext_phy_target = option;
+			ep->ext_phy_option = 0;
+			rtl9602c_ext_phy_reset(ep);
+		}
 		rc = rtl9602c_ext_phy_serdes_option(ep, option);
+		if (rc)
+			return rc;
 	}
 	rtl9602c_ext_phy_leds(ep);
-	return rc;
+	return 0;
 }
 
 static int rtl9602c_ext_phy_init(struct rtl9602c_eth *ep)
