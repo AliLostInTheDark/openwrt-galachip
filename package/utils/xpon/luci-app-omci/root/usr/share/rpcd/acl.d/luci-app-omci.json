@@ -10,7 +10,10 @@
 					"config_details",
 					"config_get",
 					"config_inspect",
+					"class_list",
+					"class_get",
 					"mib_list",
+					"mib_get",
 					"status_live"
 				],
 				"omci.vlan": [
@@ -27,6 +30,9 @@
 				"omci.agent": [
 					"agent_set",
 					"config_set",
+					"mib_set",
+					"mib_delete",
+					"mib_reset",
 					"apply"
 				]
 			},
