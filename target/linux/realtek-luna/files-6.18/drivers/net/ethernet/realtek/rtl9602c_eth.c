@@ -10,6 +10,7 @@
 #include <linux/of.h>
 #include <linux/of_net.h>	/* of_get_mac_address() -- the DT rung of the ladder */
 #include <linux/io.h>
+#include <linux/iopoll.h>
 #include <linux/mii.h>	/* BMCR_* -- the standard MII bit names */
 #include <linux/interrupt.h>	/* request_irq, irqreturn_t, IRQF_SHARED */
 #include <linux/delay.h>
@@ -567,7 +568,7 @@ static void rtl9602c_lan_sds_program(struct rtl9602c_eth *ep, bool hsgmii)
 	for (i = 0; i < n; i++)
 		iowrite32(a[i].val, ep->sw + a[i].off);
 	iowrite32(hsgmii ? LAN_SDS_MODE_HSGMII : LAN_SDS_MODE_SGMII, ep->sw + SW_LAN_SDS_MODE);
-	if (rtl9602c_uni_port_locked(0))
+	if (ep->ext_phy_ok || rtl9602c_uni_port_locked(0))
 		v &= ~ABLTY_LINK;
 	iowrite32(v, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
 	iowrite32(0xfff, ep->sw + SW_ABLTY_FORCE_MODE(ep, 0));
@@ -3313,6 +3314,21 @@ static void rtl9602c_ext_phy_reset(struct rtl9602c_eth *ep)
 	msleep(30);
 }
 
+static bool rtl9602c_ext_phy_ready(struct rtl9602c_eth *ep, unsigned int option)
+{
+	int v;
+
+	v = ext_mdio_read_c45(ep, MDIO_MMD_VEND1_RTL, RTL8221B_VND1_SERDES_OPTION);
+	if (v < 0 || v == 0xffff)
+		return false;
+	if (option == RTL8221B_SDS_OPTION_SGMII) {
+		v = ext_mdio_read_c45(ep, MDIO_MMD_VEND1_RTL, RTL8221B_VND1_SERDES_CTRL);
+		if (v < 0 || v == 0xffff)
+			return false;
+	}
+	return true;
+}
+
 static int rtl9602c_ext_phy_serdes_option(struct rtl9602c_eth *ep, unsigned int option)
 {
 	int v;
@@ -3343,6 +3359,7 @@ static int rtl9602c_ext_phy_serdes_option(struct rtl9602c_eth *ep, unsigned int 
  * registers are ready; resetting on every retry restarts that initialization. */
 static int rtl9602c_ext_phy_setup(struct rtl9602c_eth *ep, unsigned int option)
 {
+	bool ready;
 	int rc;
 
 	if (option) {
@@ -3351,6 +3368,11 @@ static int rtl9602c_ext_phy_setup(struct rtl9602c_eth *ep, unsigned int option)
 			ep->ext_phy_option = 0;
 			rtl9602c_ext_phy_reset(ep);
 		}
+		/* Vendor registers can lag behind the Clause 22 PHY ID after reset. */
+		rc = read_poll_timeout(rtl9602c_ext_phy_ready, ready, ready,
+				       10000, 1000000, false, ep, option);
+		if (rc)
+			return rc;
 		rc = rtl9602c_ext_phy_serdes_option(ep, option);
 		if (rc)
 			return rc;
@@ -3512,7 +3534,9 @@ static void rtl9602c_port0_link_poll(struct rtl9602c_eth *ep)
 	up = bmsr >= 0 && (bmsr & BMSR_LSTATUS);
 	if (up)
 		speed = rtl9602c_port0_speed(ep, &full);
-	if (lan_sds && ep->lan_sds_set) {
+	if (lan_sds && !ep->lan_sds_set) {
+		up = false;
+	} else if (lan_sds) {
 		bool hsgmii = ep->ext_phy_target == RTL8221B_SDS_OPTION_HSGMII;
 		unsigned int option;
 
@@ -3521,8 +3545,14 @@ static void rtl9602c_port0_link_poll(struct rtl9602c_eth *ep)
 			hsgmii = speed == SPEED_2500;
 		option = hsgmii ? RTL8221B_SDS_OPTION_HSGMII : RTL8221B_SDS_OPTION_SGMII;
 		if (hsgmii != ep->lan_sds_hsgmii || ep->ext_phy_option != option) {
-			int rc = rtl9602c_ext_phy_setup(ep, option);
+			int rc;
 
+			cur = ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, 0));
+			iowrite32(cur & ~ABLTY_LINK, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
+			if (ep->lan_link[0].up)
+				rtl9602c_link_log(ep, 2, false, SPEED_UNKNOWN, false, cur);
+			rtl9602c_lan_link_set(ep, 0, false, SPEED_UNKNOWN, false);
+			rc = rtl9602c_ext_phy_setup(ep, option);
 			if (rc) {
 				dev_warn_ratelimited(ep->dev, "LAN2 PHY SerDes option %u failed: %d; retrying\n",
 						     option, rc);
@@ -3535,6 +3565,8 @@ static void rtl9602c_port0_link_poll(struct rtl9602c_eth *ep)
 			up = false;
 		}
 	}
+	if (lan_sds && speed == SPEED_UNKNOWN && !ep->lan_link[0].up)
+		up = false;
 	link = up && !rtl9602c_uni_port_locked(0);
 	if (!link)
 		want &= ~ABLTY_LINK;
