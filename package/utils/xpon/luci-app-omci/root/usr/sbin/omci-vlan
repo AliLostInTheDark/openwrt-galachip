@@ -272,11 +272,38 @@ function update() {
 	state = next;
 }
 
+/* board.d generates this inventory; PON and the CPU conduit are not jacks. */
+function tagging_ports() {
+	let board;
+
+	try {
+		board = json(readfile('/etc/board.json') ?? '{}');
+	} catch (e) {
+		return [];
+	}
+	let lan = board?.network?.lan;
+	let ports = type(lan?.ports) == 'array' ? lan.ports : split(lan?.device ?? '', ' ');
+	let present = {};
+
+	for (let port in ports) {
+		/* This driver's control mask currently supports LAN1 and LAN2. */
+		if ((port == 'lan1' || port == 'lan2') &&
+		    readfile(`/sys/class/net/${port}/ifindex`) != null)
+			present[port] = true;
+	}
+	return sort(keys(present));
+}
+
 let object = conn.publish('omci.vlan', {
 	status: {
 		/* rpcd adds the session to every call made over HTTP */
 		args: { ubus_rpc_session: '' },
-		call: () => ({ ...state, port_tagging: readfile(`/sys/class/net/${PON}/device/sfu_lan_tagged`) != null })
+		call: () => {
+			let supported = readfile(`/sys/class/net/${PON}/device/sfu_lan_tagged`) != null;
+
+			return { ...state, port_tagging: supported,
+				 port_tagging_ports: supported ? tagging_ports() : [] };
+		}
 	}
 });
 
