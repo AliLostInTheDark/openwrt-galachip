@@ -942,7 +942,7 @@ static int luna_xpon_delete_service(struct omci_device *odev, u32 cookie)
 static u8 luna_xpon_lan_mode(const struct luna_xpon_service *s, u16 *uni_vid);
 
 /* The offload worker holds RTNL; backend transactions serialize this copy. */
-int luna_xpon_l2_services(struct luna_l2_service *services)
+int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 {
 	unsigned int i, j;
 	u8 priorities[LUNA_L2_SERVICES] = { 0 };
@@ -960,7 +960,8 @@ int luna_xpon_l2_services(struct luna_l2_service *services)
 
 		if (!s->used)
 			continue;
-		mode = luna_xpon_lan_mode(s, &uni_vid);
+		mode = vlan_filtering ? OMCI_UNI_VLAN_SAME :
+			luna_xpon_lan_mode(s, &uni_vid);
 		if (!s->vlan_valid || !s->vlan || s->vlan >= 4095 ||
 		    s->multicast || s->direction != OMCI_GEM_PORT_DIRECTION_BIDIRECTIONAL ||
 		    (mode != OMCI_UNI_VLAN_SAME && mode != OMCI_UNI_VLAN_UNTAGGED)) {
@@ -980,6 +981,7 @@ int luna_xpon_l2_services(struct luna_l2_service *services)
 			.untagged = mode == OMCI_UNI_VLAN_UNTAGGED,
 		};
 		d.untag_mask = d.untagged ? d.lan_mask & ~luna_xpon.lan_tagged : 0;
+		d.pvid_mask = d.untag_mask;
 		for (j = 0; j < n; j++) {
 			if (services[j].vid == d.vid) {
 				if (services[j].flow != d.flow ||
@@ -1421,7 +1423,7 @@ static bool luna_xpon_better(const struct luna_xpon_service *s,
  * else a VLAN-transparent service takes it. Returns the flow or a negative
  * errno; the skb may be replaced, and is freed when vlan_insert_tag fails.
  */
-int luna_xpon_tx_flow(struct sk_buff **pskb)
+int luna_xpon_tx_flow(struct sk_buff **pskb, bool network_vlan)
 {
 	const struct luna_xpon_service *svc = NULL, *net_svc = NULL, *any = NULL, *s;
 	struct sk_buff *skb = *pskb;
@@ -1440,7 +1442,8 @@ int luna_xpon_tx_flow(struct sk_buff **pskb)
 		if (!s->used || s->multicast ||
 		    !(s->direction & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI))
 			continue;
-		mode = luna_xpon_lan_mode(s, &uni_vid);
+		mode = network_vlan ? OMCI_UNI_VLAN_SAME :
+			luna_xpon_lan_mode(s, &uni_vid);
 		if (tagged) {
 			if (s->vlan_valid && s->vlan == vid &&
 			    luna_xpon_better(s, net_svc, tci >> VLAN_PRIO_SHIFT))

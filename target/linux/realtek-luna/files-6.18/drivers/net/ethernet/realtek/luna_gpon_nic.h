@@ -29,6 +29,8 @@ struct luna_l2_service {
 	u8 flow;
 	u8 lan_mask;
 	u8 untag_mask;
+	u8 pvid_mask;
+	bool local;
 	bool untagged;
 };
 void rtl9601d_l2_changed(void);
@@ -39,7 +41,7 @@ struct net_device;
 struct sk_buff;
 struct led_classdev;
 #if IS_ENABLED(CONFIG_XPON_OMCI)
-int luna_xpon_l2_services(struct luna_l2_service *services);
+int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering);
 void luna_xpon_service_vids(unsigned long *vids);
 u8 luna_xpon_lan_tagged(void);
 int luna_xpon_native_vlan(void);
@@ -55,10 +57,10 @@ int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 		     struct led_classdev *pon_led, struct led_classdev *los_led);
 void luna_xpon_detach(void *cookie);
 void luna_xpon_omci_rx(const u8 *msg, unsigned int len);
-int luna_xpon_tx_flow(struct sk_buff **pskb);
+int luna_xpon_tx_flow(struct sk_buff **pskb, bool network_vlan);
 void luna_xpon_rx_fixup(struct sk_buff *skb);
 #else
-static inline int luna_xpon_l2_services(struct luna_l2_service *services)
+static inline int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 {
 	return -EOPNOTSUPP;
 }
@@ -80,7 +82,10 @@ static inline int luna_xpon_attach(struct device *dev, struct net_device *wan,
 }
 static inline void luna_xpon_detach(void *cookie) { }
 static inline void luna_xpon_omci_rx(const u8 *msg, unsigned int len) { }
-static inline int luna_xpon_tx_flow(struct sk_buff **pskb) { return -ENOENT; }
+static inline int luna_xpon_tx_flow(struct sk_buff **pskb, bool network_vlan)
+{
+	return -ENOENT;
+}
 static inline void luna_xpon_rx_fixup(struct sk_buff *skb) { }
 #endif
 void luna_gpon_vlan_filter_ok(bool ok);
