@@ -1,0 +1,90 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] cmd: bound GC1601 serial, TFTP and NOR read destinations
+
+--- a/cmd/load.c
++++ b/cmd/load.c
+@@ -18,6 +18,9 @@
+ #endif
+ #include <image.h>
+ #include <lmb.h>
++#ifdef CONFIG_ARCH_GALACHIP
++#include <gc1601_bounds.h>
++#endif
+ #include <mapmem.h>
+ #include <net.h>
+ #include <s_record.h>
+@@ -448,6 +451,11 @@
+ static int do_load_serial_bin(struct cmd_tbl *cmdtp, int flag, int argc,
+ 			      char *const argv[])
+ {
++#ifdef CONFIG_ARCH_GALACHIP
++	/* GC1601 recovery uses upstream X/YMODEM only, at the current baud. */
++	if (!strcmp(argv[0], "loadb") || argc == 3)
++		return CMD_RET_USAGE;
++#endif
+ 	ulong offset = 0;
+ 	ulong addr;
+ 	int load_baudrate, current_baudrate;
+@@ -1019,6 +1027,16 @@
+ 		while ((res =
+ 			xyzModem_stream_read(ymodemBuf, 1024, &err)) > 0) {
+ 			store_addr = addr + offset;
++#ifdef CONFIG_ARCH_GALACHIP
++			if (store_addr < offset ||
++			    !gc1601_load_range(store_addr, res) ||
++			    lmb_read_check(store_addr, res)) {
++				xyzModem_stream_terminate(true, &getcxmodem);
++				xyzModem_stream_close(&err);
++				puts("Invalid/reserved serial load range\n");
++				return ~0UL;
++			}
++#endif
+ 			size += res;
+ 			addr += res;
+ #ifdef CONFIG_MTD_NOR_FLASH
+--- a/net/tftp.c
++++ b/net/tftp.c
+@@ -12,6 +12,9 @@
+ #include <image.h>
+ #include <led.h>
+ #include <lmb.h>
++#ifdef CONFIG_ARCH_GALACHIP
++#include <gc1601_bounds.h>
++#endif
+ #include <log.h>
+ #include <mapmem.h>
+ #include <net.h>
+@@ -164,6 +167,10 @@
+ 	ulong store_addr = tftp_load_addr + offset;
+ 	void *ptr;
+ 
++#ifdef CONFIG_ARCH_GALACHIP
++	if (newsize < offset || !gc1601_load_range(store_addr, len))
++		return -1;
++#endif
+ 	if (CONFIG_IS_ENABLED(LMB)) {
+ 		if (store_addr < tftp_load_addr ||
+ 		    lmb_read_check(store_addr, len)) {
+--- a/cmd/sf.c
++++ b/cmd/sf.c
+@@ -16,6 +16,9 @@
+ #include <spi.h>
+ #include <time.h>
+ #include <spi_flash.h>
++#ifdef CONFIG_ARCH_GALACHIP
++#include <gc1601_bounds.h>
++#endif
+ #include <asm/cache.h>
+ #include <jffs2/jffs2.h>
+ #include <linux/mtd/mtd.h>
+@@ -293,6 +296,10 @@
+ 		return CMD_RET_FAILURE;
+ 
+ 	/* Consistency checking */
++#ifdef CONFIG_ARCH_GALACHIP
++	if (strcmp(argv[0], "read") || !gc1601_load_range(addr, len))
++		return CMD_RET_FAILURE;
++#endif
+ 	if (offset + len > flash->size) {
+ 		printf("ERROR: attempting %s past flash size (%#x)\n",
+ 		       argv[0], flash->size);
