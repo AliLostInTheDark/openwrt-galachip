@@ -218,8 +218,6 @@ static int v2802_l2_gate_locked(void)
 	u32 w[2];
 	unsigned int p, i;
 
-	if (v2802_l2.gated)
-		return 0;
 	for (i = 0; i < ARRAY_SIZE(w); i++) {
 		if (!v2802_l2.isolation_saved)
 			v2802_l2.piso[i] = ioread32(ep->sw + SW_PISO_PORT + 4 * i);
@@ -228,7 +226,12 @@ static int v2802_l2_gate_locked(void)
 	v2802_l2.isolation_saved = true;
 	for (p = 0; p < 3; p++) {
 		unsigned int shift = (p % 2) * V2802_PISO_BITS;
-		u32 mask = (p == 2 ? 3 : BIT(2)) << shift;
+		u32 mask = p == 2 ? 3 : BIT(2);
+
+		/* Mixed tagging needs software LAN relay while the PVIDs are withdrawn. */
+		if (p < 2 && luna_xpon_lan_tagged())
+			mask |= BIT(1 - p);
+		mask <<= shift;
 
 		w[p / 2] &= ~mask;
 	}
@@ -379,7 +382,7 @@ static int v2802_l2_clear(void)
 	if (rc)
 		return rc;
 	spin_lock_irqsave(&v2802_l2_lock, flags);
-	rc = v2802_l2_ungate_locked();
+	rc = luna_xpon_lan_tagged() ? 0 : v2802_l2_ungate_locked();
 	if (!rc) {
 		v2802_l2.saved = false;
 		v2802_l2.management_saved = false;
@@ -399,7 +402,7 @@ void rtl9601d_l2_changed(void)
 	spin_lock_irqsave(&v2802_l2_lock, flags);
 	if (v2802_l2.ep && !v2802_l2.stopping) {
 		v2802_l2.generation++;
-		if (v2802_l2.saved)
+		if (v2802_l2.saved || (v2802_l2.ep->hw_up && luna_xpon_lan_tagged()))
 			rc = v2802_l2_gate_locked();
 		if (rc)
 			v2802_l2.error = rc;
@@ -413,14 +416,14 @@ EXPORT_SYMBOL(rtl9601d_l2_changed);
  * Rule bit 48 is validity; direction 31, C-tag 3, VID 11..22, UNI 0..2.
  */
 static int v2802_l2_rule(unsigned int idx, const struct luna_l2_service *s,
-			  unsigned int port)
+			  unsigned int port, bool untagged)
 {
 	u32 care[2] = { BIT(31) | BIT(3) | 7, 0 };
 	u32 data[2] = { port, 0 }, rule[2], mask[2];
 	u32 action[3] = { ((u32)s->flow << 24) | BIT(23), 0, 0 };
 	int rc;
 
-	if (!s->untagged) {
+	if (!untagged) {
 		care[0] |= VLAN_VID_MASK << 11;
 		data[0] |= ((u32)s->vid << 11) | BIT(3);
 	}
@@ -536,7 +539,7 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 
 		members = s->lan_mask | BIT(2) | BIT(3);
 		/* Keep the service VID on CPU copies for accurate forwarding marks. */
-		untag = s->untagged ? s->lan_mask : 0;
+		untag = s->untag_mask;
 		/* IVL, as for the WAN VIDs: a shared FID drops unicast replies. */
 		w[0] = BIT(11) | SW_VLAN_IVL | (untag << 4) | members;
 		rc = v2802_l2_table(1, s->vid, w, 1, true);
@@ -545,17 +548,15 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 		for (p = 0; p < 2; p++) {
 			if (!(s->lan_mask & BIT(p)))
 				continue;
-			if (s->untagged)
+			if (s->untag_mask & BIT(p))
 				pvid = sw_packed_ins(pvid, p, SW_VLAN_PB_VID_BITS, s->vid);
-			rc = v2802_l2_rule(V2802_L2_FIRST + 4 * i + 2 * p, s, p);
+			rc = v2802_l2_rule(V2802_L2_FIRST + 4 * i + 2 * p, s, p,
+					   s->untag_mask & BIT(p));
 			if (rc)
 				goto rollback;
-			if (s->untagged) {
-				struct luna_l2_service tagged = *s;
-
-				tagged.untagged = false;
+			if (s->untag_mask & BIT(p)) {
 				rc = v2802_l2_rule(V2802_L2_FIRST + 4 * i + 2 * p + 1,
-						     &tagged, p);
+						     s, p, false);
 				if (rc)
 					goto rollback;
 			}
@@ -759,6 +760,11 @@ static void v2802_l2_work(struct work_struct *work)
 	if (rc)
 		goto out;
 	v2802_l2_unoffload(ep);
+	spin_lock_irqsave(&v2802_l2_lock, flags);
+	rc = luna_xpon_lan_tagged() ? v2802_l2_gate_locked() : v2802_l2_ungate_locked();
+	spin_unlock_irqrestore(&v2802_l2_lock, flags);
+	if (rc)
+		goto out;
 	rc = v2802_l2_sync_vids(ep);
 	retry = !!rc;
 	if (rc || !READ_ONCE(v2802_l2.requested))
@@ -880,7 +886,7 @@ static bool v2802_l2_forwarded(struct sk_buff *skb, unsigned int port,
 			if ((port == 2 || (s->lan_mask & BIT(port))) &&
 			    tagged && (tci & VLAN_VID_MASK) == s->vid) {
 				/* Keep CPU copies usable until the old PVID is restored. */
-				if (port < 2 && s->untagged) {
+				if (port < 2 && (s->untag_mask & BIT(port))) {
 					memmove(skb->data + VLAN_HLEN, skb->data, 2 * ETH_ALEN);
 					skb_pull(skb, VLAN_HLEN);
 				}
@@ -895,6 +901,57 @@ static bool v2802_l2_forwarded(struct sk_buff *skb, unsigned int port,
 		}
 	spin_unlock_irqrestore(&v2802_l2_lock, flags);
 	return forwarded;
+}
+
+static int v2802_l2_ingress_port(struct rtl9602c_eth *ep, const struct sk_buff *skb)
+{
+	unsigned int p;
+
+	for (p = 0; p < LAN_PORTS; p++)
+		if (ep->lan_ndev[p] && skb->skb_iif == ep->lan_ndev[p]->ifindex)
+			return p;
+	return -1;
+}
+
+static bool v2802_l2_wan_allowed(struct rtl9602c_eth *ep, const struct sk_buff *skb)
+{
+	int port;
+	u16 tci;
+
+	if (!luna_xpon_lan_tagged())
+		return true;
+	port = v2802_l2_ingress_port(ep, skb);
+	return port < 0 || !(luna_xpon_lan_tagged() & BIT(port)) ||
+	       !__vlan_get_tag(skb, &tci) || !luna_xpon_native_vlan();
+}
+
+/* The bridge keeps the legacy native-service form. Tag only relayed service
+ * frames: locally generated, untagged management replies remain untagged. */
+static int v2802_l2_lan_prepare(struct rtl9602c_eth *ep, struct sk_buff *skb,
+				unsigned int port)
+{
+	int vid, rc;
+	u16 tci;
+	bool tagged;
+
+	if (!luna_xpon_lan_tagged())
+		return 0;
+	vid = luna_xpon_native_vlan();
+	if (vid <= 0)
+		return vid;
+	tagged = !__vlan_get_tag(skb, &tci);
+	if (luna_xpon_lan_tagged() & BIT(port)) {
+		if (!tagged && (v2802_l2_ingress_port(ep, skb) >= 0 ||
+		    (ep->wan_ndev && skb->skb_iif == ep->wan_ndev->ifindex))) {
+			rc = __vlan_insert_tag(skb, htons(ETH_P_8021Q), vid);
+			if (!rc)
+				skb->protocol = htons(ETH_P_8021Q);
+			return rc;
+		}
+	} else if (tagged && (tci & VLAN_VID_MASK) == vid) {
+		return __skb_vlan_pop(skb, &tci);
+	}
+	return 0;
 }
 
 static int v2802_l2_parent_id(struct net_device *dev, struct netdev_phys_item_id *id)
@@ -950,8 +1007,8 @@ static ssize_t l2_offload_bindings_show(struct device *dev,
 		u32 vlan = 0;
 		int rc = v2802_l2_table(1, s->vid, &vlan, 1, false);
 
-		len += sysfs_emit_at(buf, len, "vid=%u sid=%u lan_mask=%#x untagged=%u vlan=%#x read_error=%d\n",
-				    s->vid, s->flow, s->lan_mask, s->untagged, vlan, rc);
+		len += sysfs_emit_at(buf, len, "vid=%u sid=%u lan_mask=%#x untagged=%u untag_mask=%#x vlan=%#x read_error=%d\n",
+				    s->vid, s->flow, s->lan_mask, s->untagged, s->untag_mask, vlan, rc);
 	}
 	rtnl_unlock();
 	return len;

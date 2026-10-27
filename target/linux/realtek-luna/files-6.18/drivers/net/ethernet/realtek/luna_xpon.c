@@ -110,6 +110,7 @@ static struct {
 	unsigned int unis;
 	/* omci-agent's LAN-side VLANs, ahead of the OLT's class 171 rules */
 	u16 untag_vlan;
+	u8 lan_tagged;
 	struct luna_xpon_vlan_map {
 		u16 wan;
 		u16 lan;
@@ -978,6 +979,7 @@ int luna_xpon_l2_services(struct luna_l2_service *services)
 			.lan_mask = port < 0 ? 3 : BIT(port),
 			.untagged = mode == OMCI_UNI_VLAN_UNTAGGED,
 		};
+		d.untag_mask = d.untagged ? d.lan_mask & ~luna_xpon.lan_tagged : 0;
 		for (j = 0; j < n; j++) {
 			if (services[j].vid == d.vid) {
 				if (services[j].flow != d.flow ||
@@ -1360,6 +1362,38 @@ static u8 luna_xpon_lan_mode(const struct luna_xpon_service *s, u16 *uni_vid)
 	return mode;
 }
 
+/* Physical bits: LAN2 is port 0, LAN1 is port 1. */
+u8 luna_xpon_lan_tagged(void)
+{
+	return READ_ONCE(luna_xpon.lan_tagged);
+}
+EXPORT_SYMBOL(luna_xpon_lan_tagged);
+
+/* CPU fallback uses the same native service as the switch's PVID. */
+int luna_xpon_native_vlan(void)
+{
+	int vid = 0;
+	unsigned int i;
+	u16 uni_vid;
+
+	spin_lock_bh(&luna_xpon.svc_lock);
+	for (i = 0; i < LUNA_XPON_SERVICES; i++) {
+		const struct luna_xpon_service *s = &luna_xpon.svc[i];
+
+		if (!s->used || !s->vlan_valid || s->multicast ||
+		    luna_xpon_lan_mode(s, &uni_vid) != OMCI_UNI_VLAN_UNTAGGED)
+			continue;
+		if (vid && vid != s->vlan) {
+			vid = -EOPNOTSUPP;
+			break;
+		}
+		vid = s->vlan;
+	}
+	spin_unlock_bh(&luna_xpon.svc_lock);
+	return vid;
+}
+EXPORT_SYMBOL(luna_xpon_native_vlan);
+
 /* The VLAN a service's frames carry on the LAN side. */
 static u16 luna_xpon_lan_vid(const struct luna_xpon_service *s, u8 mode,
 			     u16 uni_vid)
@@ -1543,6 +1577,37 @@ static ssize_t sfu_untag_vlan_store(struct device *dev,
 }
 static DEVICE_ATTR_RW(sfu_untag_vlan);
 
+static ssize_t sfu_lan_tagged_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%u\n", luna_xpon_lan_tagged());
+}
+
+static ssize_t sfu_lan_tagged_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	u8 mask;
+	int rc = kstrtou8(buf, 0, &mask);
+
+	if (rc)
+		return rc;
+	if (mask > 3)
+		return -ERANGE;
+	if (!of_machine_is_compatible("vsol,v2802rh"))
+		return -EOPNOTSUPP;
+	if (mask && luna_xpon_native_vlan() < 0)
+		return -EOPNOTSUPP;
+	spin_lock_bh(&luna_xpon.svc_lock);
+	if (mask != luna_xpon.lan_tagged) {
+		luna_xpon.lan_tagged = mask;
+		rtl9601d_l2_changed();
+	}
+	spin_unlock_bh(&luna_xpon.svc_lock);
+	return count;
+}
+static DEVICE_ATTR_RW(sfu_lan_tagged);
+
 static ssize_t sfu_vlan_map_show(struct device *dev,
 				 struct device_attribute *attr, char *buf)
 {
@@ -1653,13 +1718,24 @@ static struct attribute *luna_xpon_attrs[] = {
 	&dev_attr_bosa_ddm.attr,
 	&dev_attr_bosa_thresholds.attr,
 	&dev_attr_sfu_untag_vlan.attr,
+	&dev_attr_sfu_lan_tagged.attr,
 	&dev_attr_sfu_vlan_map.attr,
 	&dev_attr_allow_tx.attr,
 	NULL,
 };
 
+static umode_t luna_xpon_attr_visible(struct kobject *kobj,
+				     struct attribute *attr, int index)
+{
+	if (attr == &dev_attr_sfu_lan_tagged.attr &&
+	    !of_machine_is_compatible("vsol,v2802rh"))
+		return 0;
+	return attr->mode;
+}
+
 static const struct attribute_group luna_xpon_group = {
 	.attrs = luna_xpon_attrs,
+	.is_visible = luna_xpon_attr_visible,
 };
 
 static int luna_xpon_set_mode(struct xpon_device *xpon, enum xpon_mode mode)

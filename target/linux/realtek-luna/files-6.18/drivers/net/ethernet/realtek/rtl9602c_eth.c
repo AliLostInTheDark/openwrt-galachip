@@ -1115,6 +1115,11 @@ static netdev_tx_t rtl9602c_eth_wan_xmit(struct sk_buff *skb, struct net_device 
 
 	/* omcid's services: the frame's GEM flow, with the network-side tag */
 	if (luna_xpon_active()) {
+		if (!v2802_l2_wan_allowed(ep, skb)) {
+			dev_kfree_skb_any(skb);
+			ndev->stats.tx_dropped++;
+			return NETDEV_TX_OK;
+		}
 		flow = luna_xpon_tx_flow(&skb);
 		if (flow < 0) {
 			if (skb)
@@ -2368,6 +2373,13 @@ static netdev_tx_t rtl9602c_eth_lan_submit(struct rtl9602c_eth *ep,
 		netif_stop_queue(ndev);
 		return NETDEV_TX_BUSY;
 	}
+	if (port >= 0 && v2802_l2_lan_prepare(ep, skb, port)) {
+		spin_unlock_irqrestore(&ep->tx_lock, flags);
+		ndev->stats.tx_dropped++;
+		dev_kfree_skb_any(skb);
+		return NETDEV_TX_OK;
+	}
+	len = skb->len;
 	if (len < ETH_ZLEN) {
 		if (skb_padto(skb, ETH_ZLEN)) {
 			spin_unlock_irqrestore(&ep->tx_lock, flags);
@@ -2438,7 +2450,8 @@ static netdev_tx_t rtl9602c_lan_xmit(struct sk_buff *skb,
 	unsigned int p;
 
 	for (p = 0; p < LAN_PORTS; p++) {
-		if (ep->lan_ndev[p] && skb->skb_iif == ep->lan_ndev[p]->ifindex) {
+		if (ep->lan_ndev[p] && skb->skb_iif == ep->lan_ndev[p]->ifindex &&
+		    (!luna_xpon_lan_tagged() || READ_ONCE(v2802_l2.active))) {
 			ep->dbg_lan_relay_skipped++;
 			dev_kfree_skb_any(skb);
 			return NETDEV_TX_OK;
