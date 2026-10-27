@@ -126,6 +126,10 @@
 	/* The RTL8221B's MDIO, bit-banged as stock does it: MDC, MDIO. */
 	realtek,ext-mdio-gpios = <&gpio 5 GPIO_ACTIVE_HIGH>, <&gpio 10 GPIO_ACTIVE_HIGH>;
 	realtek,ext-phy-addr = <7>;
+	/* The RTL8221B's reset line. Stock (rtk_rtl8226b_moudle_init1) drives
+	 * GPIO 27 low for 30 ms before it sets the PHY's SerDes option, at boot
+	 * and whenever the copper speed crosses 1G; the driver does the same. */
+	realtek,ext-phy-reset-gpios = <&gpio 27 GPIO_ACTIVE_LOW>;
 
 	/* The PON and LOS lamps, for net/xpon: this node is the xPON device's
 	 * parent, so the lookup is made here. */
