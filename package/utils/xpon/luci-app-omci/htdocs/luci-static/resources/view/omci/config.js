@@ -449,16 +449,14 @@ return view.extend({
 		o.default = '0';
 		o.depends('mode', 'tagged');
 
-		if (data[3].port_tagging) {
-			[ 'lan1', 'lan2' ].forEach(function(port) {
-				o = s.taboption('mode', form.ListValue, port + '_tagged', _('%s service VLAN').format(port.toUpperCase()));
-				o.value('0', _('Follow LAN VLAN mode'));
-				o.value('1', _('Keep service VLAN tagged'));
-				o.default = '0';
-				o.rmempty = false;
-				o.description = _('Choose independently for each port. Keep tagged retains the VLAN that the LAN VLAN mode or OLT otherwise removes; the connected router must tag that VLAN. Other tagged services pass unchanged. This requires one native service VLAN.');
-			});
-		}
+		(data[3].port_tagging_ports || []).forEach(function(port) {
+			o = s.taboption('mode', form.ListValue, port + '_tagged', _('%s service VLAN').format(port.toUpperCase()));
+			o.value('0', _('Follow LAN VLAN mode'));
+			o.value('1', _('Keep service VLAN tagged'));
+			o.default = '0';
+			o.rmempty = false;
+			o.description = _('Choose independently for each port. Keep tagged retains the VLAN that the LAN VLAN mode or OLT otherwise removes; the connected router must tag that VLAN. Other tagged services pass unchanged. This requires one native service VLAN.');
+		});
 
 		o = s.taboption('scan', form.Value, 'scan_vids', _('Extra VLAN IDs to scan'));
 		o.placeholder = '100 200';
