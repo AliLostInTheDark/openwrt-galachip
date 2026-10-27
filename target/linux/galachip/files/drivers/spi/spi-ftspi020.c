@@ -57,6 +57,7 @@
  * Control Register offset 0x10
  */
 #define FTSPI020_CTRL_READY_LOC         GENMASK(18, 16)
+#define FTSPI020_CTRL_ABORT             BIT(8)
 #define FTSPI020_CTRL_XIP_PORT_IDLE     BIT(7)
 #define FTSPI020_CTRL_CLK_MODE_3        BIT(4)
 #define FTSPI020_CTRL_CLK_DIVIDER       GENMASK(1, 0)
@@ -155,6 +156,7 @@ struct ftspi020_priv {
 	struct reset_control *rstc;
 	struct spi_controller *controller;
 	struct mutex lock;
+	bool needs_abort;
 	u32 tx_transfer_size;
 	u32 rx_transfer_size;
 	u8 txfifo_depth;
@@ -178,6 +180,25 @@ static int ftspi020_wait_complete(struct ftspi020_priv *ctrl, unsigned long time
 	} while (time_before(jiffies, expire));
 
 	return -ETIMEDOUT;
+}
+
+static int ftspi020_abort(struct ftspi020_priv *ctrl)
+{
+	u32 val;
+	int ret;
+
+	val = readl(ctrl->io_base + FTSPI020_REG_CTRL);
+	writel(val | FTSPI020_CTRL_ABORT, ctrl->io_base + FTSPI020_REG_CTRL);
+	ret = readl_poll_timeout(ctrl->io_base + FTSPI020_REG_CTRL, val,
+				 !(val & FTSPI020_CTRL_ABORT), 10, 1000000);
+	ctrl->needs_abort = !!ret;
+	if (ret) {
+		dev_err(ctrl->dev, "controller abort timed out\n");
+		return ret;
+	}
+	writel(readl(ctrl->io_base + FTSPI020_REG_ISR),
+	       ctrl->io_base + FTSPI020_REG_ISR);
+	return 0;
 }
 
 /*
@@ -274,17 +295,23 @@ static int ftspi020_firecmd(struct ftspi020_priv *ctrl, u32 cmd3, const struct s
 			(op->data.dir == SPI_MEM_DATA_IN) ? "IN" : "OUT");
 		err = ftspi020_do_data_pio(ctrl, op);
 		if (err)
-			return err;
+			goto abort;
 	}
 
-	if (ftspi020_wait_complete(ctrl, 1000)) {
+	err = ftspi020_wait_complete(ctrl, 1000);
+	if (err) {
 		dev_err(ctrl->dev, "wait cmd complete timeout (cmd3=%08x isr=%08x sts=%08x)\n",
 			cmd3, readl(ctrl->io_base + FTSPI020_REG_ISR),
 			readl(ctrl->io_base + FTSPI020_REG_STS));
-		return -ETIMEDOUT;
+		goto abort;
 	}
 
 	return 0;
+
+abort:
+	/* The BSP aborts failed commands; never retry a flash write here. */
+	ftspi020_abort(ctrl);
+	return err;
 }
 
 static int ftspi020_decode_proto(const struct spi_mem_op *op)
@@ -385,6 +412,11 @@ static int ftspi020_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
 	u32 ce;
 
 	mutex_lock(&ctrl->lock);
+	if (ctrl->needs_abort) {
+		err = ftspi020_abort(ctrl);
+		if (err)
+			goto error;
+	}
 
 	dev_dbg(ctrl->dev, "cmd:%#x mode:%d.%d.%d.%d addr:%#llx.%d len:%#x\n",
 		op->cmd.opcode, op->cmd.buswidth, op->addr.buswidth,
