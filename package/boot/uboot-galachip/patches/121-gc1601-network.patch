@@ -1,0 +1,10 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] net: hook up GC1601 Ethernet and MDIO
+
+--- a/drivers/net/Makefile
++++ b/drivers/net/Makefile
+@@ -115,3 +115,4 @@
+ obj-y += phy/
+ obj-y += qe/
+ obj-y += ti/
++obj-$(CONFIG_ARCH_GALACHIP) += gc1601_eth.o gc1601_mdio.o
