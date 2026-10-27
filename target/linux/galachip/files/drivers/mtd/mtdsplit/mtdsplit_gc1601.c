@@ -29,6 +29,7 @@ static int mtdsplit_parse_gc1601(struct mtd_info *master,
 	enum mtdsplit_part_type type;
 	struct mtd_partition *parts;
 	size_t retlen, kernel_end, rootfs_offset, squashfs_len;
+	u32 kernel_len;
 	int err;
 
 	/*
@@ -43,10 +44,11 @@ static int mtdsplit_parse_gc1601(struct mtd_info *master,
 		return 0;
 	}
 
-	kernel_end = GC1601_TAG_SIZE +
-		     le32_to_cpu(tag[GC1601_TAG_KERNEL_LEN / 4]);
-	if (kernel_end >= master->size)
+	kernel_len = le32_to_cpu(tag[GC1601_TAG_KERNEL_LEN / 4]);
+	if (master->size <= GC1601_TAG_SIZE || !kernel_len ||
+	    kernel_len >= master->size - GC1601_TAG_SIZE)
 		return 0;
+	kernel_end = GC1601_TAG_SIZE + kernel_len;
 
 	err = mtd_find_rootfs_from(master, mtd_roundup_to_eb(kernel_end, master),
 				   master->size, &rootfs_offset, &type);
@@ -63,7 +65,7 @@ static int mtdsplit_parse_gc1601(struct mtd_info *master,
 	 */
 	if (type == MTDSPLIT_PART_TYPE_SQUASHFS) {
 		err = mtd_get_squashfs_len(master, rootfs_offset, &squashfs_len);
-		if (err ||
+		if (err || squashfs_len > master->size - rootfs_offset ||
 		    mtd_roundup_to_eb(rootfs_offset + squashfs_len, master) >=
 		    master->size) {
 			pr_warn("%s: no room for rootfs_data, not splitting\n",
