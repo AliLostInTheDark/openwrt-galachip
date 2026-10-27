@@ -193,7 +193,7 @@ function summary(status) {
 		[ _('OMCI agent'), status.agent_operational ? _('Operational') : _('Not operational') ],
 		[ _('OLT profile'), text(status.olt_profile_effective_name) ],
 		[ _('MIB objects'), text(status.mib_objects, '0') ],
-		[ _('OMCI alarms'), omciAlarmCount(status.omci_alarms) ]
+		[ _('OMCI alarms'), omciAlarmCount(status.omci_alarms, status.channel_up) ]
 	];
 
 	return E('div', { 'class': 'omci-summary' }, cards.map(function(card) {
@@ -237,9 +237,11 @@ function omciAlarmLabel(row) {
 	return '%s: %s'.format(row[0] == 263 ? 'ANI-G' : 'UNI 1', omciAlarmNames[row[1]]);
 }
 
-function omciAlarmState(list, row) {
+function omciAlarmState(list, row, channelUp) {
 	var entry;
 
+	if (channelUp != null && !channelUp)
+		return _('Unavailable (channel down)');
 	if (!Array.isArray(list))
 		return '-';
 	entry = list.filter(function(a) {
@@ -252,9 +254,11 @@ function omciAlarmState(list, row) {
 	return entry.reported ? _('Active, reported') : _('Active, held by ARC');
 }
 
-function omciAlarmCount(list) {
+function omciAlarmCount(list, channelUp) {
 	var count = 0;
 
+	if (channelUp != null && !channelUp)
+		return _('Unavailable');
 	if (!Array.isArray(list))
 		return '-';
 	list.forEach(function(a) { count += (a.alarms || []).length; });
@@ -270,7 +274,7 @@ function values(status) {
 		responder: text(status.responder),
 		ifindex: text(status.ifindex),
 		onu_id: text(status.onu_id),
-		gem_port: text(status.gem_port),
+		gem_port: status.gem_port == 0xffff ? _('Not assigned') : text(status.gem_port),
 		channel_up: yesno(status.channel_up),
 		agent_enabled: yesno(status.agent_enabled),
 		agent_operational: yesno(status.agent_operational),
@@ -307,7 +311,7 @@ function values(status) {
 	};
 
 	omciAlarmRows.forEach(function(row, i) {
-		v['omci_alarm_' + i] = omciAlarmState(status.omci_alarms, row);
+		v['omci_alarm_' + i] = omciAlarmState(status.omci_alarms, row, status.channel_up);
 	});
 
 	return v;
