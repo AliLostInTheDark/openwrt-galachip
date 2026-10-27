@@ -184,6 +184,26 @@ assert.equal(main.nodes.get('omci-status-profile_configured').children, 'auto');
 assert.equal(main.nodes.get('omci-status-olt_vendor').children, 'TEST');
 assert.equal(main.reads.length, 0);
 
+// Channel loss clears the daemon's alarm cache; an empty cache is not an all-clear.
+main.data.live.channel_up = false;
+main.data.live.gem_port = 65535;
+await main.polls[0].fn();
+assert.equal(main.nodes.get('omci-status-gem_port').children, 'Not assigned');
+assert.equal(main.nodes.get('omci-status-omci_alarm_0').children, 'Unavailable (channel down)');
+assert.match(flat(main.nodes.get('omci-summary-root')), /OMCI alarms Unavailable/);
+main.data.live.channel_up = true;
+main.data.live.gem_port = 256;
+main.data.live.omci_alarms = [{class: 263, entity: '8000', alarms: ['low-rx-power'], reported: true}];
+await main.polls[0].fn();
+assert.equal(main.nodes.get('omci-status-gem_port').children, '256');
+assert.equal(main.nodes.get('omci-status-omci_alarm_0').children, 'Active, reported');
+assert.equal(main.nodes.get('omci-status-omci_alarm_1').children, 'Clear');
+assert.match(flat(main.nodes.get('omci-summary-root')), /OMCI alarms 1 active/);
+main.data.live.omci_alarms = [];
+await main.polls[0].fn();
+assert.match(flat(main.nodes.get('omci-summary-root')), /OMCI alarms None/);
+
+
 assert(!fs.existsSync(path.join(resource, 'view/omci/line.js')));
 
 const ep = view(path.join(xpon, 'luci-app-epon/htdocs/luci-static/resources/view/epon/status.js'), {
