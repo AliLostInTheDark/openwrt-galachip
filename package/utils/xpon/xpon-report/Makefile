@@ -3,7 +3,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xpon-report
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 PKG_LICENSE:=GPL-2.0-only
 
 include $(INCLUDE_DIR)/package.mk
@@ -13,6 +13,7 @@ define Package/xpon-report
   CATEGORY:=Network
   TITLE:=Collect a GPON/EPON diagnostics report
   PKGARCH:=all
+  DEPENDS:=+uci +ubus +jsonfilter
 endef
 
 define Package/xpon-report/description

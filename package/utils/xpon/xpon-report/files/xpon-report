@@ -9,12 +9,14 @@ usage() {
 	cat <<-EOT
 	usage: xpon-report [-o FILE|-] [-f] [-u]
 	  -o FILE  write here (default /tmp/xpon-report-DATE.txt; - for stdout)
-	  -f       also read the packet engine tables (queue and ingress snapshots)
+	  -f       also read full driver and packet engine snapshots
 	  -u       do not mask serial numbers, passwords and LOIDs
 	For the most detail, load the diagnostics module for your mode first
 	and let the link come up (or fail) once:
 	  modprobe gc1601-gpon-diag   (GPON)
 	  modprobe gc1601-epon-diag   (EPON)
+	On Realtek Luna, no extra diagnostics module is needed. The full GPON
+	dump (-f) reads hardware PM counters, which may clear on read.
 	EOT
 	exit 1
 }
@@ -37,6 +39,7 @@ ETH=
 for d in /sys/bus/platform/devices/*.packet-engine; do
 	[ -d "$d" ] && ETH=$d && break
 done
+omci_status=$(ubus call omci.agent status 2>/dev/null)
 
 section() {
 	printf '\n===== %s =====\n' "$1"
@@ -89,12 +92,21 @@ escape() {
 build_mask() {
 	local s h v k vendorless
 	{
-		for s in $(uci -q get omci.main.password) $(uci -q get omci.main.loid) \
-			 $(uci -q get omci.main.loid_password) $(uci -q get epon.main.loid) \
-			 $(uci -q get epon.main.loid_password) \
-			 $(uci -q get omci.main.serial) $(cat "$PON/serial_number" 2>/dev/null); do
+		{
+			for k in omci.main.password omci.main.loid omci.main.loid_password \
+				epon.main.loid epon.main.loid_password omci.main.serial; do
+				uci -q get "$k"
+			done
+			cat "$PON/serial_number" "$XPON/omci/serial_number" 2>/dev/null
+			printf '%s\n' "$omci_status" | jsonfilter \
+				-e '@.status.identity.serial' -e '@.status.identity.loid' 2>/dev/null
+		} | while IFS= read -r s; do
 			[ ${#s} -ge 4 ] || continue
 			mask_line "$s"
+			case "$s" in
+			*[!0-9A-Fa-f]*) ;;
+			*) mask_line "$(spaced "$s")" ;;
+			esac
 			h=$(hex "$s")
 			for v in "$h" "$(upper "$h")"; do
 				mask_line "$v"
@@ -111,7 +123,8 @@ build_mask() {
 		done
 		printf '%s\n' 's/\(serial[ _]number[ :=]*[A-Za-z][A-Za-z][A-Za-z][A-Za-z]\)[0-9A-Fa-f]*/\1[masked]/g'
 		# key=value, key='value' and "key": "value"
-		for k in loid LOID password Password loid_password; do
+		printf '%s\n' 's/\(sn=\)\([[:xdigit:]]\{2\} \)\{7\}[[:xdigit:]]\{2\}/\1[masked]/g'
+		for k in serial serial_number serial-number sn loid LOID password Password loid_password; do
 			printf '%s\n' "s/\($k['\"]\{0,1\}[=:] *['\"]\{0,1\}\)[^' ,}\"]\{1,\}/\1[masked]/g"
 		done
 	} > "$1"
@@ -134,6 +147,16 @@ collect() {
 	section "GPON"
 	show "$PON/gpon_state" "$PON/gpon_events" "$PON/allow_tx" "$PON/gpon_identity_wait" "$PON/gpon_ber" \
 	     "$PON/ploam_log" "$PON/ploam_trace" "$PON/pon_counters" "$PON/tcont_stats"
+	if [ -r /proc/gpon_health ]; then
+		section "Realtek GPON"
+		show /proc/gpon_health /proc/gpon_timing /proc/gpon_prov /proc/gpon_log
+		if [ "$full" = 1 ]; then
+			show /proc/gpon /proc/ethdump
+		fi
+		if command -v omci-report >/dev/null 2>&1; then
+			if [ "$full" = 1 ]; then run omci-report; else run omci-report -b; fi
+		fi
+	fi
 
 	section "OMCI"
 	for f in "$XPON"/omci/*; do
@@ -142,7 +165,7 @@ collect() {
 		*) show "$f" ;;
 		esac
 	done
-	run ubus call omci.agent status
+	printf -- '--- ubus call omci.agent status\n%s\n' "$omci_status"
 	show "$ETH/omci_stats"
 
 	section "EPON"
@@ -151,6 +174,8 @@ collect() {
 
 	section "LAN VLAN and switch offload"
 	show "$PON/sfu_untag_vlan" "$PON/sfu_vlan_map" "$PON/sfu_offload"
+	show "$PON/l2_offload" "$PON/l2_offload_bindings" "$PON/l2_offload_counters" \
+	     /sys/module/rtl9602c_eth/parameters/lan_tx_steer
 	run ubus call omci.vlan status
 
 	section "Packet engine"
@@ -160,7 +185,7 @@ collect() {
 	fi
 
 	section "Network"
-	run ip -d link show
+	run ip -s -d link show
 	run ip addr show
 	run bridge link show
 	show /proc/net/dev
@@ -178,12 +203,11 @@ collect() {
 	dmesg
 }
 
-mask=/tmp/.xpon-report-mask.$$
-if [ "$unmasked" = 1 ]; then
-	echo 's/^\(.*\)$/\1/' > "$mask"
-else
-	build_mask "$mask"
-fi
+umask 077
+mask=$(mktemp /tmp/.xpon-report-mask.XXXXXX) || exit 1
+trap 'rm -f "$mask"' EXIT
+trap 'exit 1' HUP INT TERM
+[ "$unmasked" = 1 ] || build_mask "$mask"
 
 if [ "$out" = "-" ]; then
 	collect | sed -f "$mask"
@@ -193,4 +217,3 @@ else
 	[ "$unmasked" = 1 ] || echo "Serial numbers, passwords and LOIDs are masked; check the file before sharing it."
 	echo "Copy it off with WinSCP (SCP) or: scp -O root@192.168.1.1:$out ."
 fi
-rm -f "$mask"
