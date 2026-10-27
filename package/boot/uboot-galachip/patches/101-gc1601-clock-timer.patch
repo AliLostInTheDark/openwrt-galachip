@@ -1,0 +1,17 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] clk: timer: hook up GC1601 driver-model clock and timer
+
+--- a/drivers/clk/Makefile
++++ b/drivers/clk/Makefile
+@@ -63,3 +63,4 @@
+ obj-$(CONFIG_SANDBOX_CLK_CCF) += clk_sandbox_ccf.o
+ obj-$(CONFIG_SANDBOX) += clk_sandbox.o
+ obj-$(CONFIG_SANDBOX) += clk_sandbox_test.o
++obj-$(CONFIG_ARCH_GALACHIP) += clk-gc1601.o
+--- a/drivers/timer/Makefile
++++ b/drivers/timer/Makefile
+@@ -37,3 +37,4 @@
+ obj-$(CONFIG_XILINX_TIMER)	+= xilinx-timer.o
+ obj-$(CONFIG_STARFIVE_TIMER)	+= starfive-timer.o
+ obj-$(CONFIG_GOLDFISH_TIMER)	+= goldfish_timer.o
++obj-$(CONFIG_ARCH_GALACHIP) += gc1601_timer.o
