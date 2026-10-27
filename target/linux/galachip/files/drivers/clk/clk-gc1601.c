@@ -44,7 +44,7 @@ static void __init gc1601_clk_init(struct device_node *np)
 	cpu_sel = (ctrl >> 16) & 3;
 	bus_sel = (ctrl >> 20) & 3;
 	divs[GC1601_CLK_CPU] = cpu_sel == 2 ? 1 : cpu_sel == 1 ? 2 : 4;
-	divs[GC1601_CLK_AHB] = bus_sel == 0 ? 8 : 4;
+	divs[GC1601_CLK_AHB] = bus_sel == 1 ? 4 : 8;
 	divs[GC1601_CLK_APB] = bus_sel == 1 ? 4 : 8;
 	divs[GC1601_CLK_SPI] = spi & BIT(11) ? 2 : 8;
 
