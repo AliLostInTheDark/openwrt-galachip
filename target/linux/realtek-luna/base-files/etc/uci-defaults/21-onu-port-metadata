@@ -1,0 +1,8 @@
+#!/bin/sh
+
+. /lib/functions.sh
+
+[ "$(board_name)" = "vsol,v2802rh" ] || exit 0
+
+# Refresh metadata kept from builds that described the LAN as eth0.
+/bin/board_detect -f
