@@ -151,12 +151,12 @@ return view.extend({
 		var bridge = uci.sections('network', 'device').find(function(s) { return s.name == 'br-lan'; });
 		var supported = !!(bridge && status.port_vlan && ports.length);
 		var reserved = status.reserved_vids || [];
-		var m = new form.Map('omci', _('LAN VLANs'),
+		var m = new form.Map('network', _('LAN VLANs'),
 			_('Choose one VLAN policy here. The service VLAN policy uses the global mode; the per-port table controls VLAN membership and tagging for each LAN port.'));
 		var s, o, root;
 
 		vlanMap = m;
-		m.chain('network');
+		m.chain('omci');
 		perPort = supported && uci.get('network', bridge['.name'], 'vlan_filtering') == '1';
 
 		function policySection(section, advanced) {
@@ -205,6 +205,7 @@ return view.extend({
 		}
 
 		s = policySection(m.section(form.NamedSection, 'vlan', 'vlan', _('Service VLAN')), false);
+		s.uciconfig = 'omci';
 		s.addremove = false;
 		o = s.option(form.ListValue, 'mode', _('Mode'));
 		o.value('transparent', _('Transparent'));
@@ -245,7 +246,7 @@ return view.extend({
 		});
 
 		if (supported) {
-			if (uci.get('network', 'lan') == 'interface') {
+			if (uci.get('network', 'lan', '.type') == 'interface') {
 				s = policySection(m.section(form.NamedSection, 'lan', 'interface', _('ONU management')), true);
 				s.uciconfig = 'network';
 				o = s.option(form.Value, 'device', _('Management device'));
@@ -265,11 +266,12 @@ return view.extend({
 			s.addremove = true;
 			s.sortable = true;
 			s.filter = function(id) { return uci.get('network', id, 'device') == 'br-lan'; };
-			s.add = function() {
-				var id = uci.add('network', 'bridge-vlan');
+			s.handleAdd = function(ev, name) {
+				var id = this.map.data.add('network', 'bridge-vlan', name);
 				uci.set('network', id, 'device', 'br-lan');
 				uci.set('network', id, 'ports', [ 'pon0:t' ]);
-				return id;
+				this.map.addedSection = id;
+				return this.renderMoreOptionsModal(id, ev);
 			};
 
 			o = s.option(form.Value, 'vlan', _('VLAN ID'));
@@ -331,6 +333,7 @@ return view.extend({
 		}
 
 		s = m.section(form.NamedSection, 'main', 'agent', _('VLAN scan'));
+		s.uciconfig = 'omci';
 		s.addremove = false;
 		s.description = _('Scan results can set the simple service VLAN policy. With per-port control, configure the discovered VLAN in the membership table.');
 		o = s.option(form.Value, 'scan_vids', _('Extra VLAN IDs to scan'));
