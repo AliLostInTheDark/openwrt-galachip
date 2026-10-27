@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+/dts-v1/;
+/memreserve/ 0x40800000 0x00112000;
+/ {
+	model = "TP-Link XZ000-G7 (4 MiB)";
+	compatible = "tplink,xz000-g7", "galachip,gc1601";
+	#address-cells = <1>;
+	#size-cells = <1>;
+	aliases { serial0 = &uart; spi0 = &spi; ethernet0 = &eth; };
+	chosen { stdout-path = "serial0:115200n8"; };
+	memory@40000000 { device_type = "memory"; reg = <0x40000000 0x02000000>; };
+	scu: clock-controller@90a00000 {
+		compatible = "galachip,gc1601-scu";
+		reg = <0x90a00000 0x1000>;
+		#clock-cells = <1>;
+		bootph-all;
+	};
+	timer@90200000 {
+		compatible = "galachip,gc1601-timer";
+		reg = <0x90200000 0x100>;
+		clocks = <&scu 5>;
+		bootph-all;
+	};
+	uart: serial@90400000 {
+		compatible = "ns16550a";
+		reg = <0x90400000 0x1000>;
+		reg-shift = <2>;
+		reg-io-width = <4>;
+		clock-frequency = <33000000>;
+		bootph-all;
+	};
+	spi: spi@a0000000 {
+		compatible = "faraday,ftspi020-gc1601";
+		reg = <0xa0000000 0x1000>;
+		clocks = <&scu 6>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		flash@0 {
+			compatible = "jedec,spi-nor";
+			reg = <0>;
+			spi-max-frequency = <25000000>;
+			spi-rx-bus-width = <1>;
+			spi-tx-bus-width = <1>;
+		};
+	};
+	mdio: mdio@90100000 {
+		compatible = "galachip,gc1601-mdio";
+		reg = <0x90100000 0x18>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		phy: ethernet-phy@18 {
+			compatible = "ethernet-phy-ieee802.3-c22";
+			reg = <24>;
+		};
+	};
+	eth: ethernet@90e00000 {
+		compatible = "galachip,gc1601-eth";
+		reg = <0x90e00000 0x1000>;
+		phy-handle = <&phy>;
+		phy-mode = "gmii";
+	};
+};

@@ -1,0 +1,73 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] arm: add FA626TE and GC1601 board and driver hooks
+
+--- a/arch/arm/Kconfig
++++ b/arch/arm/Kconfig
+@@ -333,6 +333,10 @@
+ 	select SYS_CACHE_SHIFT_5
+ 	imply SYS_ARM_MMU
+ 
++config CPU_FA626TE
++	bool
++	select SYS_CACHE_SHIFT_5
++
+ config CPU_ARM926EJS
+ 	bool
+ 	select SYS_CACHE_SHIFT_5
+@@ -389,6 +393,7 @@
+ 	select CPU_V7M_V8M
+ 
+ config SYS_CPU
++	default "fa626te" if CPU_FA626TE
+ 	default "arm720t" if CPU_ARM720T
+ 	default "arm920t" if CPU_ARM920T
+ 	default "arm926ejs" if CPU_ARM926EJS
+@@ -403,6 +408,7 @@
+ 
+ config SYS_ARM_ARCH
+ 	int
++	default 5 if CPU_FA626TE
+ 	default 4 if CPU_ARM720T
+ 	default 4 if CPU_ARM920T
+ 	default 5 if CPU_ARM926EJS
+@@ -622,6 +628,15 @@
+ choice
+ 	prompt "Target select"
+ 	default TARGET_HIKEY
++
++config ARCH_GALACHIP
++	bool "GalaChip GC1601"
++	select CPU_FA626TE
++	select DM
++	select DM_SERIAL
++	select OF_CONTROL
++	select TIMER
++	select CLK
+ 
+ config ARCH_AIROHA
+ 	bool "Airoha SoCs"
+@@ -2475,6 +2490,7 @@
+ source "board/phytium/pe2201/Kconfig"
+ source "board/xen/xenguest_arm64/Kconfig"
+ 
++source "board/tplink/xz000-g7/Kconfig"
+ source "arch/arm/Kconfig.debug"
+ 
+ endmenu
+--- a/arch/arm/Makefile
++++ b/arch/arm/Makefile
+@@ -8,6 +8,7 @@
+ # This selects which instruction set is used.
+ arch-$(CONFIG_CPU_ARM720T)	=-march=armv4
+ arch-$(CONFIG_CPU_ARM920T)	=-march=armv4t
++arch-$(CONFIG_CPU_FA626TE) =-march=armv5te
+ arch-$(CONFIG_CPU_ARM926EJS)	=-march=armv5te
+ arch-$(CONFIG_CPU_ARM946ES)	=-march=armv5te
+ arch-$(CONFIG_CPU_ARM1136)	=-march=armv5t
+--- a/arch/arm/dts/Makefile
++++ b/arch/arm/dts/Makefile
+@@ -1177,3 +1177,4 @@
+ 
+ DTC_FLAGS_imx8mp-dhcom-som-overlay-rev100 += -Wno-avoid_default_addr_size -Wno-reg_format
+ DTC_FLAGS_imx8mp-dhcom-pdk3-overlay-rev100 += -Wno-avoid_default_addr_size -Wno-reg_format
++dtb-$(CONFIG_ARCH_GALACHIP) += gc1601-tplink-xz000-g7.dtb
