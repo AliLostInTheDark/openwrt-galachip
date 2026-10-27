@@ -173,7 +173,7 @@ collect() {
 	[ -d /sys/kernel/debug/gc1601-epon ] && show /sys/kernel/debug/gc1601-epon/regs
 
 	section "LAN VLAN and switch offload"
-	show "$PON/sfu_untag_vlan" "$PON/sfu_vlan_map" "$PON/sfu_offload"
+	show "$PON/sfu_untag_vlan" "$PON/sfu_lan_tagged" "$PON/sfu_vlan_map" "$PON/sfu_offload"
 	show "$PON/l2_offload" "$PON/l2_offload_bindings" "$PON/l2_offload_counters" \
 	     /sys/module/rtl9602c_eth/parameters/lan_tx_steer
 	run ubus call omci.vlan status
