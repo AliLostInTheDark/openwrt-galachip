@@ -1,0 +1,10 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] spi: hook up GC1601 single-lane SPI memory controller
+
+--- a/drivers/spi/Makefile
++++ b/drivers/spi/Makefile
+@@ -89,3 +89,4 @@
+ obj-$(CONFIG_ZYNQ_SPI) += zynq_spi.o
+ obj-$(CONFIG_ZYNQ_QSPI) += zynq_qspi.o
+ obj-$(CONFIG_ZYNQMP_GQSPI) += zynqmp_gqspi.o
++obj-$(CONFIG_ARCH_GALACHIP) += ftspi020_gc1601.o
