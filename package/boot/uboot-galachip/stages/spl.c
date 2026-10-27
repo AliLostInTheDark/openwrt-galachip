@@ -1,0 +1,126 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * GC1601 minimal SRAM first stage. DDR values from the board's installed
+ * SPL and Faraday GPL. Based on the separate gc1601-loader implementation.
+ */
+#include "common.h"
+#define REG(a) (*(volatile uint32_t *)(a))
+#define DDR 0x90b00000U
+#define SPI 0xa0000000U
+#define WAIT 10000000U
+void uart_init(void);
+void uart_puts(const char *);
+static const uint32_t ddr_table[][2] = {
+	{ 0x000, 0x08629d11 }, { 0x004, 0x00000000 }, { 0x008, 0x00000033 },
+	{ 0x00c, 0x00000000 }, { 0x010, 0x40000101 }, { 0x014, 0x06040503 },
+	{ 0x018, 0x01210101 }, { 0x01c, 0x05000118 }, { 0x020, 0x00001f41 },
+	{ 0x024, 0x00000077 }, { 0x028, 0x00000000 }, { 0x02c, 0x00000000 },
+	{ 0x030, 0x16ffd5e5 }, { 0x034, 0x0f050506 }, { 0x038, 0x05080305 },
+	{ 0x03c, 0x00010010 }, { 0x040, 0x0000aa00 }, { 0x048, 0x00555500 },
+	{ 0x04c, 0x00001005 }, { 0x060, 0x00ff0000 }, { 0x064, 0x00000000 },
+	{ 0x068, 0x00000000 }, { 0x06c, 0x00000000 }, { 0x070, 0x000000ff },
+	{ 0x074, 0x00000011 }, { 0x078, 0x00000077 }, { 0x07c, 0x00000000 },
+	{ 0x0a0, 0x81818181 }, { 0x0a4, 0x81818181 }, { 0x0a8, 0x00004e20 },
+	{ 0x0ac, 0x0000c350 }, { 0x0b0, 0x00000002 }, { 0x0b4, 0x03030404 },
+	{ 0x0b8, 0x01010202 }, { 0x130, 0x00000077 }, { 0x138, 0x00000005 },
+};
+
+static int wait_bits(uint32_t address, uint32_t mask, uint32_t expected)
+{
+	uint32_t n;
+
+	for (n = WAIT; n; n--)
+		if ((REG(address) & mask) == expected)
+			return 0;
+	return -1;
+}
+
+static int ddr_init(void)
+{
+	unsigned int i;
+	volatile uint32_t *scratch = (void *)0x407f0000;
+	static const uint32_t patterns[] = { 0x55555555, 0xaaaaaaaa, 0, ~0U };
+
+	/* A software reset may retain DDR. Never replay cold init when ready. */
+	if (REG(DDR + 4) != 0xc100) {
+		if (REG(DDR + 0x20) & 0x03000000)
+			return -1;
+		for (i = 0; i < sizeof(ddr_table) / sizeof(ddr_table[0]); i++)
+			REG(DDR + ddr_table[i][0]) = ddr_table[i][1];
+		REG(DDR + 4) = 1;
+	}
+	if (wait_bits(DDR + 4, ~0U, 0xc100) ||
+	    wait_bits(DDR + 0x20, 0x03000000, 0x03000000))
+		return -1;
+	/* Scratch is below DMA and separate from wrapper, output, heap and stack. */
+	for (i = 0; i < sizeof(patterns) / sizeof(patterns[0]); i++) {
+		scratch[i] = patterns[i];
+		asm volatile("mcr p15, 0, %0, c7, c10, 4" : : "r"(0) : "memory");
+		if (scratch[i] != patterns[i])
+			return -1;
+	}
+	return 0;
+}
+
+static int spi_read_stage(void *destination)
+{
+	uint32_t *dst = destination;
+	unsigned int left = STAGE_SIZE, chunk, i;
+	uint32_t id;
+
+	REG(SPI + 0x10) |= 0x100;
+	if (wait_bits(SPI + 0x10, 0x100, 0))
+		return -1;
+	/* Slowest controller divisor, mode 0, completion enabled, PIO 32 bytes. */
+	REG(SPI + 0x10) = (REG(SPI + 0x10) & ~0x13U) | 3;
+	REG(SPI + 0x20) = (REG(SPI + 0x20) & ~(3U | (3U << 12))) | 2;
+	REG(SPI + 0x24) = 1;
+	REG(SPI) = 0;
+	REG(SPI + 4) = 0x01000000;
+	REG(SPI + 8) = 3;
+	REG(SPI + 0x0c) = 0x9f000001;
+	if (wait_bits(SPI + 0x18, 2, 2))
+		return -1;
+	id = REG(SPI + 0x100) & 0xffffff;
+	if (wait_bits(SPI + 0x24, 1, 1) || id != 0x16701c)
+		return -1;
+	REG(SPI + 0x24) = 1;
+	REG(SPI) = 0x2000;
+	REG(SPI + 4) = 0x01000003;
+	REG(SPI + 8) = STAGE_SIZE;
+	REG(SPI + 0x0c) = 0x03000001;
+	while (left) {
+		chunk = left < 32 ? left : 32;
+		if (wait_bits(SPI + 0x18, 2, 2))
+			return -1;
+		left -= chunk;
+		for (i = 0; i < chunk; i += 4)
+			*dst++ = REG(SPI + 0x100);
+	}
+	if (wait_bits(SPI + 0x24, 1, 1))
+		return -1;
+	REG(SPI + 0x24) = 1;
+	return 0;
+}
+
+void stage_main(void)
+{
+	int length;
+
+	uart_init();
+	REG(0x9080000c) = 0;
+	uart_puts("GC1601 SPL: cold init or retained DDR\n");
+	if (ddr_init())
+		fail("DDR cold initialization/access failed; recovery needs working DDR");
+	if (!spi_read_stage((void *)WRAPPER_ENTRY) &&
+	    stage_valid((void *)WRAPPER_ENTRY, STAGE_SIZE))
+		stage_jump(WRAPPER_ENTRY);
+	/* No flash writes. Receive the fixed-size checked proper.img into DDR. */
+	for (;;) {
+		uart_puts("Next stage invalid; send proper.img by XMODEM-CRC\n");
+		length = xmodem_receive((void *)WRAPPER_ENTRY, STAGE_SIZE);
+		if (length == STAGE_SIZE &&
+		    stage_valid((void *)WRAPPER_ENTRY, STAGE_SIZE))
+			stage_jump(WRAPPER_ENTRY);
+	}
+}
