@@ -1120,7 +1120,12 @@ static netdev_tx_t rtl9602c_eth_wan_xmit(struct sk_buff *skb, struct net_device 
 			ndev->stats.tx_dropped++;
 			return NETDEV_TX_OK;
 		}
-		flow = luna_xpon_tx_flow(&skb);
+		if (v2802_l2_priority(ep, skb)) {
+			dev_kfree_skb_any(skb);
+			ndev->stats.tx_dropped++;
+			return NETDEV_TX_OK;
+		}
+		flow = luna_xpon_tx_flow(&skb, v2802_l2_vlan_filtering(ep));
 		if (flow < 0) {
 			if (skb)
 				dev_kfree_skb_any(skb);
@@ -1539,7 +1544,8 @@ static int rtl9602c_eth_rx(struct rtl9602c_eth *ep, int budget, bool napi_ctx)
 				dev_kfree_skb_any(skb);
 				goto rx_rearm;
 			}
-			if (rdev == ep->wan_ndev && luna_xpon_active())
+			if (rdev == ep->wan_ndev && luna_xpon_active() &&
+			    !v2802_l2_vlan_filtering(ep))
 				luna_xpon_rx_fixup(skb);
 			skb->protocol = eth_type_trans(skb, rdev);
 			rdev->stats.rx_packets++;
@@ -2451,7 +2457,8 @@ static netdev_tx_t rtl9602c_lan_xmit(struct sk_buff *skb,
 
 	for (p = 0; p < LAN_PORTS; p++) {
 		if (ep->lan_ndev[p] && skb->skb_iif == ep->lan_ndev[p]->ifindex &&
-		    (!luna_xpon_lan_tagged() || READ_ONCE(v2802_l2.active))) {
+		    ((!luna_xpon_lan_tagged() && !v2802_l2_vlan_filtering(ep)) ||
+		     READ_ONCE(v2802_l2.active))) {
 			ep->dbg_lan_relay_skipped++;
 			dev_kfree_skb_any(skb);
 			return NETDEV_TX_OK;
