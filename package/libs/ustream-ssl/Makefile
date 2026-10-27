@@ -1,13 +1,15 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ustream-ssl
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL=$(PROJECT_GIT)/project/ustream-ssl.git
 PKG_SOURCE_DATE:=2026-03-01
 PKG_SOURCE_VERSION:=99f1c0db5a729f615bc5114b3b52fd8ac8083f34
 PKG_MIRROR_HASH:=631ce829a510895cdf0bcfa48970e963e6c910ccd09718b90d85e455ec35f290
+# Header consumers build the default variant even when no TLS package is selected.
+PKG_BUILD_DEPENDS:=!(PACKAGE_libustream-openssl||PACKAGE_libustream-wolfssl):mbedtls
 CMAKE_INSTALL:=1
 
 PKG_LICENSE:=ISC
