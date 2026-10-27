@@ -109,16 +109,11 @@
 		}
 	},
 	"admin/network/omci/config/ports": {
-		"title": "LAN port VLANs",
+		"title": "LAN VLANs",
 		"order": 20,
 		"action": {
 			"type": "view",
 			"path": "omci/ports"
-		},
-		"depends": {
-			"fs": {
-				"/sys/class/net/pon0/device/l2_port_priority": "file"
-			}
 		}
 	}
 }
