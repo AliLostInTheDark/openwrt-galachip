@@ -264,8 +264,16 @@ assert.deepEqual(Object.keys(xponAcl.write.file), ['/usr/sbin/xpon-report -o -']
 
 const menu = JSON.parse(read(path.join(pkg, 'root/usr/share/luci/menu.d/luci-app-omci.json')));
 // MIB reads and edits are on demand; the page must not poll.
-assert.deepEqual(Object.keys(menu).filter(k => k.includes('/mib')), ['admin/network/omci/mib']);
-assert(!/\bpoll\b/.test(read(path.join(pkg, 'htdocs/luci-static/resources/view/omci/mib.js'))));
+const mibRoot = 'admin/network/omci/mib';
+assert.equal(menu[mibRoot].action.type, 'firstchild');
+assert.deepEqual(Object.keys(menu).filter(k => k.startsWith(mibRoot + '/')),
+  ['inventory', 'gpon', 'bridge', 'multicast', 'other'].map(group => mibRoot + '/' + group));
+assert(!/\bpoll\b/.test(read(path.join(resource, 'omci/mib-editor.js'))));
+for (const group of ['inventory', 'gpon', 'bridge', 'multicast', 'other']) {
+  const route = menu[mibRoot + '/' + group].action.path;
+  assert.equal(route, 'omci/mib/' + group);
+  assert(read(path.join(resource, 'view', route + '.js')).includes('require omci.mib-editor as mib'));
+}
 assert(!Object.keys(menu).some(k => k.endsWith('/line')));
 const acl = JSON.parse(read(path.join(pkg, 'root/usr/share/rpcd/acl.d/luci-app-omci.json')))['luci-app-omci'];
 assert(acl.read.ubus['omci.agent'].includes('status_live'));
