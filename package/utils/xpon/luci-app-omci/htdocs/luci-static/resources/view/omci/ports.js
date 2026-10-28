@@ -1,5 +1,4 @@
 'use strict';
-'require omci.layout as layout';
 'require view';
 'require form';
 'require uci';
@@ -421,6 +420,12 @@ return view.extend({
 .omci-vlan-page .cbi-section-table td,
 .omci-vlan-page .cbi-section-table th { display: table-cell; vertical-align: middle; }
 .omci-vlan-page .cbi-section-table td::before { display: none; }
+.omci-vlan-page .cbi-section-table .cbi-section-actions { white-space: nowrap; }
+.omci-vlan-page .cbi-section-table .cbi-section-actions > div { display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: .375rem; }
+.omci-vlan-page .cbi-section-table .cbi-section-actions button { flex: 0 0 auto; width: auto; min-width: max-content; max-width: none; white-space: nowrap; overflow-wrap: normal; }
+.omci-vlan-page .cbi-section-table tbody td { padding-top: .5rem; padding-bottom: .5rem; }
+.omci-vlan-page .cbi-section-table th:nth-child(2),
+.omci-vlan-page .cbi-section-table td:nth-child(2) { text-align: center; }
 .omci-vlan-page .cbi-section-table select { text-overflow: clip; }
 .omci-vlan-page .cbi-section-table .cbi-input-select,
 .omci-vlan-page .cbi-section-table select { min-width: 11rem; width: 100%; max-width: none; }
@@ -467,7 +472,7 @@ return view.extend({
 								      objects, false));
 				});
 			}
-			return layout.apply(node);
+			return node;
 		});
 	}
 });
