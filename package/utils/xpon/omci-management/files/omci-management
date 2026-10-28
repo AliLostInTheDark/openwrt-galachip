@@ -1,0 +1,112 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Only packets addressed to the ONU enter this bridge; services stay separate.
+. /lib/functions.sh
+
+STATE=/var/run/omci-management
+CHAIN=49152
+
+cleanup() {
+	local port peer hooked
+	while read -r port peer hooked; do
+		[ -n "$port" ] || continue
+		[ "$hooked" != 1 ] || tc filter del dev "$port" ingress pref "$CHAIN" handle 1 matchall 2>/dev/null
+		tc filter del dev "$port" ingress chain "$CHAIN" 2>/dev/null
+		ip link del "$peer" 2>/dev/null
+	done < "$STATE/links"
+	: > "$STATE/links"
+}
+
+# A private chain avoids modifying the user's classifiers or qdiscs.
+attach() {
+	local port="$1" index="$2" peer="omgp$2" end="omgm$2" ip vid pref=1
+	# Refuse a collision rather than replacing somebody else's policy.
+	[ -z "$(tc filter show dev "$port" ingress chain "$CHAIN" 2>/dev/null)" ] || return 1
+	[ -z "$(tc filter show dev "$port" ingress pref "$CHAIN" 2>/dev/null)" ] || return 1
+	ip link add "$peer" type veth peer name "$end" || return 1
+	# Record ownership before installing anything, for partial-failure cleanup.
+	printf '%s %s 0\n' "$port" "$peer" >> "$STATE/links"
+	ip link set "$end" master br-onu || return 1
+	ip link set "$end" up || return 1
+	ip link set "$peer" up || return 1
+	tc qdisc add dev "$port" clsact 2>/dev/null
+	tc qdisc add dev "$peer" clsact || return 1
+	tc filter add dev "$peer" ingress protocol all pref 1 matchall \
+		action mirred egress redirect dev "$port" || return 1
+	for ip in $addresses; do
+		for vid in 0 $vids; do
+			if [ "$vid" = 0 ]; then
+				tc filter add dev "$port" ingress chain "$CHAIN" protocol ip pref "$pref" \
+					flower skip_hw dst_ip "$ip" action mirred egress redirect dev "$peer" || return 1
+				pref=$((pref + 1))
+				tc filter add dev "$port" ingress chain "$CHAIN" protocol arp pref "$pref" \
+					flower skip_hw arp_tip "$ip" action mirred egress redirect dev "$peer" || return 1
+			else
+				tc filter add dev "$port" ingress chain "$CHAIN" protocol 802.1Q pref "$pref" \
+					flower skip_hw vlan_id "$vid" vlan_ethtype ip dst_ip "$ip" \
+					action vlan pop action mirred egress redirect dev "$peer" || return 1
+				pref=$((pref + 1))
+				tc filter add dev "$port" ingress chain "$CHAIN" protocol 802.1Q pref "$pref" \
+					flower skip_hw vlan_id "$vid" vlan_ethtype arp arp_tip "$ip" \
+					action vlan pop action mirred egress redirect dev "$peer" || return 1
+			fi
+			pref=$((pref + 1))
+		done
+	done
+	tc filter add dev "$port" ingress protocol all pref "$CHAIN" handle 1 \
+		matchall action goto chain "$CHAIN" || return 1
+	sed -i "s/^$port $peer 0$/$port $peer 1/" "$STATE/links"
+}
+
+native_vid() {
+	local section="$1" device vlan ports entry
+	config_get device "$section" device
+	[ "$device" = br-lan ] || return
+	config_get vlan "$section" vlan
+	config_get ports "$section" ports
+	for entry in $ports; do
+		case "$entry" in "$port":*\**) vids="$vids $vlan";; esac
+	done
+}
+
+run() {
+	local signature previous ports addresses vids port index reserved failed
+	mkdir -p "$STATE"
+	touch "$STATE/links"
+	trap 'exit' INT TERM
+	trap cleanup EXIT
+	while :; do
+		config_load network
+		config_get ports lan omci_management_ports
+		addresses="$(ip -o -4 addr show dev br-onu 2>/dev/null | awk '{split($4,a,"/"); print a[1]}')"
+		signature="$(uci export network) $addresses"
+		if [ "$signature" != "$previous" ]; then
+			cleanup
+			index=0
+			failed=0
+			if [ -n "$addresses" ]; then
+				for port in $ports; do
+					case "$port" in lan[1-9]|lan[1-9][0-9]) ;; *) continue;; esac
+					vids=
+					config_foreach native_vid bridge-vlan
+					# The driver uses private tags for CPU copies when offload is gated.
+					reserved="$(cat /sys/class/net/pon0/device/l2_vlan_reserved 2>/dev/null)"
+					set -- $reserved
+					[ "$#" -lt 3 ] || vids="$vids $2 $3"
+					vids="$(printf '%s\n' $vids | sort -nu)"
+					if ! attach "$port" "$index"; then
+						logger -t omci-management "Cannot attach $port; retaining the configured management VLAN"
+						cleanup
+						failed=1
+						break
+					fi
+					index=$((index + 1))
+				done
+			fi
+			[ "$failed" = 1 ] || previous="$signature"
+		fi
+		sleep 5
+	done
+}
+
+run
