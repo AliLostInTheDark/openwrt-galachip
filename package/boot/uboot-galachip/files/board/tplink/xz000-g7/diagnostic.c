@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <command.h>
+#include <linux/string.h>
 #include <asm/io.h>
 
-void gc1601_eth_diagnostic(void);
+void gc1601_eth_diagnostic(bool verbose);
 
 static int do_g7diag(struct cmd_tbl *cmd, int flag, int argc, char *const argv[])
 {
+	if (argc == 2 && strcmp(argv[1], "verbose"))
+		return CMD_RET_USAGE;
 	printf("scu=%08x/%08x/%08x ddr=%08x/%08x\n",
 	       readl((void *)0x90a00020), readl((void *)0x90a00030),
 	       readl((void *)0x90a00810), readl((void *)0x90b00004),
@@ -21,7 +24,7 @@ static int do_g7diag(struct cmd_tbl *cmd, int flag, int argc, char *const argv[]
 	       readl((void *)0x90ddc000), readl((void *)0x90ddc008),
 	       readl((void *)0x90ddc00c), readl((void *)0x90ddc010),
 	       readl((void *)0x90ddc014));
-	gc1601_eth_diagnostic();
+	gc1601_eth_diagnostic(argc == 2);
 	return 0;
 }
-U_BOOT_CMD(g7diag, 1, 1, do_g7diag, "read GC1601 handoff registers", "");
+U_BOOT_CMD(g7diag, 2, 1, do_g7diag, "read GC1601 handoff registers", "[verbose]");

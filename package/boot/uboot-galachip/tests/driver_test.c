@@ -10,7 +10,8 @@
 
 struct phy_device mock_phy = { 1, 1000, DUPLEX_FULL };
 static bool fifo_stuck, abort_stuck, complete_stuck, tx_stuck;
-static bool mdio_stuck, alloc_empty;
+static bool mdio_stuck, alloc_empty, table_stuck;
+static u32 table_reads;
 static u32 completions, releases, acknowledgments, spi_left, spi_position, spi_opcode;
 static u32 raw(uintptr_t a) { return *(u32 *)a; }
 static void set(uintptr_t a, u32 v) { *(u32 *)a = v; }
@@ -53,6 +54,13 @@ void mock_write(u32 v, uintptr_t a)
 		set(0x90dc000c, 1);
 	if (a == 0x90dc0010)
 		set(0x90dc0014, 1);
+	if (a == 0x90dd0014 && (v & BIT(27))) {
+		table_reads++;
+		if (!table_stuck) {
+			set(0x90dd0018, 1);
+			set(0x90dd001c, v);
+		}
+	}
 	if (a == 0x90dd001c) {
 		assert(!raw(0x90dd0020));
 		assert(!raw(0x90dd0024));
@@ -173,6 +181,31 @@ static void network_tests(void)
 	assert(!gc_send(&dev, input, sizeof(input)));
 	assert(!p.tx_error && p.tx_submitted == before + 1);
 	assert(p.tx_completed == p.tx_submitted);
+	/* Completion can advance without MAC egress: retain both independently. */
+	{
+		u32 value = 0;
+
+		assert(!diagnostic_count(0x140, 0xc00000, &value));
+		assert(value == (BIT(27) | 0xc00000 | 0x140));
+		table_stuck = true;
+		assert(diagnostic_count(0x140, 0xc00000, &value) == -ETIMEDOUT);
+		table_stuck = false;
+		before = table_reads;
+		diagnostic_queues();
+		assert(table_reads == before + 40);
+	}
+	set(0x90e00714, 12345);
+	for (i = 0; i < TRACE_SIZE + 3; i++)
+		assert(!gc_send(&dev, input, sizeof(input)));
+	{
+		struct gc_tx_trace *t = &p.trace[(p.tx_attempts - 1) % TRACE_SIZE];
+
+		assert(t->attempt == p.tx_attempts && t->session == p.starts);
+		assert(t->submitted == 1 && !t->error);
+		assert(t->completion == 1 && t->alloc == (BIT(31) | 7));
+		assert(t->mac_before == 12345 && t->mac_after == 12345);
+		assert(!memcmp(t->destination, input, 6));
+	}
 	d = descriptor(15, 255);
 	d[0] = (1U << 29) | sizeof(input);
 	d[1] = BIT(12);
@@ -181,6 +214,10 @@ static void network_tests(void)
 	set(0x90ddc09c, 1U << 16);
 	memcpy((void *)(POOL + 9 * BUFSIZE + 3), input, sizeof(input));
 	before = releases;
+	capture_stop(&p);
+	assert(p.stop[15].pending == 1 && p.stop[15].ready == 1);
+	assert(p.stop[15].first_ready == 255 && releases == before);
+	assert(pending(15) == 1);
 	assert(gc_recv(&dev, 0, &packet) == sizeof(input));
 	assert(!memcmp(packet, input, sizeof(input)));
 	assert(releases == before + 1 && !pending(15));

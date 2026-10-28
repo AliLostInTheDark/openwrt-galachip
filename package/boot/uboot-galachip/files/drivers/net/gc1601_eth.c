@@ -29,6 +29,20 @@
 #define BUFSIZE 2048
 #define SLOTS 256
 #define CONTAINERS 16
+#define TRACE_SIZE 64
+
+struct gc_tx_trace {
+	u32 attempt, session, length, alloc, completion, submitted;
+	u32 mac_before, mac_after, rx_packets;
+	int error;
+	u16 type;
+	u8 destination[6];
+};
+
+struct gc_stop_trace {
+	u32 pending, words[4];
+	u16 consumer, first_ready, ready;
+};
 
 struct gc_eth {
 	struct phy_device *phy;
@@ -37,6 +51,9 @@ struct gc_eth {
 	u32 starts, tx_attempts, tx_submitted, tx_completed, tx_errors;
 	u32 last_alloc, last_completion, rx_packets, rx_dropped;
 	int start_error, tx_error;
+	struct gc_tx_trace trace[TRACE_SIZE];
+	struct gc_stop_trace stop[CONTAINERS];
+	u32 stop_tx_octets, stop_rx_packets;
 	u8 packet[BUFSIZE];
 };
 static struct gc_eth *active;
@@ -120,6 +137,35 @@ static int drain(struct gc_eth *p)
 	return 0;
 }
 
+static void capture_stop(struct gc_eth *p)
+{
+	unsigned int c, i;
+
+	p->stop_tx_octets = readl(GMAC + 0x714);
+	p->stop_rx_packets = p->rx_packets;
+	for (c = 0; c < CONTAINERS; c++) {
+		struct gc_stop_trace *t = &p->stop[c];
+		u32 *d = descriptor(c, p->consumer[c]);
+
+		t->pending = pending(c);
+		t->consumer = p->consumer[c];
+		t->first_ready = SLOTS;
+		t->ready = 0;
+		for (i = 0; i < 4; i++)
+			t->words[i] = readl(d + i);
+		if (!t->pending)
+			continue;
+		for (i = 0; i < SLOTS; i++) {
+			d = descriptor(c, i);
+			if (!(readl(d) & 0x3fff) || !readl(d + 3))
+				continue;
+			if (!t->ready)
+				t->first_ready = i;
+			t->ready++;
+		}
+	}
+}
+
 static int quiesce(struct gc_eth *p)
 {
 	int ret;
@@ -129,6 +175,8 @@ static int quiesce(struct gc_eth *p)
 	gc_barrier();
 	udelay(1000);
 	ret = tx_wait(p);
+	if (p->initialized)
+		capture_stop(p);
 	if (!ret && p->initialized)
 		ret = drain(p);
 	p->running = false;
@@ -401,10 +449,28 @@ static int gc_xmit(struct udevice *dev, void *packet, int length)
 static int gc_send(struct udevice *dev, void *packet, int length)
 {
 	struct gc_eth *p = dev_get_priv(dev);
+	struct gc_tx_trace *t = &p->trace[p->tx_attempts % TRACE_SIZE];
+	const u8 *bytes = packet;
+	u32 submitted = p->tx_submitted;
 	int ret;
 
-	p->tx_attempts++;
+	memset(t, 0, sizeof(*t));
+	t->attempt = ++p->tx_attempts;
+	t->session = p->starts;
+	t->length = length;
+	if (length >= 14) {
+		memcpy(t->destination, bytes, sizeof(t->destination));
+		t->type = (u16)bytes[12] << 8 | bytes[13];
+	}
+	t->mac_before = readl(GMAC + 0x714);
+	p->last_alloc = 0;
 	ret = gc_xmit(dev, packet, length);
+	t->mac_after = readl(GMAC + 0x714);
+	t->alloc = p->last_alloc;
+	t->completion = p->last_completion;
+	t->submitted = p->tx_submitted - submitted;
+	t->rx_packets = p->rx_packets;
+	t->error = ret;
 	p->tx_error = ret;
 	if (ret)
 		p->tx_errors++;
@@ -464,10 +530,48 @@ static int gc_recv(struct udevice *dev, int flags, uchar **packetp)
 	return -EAGAIN;
 }
 
-void gc1601_eth_diagnostic(void)
+static int diagnostic_count(u32 index, u32 selector, u32 *data)
+{
+	u32 done;
+	int ret;
+
+	writel(0, DESC + 0x18);
+	writel(BIT(27) | selector | index, DESC + 0x14);
+	ret = readl_poll_timeout(DESC + 0x18, done, done == 1, 1000);
+	if (!ret)
+		*data = readl(DESC + 0x1c);
+	return ret;
+}
+
+static void diagnostic_queues(void)
+{
+	u32 in, out, all;
+	unsigned int i;
+
+	/* Read selectors only: no queue state or thresholds are written. */
+	for (i = 0x140; i < 0x148; i++) {
+		if (diagnostic_count(i, 0xc00000, &in) ||
+		    diagnostic_count(i, 0x400000, &out) ||
+		    diagnostic_count(i, 0x1400000, &all)) {
+			printf("queue: read timeout at %03x\n", i);
+			return;
+		}
+		printf("queue: index=%03x incnt=%08x outcnt=%08x allcnt=%08x\n",
+		       i, in, out, all);
+	}
+	for (i = 0x180; i < 0x190; i++) {
+		if (diagnostic_count(i, 0x400000, &out)) {
+			printf("queue: read timeout at %03x\n", i);
+			return;
+		}
+		printf("queue: index=%03x outcnt=%08x\n", i, out);
+	}
+}
+
+void gc1601_eth_diagnostic(bool verbose)
 {
 	struct gc_eth *p = active;
-	unsigned int c;
+	unsigned int c, i, count;
 
 	if (!p) {
 		puts("eth: not probed\n");
@@ -488,6 +592,39 @@ void gc1601_eth_diagnostic(void)
 		       c, pending(c), p->consumer[c], !!(p->synced & BIT(c)),
 		       readl(d), readl(d + 1), readl(d + 2), readl(d + 3));
 	}
+	if (!verbose)
+		return;
+	printf("eth: MAC raw 714=%08x 718=%08x 780=%08x 784=%08x\n",
+	       readl(GMAC + 0x714), readl(GMAC + 0x718),
+	       readl(GMAC + 0x780), readl(GMAC + 0x784));
+	printf("eth: stop before drain tx_octets=%u rx_packets=%u PM=%08x OS=%08x sched=%08x\n",
+	       p->stop_tx_octets, p->stop_rx_packets, readl(BUF + 0x0c),
+	       readl(BUF + 0x14), readl((void *)0x90de8000));
+	for (c = 0; c < CONTAINERS; c++) {
+		struct gc_stop_trace *t = &p->stop[c];
+
+		printf("stop: container=%u pending=%u consumer=%u ready=%u first=%u desc=%08x/%08x/%08x/%08x\n",
+		       c, t->pending, t->consumer, t->ready, t->first_ready,
+		       t->words[0], t->words[1], t->words[2], t->words[3]);
+	}
+	count = min(p->tx_attempts, (u32)TRACE_SIZE);
+	for (i = 0; i < count; i++) {
+		u32 index = p->tx_attempts - count + i;
+		struct gc_tx_trace *t = &p->trace[index % TRACE_SIZE];
+
+		printf("tx: n=%u session=%u len=%u type=%04x dst=%02x:%02x:%02x:%02x:%02x:%02x alloc=%08x submitted=%u completion=%08x err=%d tx_octets=%u/%u rx=%u\n",
+		       t->attempt, t->session, t->length, t->type,
+		       t->destination[0], t->destination[1], t->destination[2],
+		       t->destination[3], t->destination[4], t->destination[5],
+		       t->alloc, t->submitted, t->completion, t->error,
+		       t->mac_before, t->mac_after, t->rx_packets);
+	}
+	printf("phy: bmcr=%d bmsr=%d vendor18=%d\n",
+	       phy_read(p->phy, MDIO_DEVAD_NONE, 0),
+	       phy_read(p->phy, MDIO_DEVAD_NONE, 1),
+	       phy_read(p->phy, MDIO_DEVAD_NONE, 0x18));
+	if (p->initialized && !p->running)
+		diagnostic_queues();
 }
 
 static int gc_write_hwaddr(struct udevice *dev)
