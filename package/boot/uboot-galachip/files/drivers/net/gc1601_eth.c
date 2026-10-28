@@ -13,6 +13,7 @@
 #include <linux/delay.h>
 #include <linux/iopoll.h>
 
+#define GLOBAL ((void *)0x90c00000)
 #define GMAC ((void *)0x90e00000)
 #define BUF ((void *)0x90dc0000)
 #define DESC ((void *)0x90dd0000)
@@ -243,12 +244,34 @@ static void switch_defaults(void)
 	sr_update(0x2c, 0x8000, 0x4000);
 }
 
+static void packet_block_reset(void)
+{
+	/* gala_eth_init: shared xPON/packet reset, before PM/OS SRAM init. */
+	writel(0x7fffffff, GLOBAL + 8);
+	udelay(100000);
+	writel(~0U, GLOBAL + 8);
+	udelay(100000);
+	writel(1, GLOBAL + 0x40);
+	udelay(10000);
+	writel(0x80000000, GLOBAL + 8);
+	udelay(100000);
+	writel(~0U, GLOBAL + 8);
+	udelay(100000);
+	writel(~0U, GLOBAL);
+	writel(~0U, GLOBAL + 4);
+	writel(7, GLOBAL + 0x40010);
+	writel(0x7d, GLOBAL + 0x40008);
+	gc_barrier();
+	puts("GC1601: vendor shared packet-block reset complete\n");
+}
+
 static int engine_init(struct gc_eth *p)
 {
 	u32 status;
 	unsigned int i;
 	int ret;
 
+	packet_block_reset();
 	/* Always establish our own SRAM, free list, rings and queue profiles. */
 	writel(1, (void *)0x90dc8000);
 	writel(~0U, SW + 0x38);

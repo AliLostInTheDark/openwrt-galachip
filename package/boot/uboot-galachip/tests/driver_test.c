@@ -11,7 +11,7 @@
 struct phy_device mock_phy = { 1, 1000, DUPLEX_FULL };
 static bool fifo_stuck, abort_stuck, complete_stuck, tx_stuck;
 static bool mdio_stuck, alloc_empty, table_stuck;
-static u32 table_reads;
+static u32 table_reads, global_reset_writes;
 static u32 completions, releases, acknowledgments, spi_left, spi_position, spi_opcode;
 static u32 raw(uintptr_t a) { return *(u32 *)a; }
 static void set(uintptr_t a, u32 v) { *(u32 *)a = v; }
@@ -40,6 +40,21 @@ u32 mock_read(uintptr_t a)
 
 void mock_write(u32 v, uintptr_t a)
 {
+	if (a >= 0x90c00000 && a <= 0x90c40010) {
+		static const struct { uintptr_t address; u32 value; } expected[] = {
+			{ 0x90c00008, 0x7fffffff }, { 0x90c00008, 0xffffffff },
+			{ 0x90c00040, 1 }, { 0x90c00008, 0x80000000 },
+			{ 0x90c00008, 0xffffffff }, { 0x90c00000, 0xffffffff },
+			{ 0x90c00004, 0xffffffff }, { 0x90c40010, 7 },
+			{ 0x90c40008, 0x7d },
+		};
+		unsigned int step = global_reset_writes++ % ARRAY_SIZE(expected);
+
+		assert(a == expected[step].address && v == expected[step].value);
+		assert(!(raw(0x90e00000) & 3) && !raw(0x90dd4000));
+	}
+	if (a == 0x90dc0008 || a == 0x90dc0010)
+		assert(global_reset_writes && !(global_reset_writes % 9));
 	set(a, v);
 	if ((a == 0x90100010 || a == 0x90100014) && v && !mdio_stuck)
 		set(0x9010000c, raw(0x9010000c) | (a == 0x90100010 ? BIT(8) : 1));
@@ -160,6 +175,7 @@ static void network_tests(void)
 	mock_phy.link = 0;
 	assert(gc_start(&dev) == -ENOLINK);
 	assert(!p.running && p.initialized && !p.failed);
+	assert(global_reset_writes == 9);
 	mock_phy.link = 1;
 	for (i = 0; i < 20; i++) {
 		assert(!gc_start(&dev));
@@ -172,6 +188,7 @@ static void network_tests(void)
 		assert(!p.failed && !p.tx_owned && !p.running);
 	}
 	assert(!gc_start(&dev));
+	assert(global_reset_writes == 9);
 	before = p.tx_submitted;
 	alloc_empty = true;
 	assert(gc_send(&dev, input, sizeof(input)) == -ENOBUFS);
@@ -311,6 +328,7 @@ int main(void)
 	map(0x90dc0000, 0x200000);
 	map(0xa0000000, 0x1000);
 	map(0x90100000, 0x1000);
+	map(0x90c00000, 0x41000);
 	map(0x90a00000, 0x1000);
 	map(0x91400000, 0x1000);
 	assert(gc1601_load_range(0x41000000, 0x400000));
