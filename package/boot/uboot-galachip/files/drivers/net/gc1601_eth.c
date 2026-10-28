@@ -34,6 +34,9 @@ struct gc_eth {
 	struct phy_device *phy;
 	u16 consumer[CONTAINERS], synced;
 	bool initialized, tx_owned, failed, running;
+	u32 starts, tx_attempts, tx_submitted, tx_completed, tx_errors;
+	u32 last_alloc, last_completion, rx_packets, rx_dropped;
+	int start_error, tx_error;
 	u8 packet[BUFSIZE];
 };
 static struct gc_eth *active;
@@ -82,12 +85,14 @@ static int tx_wait(struct gc_eth *p)
 	if (!p->tx_owned)
 		return p->failed ? -EIO : 0;
 	ret = readl_poll_timeout(TX + 8, count, count & 0xffff, 1000000);
+	p->last_completion = count;
 	/* Never return a hardware-owned buffer to the free list on timeout. */
 	if (ret || (count & 0xffff) != 1) {
 		p->failed = true;
 		return ret ? ret : -EIO;
 	}
 	p->tx_owned = false;
+	p->tx_completed++;
 	return 0;
 }
 
@@ -291,7 +296,7 @@ static int tune_phy(struct phy_device *phy)
 	return ret ? ret : restore;
 }
 
-static int gc_start(struct udevice *dev)
+static int gc_open(struct udevice *dev)
 {
 	struct gc_eth *p = dev_get_priv(dev);
 	u32 cfg;
@@ -330,6 +335,15 @@ static int gc_start(struct udevice *dev)
 	return 0;
 }
 
+static int gc_start(struct udevice *dev)
+{
+	struct gc_eth *p = dev_get_priv(dev);
+
+	p->starts++;
+	p->start_error = gc_open(dev);
+	return p->start_error;
+}
+
 static void gc_stop(struct udevice *dev)
 {
 	struct gc_eth *p = dev_get_priv(dev);
@@ -338,7 +352,7 @@ static void gc_stop(struct udevice *dev)
 		puts("GC1601: unresolved DMA ownership; power cycle required\n");
 }
 
-static int gc_send(struct udevice *dev, void *packet, int length)
+static int gc_xmit(struct udevice *dev, void *packet, int length)
 {
 	struct gc_eth *p = dev_get_priv(dev);
 	u32 val, buf;
@@ -357,6 +371,7 @@ static int gc_send(struct udevice *dev, void *packet, int length)
 	if (ret)
 		return ret;
 	val = readl(RX + 0x0c);
+	p->last_alloc = val;
 	if (!(val & BIT(31)) || (val & ~BIT(31)) >= BUFS)
 		return -ENOBUFS;
 	buf = val & ~BIT(31);
@@ -373,9 +388,23 @@ static int gc_send(struct udevice *dev, void *packet, int length)
 	}
 	gc_barrier();
 	p->tx_owned = true;
+	p->tx_submitted++;
 	writel(buf, RX + 0x38);
 	writel(1, TX + 4);
 	return tx_wait(p);
+}
+
+static int gc_send(struct udevice *dev, void *packet, int length)
+{
+	struct gc_eth *p = dev_get_priv(dev);
+	int ret;
+
+	p->tx_attempts++;
+	ret = gc_xmit(dev, packet, length);
+	p->tx_error = ret;
+	if (ret)
+		p->tx_errors++;
+	return ret;
 }
 
 static int gc_recv(struct udevice *dev, int flags, uchar **packetp)
@@ -422,11 +451,39 @@ static int gc_recv(struct udevice *dev, int flags, uchar **packetp)
 		}
 		p->consumer[c] = (p->consumer[c] + 1) % SLOTS;
 		if (valid) {
+			p->rx_packets++;
 			*packetp = p->packet;
 			return len;
 		}
+		p->rx_dropped++;
 	}
 	return -EAGAIN;
+}
+
+void gc1601_eth_diagnostic(void)
+{
+	struct gc_eth *p = active;
+	unsigned int c;
+
+	if (!p) {
+		puts("eth: not probed\n");
+		return;
+	}
+	printf("eth: starts=%u start_error=%d initialized=%u running=%u failed=%u owned=%u\n",
+	       p->starts, p->start_error, p->initialized, p->running,
+	       p->failed, p->tx_owned);
+	printf("eth: attempts=%u submitted=%u completed=%u errors=%u last_error=%d alloc=%08x completion=%08x\n",
+	       p->tx_attempts, p->tx_submitted, p->tx_completed, p->tx_errors,
+	       p->tx_error, p->last_alloc, p->last_completion);
+	printf("eth: rx_packets=%u rx_dropped=%u\n", p->rx_packets, p->rx_dropped);
+	/* Completion and allocator result registers are not read here. */
+	for (c = 0; c < CONTAINERS; c++) {
+		u32 *d = descriptor(c, p->consumer[c]);
+
+		printf("eth: container=%u pending=%u consumer=%u synced=%u desc=%08x/%08x/%08x/%08x\n",
+		       c, pending(c), p->consumer[c], !!(p->synced & BIT(c)),
+		       readl(d), readl(d + 1), readl(d + 2), readl(d + 3));
+	}
 }
 
 static int gc_write_hwaddr(struct udevice *dev)

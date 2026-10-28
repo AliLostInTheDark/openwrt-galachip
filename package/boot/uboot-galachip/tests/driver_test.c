@@ -10,7 +10,7 @@
 
 struct phy_device mock_phy = { 1, 1000, DUPLEX_FULL };
 static bool fifo_stuck, abort_stuck, complete_stuck, tx_stuck;
-static bool mdio_stuck;
+static bool mdio_stuck, alloc_empty;
 static u32 completions, releases, acknowledgments, spi_left, spi_position, spi_opcode;
 static u32 raw(uintptr_t a) { return *(u32 *)a; }
 static void set(uintptr_t a, u32 v) { *(u32 *)a = v; }
@@ -59,7 +59,7 @@ void mock_write(u32 v, uintptr_t a)
 		set(0x90f80040, 1);
 	if (a == 0x90dd4014) {
 		set(a, 0);
-		set(0x90dd400c, BIT(31) | 7);
+		set(0x90dd400c, alloc_empty ? 0 : BIT(31) | 7);
 	}
 	if (a == 0x90ddc044 && !tx_stuck)
 		completions++;
@@ -153,6 +153,15 @@ static void network_tests(void)
 		assert(!p.failed && !p.tx_owned && !p.running);
 	}
 	assert(!gc_start(&dev));
+	before = p.tx_submitted;
+	alloc_empty = true;
+	assert(gc_send(&dev, input, sizeof(input)) == -ENOBUFS);
+	assert(p.tx_error == -ENOBUFS && p.tx_errors == 1);
+	assert(!p.last_alloc && p.tx_submitted == before && !p.tx_owned);
+	alloc_empty = false;
+	assert(!gc_send(&dev, input, sizeof(input)));
+	assert(!p.tx_error && p.tx_submitted == before + 1);
+	assert(p.tx_completed == p.tx_submitted);
 	d = descriptor(15, 255);
 	d[0] = (1U << 29) | sizeof(input);
 	d[1] = BIT(12);
