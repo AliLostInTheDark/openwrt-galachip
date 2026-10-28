@@ -53,8 +53,16 @@ void mock_write(u32 v, uintptr_t a)
 		set(0x90dc000c, 1);
 	if (a == 0x90dc0010)
 		set(0x90dc0014, 1);
-	if (a == 0x90dd001c)
+	if (a == 0x90dd001c) {
+		assert(!raw(0x90dd0020));
+		assert(!raw(0x90dd0024));
+		assert(!raw(0x90dd0028));
 		set(0x90dd0018, 1);
+		/* Emulate stale staging left by a preceding transaction. */
+		set(0x90dd0020, 0xdeadbeef);
+		set(0x90dd0024, 0x12345678);
+		set(0x90dd0028, 0xffffffff);
+	}
 	if (a == 0x90f80038)
 		set(0x90f80040, 1);
 	if (a == 0x90dd4014) {
@@ -138,6 +146,9 @@ static void network_tests(void)
 	unsigned int i, before;
 
 	memset(input, 0x5a, sizeof(input));
+	set(0x90dd0020, 0xaaaaaaaa);
+	set(0x90dd0024, 0x55555555);
+	set(0x90dd0028, 0xffffffff);
 	mock_phy.link = 0;
 	assert(gc_start(&dev) == -ENOLINK);
 	assert(!p.running && p.initialized && !p.failed);

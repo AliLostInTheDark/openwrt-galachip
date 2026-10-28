@@ -148,6 +148,10 @@ static int table_write(u32 selector, u32 data)
 
 	writel(0, DESC + 0x18);
 	writel(selector, DESC + 0x14);
+	/* DATA0 commits the complete staging bank, including the upper words. */
+	writel(0, DESC + 0x28);
+	writel(0, DESC + 0x24);
+	writel(0, DESC + 0x20);
 	writel(data, DESC + 0x1c);
 	return readl_poll_timeout(DESC + 0x18, done, done == 1, 1000);
 }
