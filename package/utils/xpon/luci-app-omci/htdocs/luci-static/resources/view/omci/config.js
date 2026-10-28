@@ -291,6 +291,11 @@ return view.extend({
 
 		m.children.forEach(function(section) {
 			section.children.forEach(function(option) {
+				/* Empty choices clear an override: keep current or learn from the OLT. */
+				if (option.keylist && option.keylist.indexOf('') >= 0) {
+					option.optional = true;
+					option.rmempty = true;
+				}
 				if (applyCost[option.option])
 					widgets.annotate(option, applyCost[option.option]);
 			});

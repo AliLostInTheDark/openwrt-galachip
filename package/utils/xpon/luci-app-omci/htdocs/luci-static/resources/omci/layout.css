@@ -11,8 +11,16 @@
 	max-width: 100%;
 	min-width: 0;
 }
-:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .cbi-value-field :is(input[type="text"], input[type="password"], input[type="number"], select, textarea, .cbi-dropdown, .cbi-dynlist) {
-	width: 100%;
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .cbi-value .cbi-value-field :is(input[type="text"], input[type="password"], input[type="number"], .cbi-dynlist) {
+	width: min(100%, 22rem);
+}
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .cbi-value .cbi-value-field :is(select, .cbi-dropdown) {
+	width: fit-content;
+	min-width: min(100%, 14rem);
+	max-width: min(100%, 32rem);
+}
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .cbi-value .cbi-value-field textarea {
+	width: min(100%, 36rem);
 }
 :is(.omci-page, body[data-page^="admin-network-omci"] .modal) :is(.cbi-value-title, .cbi-value-description, .cbi-map-descr, .cbi-section-descr) {
 	white-space: normal;
@@ -73,6 +81,7 @@
 
 :is(.omci-page, body[data-page^="admin-network-omci"] .modal) .control-group {
 	display: flex;
+	width: min(100%, 22rem);
 	min-width: 0;
 	max-width: 100%;
 }
