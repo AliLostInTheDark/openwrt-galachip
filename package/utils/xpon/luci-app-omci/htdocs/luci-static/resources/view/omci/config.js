@@ -1,4 +1,5 @@
 'use strict';
+'require omci.layout as layout';
 'require view';
 'require form';
 'require uci';
@@ -150,13 +151,13 @@ return view.extend({
 		o.placeholder = '200:30';
 		o.description = _('Pairs of <code>S-VLAN:C-VLAN</code>. Upstream, the ONU adds the S-VLAN tag on top of the C-VLAN tag sent by the router; downstream, it removes it again.');
 
-		o = s.taboption('agent', form.ListValue, 'olt_profile', _('OLT profile'));
+		o = s.taboption('agent', form.RichListValue, 'olt_profile', _('OLT profile'));
 		[ ['auto', _('Auto detect')], ['generic', _('Generic')], ['nokia-alcl', _('Nokia / Alcatel-Lucent')],
 		  ['dasan', _('DASAN')], ['huawei', _('Huawei')], ['fiberhome', _('FiberHome')], ['zte', _('ZTE')],
 		  ['unspecified', _('Unspecified')] ].forEach(function(v) { o.value(v[0], v[1]); });
 		o.default = 'auto';
 
-		o = s.taboption('agent', form.ListValue, 'olt_profile_force', _('Force OLT profile'));
+		o = s.taboption('agent', form.RichListValue, 'olt_profile_force', _('Force OLT profile'));
 		[ ['unspecified', _('Do not force')], ['generic', _('Generic')], ['nokia-alcl', _('Nokia / Alcatel-Lucent')],
 		  ['dasan', _('DASAN')], ['huawei', _('Huawei')], ['fiberhome', _('FiberHome')], ['zte', _('ZTE')] ].forEach(function(v) { o.value(v[0], v[1]); });
 		o.default = 'unspecified';
@@ -223,7 +224,7 @@ return view.extend({
 		asciiField(o, 12);
 
 		/* ITU-T G.988 9.1.2, ONU2-G OMCC version (Amd. 2, 2025) */
-		o = s.taboption('capabilities', form.ListValue, 'omcc_version', _('OMCC version'));
+		o = s.taboption('capabilities', form.RichListValue, 'omcc_version', _('OMCC version'));
 		numericList(o, _('Keep current value'), [
 			[ 0x80, _('G.984.4 (06/04)') ],
 			[ 0x81, _('G.984.4 Amd.1 (06/05)') ],
@@ -247,7 +248,7 @@ return view.extend({
 		o.description = _('OMCI version the ONU reports to the OLT in ONU2-G. The agent default is 0xA0. Some OLTs expect the version of the ONT being replaced.');
 
 		/* ITU-T G.988 9.1.1, ONU-G traffic management option */
-		o = s.taboption('capabilities', form.ListValue, 'traffic_management_option', _('Traffic management option'));
+		o = s.taboption('capabilities', form.RichListValue, 'traffic_management_option', _('Traffic management option'));
 		numericList(o, _('Keep current value'), [
 			[ 0, _('0 (Priority controlled: upstream traffic uses the traffic schedulers and priority queues)') ],
 			[ 1, _('1 (Rate controlled: each connection\'s maximum upstream rate is enforced by shaping)') ],
@@ -260,7 +261,7 @@ return view.extend({
 		o.rmempty = false;
 		o.description = _('ANI-G SR indication. On tells the OLT that the ONU sends valid DBRu queue reports; off makes it use traffic-monitoring DBA. The OLT reads it at its next MIB upload.');
 
-		o = s.taboption('capabilities', form.ListValue, 'onu_type', _('ONU type'));
+		o = s.taboption('capabilities', form.RichListValue, 'onu_type', _('ONU type'));
 		o.value('', _('Keep current value'));
 		[
 			_('Other'),
@@ -274,13 +275,13 @@ return view.extend({
 			o.value(String(value), name);
 		});
 
-		o = s.taboption('capabilities', form.ListValue, 'uni_count', _('UNI count'));
+		o = s.taboption('capabilities', form.RichListValue, 'uni_count', _('UNI count'));
 		numericList(o, _('Keep current value'), Array.from({ length: 16 }, function(x, i) {
 			return [ i + 1, String(i + 1) ];
 		}));
 		o.description = _('Number of Ethernet UNIs advertised to the OLT. Advertising extra UNIs does not add physical Ethernet ports; match the ONT whose identity is cloned.');
 
-		o = s.taboption('capabilities', form.ListValue, 'veip_slot', _('VEIP slot'));
+		o = s.taboption('capabilities', form.RichListValue, 'veip_slot', _('VEIP slot'));
 		o.value('', _('Learn from the OLT'));
 		o.value('3', _('Slot 3 (0x0301)'));
 		o.value('6', _('Slot 6 (0x0601)'));
@@ -302,7 +303,7 @@ return view.extend({
 			node.insertBefore(widgets.legend([ 'live', 'next', 'drop' ]),
 					  descr ? descr.nextSibling : node.firstChild);
 
-			return node;
+			return layout.apply(node);
 		});
 	}
 });
