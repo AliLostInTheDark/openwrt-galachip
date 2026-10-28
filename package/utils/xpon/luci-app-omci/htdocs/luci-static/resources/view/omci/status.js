@@ -1,4 +1,5 @@
 'use strict';
+'require omci.layout as layout';
 'require view';
 'require poll';
 'require dom';
@@ -384,7 +385,7 @@ return view.extend({
 		}, 10);
 		window.setTimeout(function() { loadProvisioned(vlan); }, 0);
 
-		return E([], [
+		return layout.apply(E([], [
 			E('h2', {}, _('OMCI status')),
 			E('p', {}, _('Configured identity and agent settings, with live readings refreshed every 10 seconds.')),
 			E('div', { 'id': 'omci-line-root' }, line(status)),
@@ -441,7 +442,7 @@ return view.extend({
 				return row(omciAlarmLabel(alarm), v['omci_alarm_' + i], 'omci_alarm_' + i);
 			})),
 			widgets.report()
-		]);
+		]));
 	},
 
 	handleSaveApply: null,

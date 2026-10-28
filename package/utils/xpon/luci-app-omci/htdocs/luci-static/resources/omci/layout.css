@@ -1,0 +1,123 @@
+/* Shared by every OMCI view and its LuCI dialogs. */
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .cbi-value-field {
+	min-width: 0;
+}
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) :is(input[type="text"], input[type="password"], input[type="number"], select, textarea, .cbi-dropdown, .cbi-dynlist) {
+	box-sizing: border-box;
+	max-width: 100%;
+	min-width: 0;
+}
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .cbi-value-field :is(input[type="text"], input[type="password"], input[type="number"], select, textarea, .cbi-dropdown, .cbi-dynlist) {
+	width: 100%;
+}
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) :is(.cbi-value-title, .cbi-value-description, .cbi-map-descr, .cbi-section-descr) {
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .cbi-dropdown :is(ul, li) {
+	min-width: 0;
+	max-width: 100%;
+	white-space: normal;
+	text-overflow: clip;
+	overflow-wrap: anywhere;
+}
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) :is(button, .cbi-button, .btn) {
+	white-space: normal;
+	max-width: 100%;
+	overflow-wrap: anywhere;
+}
+.omci-page :is(.omci-card, .xpon-panel, .xpon-card, .omci-mib-filter) {
+	min-width: 0;
+}
+.omci-page .table td:not(.cbi-section-actions) {
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+.omci-page .omci-mib-filter select {
+	flex: 0 1 auto;
+	width: auto;
+}
+.omci-table-scroll {
+	max-width: 100%;
+	overflow-x: auto;
+	padding-bottom: .75rem;
+}
+.omci-page :is(pre, code) {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+	:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .cbi-value {
+		display: block;
+	}
+	:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .cbi-value label.cbi-value-title {
+		display: block;
+		float: none;
+		width: auto;
+		padding: 0 0 .5rem;
+		text-align: left;
+	}
+	:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .cbi-value > .cbi-value-field {
+		width: 100%;
+		margin: 0;
+		padding: 0;
+	}
+	.omci-page .xpon-gauge-head {
+		flex-wrap: wrap;
+	}
+}
+
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .control-group {
+	display: flex;
+	min-width: 0;
+	max-width: 100%;
+}
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .control-group > input {
+	flex: 1 1 auto;
+	width: auto;
+	min-width: 0;
+}
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .control-group > button {
+	flex: 0 0 auto;
+}
+.omci-page .xpon-pill {
+	max-width: 100%;
+	white-space: normal;
+}
+body[data-page^="admin-network-omci"] .cbi-page-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: .5rem;
+}
+body[data-page^="admin-network-omci"] .modal {
+	box-sizing: border-box;
+	max-width: calc(100vw - 2rem);
+}
+/* Keep MIB column headings aligned; small screens scroll the matrix. */
+.omci-page .omci-mib-table {
+	display: table;
+	table-layout: auto;
+}
+.omci-page .omci-mib-table .tr {
+	display: table-row;
+}
+.omci-page .omci-mib-table :is(.th, .td) {
+	display: table-cell;
+	vertical-align: top;
+}
+.omci-page .omci-mib-table .td::before {
+	display: none;
+}
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .cbi-dropdown:not(.btn):not(.cbi-button) {
+	height: auto;
+	min-height: 2.25rem;
+}
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .cbi-dropdown:not([open]) > ul,
+:is(.omci-page, body[data-page^="admin-network-omci"] .modal) .cbi-dropdown > ul > li[display] {
+	height: auto;
+	max-height: none;
+}

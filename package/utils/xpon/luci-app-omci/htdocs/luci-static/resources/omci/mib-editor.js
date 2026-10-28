@@ -1,4 +1,5 @@
 'use strict';
+'require omci.layout as layout';
 'require baseclass';
 'require ui';
 'require omci.rpc as omci';
@@ -62,7 +63,8 @@ function render(group, data, title, description) {
 		E('option', { 'value': 'local' }, _('Local edits')),
 		E('option', { 'value': 'hardware' }, _('Hardware'))
 	]);
-	var tableRoot = E('div', { 'style': 'overflow-x:auto' });
+	var tableRoot = E('div', { 'class': 'omci-table-scroll', 'tabindex': '0',
+		'role': 'region', 'aria-label': _('MIB objects') });
 	var count = E('span');
 
 	function updateCatalog() {
@@ -97,11 +99,15 @@ function render(group, data, title, description) {
 	}
 
 	function showEditor(item) {
+		var choices = {};
+		groupClasses.forEach(function(c) {
+			choices[String(c.class_id)] = '%d — %s'.format(c.class_id, c.name);
+		});
+		var classWidget = item ? null : new ui.Dropdown(
+			groupClasses.length ? String(groupClasses[0].class_id) : null, choices,
+			{ optional: false, sort: groupClasses.map(function(c) { return String(c.class_id); }) });
 		var classNode = item ? E('input', { 'class': 'cbi-input-text', 'readonly': true,
-			'value': String(item.class_id) }) : E('select', { 'class': 'cbi-input-select' },
-			groupClasses.map(function(c) {
-				return E('option', { 'value': String(c.class_id) }, '%d — %s'.format(c.class_id, c.name));
-			}));
+			'value': String(item.class_id) }) : classWidget.render();
 		var entityNode = E('input', { 'class': 'cbi-input-text', 'value': item ? hex(item.entity_id, 4) : '',
 			'placeholder': '0x0000', 'readonly': item ? true : null });
 		var maskNode = E('input', { 'class': 'cbi-input-text', 'value': item ? hex(item.attr_mask, 4) : '0xffff' });
@@ -115,7 +121,7 @@ function render(group, data, title, description) {
 			E('div', { 'class': 'omci-mib-actions' }, [
 				modalButton(_('Cancel'), 'reset', ui.hideModal),
 				modalButton(item ? _('Save') : _('Create'), 'positive', function() {
-					var classId = parseUint(classNode.value), entityId = parseUint(entityNode.value);
+					var classId = parseUint(item ? classNode.value : classWidget.getValue()), entityId = parseUint(entityNode.value);
 					var mask = parseUint(maskNode.value), bytes = normalizeHex(dataNode.value);
 					if (classId == null || entityId == null || mask == null || bytes == null) {
 						ui.addNotification(null, E('p', {}, _('Class, entity and mask must be between 0 and 65535. Data must be at most 64 bytes of hexadecimal pairs.')), 'error');
@@ -198,7 +204,7 @@ function render(group, data, title, description) {
 	originFilter.addEventListener('change', renderTable);
 	renderTable();
 
-	return E([], [
+	return layout.apply(E([], [
 		E('style', {}, [
 			'.omci-mib-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin:12px 0}',
 			'.omci-mib-filter{display:flex;align-items:center;flex-wrap:wrap;gap:8px}',
@@ -215,7 +221,7 @@ function render(group, data, title, description) {
 			modalButton(_('Refresh'), 'action', function() { return reloadObjects().catch(notifyError); }),
 			writable ? modalButton(_('Reset MIB'), 'negative', showReset) : ''
 		])
-	]);
+	]));
 }
 
 return baseclass.extend({

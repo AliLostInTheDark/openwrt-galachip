@@ -105,6 +105,7 @@ function view(file, data, mode = 'gpon') {
       vlanStatus: () => {count('vlan'); return Promise.resolve(data.vlan || null);},
       mibList: () => {count('mib'); return Promise.resolve(data.mib || []);}
     },
+    layout: {apply: node => node},
     window: {setTimeout: fn => setImmediate(fn)},
     baseclass: {extend: x => x},
     rpc: {declare: () => () => { count('public'); return Promise.resolve(data.public || {}); }},

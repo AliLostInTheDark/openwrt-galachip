@@ -1,4 +1,5 @@
 'use strict';
+'require omci.layout as layout';
 'require view';
 'require form';
 'require uci';
@@ -466,7 +467,7 @@ return view.extend({
 								      objects, false));
 				});
 			}
-			return node;
+			return layout.apply(node);
 		});
 	}
 });
