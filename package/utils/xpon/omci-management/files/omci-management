@@ -17,6 +17,25 @@ cleanup() {
 	: > "$STATE/links"
 }
 
+# Do not flood management frames into a disconnected physical jack.
+sync_links() {
+	local port peer hooked end carrier flags state
+	while read -r port peer hooked; do
+		[ "$hooked" = 1 ] || continue
+		end="omgm${peer#omgp}"
+		carrier=0
+		{ read -r carrier < "/sys/class/net/$port/carrier"; } 2>/dev/null || carrier=0
+		{ read -r flags < "/sys/class/net/$end/flags"; } 2>/dev/null || return 1
+		case "$carrier" in
+		1) state=up ;;
+		*) state=down; carrier=0 ;;
+		esac
+		if [ "$((flags & 1))" -ne "$carrier" ]; then
+			ip link set "$end" "$state" || return 1
+		fi
+	done < "$STATE/links"
+}
+
 # A private chain avoids modifying the user's classifiers or qdiscs.
 attach() {
 	local port="$1" index="$2" peer="omgp$2" end="omgm$2" ip vid pref=1
@@ -27,9 +46,9 @@ attach() {
 	# Record ownership before installing anything, for partial-failure cleanup.
 	printf '%s %s 0\n' "$port" "$peer" >> "$STATE/links"
 	ip link set "$end" master br-onu || return 1
-	ip link set "$end" up || return 1
 	ip link set "$peer" up || return 1
-	tc qdisc add dev "$port" clsact 2>/dev/null
+	tc qdisc add dev "$port" clsact 2>/dev/null ||
+		tc qdisc show dev "$port" | grep -qE 'qdisc (clsact|ingress) ' || return 1
 	tc qdisc add dev "$peer" clsact || return 1
 	tc filter add dev "$peer" ingress protocol all pref 1 matchall \
 		action mirred egress redirect dev "$port" || return 1
@@ -56,6 +75,7 @@ attach() {
 	tc filter add dev "$port" ingress protocol all pref "$CHAIN" handle 1 \
 		matchall action goto chain "$CHAIN" || return 1
 	sed -i "s/^$port $peer 0$/$port $peer 1/" "$STATE/links"
+	sync_links
 }
 
 native_vid() {
@@ -70,7 +90,7 @@ native_vid() {
 }
 
 run() {
-	local signature previous ports addresses vids port index reserved failed
+	local signature previous ports addresses vids port index reserved failed tick
 	mkdir -p "$STATE"
 	touch "$STATE/links"
 	trap 'exit' INT TERM
@@ -105,7 +125,13 @@ run() {
 			fi
 			[ "$failed" = 1 ] || previous="$signature"
 		fi
-		sleep 5
+		for tick in 1 2 3 4 5; do
+			if ! sync_links; then
+				previous=
+				break
+			fi
+			sleep 1
+		done
 	done
 }
 
