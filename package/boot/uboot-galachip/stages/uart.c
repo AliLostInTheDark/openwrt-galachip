@@ -3,6 +3,7 @@
 #define REG(a) (*(volatile uint32_t *)(a))
 #define UART 0x90400000U
 #define POLLS 3000000U
+uint32_t uart_rx_errors;
 
 void uart_init(void)
 {
@@ -27,11 +28,15 @@ void uart_put(int ch)
 
 int uart_get(void)
 {
-	uint32_t n;
+	uint32_t n, status;
 
-	for (n = POLLS; n; n--)
-		if (REG(UART + 0x14) & 1)
+	for (n = POLLS; n; n--) {
+		status = REG(UART + 0x14);
+		if (status & 1) {
+			uart_rx_errors |= status & 0x1e;
 			return REG(UART) & 255;
+		}
+	}
 	return -1;
 }
 

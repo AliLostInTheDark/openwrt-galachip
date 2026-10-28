@@ -21,6 +21,12 @@ uint32_t stage_crc(const void *data, size_t length);
 int stage_valid(const void *data, size_t length);
 int lzma_header_valid(const struct lzma_header *h, size_t compressed_size);
 int uart_image_valid(const void *data, size_t received);
+extern uint32_t uart_rx_errors;
+struct xmodem_status {
+	uint32_t packets, timeouts, crc_errors, header_errors;
+	uint32_t bytes, sequence, calculated_crc, received_crc;
+};
+extern struct xmodem_status xmodem_status;
 int uart_get(void);
 void uart_put(int ch);
 int xmodem_receive(void *destination, size_t capacity);

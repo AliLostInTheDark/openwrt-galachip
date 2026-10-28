@@ -123,6 +123,13 @@ class Images(unittest.TestCase):
             self.assertEqual(result, n)
             self.assertEqual(out, data)
 
+    def test_initial_timeout_requests_crc_without_nak(self):
+        data = b"a" * 128
+        result, out = self.receive([-1, -1] + packet(1, data) + [4], 128)
+        self.assertEqual((result, out), (128, data))
+        self.assertEqual(self.c.uart_output_count(67), 3)
+        self.assertEqual(self.c.uart_output_count(21), 0)
+
     def test_uart_package_and_overflow(self):
         for n in (1, 128, images.PROPER_MAX):
             packed = images.uart_image(bytes(n))

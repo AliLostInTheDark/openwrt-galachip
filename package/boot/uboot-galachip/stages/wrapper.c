@@ -6,6 +6,15 @@ void uart_init(void);
 void uart_puts(const char *s);
 static int allocated;
 
+static void report_word(const char *name, uint32_t value)
+{
+	int shift;
+
+	uart_puts(name);
+	for (shift = 28; shift >= 0; shift -= 4)
+		uart_put("0123456789abcdef"[(value >> shift) & 15]);
+}
+
 static void recover(void)
 {
 	void *package = (void *)0x40fffff0;
@@ -16,6 +25,17 @@ static void recover(void)
 		length = xmodem_receive(package, UART_MAX);
 		if (length > 0 && uart_image_valid(package, length))
 			stage_jump(0x41000000);
+		/* Print only after reception ends, never inside an active packet. */
+		report_word("XMODEM packets=", xmodem_status.packets);
+		report_word(" timeouts=", xmodem_status.timeouts);
+		report_word(" crc_errors=", xmodem_status.crc_errors);
+		report_word(" header_errors=", xmodem_status.header_errors);
+		report_word(" bytes=", xmodem_status.bytes);
+		report_word(" seq=", xmodem_status.sequence);
+		report_word(" crc=", xmodem_status.calculated_crc);
+		report_word(" wire_crc=", xmodem_status.received_crc);
+		report_word(" lsr_errors=", uart_rx_errors);
+		uart_puts("\n");
 	}
 }
 

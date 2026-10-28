@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <stddef.h>
+#include <stdint.h>
+uint32_t uart_rx_errors;
 static const int *input;
 static size_t length, position, output_length;
 static unsigned char output[100000];

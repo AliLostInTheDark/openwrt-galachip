@@ -8,6 +8,7 @@
 #define NAK 21
 #define CAN 24
 static uint8_t block[1024];
+struct xmodem_status xmodem_status;
 
 static uint16_t crc16(uint16_t crc, uint8_t data)
 {
@@ -27,6 +28,9 @@ int xmodem_receive(void *destination, size_t capacity)
 	uint16_t crc;
 	int c, seq, inverse, hi, lo, previous;
 
+	xmodem_status = (struct xmodem_status){0};
+	uart_rx_errors = 0;
+
 	while (errors < 64) {
 		if (!total)
 			uart_put('C');
@@ -39,26 +43,59 @@ int xmodem_receive(void *destination, size_t capacity)
 			uart_put(ACK);
 			return total;
 		}
-		if (c != SOH && c != STX)
+		if (c != SOH && c != STX) {
+			if (c < 0)
+				xmodem_status.timeouts++;
+			else
+				xmodem_status.header_errors++;
+			/* Before the first packet, request CRC mode without a NAK. */
+			if (!total) {
+				errors++;
+				continue;
+			}
 			goto retry;
+		}
 		count = c == SOH ? 128 : 1024;
+		xmodem_status.packets++;
+		xmodem_status.bytes = 0;
 		seq = uart_get();
 		inverse = uart_get();
-		if (seq < 0 || inverse < 0)
+		if (seq < 0 || inverse < 0) {
+			xmodem_status.timeouts++;
 			goto retry;
-		crc = 0;
+		}
+		xmodem_status.sequence = seq;
 		for (i = 0; i < count; i++) {
 			c = uart_get();
-			if (c < 0)
+			if (c < 0) {
+				xmodem_status.timeouts++;
+				xmodem_status.bytes = i;
 				goto retry;
+			}
 			block[i] = c;
-			crc = crc16(crc, c);
+
 		}
+		xmodem_status.bytes = count;
 		hi = uart_get();
 		lo = uart_get();
-		if (hi < 0 || lo < 0 || (seq ^ inverse) != 255 ||
-		    crc != (uint16_t)((hi << 8) | lo))
+		if (hi < 0 || lo < 0) {
+			xmodem_status.timeouts++;
 			goto retry;
+		}
+		if ((seq ^ inverse) != 255) {
+			xmodem_status.header_errors++;
+			goto retry;
+		}
+		/* Receive the complete burst before doing CRC work with caches off. */
+		crc = 0;
+		for (i = 0; i < count; i++)
+			crc = crc16(crc, block[i]);
+		xmodem_status.calculated_crc = crc;
+		xmodem_status.received_crc = (hi << 8) | lo;
+		if (crc != xmodem_status.received_crc) {
+			xmodem_status.crc_errors++;
+			goto retry;
+		}
 		previous = total && (uint8_t)seq == (uint8_t)(expected - 1);
 		if (previous) {
 			/* A duplicate may only match bytes from the last accepted block. */
