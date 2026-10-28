@@ -252,16 +252,66 @@ return view.extend({
 				o = s.option(form.Value, 'device', _('Management device'));
 				o.rmempty = false;
 				o.placeholder = 'br-lan.1';
-				o.description = _('Use br-lan.VID for a VLAN with ONU (CPU) membership, for example br-lan.1. Your management IP address is preserved.');
+				o.description = _('Management VLAN with ONU (CPU) membership, for example br-lan.1. Optional untagged access below works independently of each port’s service VLAN.');
+				o.cfgvalue = function() {
+					return uci.get('network', 'lan', 'device') == 'br-onu'
+						? (uci.get('network', 'omci_management', 'ports') || [])[0]
+						: uci.get('network', 'lan', 'device');
+				};
+				o.write = function(id, value) {
+					if (uci.get('network', 'lan', 'device') == 'br-onu')
+						uci.set('network', 'omci_management', 'ports', [ value ]);
+					else
+						uci.set('network', 'lan', 'device', value);
+				};
 				o.validate = function(id, value) {
 					var match = /^br-lan(?:\.([1-9][0-9]{0,3}))?$/.exec(value);
 					return match && (!match[1] || (Number(match[1]) <= 4094 &&
 						reserved.indexOf(Number(match[1])) < 0)) ? true : _('Use br-lan or br-lan.VID with an available VLAN ID (1–4094).');
 				};
+				o = s.option(form.MultiValue, 'omci_management_ports', _('Untagged management access'));
+				o.optional = true;
+				o.rmempty = true;
+				ports.forEach(function(port) { o.value(port, port.toUpperCase()); });
+				o.description = _('Selected ports accept IPv4 traffic to the ONU’s management address without a VLAN tag, even when their native VLAN carries Internet or another service. Service VLANs remain isolated. Uses a Linux bridge and traffic classifiers; ordinary service traffic stays on its existing offload path.');
+				o.validate = function(id, value) {
+					var existing = uci.get('network', 'omci_management');
+					var collision = uci.sections('network', 'device').some(function(dev) {
+						return dev.name == 'br-onu' && dev['.name'] != 'omci_management';
+					});
+					return !L.toArray(value).length || (!collision && (!existing ||
+						(existing['.type'] == 'device' && existing.name == 'br-onu' && existing.type == 'bridge')))
+						? true : _('The network section omci_management is already used by another device.');
+				};
+				o.write = function(id, value) {
+					var selected = L.toArray(value);
+					var lower = uci.get('network', 'lan', 'device');
+					if (selected.length) {
+						if (lower != 'br-onu') {
+							uci.add('network', 'device', 'omci_management');
+							uci.set('network', 'omci_management', 'type', 'bridge');
+							uci.set('network', 'omci_management', 'name', 'br-onu');
+							uci.set('network', 'omci_management', 'ports', [ lower ]);
+							if (bridge.macaddr)
+								uci.set('network', 'omci_management', 'macaddr', bridge.macaddr);
+							uci.set('network', 'lan', 'device', 'br-onu');
+						}
+						uci.set('network', id, this.option, selected);
+					} else {
+						if (lower == 'br-onu') {
+							uci.set('network', 'lan', 'device',
+								(uci.get('network', 'omci_management', 'ports') || [])[0]);
+							uci.remove('network', 'omci_management');
+						}
+						uci.unset('network', id, this.option);
+					}
+				};
+				o.remove = function(id) { return this.write(id, []); };
 			}
 
 			s = policySection(m.section(form.GridSection, 'bridge-vlan', _('VLAN membership')), true);
 			s.uciconfig = 'network';
+			s.description = _('ONU (CPU) membership enables local access on that VLAN. Untagged management access above can also provide local access independently of the native service VLAN.');
 			s.anonymous = true;
 			s.addremove = true;
 			s.sortable = true;
@@ -293,7 +343,6 @@ return view.extend({
 			o.editable = true;
 			o.default = '1';
 			o.rmempty = false;
-			o.description = _('Allow the ONU itself to use this VLAN. Set the LAN interface device under Network → Interfaces to br-lan.VID for management on that VLAN.');
 
 			ports.concat([ 'pon0' ]).forEach(function(port) {
 				var option = s.option(form.ListValue, '_port_' + port,
@@ -361,6 +410,40 @@ return view.extend({
 
 		return m.render().then(function(node) {
 			root = node;
+			node.classList.add('omci-vlan-page');
+			node.prepend(E('style', {}, `
+.omci-vlan-page .cbi-section-table { table-layout: auto; min-width: 62rem; width: 100%; }
+.omci-vlan-page .cbi-section-table { display: table; }
+.omci-vlan-page .cbi-section-table thead { display: table-header-group; }
+.omci-vlan-page .cbi-section-table tbody { display: table-row-group; }
+.omci-vlan-page .cbi-section-table tr { display: table-row; }
+.omci-vlan-page .cbi-section-table td,
+.omci-vlan-page .cbi-section-table th { display: table-cell; vertical-align: middle; }
+.omci-vlan-page .cbi-section-table td::before { display: none; }
+.omci-vlan-page .cbi-section-table select { text-overflow: clip; }
+.omci-vlan-page .cbi-section-table .cbi-input-select,
+.omci-vlan-page .cbi-section-table select { min-width: 11rem; width: 100%; max-width: none; }
+.omci-vlan-page .cbi-section-table input[type="text"] { min-width: 5rem; width: 6rem; }
+.omci-vlan-page .cbi-section-table .cbi-value-description { white-space: normal; overflow-wrap: anywhere; }
+.omci-vlan-page .cbi-value-field { min-width: 0; }
+.omci-vlan-page .cbi-value-field > select { max-width: 100%; }
+.omci-vlan-page .cbi-value-description { overflow-wrap: anywhere; }
+.omci-vlan-scroll { width: 100%; max-width: 100%; overflow-x: auto; padding-bottom: .75rem; }
+@media (max-width: 600px) {
+ .omci-vlan-page .cbi-value { display: block; }
+ .omci-vlan-page .cbi-value label.cbi-value-title { display: block; float: none; width: auto; text-align: left; padding: 0 0 .5rem; }
+ .omci-vlan-page .cbi-value > .cbi-value-field { width: 100%; margin: 0; padding: 0; }
+ .omci-vlan-page .cbi-value > .cbi-value-field select,
+ .omci-vlan-page .cbi-value > .cbi-value-field input[type="text"],
+ .omci-vlan-page .cbi-value > .cbi-value-field .cbi-dropdown { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+}
+`));
+			node.querySelectorAll('.cbi-section-table').forEach(function(table) {
+				var scroll = E('div', { 'class': 'omci-vlan-scroll', 'tabindex': '0',
+					'role': 'region', 'aria-label': _('VLAN membership') });
+				table.parentNode.insertBefore(scroll, table);
+				scroll.appendChild(table);
+			});
 			var bridged = [];
 			uci.sections('network', 'device', function(dev) {
 				L.toArray(dev.ports).forEach(function(port) {
