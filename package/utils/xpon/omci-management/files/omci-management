@@ -23,6 +23,7 @@ sync_links() {
 	while read -r port peer hooked; do
 		[ "$hooked" = 1 ] || continue
 		end="omgm${peer#omgp}"
+		[ -e "/sys/class/net/br-onu/brif/$end" ] || return 1
 		carrier=0
 		{ read -r carrier < "/sys/class/net/$port/carrier"; } 2>/dev/null || carrier=0
 		{ read -r flags < "/sys/class/net/$end/flags"; } 2>/dev/null || return 1
@@ -33,6 +34,20 @@ sync_links() {
 		if [ "$((flags & 1))" -ne "$carrier" ]; then
 			ip link set "$end" "$state" || return 1
 		fi
+	done < "$STATE/links"
+}
+
+# Network reloads can remove classifiers without deleting the veth devices.
+filters_ready() {
+	local port peer hooked
+	while read -r port peer hooked; do
+		[ "$hooked" = 1 ] || return 1
+		tc filter show dev "$port" ingress pref "$CHAIN" 2>/dev/null |
+			grep -q "goto chain $CHAIN" || return 1
+		tc filter show dev "$port" ingress chain "$CHAIN" 2>/dev/null |
+			grep -Fq "Redirect to device $peer)" || return 1
+		tc filter show dev "$peer" ingress pref 1 2>/dev/null |
+			grep -Fq "Redirect to device $port)" || return 1
 	done < "$STATE/links"
 }
 
@@ -90,7 +105,7 @@ native_vid() {
 }
 
 run() {
-	local signature previous ports addresses vids port index reserved failed tick
+	local signature previous ports addresses vids port index reserved failed tick identities ifindex
 	mkdir -p "$STATE"
 	touch "$STATE/links"
 	trap 'exit' INT TERM
@@ -99,8 +114,14 @@ run() {
 		config_load network
 		config_get ports lan omci_management_ports
 		addresses="$(ip -o -4 addr show dev br-onu 2>/dev/null | awk '{split($4,a,"/"); print a[1]}')"
-		signature="$(uci export network) $addresses"
-		if [ "$signature" != "$previous" ]; then
+		identities=
+		for port in br-onu $ports; do
+			ifindex=
+			{ read -r ifindex < "/sys/class/net/$port/ifindex"; } 2>/dev/null
+			identities="$identities $port:$ifindex"
+		done
+		signature="$(uci export network) $addresses $identities"
+		if [ "$signature" != "$previous" ] || ! filters_ready; then
 			cleanup
 			index=0
 			failed=0
