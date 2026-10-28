@@ -1,0 +1,40 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] serial: service GC1601 input during polled console echo
+
+Drain the UART into the existing bounded RX ring before reading input and
+while waiting for output. The basic command editor otherwise consumes only
+one byte per echo and can overflow the hardware FIFO during pasted lines.
+This does not provide flow control during long-running commands.
+
+--- a/drivers/serial/serial-uclass.c
++++ b/drivers/serial/serial-uclass.c
+@@ -253,6 +253,8 @@
+ 		;
+ }
+ 
++static int _serial_tstc(struct udevice *dev);
++
+ static void _serial_putc(struct udevice *dev, char ch)
+ {
+ 	struct dm_serial_ops *ops = serial_get_ops(dev);
+@@ -262,6 +264,10 @@
+ 		_serial_putc(dev, '\r');
+ 
+ 	do {
++		/* Keep pasted input moving while console echo waits for TX. */
++		if (IS_ENABLED(CONFIG_ARCH_GALACHIP) &&
++		    CONFIG_IS_ENABLED(SERIAL_RX_BUFFER))
++			_serial_tstc(dev);
+ 		err = ops->putc(dev, ch);
+ 	} while (err == -EAGAIN);
+ 
+@@ -359,6 +365,9 @@
+ 	struct serial_dev_priv *upriv = dev_get_uclass_priv(dev);
+ 	char val;
+ 	uint rd;
++
++	if (IS_ENABLED(CONFIG_ARCH_GALACHIP))
++		_serial_tstc(dev);
+ 
+ 	if (upriv->rd_ptr == upriv->wr_ptr)
+ 		return __serial_getc(dev);
