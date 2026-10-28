@@ -1,0 +1,14 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] cli: ignore empty input on the GC1601 console
+
+--- a/common/cli_simple.c
++++ b/common/cli_simple.c
+@@ -281,6 +281,8 @@
+ 			bootretry_reset_cmd_timeout();
+ 		}
+ 		len = cli_readline(CONFIG_SYS_PROMPT);
++		if (IS_ENABLED(CONFIG_ARCH_GALACHIP) && !len)
++			continue;
+ 
+ 		flag = 0;	/* assume no special flags for now */
+ 		if (len > 0)

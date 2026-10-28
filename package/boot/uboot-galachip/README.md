@@ -133,3 +133,6 @@ Ethernet/descriptor work retains Ifran Ali's authorship from the Linux/V5 port.
 The decoder is upstream's Igor Pavlov LZMA SDK implementation and license.
 Private flash dumps, calibration data, live MAC/serial identities and old
 experimental artifacts are not part of this package.
+
+The GC1601 console ignores an empty Enter instead of repeating the last
+command. Explicitly entered commands and command-line history remain available.
