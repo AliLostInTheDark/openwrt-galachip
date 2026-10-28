@@ -48,7 +48,7 @@ struct gc_stop_trace {
 struct gc_eth {
 	struct phy_device *phy;
 	u16 consumer[CONTAINERS], synced;
-	bool initialized, tx_owned, failed, running;
+	bool initialized, mac_ready, tx_owned, failed, running;
 	u32 starts, tx_attempts, tx_submitted, tx_completed, tx_errors;
 	u32 last_alloc, last_completion, rx_packets, rx_dropped;
 	int start_error, tx_error;
@@ -371,6 +371,24 @@ static int tune_phy(struct phy_device *phy)
 	return ret ? ret : restore;
 }
 
+static int mac_init(struct gc_eth *p)
+{
+	u32 status;
+	int ret;
+
+	/* The shared reset clears this setup; do not inherit it from the loader. */
+	writel(0xfffe, GMAC + 4);
+	writel(0x140001, GMAC + 0xe0);
+	ret = readl_poll_timeout(GMAC + 0xe4, status, status & BIT(2), 10000);
+	if (ret) {
+		p->failed = true;
+		return ret;
+	}
+	writel(0x80000001, GMAC + 8);
+	p->mac_ready = true;
+	return 0;
+}
+
 static int gc_open(struct udevice *dev)
 {
 	struct gc_eth *p = dev_get_priv(dev);
@@ -404,6 +422,12 @@ static int gc_open(struct udevice *dev)
 		cfg |= 0xc000;
 	else if (p->phy->speed != SPEED_1000)
 		return -EINVAL;
+	writel(cfg, GMAC);
+	if (!p->mac_ready) {
+		ret = mac_init(p);
+		if (ret)
+			return ret;
+	}
 	writel(cfg | 3, GMAC);
 	writel(1, RX);
 	p->running = true;

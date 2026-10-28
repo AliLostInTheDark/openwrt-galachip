@@ -10,7 +10,7 @@
 
 struct phy_device mock_phy = { 1, 1000, DUPLEX_FULL };
 static bool fifo_stuck, abort_stuck, complete_stuck, tx_stuck;
-static bool mdio_stuck, alloc_empty, table_stuck;
+static bool mdio_stuck, alloc_empty, table_stuck, mac_stuck;
 static u32 table_reads, global_reset_writes;
 static u32 completions, releases, acknowledgments, spi_left, spi_position, spi_opcode;
 static u32 raw(uintptr_t a) { return *(u32 *)a; }
@@ -52,10 +52,22 @@ void mock_write(u32 v, uintptr_t a)
 
 		assert(a == expected[step].address && v == expected[step].value);
 		assert(!(raw(0x90e00000) & 3) && !raw(0x90dd4000));
+		if (!step) {
+			set(0x90e00008, 0);
+			set(0x90e000e0, 0);
+			set(0x90e000e4, 0);
+		}
 	}
+	if (a == 0x90e00008 && v == 0x80000001)
+		assert(raw(0x90e000e4) & BIT(2));
 	if (a == 0x90dc0008 || a == 0x90dc0010)
 		assert(global_reset_writes && !(global_reset_writes % 9));
 	set(a, v);
+	if (a == 0x90e000e0) {
+		assert(v == 0x140001 && !(raw(0x90e00000) & 3));
+		if (!mac_stuck)
+			set(0x90e000e4, BIT(2));
+	}
 	if ((a == 0x90100010 || a == 0x90100014) && v && !mdio_stuck)
 		set(0x9010000c, raw(0x9010000c) | (a == 0x90100010 ? BIT(8) : 1));
 	if (a == 0xa0000010 && (v & BIT(8)) && !abort_stuck)
@@ -179,7 +191,8 @@ static void network_tests(void)
 	mock_phy.link = 1;
 	for (i = 0; i < 20; i++) {
 		assert(!gc_start(&dev));
-		assert(p.initialized && p.running);
+		assert(p.initialized && p.running && p.mac_ready);
+		assert(raw(0x90e00008) == 0x80000001);
 		assert(raw(0x90dc0028) == FREE && raw(0x90dc0030) == RXRING);
 		assert(!gc_send(&dev, input, 14));
 		assert(!memcmp((void *)(POOL + 7 * BUFSIZE), input, 14));
@@ -261,6 +274,16 @@ static void network_tests(void)
 	assert(gc_recv(&dev, 0, &packet) == -EIO);
 	assert(p.failed && acknowledgments == before);
 	assert(gc_start(&dev) == -EIO);
+	/* A stuck vendor MAC command must not enable RX/TX or assume MAC ready. */
+	set(0x90ddc080, 0);
+	memset(&p, 0, sizeof(p));
+	p.phy = &mock_phy;
+	mac_stuck = true;
+	assert(gc_start(&dev) == -ETIMEDOUT);
+	assert(p.failed && !p.mac_ready && !p.running);
+	assert(!raw(0x90e00008) && !(raw(0x90e00000) & 3));
+	assert(!raw(0x90dd4000));
+	mac_stuck = false;
 	/* Separate device: timed-out TX must remain hardware-owned on stop/retry. */
 	memset(&p, 0, sizeof(p));
 	p.phy = &mock_phy;
