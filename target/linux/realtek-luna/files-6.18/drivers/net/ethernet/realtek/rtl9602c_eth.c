@@ -814,11 +814,12 @@ static void rtl9602c_sw_stock_config(struct rtl9602c_eth *ep)
 }
 
 /* XZ005-G6 SDK: ingress rate is bits [20:2], egress [19:1],
- * both in 8-kbit/s units. Keep IFG/flow-control and reserved bits intact. */
+ * both in 8-kbit/s units. Ingress lives in the per-port MAC block;
+ * egress is a packed word array. Preserve IFG/flow-control and reserved bits. */
 static int rtl9602c_uni_rate_write(struct rtl9602c_eth *ep, unsigned int port,
 				 u32 down, u32 up)
 {
-	void __iomem *igr = ep->sw + SW_IGR_BWCTRL_P_CTRL + 4 * port;
+	void __iomem *igr = ep->sw + SW_IGR_BWCTRL_P_CTRL + ep->swm->macpp_stride * port;
 	void __iomem *egr = ep->sw + SW_EGR_BWCTRL_P_CTRL + 4 * port;
 	u32 old_igr = ioread32(igr), old_egr = ioread32(egr);
 	u32 want_igr = (old_igr & ~GENMASK(20, 2)) | (up << 2);
@@ -853,7 +854,11 @@ static int rtl9602c_uni_rate_set(void *cookie, unsigned int port,
 	down = down_kbps ? down_kbps >> 3 : UNI_RATE_MAX;
 	up = up_kbps ? up_kbps >> 3 : UNI_RATE_MAX;
 	spin_lock_irqsave(&ep->sw_table_lock, flags);
-	if (READ_ONCE(ep->in_recovery) || !READ_ONCE(ep->hw_up)) {
+	/* omcid binds before the NIC opens. Defaults must not touch hardware
+	 * or prevent its initial backend reset from completing. */
+	if (!ep->uni_rate[port].valid && !down_kbps && !up_kbps) {
+		rc = 0;
+	} else if (READ_ONCE(ep->in_recovery) || !READ_ONCE(ep->hw_up)) {
 		rc = -EAGAIN;
 	} else {
 		rc = rtl9602c_uni_rate_write(ep, port, down, up);
@@ -3059,7 +3064,7 @@ static int rtl9602c_ethdump_show(struct seq_file *m, void *v)
 					   ep->lan_ndev[p]->name, ep->uni_rate[p].valid,
 					   ep->uni_rate[p].down, ep->uni_rate[p].up,
 					   (ioread32(ep->sw + SW_EGR_BWCTRL_P_CTRL + 4 * p) >> 1) & UNI_RATE_MAX,
-					   (ioread32(ep->sw + SW_IGR_BWCTRL_P_CTRL + 4 * p) >> 2) & UNI_RATE_MAX);
+					   (ioread32(ep->sw + SW_IGR_BWCTRL_P_CTRL + ep->swm->macpp_stride * p) >> 2) & UNI_RATE_MAX);
 			}
 		}
 		seq_printf(m, "MIB p0(LAN) tx=%08x | p1(LAN) tx=%08x\n",
