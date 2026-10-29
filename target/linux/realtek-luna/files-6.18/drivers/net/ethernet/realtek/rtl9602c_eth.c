@@ -240,6 +240,8 @@ static bool rtl9602c_uni_port_locked(unsigned int port)
 #define SW_METER_GLB_CTRL(m)		(0x25004 + 8 * (m))	/* two words per meter */
 #define SW_METER_PKT_RATE		0x25088	/* [m] meter m counts packets */
 #define SW_IGR_BWCTRL_P_CTRL		0x20010
+#define SW_EGR_BWCTRL_P_CTRL		0x2d804
+#define UNI_RATE_MAX			0x7ffffu
 #define SW_FIB_REG0			0x22c00	/* the fibre PHY's BMCR */
 #define SW_DLF_ACT_TRAP2CPU	2
 /* Forced ability value: 1000M (speed[1:0]=2) + full duplex (b2) + link-up (b4) */
@@ -408,6 +410,10 @@ struct rtl9602c_eth {
 	struct napi_struct napi;
 	int		irq;	/* GMAC0 INTC input (platform_get_irq); <=0 = pure-poll fallback */
 	spinlock_t sw_table_lock;
+	struct {
+		u32 down, up;
+		bool valid;
+	} uni_rate[LAN_PORTS];
 	struct rtl9602c_l34 l34;	/* switch L3/L4 (NAPT) hardware-offload engine */
 #ifdef CONFIG_GPON_FLOW_OFFLOAD
 	struct gpon_flow_offload *fo;	/* the COMMON TC lifecycle, drivers/net/gpon/ */
@@ -807,6 +813,75 @@ static void rtl9602c_sw_stock_config(struct rtl9602c_eth *ep)
 	iowrite32(ioread32(sw + SW_FIB_REG0) | BMCR_PDOWN, sw + SW_FIB_REG0);
 }
 
+/* XZ005-G6 SDK: ingress rate is bits [20:2], egress [19:1],
+ * both in 8-kbit/s units. Keep IFG/flow-control and reserved bits intact. */
+static int rtl9602c_uni_rate_write(struct rtl9602c_eth *ep, unsigned int port,
+				 u32 down, u32 up)
+{
+	void __iomem *igr = ep->sw + SW_IGR_BWCTRL_P_CTRL + 4 * port;
+	void __iomem *egr = ep->sw + SW_EGR_BWCTRL_P_CTRL + 4 * port;
+	u32 old_igr = ioread32(igr), old_egr = ioread32(egr);
+	u32 want_igr = (old_igr & ~GENMASK(20, 2)) | (up << 2);
+	u32 want_egr = (old_egr & ~GENMASK(19, 1)) | (down << 1);
+
+	iowrite32(want_igr, igr);
+	iowrite32(want_egr, egr);
+	if ((ioread32(igr) & GENMASK(20, 2)) != (want_igr & GENMASK(20, 2)) ||
+	    (ioread32(egr) & GENMASK(19, 1)) != (want_egr & GENMASK(19, 1))) {
+		iowrite32(old_igr, igr);
+		iowrite32(old_egr, egr);
+		return -EIO;
+	}
+	return 0;
+}
+
+static int rtl9602c_uni_rate_set(void *cookie, unsigned int port,
+			       u32 down_kbps, u32 up_kbps)
+{
+	struct rtl9602c_eth *ep = cookie;
+	unsigned long flags;
+	u32 down, up;
+	int rc;
+
+	if (!of_machine_is_compatible("vsol,v2802rh"))
+		return down_kbps || up_kbps ? -EOPNOTSUPP : 0;
+	if (port >= LAN_PORTS || !ep->lan_ndev[port])
+		return -EINVAL;
+	if ((down_kbps && down_kbps < 8) || down_kbps > UNI_RATE_MAX * 8 ||
+	    (up_kbps && up_kbps < 8) || up_kbps > UNI_RATE_MAX * 8)
+		return -ERANGE;
+	down = down_kbps ? down_kbps >> 3 : UNI_RATE_MAX;
+	up = up_kbps ? up_kbps >> 3 : UNI_RATE_MAX;
+	spin_lock_irqsave(&ep->sw_table_lock, flags);
+	if (READ_ONCE(ep->in_recovery) || !READ_ONCE(ep->hw_up)) {
+		rc = -EAGAIN;
+	} else {
+		rc = rtl9602c_uni_rate_write(ep, port, down, up);
+		if (!rc) {
+			ep->uni_rate[port].down = down;
+			ep->uni_rate[port].up = up;
+			ep->uni_rate[port].valid = true;
+		}
+	}
+	spin_unlock_irqrestore(&ep->sw_table_lock, flags);
+	return rc;
+}
+
+static void rtl9602c_uni_rate_replay(struct rtl9602c_eth *ep)
+{
+	unsigned long flags;
+	unsigned int p;
+
+	spin_lock_irqsave(&ep->sw_table_lock, flags);
+	for (p = 0; p < LAN_PORTS; p++) {
+		if (ep->uni_rate[p].valid &&
+		    rtl9602c_uni_rate_write(ep, p, ep->uni_rate[p].down,
+				    ep->uni_rate[p].up))
+			dev_warn(ep->dev, "UNI port %u rate replay failed\n", p);
+	}
+	spin_unlock_irqrestore(&ep->sw_table_lock, flags);
+}
+
 static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 {
 	if (!ep->sw)
@@ -910,6 +985,7 @@ static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 
 	if (ep->stock_switch)
 		rtl9602c_sw_stock_config(ep);
+	rtl9602c_uni_rate_replay(ep);
 }
 
 /* THE FIRST RUNG of the declared precedence */
@@ -2013,7 +2089,9 @@ static void rtl9602c_eth_recover_work(struct work_struct *work)
 	if (ep->closing || !ep->hw_up)
 		return;
 
+	spin_lock_irqsave(&ep->sw_table_lock, flags);
 	ep->in_recovery = true;
+	spin_unlock_irqrestore(&ep->sw_table_lock, flags);
 	rtl9601d_l2_changed();
 	luna_gpon_nic_reset_begin();
 	netdev_warn(ndev,
@@ -2090,6 +2168,7 @@ static void rtl9602c_eth_recover_work(struct work_struct *work)
 
 	if (!use_rst && ep->irq > 0)
 		enable_irq(ep->irq);
+	rtl9602c_uni_rate_replay(ep);
 	ep->in_recovery = false;
 	napi_enable(&ep->napi);
 	mod_timer(&ep->poll_timer, jiffies + 1);
@@ -2970,6 +3049,19 @@ static int rtl9602c_ethdump_show(struct seq_file *m, void *v)
 			   ioread32(ep->sw + 0x198), ioread32(ep->sw + 0x1b8),
 			   ioread32(ep->sw + 0x1d8), ioread32(ep->sw + 0x1f8));
 		/* THE RX ADDRESSES BELOW DO NOT FOLLOW THE FORMULA, and */
+		{
+			unsigned int p;
+
+			for (p = 0; p < LAN_PORTS; p++) {
+				if (!ep->lan_ndev[p])
+					continue;
+				seq_printf(m, "uni_rate %s: cached=%u down_raw=%u up_raw=%u hw_down_raw=%u hw_up_raw=%u\n",
+					   ep->lan_ndev[p]->name, ep->uni_rate[p].valid,
+					   ep->uni_rate[p].down, ep->uni_rate[p].up,
+					   (ioread32(ep->sw + SW_EGR_BWCTRL_P_CTRL + 4 * p) >> 1) & UNI_RATE_MAX,
+					   (ioread32(ep->sw + SW_IGR_BWCTRL_P_CTRL + 4 * p) >> 2) & UNI_RATE_MAX);
+			}
+		}
 		seq_printf(m, "MIB p0(LAN) tx=%08x | p1(LAN) tx=%08x\n",
 			   ioread32(ep->sw + SW_STAT_PORT_TX_MIB), ioread32(ep->sw + SW_STAT_PORT_TX_MIB + 1 * SW_STAT_PORT_MIB_STRIDE));
 		seq_printf(m, "MIB p2(PON) tx=%08x %08x %08x | rx=%08x %08x %08x\n",
@@ -3827,6 +3919,7 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	if (ep->wan_ndev && luna_xpon_wanted()) {
 		ret = luna_xpon_attach(dev, ep->wan_ndev, ep, rtl9602c_eth_omci_send,
 				       rtl9602c_uni_admin_set, rtl9602c_uni_link,
+				       rtl9602c_uni_rate_set,
 				       ep->pon_led, ep->los_led);
 		if (ret)
 			dev_err(dev, "omcid backend not registered: %d\n", ret);

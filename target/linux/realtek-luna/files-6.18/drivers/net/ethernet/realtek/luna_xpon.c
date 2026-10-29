@@ -92,6 +92,7 @@ static struct {
 	int (*tx)(void *, const u8 *, unsigned int);
 	int (*uni_admin_set)(void *, unsigned int, bool);
 	bool (*uni_link)(void *, unsigned int);
+	int (*uni_rate)(void *, unsigned int, u32, u32);
 	struct mutex lock;
 	struct luna_xpon_tcont tcont[LUNA_XPON_TCONTS];
 	struct luna_xpon_gem gem[LUNA_XPON_GEMS];
@@ -238,7 +239,17 @@ static int luna_xpon_backend_identity(struct omci_device *odev,
 static int luna_xpon_backend_reset(struct omci_device *odev)
 {
 	unsigned int i;
+	int rc;
 
+	/* A MIB reset restores unlimited UNI rates as well as PON services. */
+	if (luna_xpon.uni_rate) {
+		for (i = 0; i < luna_xpon.unis; i++) {
+			rc = luna_xpon.uni_rate(luna_xpon.cookie,
+					       luna_xpon.uni_port[i], 0, 0);
+			if (rc)
+				return rc;
+		}
+	}
 	for (i = 0; i < LUNA_XPON_GEMS; i++)
 		if (luna_xpon.gem[i].hw)
 			luna_xpon_hw_gem_remove(i);
@@ -808,15 +819,19 @@ static int luna_xpon_set_uni(struct omci_device *odev, u16 entity, bool enable)
 	return luna_xpon.uni_admin_set(luna_xpon.cookie, port, !enable);
 }
 
-/* Pause, MAC-table and rate attributes are not applied to this switch yet:
- * their defaults are what it runs, anything else is refused. */
+/* Apply rates only after rejecting attributes this switch cannot honour. */
 static int luna_xpon_set_uni_attrs(struct omci_device *odev, u16 entity,
 				   const struct omci_uni_attrs *a)
 {
-	if (a->pause_quanta || a->ageing_s || a->learn_limit || a->down_kbps ||
-	    a->up_kbps || a->auto_detection || a->max_frame_size)
+	int port = luna_xpon_uni_port(entity);
+
+	if (a->pause_quanta || a->ageing_s || a->learn_limit ||
+	    a->auto_detection || a->max_frame_size)
 		return -EOPNOTSUPP;
-	return 0;
+	if (port < 0 || !luna_xpon.uni_rate)
+		return a->down_kbps || a->up_kbps ? -EOPNOTSUPP : 0;
+	return luna_xpon.uni_rate(luna_xpon.cookie, port, a->down_kbps,
+				 a->up_kbps);
 }
 
 static int luna_xpon_get_uni_link(struct omci_device *odev, u16 entity,
@@ -1754,6 +1769,7 @@ int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 		     int (*tx)(void *, const u8 *, unsigned int),
 		     int (*uni_admin_set)(void *, unsigned int, bool),
 		     bool (*uni_link)(void *, unsigned int),
+		     int (*uni_rate)(void *, unsigned int, u32, u32),
 		     struct led_classdev *pon_led, struct led_classdev *los_led)
 {
 	struct xpon_device_desc desc = {
@@ -1780,6 +1796,7 @@ int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 	luna_xpon.tx = tx;
 	luna_xpon.uni_admin_set = uni_admin_set;
 	luna_xpon.uni_link = uni_link;
+	luna_xpon.uni_rate = uni_rate;
 	luna_xpon_load_unis();
 	netif_carrier_off(wan);
 
