@@ -254,11 +254,13 @@ return view.extend({
 				o = s.option(form.Value, 'device', _('Management device'));
 				o.rmempty = false;
 				o.placeholder = 'br-lan.1';
+				o.forcewrite = true;
 				o.description = _('Management VLAN with ONU (CPU) membership, for example br-lan.1. Optional untagged access below works independently of each port’s service VLAN.');
 				o.cfgvalue = function() {
-					return uci.get('network', 'lan', 'device') == 'br-onu'
+					var device = uci.get('network', 'lan', 'device') == 'br-onu'
 						? (uci.get('network', 'omci_management', 'ports') || [])[0]
 						: uci.get('network', 'lan', 'device');
+					return device == 'br-lan' ? 'br-lan.1' : device;
 				};
 				o.write = function(id, value) {
 					if (uci.get('network', 'lan', 'device') == 'br-onu')
@@ -267,9 +269,9 @@ return view.extend({
 						uci.set('network', 'lan', 'device', value);
 				};
 				o.validate = function(id, value) {
-					var match = /^br-lan(?:\.([1-9][0-9]{0,3}))?$/.exec(value);
-					return match && (!match[1] || (Number(match[1]) <= 4094 &&
-						reserved.indexOf(Number(match[1])) < 0)) ? true : _('Use br-lan or br-lan.VID with an available VLAN ID (1–4094).');
+					var match = /^br-lan\.([1-9][0-9]{0,3})$/.exec(value);
+					return match && Number(match[1]) <= 4094 &&
+						reserved.indexOf(Number(match[1])) < 0 ? true : _('Use br-lan.VID with ONU (CPU) membership (1–4094). The service bridge br-lan cannot be a port of br-onu.');
 				};
 				o = s.option(form.MultiValue, 'omci_management_ports', _('Untagged management access'));
 				o.optional = true;
@@ -289,6 +291,8 @@ return view.extend({
 					var selected = L.toArray(value);
 					var lower = uci.get('network', 'lan', 'device');
 					if (selected.length) {
+						if (lower == 'br-lan')
+							lower = 'br-lan.1';
 						if (lower != 'br-onu') {
 							uci.add('network', 'device', 'omci_management');
 							uci.set('network', 'omci_management', 'type', 'bridge');
