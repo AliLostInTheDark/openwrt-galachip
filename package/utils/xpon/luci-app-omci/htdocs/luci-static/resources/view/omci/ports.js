@@ -183,6 +183,8 @@ return view.extend({
 			o.value('1', _('Per-port VLAN table'));
 			o.default = '0';
 			o.rmempty = false;
+			o.forcewrite = true;
+			o.cfgvalue = function() { return perPort ? '1' : '0'; };
 			o.description = _('Only the selected policy applies. Include your current LAN port and the ONU in the management VLAN before applying per-port control.');
 			o.onchange = function(ev, section_id, value) {
 				perPort = value == '1';
