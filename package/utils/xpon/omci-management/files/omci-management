@@ -17,9 +17,16 @@ cleanup() {
 	: > "$STATE/links"
 }
 
-# Do not flood management frames into a disconnected physical jack.
+# Keep management paths isolated and follow physical link state.
 sync_links() {
-	local port peer hooked end carrier flags state
+	local port peer hooked end carrier flags state isolated
+	# This bridge terminates management traffic locally. Forwarding between
+	# its VLAN and veth paths reflects client broadcasts into the switch.
+	for isolated in /sys/class/net/br-onu/brif/*/isolated; do
+		[ -e "$isolated" ] || continue
+		read -r state < "$isolated" || return 1
+		[ "$state" = 1 ] || echo 1 > "$isolated" || return 1
+	done
 	while read -r port peer hooked; do
 		[ "$hooked" = 1 ] || continue
 		end="omgm${peer#omgp}"
