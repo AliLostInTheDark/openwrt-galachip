@@ -2455,7 +2455,7 @@ static netdev_tx_t rtl9602c_eth_lan_submit(struct rtl9602c_eth *ep,
 					   struct net_device *ndev, int port)
 {
 	unsigned int i;
-	unsigned int len = skb->len;
+	unsigned int len;
 	unsigned long flags;
 	dma_addr_t da;
 	u32 opts1;
@@ -2474,13 +2474,10 @@ static netdev_tx_t rtl9602c_eth_lan_submit(struct rtl9602c_eth *ep,
 		dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
 	}
-	len = skb->len;
-	if (len < ETH_ZLEN) {
-		if (skb_padto(skb, ETH_ZLEN)) {
-			spin_unlock_irqrestore(&ep->tx_lock, flags);
-			return NETDEV_TX_OK;	/* skb freed by skb_padto */
-		}
-		len = ETH_ZLEN;
+	/* Steering and DMA must include the padding in skb->len. */
+	if (skb_put_padto(skb, ETH_ZLEN)) {
+		spin_unlock_irqrestore(&ep->tx_lock, flags);
+		return NETDEV_TX_OK;	/* skb freed by skb_put_padto */
 	}
 	if (port >= 0 && rtl9602c_lan_steer(ep, &skb, port)) {
 		spin_unlock_irqrestore(&ep->tx_lock, flags);
