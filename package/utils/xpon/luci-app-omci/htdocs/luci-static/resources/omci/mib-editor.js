@@ -103,7 +103,7 @@ function render(group, data, title, description) {
 		groupClasses.forEach(function(c) {
 			choices[String(c.class_id)] = '%d — %s'.format(c.class_id, c.name);
 		});
-		var classWidget = item ? null : new ui.Dropdown(
+		var classWidget = item ? null : new ui.Select(
 			groupClasses.length ? String(groupClasses[0].class_id) : null, choices,
 			{ optional: false, sort: groupClasses.map(function(c) { return String(c.class_id); }) });
 		var classNode = item ? E('input', { 'class': 'cbi-input-text', 'readonly': true,
@@ -130,7 +130,7 @@ function render(group, data, title, description) {
 					return complete(omci.mibSet(0, classId, entityId, mask, bytes));
 				})
 			])
-		]);
+		], 'omci-mib-editor');
 	}
 
 	function showDelete(item) {
