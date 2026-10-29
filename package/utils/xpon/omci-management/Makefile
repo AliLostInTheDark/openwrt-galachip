@@ -2,7 +2,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=omci-management
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 PKG_LICENSE:=GPL-2.0-only
 include $(INCLUDE_DIR)/package.mk
 
@@ -18,9 +18,10 @@ define Build/Compile
 endef
 
 define Package/omci-management/install
-	$(INSTALL_DIR) $(1)/usr/sbin $(1)/etc/init.d
+	$(INSTALL_DIR) $(1)/usr/sbin $(1)/etc/init.d $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/omci-management $(1)/usr/sbin/omci-management
 	$(INSTALL_BIN) ./files/omci-management.init $(1)/etc/init.d/omci-management
+	$(INSTALL_BIN) ./files/uci-defaults/75-omci-management-vlan $(1)/etc/uci-defaults/75-omci-management-vlan
 endef
 
 $(eval $(call BuildPackage,omci-management))
