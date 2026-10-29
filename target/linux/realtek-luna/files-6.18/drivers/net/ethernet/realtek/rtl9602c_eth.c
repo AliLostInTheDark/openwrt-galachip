@@ -10,6 +10,7 @@
 #include <linux/of.h>
 #include <linux/of_net.h>	/* of_get_mac_address() -- the DT rung of the ladder */
 #include <linux/io.h>
+#include <linux/iopoll.h>
 #include <linux/mii.h>	/* BMCR_* -- the standard MII bit names */
 #include <linux/interrupt.h>	/* request_irq, irqreturn_t, IRQF_SHARED */
 #include <linux/delay.h>
@@ -439,6 +440,13 @@ struct rtl9602c_eth {
 	struct gpio_desc *ext_mdc, *ext_mdio;
 	u8		ext_phy;
 	bool		ext_phy_ok;	/* answered on that bus; drives port 0's link */
+	/* DT realtek,ext-phy-reset-gpios: stock pulses it before every SerDes
+	 * option change (rtk_rtl8226b_moudle_init1, GPIO 27 on the V2802RH). */
+	struct gpio_desc *ext_phy_reset;
+	bool		lan_sds_hsgmii;	/* the LAN SerDes runs HSGMII (2.5G); else SGMII */
+	bool		lan_sds_set;	/* rtl9602c_lan_sds_program ran since the bring-up */
+	u8		ext_phy_option;	/* verified RTL8221B SerDes option; 0 if unknown */
+	u8		ext_phy_target;	/* retained across a failed reset/configuration */
 
 	/* Bootloader GMAC0 control snapshot (inherited). */
 	u32		ub_tcr, ub_rcr, ub_config, ub_cputagcr, ub_cputag1cr;
@@ -493,9 +501,84 @@ static bool rtl9602c_eth_want_promisc(const struct rtl9602c_eth *ep)
 static inline u32 ep_rd(struct rtl9602c_eth *ep, u32 r) { return ioread32(ep->base + r); }
 static inline void ep_wr(struct rtl9602c_eth *ep, u32 r, u32 v) { iowrite32(v, ep->base + r); }
 
-/* SW-follows-HW slot mapping. */
-#define SW_PHY_PWRDN_GUARD	0x00214
-#define   PHY_PWRDN_GUARD_OK	0x1f	/* low 5 bits, all set = port 0 may be powered down */
+/* ---- the LAN SerDes: port 0 to the external PHY -----------------------------
+ * Its mode register. [4:0] is the SerDes mode in the family's coding (0x02
+ * SGMII, 0x12 HSGMII, 0x1f off), and 0x1f, every bit set, is also what a die
+ * with no SerDes port shows: the UNI gate reads it as PHY_PWRDN_GUARD.
+ *
+ * The sequences below are the stock U-Boot's `sdsmode` command (2011.12.NA
+ * for rtl9602C: sds_sgmii at 0x80d80854, sds_hisgmii at 0x80d808fc, read from
+ * the V2802RH's flash) and are, register for register, what the stock RTOS's
+ * _rtl9602c_lan_sds_mode_set writes for its modes 3 (SGMII) and 5 (HSGMII):
+ * park the mode, the analog block, the mode, the forced ability, a reset
+ * pulse, one misc word. U-Boot runs them only when the command is typed, so
+ * a Linux that does not run them leaves the SerDes at its reset defaults --
+ * which linked, and carried traffic, but not at the link's rate (2026-10-27).
+ * The stock RTOS's link task re-runs them, with the PHY's own SerDes option,
+ * whenever the copper speed crosses 1G (rtl9602c_port0_link_poll). */
+#define SW_LAN_SDS_MODE		0x00214
+#define   LAN_SDS_MODE_MASK	0x1f
+#define   LAN_SDS_MODE_OFF	0x1f
+#define   LAN_SDS_MODE_SGMII	0x02
+#define   LAN_SDS_MODE_HSGMII	0x12
+#define SW_LAN_SDS_RST		0x21500	/* 0x10, 0x30, 0 after a mode change */
+#define SW_LAN_SDS_MISC		0x2d8b8
+#define   LAN_SDS_MISC_SGMII	0x0004ffff
+#define   LAN_SDS_MISC_HSGMII	0x000a8000
+#define SW_PHY_PWRDN_GUARD	SW_LAN_SDS_MODE
+#define   PHY_PWRDN_GUARD_OK	LAN_SDS_MODE_OFF	/* no SerDes running: port 0 may be powered down */
+
+struct rtl9602c_sds_reg { u32 off, val; };
+static const struct rtl9602c_sds_reg lan_sds_sgmii_analog[] = {
+	{ 0x21680, 0x0000 }, { 0x2168c, 0x3001 }, { 0x21698, 0x0068 },
+	{ 0x215b8, 0x98c5 }, { 0x215b4, 0x1264 }, { 0x215bc, 0x400f }, { 0x215e4, 0xfc00 },
+};
+static const struct rtl9602c_sds_reg lan_sds_hsgmii_analog[] = {
+	{ 0x21700, 0x1800 }, { 0x2170c, 0x7b01 }, { 0x21718, 0x0168 },
+	{ 0x215b8, 0x98c5 }, { 0x215b4, 0x1564 }, { 0x215bc, 0x400f }, { 0x215e4, 0xfc00 },
+};
+
+/* The RTL8221B's side, as stock's rtl8226 library sets it
+ * (Rtl8226_serdes_option_set, MMD 30): option 1 with a 1G copper link, 3 with
+ * a 2.5G one, each after a reset pulse on the PHY's reset line. */
+#define MDIO_MMD_VEND1_RTL		30
+#define RTL8221B_VND1_SERDES_OPTION	0x697a	/* [5:0] the option; bit 6 cleared with it */
+#define RTL8221B_VND1_SERDES_CTRL	0x75f3	/* bit 0 cleared for option 1 */
+#define RTL8221B_VND1_SERDES_MODE	0x7580	/* [4:0] 0x02 SGMII, 0x12 HSGMII, 0x16 2500BASE-X, 0x0d USXGMII */
+#define RTL8221B_SDS_OPTION_SGMII	1
+#define RTL8221B_SDS_OPTION_HSGMII	3
+
+/* 0 leaves the SerDes and the PHY's option as the bootloader did (the
+ * behaviour before 2026-10-27), for an A/B on the bench. */
+static unsigned int lan_sds = 1;
+module_param(lan_sds, uint, 0644);
+MODULE_PARM_DESC(lan_sds, "program the LAN SerDes and the 2.5G PHY's SerDes option as stock does and follow the copper speed (default 1; 0 = leave both to the bootloader)");
+
+static int ext_mdio_read_c45(struct rtl9602c_eth *ep, u8 dev, u16 reg);
+
+/* The SoC side of one mode. The caller holds what serialises the switch
+ * ability registers: the gphy lock, or the bring-up before the rings run. */
+static void rtl9602c_lan_sds_program(struct rtl9602c_eth *ep, bool hsgmii)
+{
+	const struct rtl9602c_sds_reg *a = hsgmii ? lan_sds_hsgmii_analog : lan_sds_sgmii_analog;
+	unsigned int i, n = hsgmii ? ARRAY_SIZE(lan_sds_hsgmii_analog) : ARRAY_SIZE(lan_sds_sgmii_analog);
+	u32 v = SW_ABLTY_SERDES_UP;
+
+	iowrite32(LAN_SDS_MODE_OFF, ep->sw + SW_LAN_SDS_MODE);
+	for (i = 0; i < n; i++)
+		iowrite32(a[i].val, ep->sw + a[i].off);
+	iowrite32(hsgmii ? LAN_SDS_MODE_HSGMII : LAN_SDS_MODE_SGMII, ep->sw + SW_LAN_SDS_MODE);
+	if (ep->ext_phy_ok || rtl9602c_uni_port_locked(0))
+		v &= ~ABLTY_LINK;
+	iowrite32(v, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
+	iowrite32(0xfff, ep->sw + SW_ABLTY_FORCE_MODE(ep, 0));
+	iowrite32(0x10, ep->sw + SW_LAN_SDS_RST);
+	iowrite32(0x30, ep->sw + SW_LAN_SDS_RST);
+	iowrite32(0x00, ep->sw + SW_LAN_SDS_RST);
+	iowrite32(hsgmii ? LAN_SDS_MISC_HSGMII : LAN_SDS_MISC_SGMII, ep->sw + SW_LAN_SDS_MISC);
+	ep->lan_sds_hsgmii = hsgmii;
+	ep->lan_sds_set = true;
+}
 
 static int rtl9602c_gphy_wait(struct rtl9602c_eth *ep)
 {
@@ -2119,12 +2202,18 @@ static int rtl9602c_uboot_swcore_bringup(struct rtl9602c_eth *ep)
 	iowrite32(0x00000196, ep->sw + SW_FORCE_P_ABLTY(ep, ep->swm->cpu_port));
 	iowrite32(0x00000fff, ep->sw + SW_ABLTY_FORCE_MODE(ep, ep->swm->cpu_port));
 	if (ep->port0_serdes) {
-		u32 v = SW_ABLTY_SERDES_UP;
+		if (lan_sds) {
+			/* SGMII first, the mode the PHY was given at probe; the
+			 * link poll moves both to HSGMII behind a 2.5G link. */
+			rtl9602c_lan_sds_program(ep, ep->lan_sds_hsgmii);
+		} else {
+			u32 v = SW_ABLTY_SERDES_UP;
 
-		if (rtl9602c_uni_port_locked(0))
-			v &= ~ABLTY_LINK;
-		iowrite32(v, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
-		iowrite32(0xfff, ep->sw + SW_ABLTY_FORCE_MODE(ep, 0));
+			if (rtl9602c_uni_port_locked(0))
+				v &= ~ABLTY_LINK;
+			iowrite32(v, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
+			iowrite32(0xfff, ep->sw + SW_ABLTY_FORCE_MODE(ep, 0));
+		}
 	}
 	iowrite32(0x00012bbd, ep->sw + SW_METER_TB_CTRL);	/* meter tick-token */
 	iowrite32(0,          ep->sw + SW_VLAN_CTRL);	/* VLAN function disable */
@@ -2366,7 +2455,7 @@ static netdev_tx_t rtl9602c_eth_lan_submit(struct rtl9602c_eth *ep,
 					   struct net_device *ndev, int port)
 {
 	unsigned int i;
-	unsigned int len = skb->len;
+	unsigned int len;
 	unsigned long flags;
 	dma_addr_t da;
 	u32 opts1;
@@ -2385,13 +2474,10 @@ static netdev_tx_t rtl9602c_eth_lan_submit(struct rtl9602c_eth *ep,
 		dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
 	}
-	len = skb->len;
-	if (len < ETH_ZLEN) {
-		if (skb_padto(skb, ETH_ZLEN)) {
-			spin_unlock_irqrestore(&ep->tx_lock, flags);
-			return NETDEV_TX_OK;	/* skb freed by skb_padto */
-		}
-		len = ETH_ZLEN;
+	/* Steering and DMA must include the padding in skb->len. */
+	if (skb_put_padto(skb, ETH_ZLEN)) {
+		spin_unlock_irqrestore(&ep->tx_lock, flags);
+		return NETDEV_TX_OK;	/* skb freed by skb_put_padto */
 	}
 	if (port >= 0 && rtl9602c_lan_steer(ep, &skb, port)) {
 		spin_unlock_irqrestore(&ep->tx_lock, flags);
@@ -2802,6 +2888,20 @@ static int rtl9602c_ethdump_show(struct seq_file *m, void *v)
 		   lan_tx_steer, ep->lan_steer_blocked, ep->dbg_lan_relay_skipped,
 		   ep->lan_link[0].up ? "up" : "down", ep->lan_link[0].speed,
 		   ep->lan_link[1].up ? "up" : "down", ep->lan_link[1].speed);
+	if (ep->port0_serdes && ep->sw) {
+		int opt = -1, mode = -1;
+
+		if (ep->ext_phy_ok && mutex_trylock(&rtl9602c_gphy_lock)) {
+			opt = ext_mdio_read_c45(ep, MDIO_MMD_VEND1_RTL, RTL8221B_VND1_SERDES_OPTION);
+			mode = ext_mdio_read_c45(ep, MDIO_MMD_VEND1_RTL, RTL8221B_VND1_SERDES_MODE);
+			mutex_unlock(&rtl9602c_gphy_lock);
+		}
+		/* soc mode: 02 SGMII, 12 HSGMII, 1f off; phy mode: 02 SGMII, 12 HSGMII, 16 2500BASE-X */
+		seq_printf(m, "lan2 serdes: lan_sds=%u set=%u soc 0x214=%08x (%s) force_ablty=%08x phy 0x697a=%04x (wrote %u) 0x7580=%04x\n",
+			   lan_sds, ep->lan_sds_set, ioread32(ep->sw + SW_LAN_SDS_MODE),
+			   ep->lan_sds_hsgmii ? "hsgmii" : "sgmii",
+			   ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, 0)), opt, ep->ext_phy_option, mode);
+	}
 	{
 		/* TX ring OWN bitmap (slot 0 = LSB of the first hex word):
 		 * separates "HW transmits but never clears OWN" from reclaim
@@ -3185,10 +3285,103 @@ static const struct { u16 reg, val; } rtl8221b_stock_leds[] = {
 
 #define MDIO_MMD_VEND2_RTL	31
 
+static void rtl9602c_ext_phy_leds(struct rtl9602c_eth *ep)
+{
+	unsigned int i;
+	int v;
+
+	for (i = 0; i < ARRAY_SIZE(rtl8221b_stock_leds); i++)
+		ext_mdio_write_c45(ep, MDIO_MMD_VEND2_RTL, rtl8221b_stock_leds[i].reg,
+				   rtl8221b_stock_leds[i].val);
+	v = ext_mdio_read_c45(ep, MDIO_MMD_VEND2_RTL, 0xd044);
+	if (v < 0)
+		dev_warn_ratelimited(ep->dev, "RTL8221B LED setup read failed: %d\n", v);
+	else if (v != 0x00f8)
+		dev_warn(ep->dev, "RTL8221B LED setup read back %04x, not 00f8\n", v);
+}
+
+/* Stock's reset: the line low for 30 ms, then 30 ms for the PHY to come up. */
+static void rtl9602c_ext_phy_reset(struct rtl9602c_eth *ep)
+{
+	if (!ep->ext_phy_reset)
+		return;
+	gpiod_set_value_cansleep(ep->ext_phy_reset, 1);
+	msleep(30);
+	gpiod_set_value_cansleep(ep->ext_phy_reset, 0);
+	msleep(30);
+}
+
+static bool rtl9602c_ext_phy_ready(struct rtl9602c_eth *ep, unsigned int option)
+{
+	int v;
+
+	v = ext_mdio_read_c45(ep, MDIO_MMD_VEND1_RTL, RTL8221B_VND1_SERDES_OPTION);
+	if (v < 0 || v == 0xffff)
+		return false;
+	if (option == RTL8221B_SDS_OPTION_SGMII) {
+		v = ext_mdio_read_c45(ep, MDIO_MMD_VEND1_RTL, RTL8221B_VND1_SERDES_CTRL);
+		if (v < 0 || v == 0xffff)
+			return false;
+	}
+	return true;
+}
+
+static int rtl9602c_ext_phy_serdes_option(struct rtl9602c_eth *ep, unsigned int option)
+{
+	int v;
+
+	if (option == RTL8221B_SDS_OPTION_SGMII) {
+		v = ext_mdio_read_c45(ep, MDIO_MMD_VEND1_RTL, RTL8221B_VND1_SERDES_CTRL);
+		if (v < 0)
+			return v;
+		ext_mdio_write_c45(ep, MDIO_MMD_VEND1_RTL, RTL8221B_VND1_SERDES_CTRL,
+				   v & ~BIT(0));
+		v = ext_mdio_read_c45(ep, MDIO_MMD_VEND1_RTL, RTL8221B_VND1_SERDES_CTRL);
+		if (v < 0 || (v & BIT(0)))
+			return v < 0 ? v : -EIO;
+	}
+	v = ext_mdio_read_c45(ep, MDIO_MMD_VEND1_RTL, RTL8221B_VND1_SERDES_OPTION);
+	if (v < 0)
+		return v;
+	ext_mdio_write_c45(ep, MDIO_MMD_VEND1_RTL, RTL8221B_VND1_SERDES_OPTION,
+			   (v & ~GENMASK(6, 0)) | option);
+	v = ext_mdio_read_c45(ep, MDIO_MMD_VEND1_RTL, RTL8221B_VND1_SERDES_OPTION);
+	if (v < 0 || (v & GENMASK(6, 0)) != option)
+		return v < 0 ? v : -EIO;
+	ep->ext_phy_option = option;
+	return 0;
+}
+
+/* Reset once per target change. The PHY can answer MDIO before its vendor
+ * registers are ready; resetting on every retry restarts that initialization. */
+static int rtl9602c_ext_phy_setup(struct rtl9602c_eth *ep, unsigned int option)
+{
+	bool ready;
+	int rc;
+
+	if (option) {
+		if (ep->ext_phy_target != option) {
+			ep->ext_phy_target = option;
+			ep->ext_phy_option = 0;
+			rtl9602c_ext_phy_reset(ep);
+		}
+		/* Vendor registers can lag behind the Clause 22 PHY ID after reset. */
+		rc = read_poll_timeout(rtl9602c_ext_phy_ready, ready, ready,
+				       10000, 1000000, false, ep, option);
+		if (rc)
+			return rc;
+		rc = rtl9602c_ext_phy_serdes_option(ep, option);
+		if (rc)
+			return rc;
+	}
+	rtl9602c_ext_phy_leds(ep);
+	return 0;
+}
+
 static int rtl9602c_ext_phy_init(struct rtl9602c_eth *ep)
 {
 	struct device *dev = ep->dev;
-	int id1, id2, i;
+	int id1, id2;
 	u32 addr;
 
 	ep->ext_mdc = devm_gpiod_get_index_optional(dev, "realtek,ext-mdio", 0,
@@ -3201,6 +3394,12 @@ static int rtl9602c_ext_phy_init(struct rtl9602c_eth *ep)
 					    GPIOD_OUT_HIGH);
 	if (IS_ERR(ep->ext_mdio))
 		return PTR_ERR(ep->ext_mdio);
+	/* Released (not in reset) from the request on: GPIOD_OUT_LOW is the
+	 * logical level, the line is active-low in the DT. */
+	ep->ext_phy_reset = devm_gpiod_get_optional(dev, "realtek,ext-phy-reset",
+						    GPIOD_OUT_LOW);
+	if (IS_ERR(ep->ext_phy_reset))
+		return PTR_ERR(ep->ext_phy_reset);
 	if (of_property_read_u32(dev->of_node, "realtek,ext-phy-addr", &addr) ||
 	    addr > 31) {
 		dev_err(dev, "realtek,ext-mdio-gpios without a valid realtek,ext-phy-addr\n");
@@ -3219,12 +3418,9 @@ static int rtl9602c_ext_phy_init(struct rtl9602c_eth *ep)
 	if (id1 != 0x001c || (id2 & 0xfff0) != 0xc840)
 		return 0;
 
-	for (i = 0; i < ARRAY_SIZE(rtl8221b_stock_leds); i++)
-		ext_mdio_write_c45(ep, MDIO_MMD_VEND2_RTL, rtl8221b_stock_leds[i].reg,
-				   rtl8221b_stock_leds[i].val);
-	i = ext_mdio_read_c45(ep, MDIO_MMD_VEND2_RTL, 0xd044);
-	if (i != 0x00f8)
-		dev_warn(dev, "RTL8221B LED setup read back %04x, not 00f8\n", i);
+	/* The SoC side starts in SGMII (rtl9602c_uboot_swcore_bringup). */
+	if (rtl9602c_ext_phy_setup(ep, lan_sds ? RTL8221B_SDS_OPTION_SGMII : 0))
+		dev_warn(dev, "RTL8221B SerDes setup pending; link polling will retry\n");
 	return 0;
 }
 
@@ -3325,27 +3521,64 @@ static void rtl9602c_gphy_link_poll(struct rtl9602c_eth *ep, unsigned int port)
  * one user at a time: the gphy lock, which the gate holds too. */
 static void rtl9602c_port0_link_poll(struct rtl9602c_eth *ep)
 {
-	u32 cur, want = SW_ABLTY_SERDES_UP;
+	u32 cur, want = SW_ABLTY_SERDES_UP, speed = SPEED_UNKNOWN;
 	int bmsr;
-	bool up, link;
+	bool up, link, full = false;
 
 	mutex_lock(&rtl9602c_gphy_lock);
 	ext_mdio_read(ep, MII_BMSR);
 	bmsr = ext_mdio_read(ep, MII_BMSR);
 	up = bmsr >= 0 && (bmsr & BMSR_LSTATUS);
+	if (up)
+		speed = rtl9602c_port0_speed(ep, &full);
+	if (lan_sds && !ep->lan_sds_set) {
+		up = false;
+	} else if (lan_sds) {
+		bool hsgmii = ep->ext_phy_target == RTL8221B_SDS_OPTION_HSGMII;
+		unsigned int option;
+
+		/* A failed speed read is not evidence of a 1G link. */
+		if (speed != SPEED_UNKNOWN)
+			hsgmii = speed == SPEED_2500;
+		option = hsgmii ? RTL8221B_SDS_OPTION_HSGMII : RTL8221B_SDS_OPTION_SGMII;
+		if (hsgmii != ep->lan_sds_hsgmii || ep->ext_phy_option != option) {
+			int rc;
+
+			cur = ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, 0));
+			iowrite32(cur & ~ABLTY_LINK, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
+			if (ep->lan_link[0].up)
+				rtl9602c_link_log(ep, 2, false, SPEED_UNKNOWN, false, cur);
+			rtl9602c_lan_link_set(ep, 0, false, SPEED_UNKNOWN, false);
+			rc = rtl9602c_ext_phy_setup(ep, option);
+			if (rc) {
+				dev_warn_ratelimited(ep->dev, "LAN2 PHY SerDes option %u failed: %d; retrying\n",
+						     option, rc);
+			} else {
+				rtl9602c_lan_sds_program(ep, hsgmii);
+				dev_info(ep->dev, "LAN2 SerDes configured for %s\n",
+					 hsgmii ? "HSGMII" : "SGMII");
+			}
+			/* Reset invalidated this sample; report up only after a fresh poll. */
+			up = false;
+		}
+	}
+	if (lan_sds && speed == SPEED_UNKNOWN && !ep->lan_link[0].up)
+		up = false;
 	link = up && !rtl9602c_uni_port_locked(0);
 	if (!link)
 		want &= ~ABLTY_LINK;
+	else if (speed == SPEED_UNKNOWN && ep->lan_link[0].up) {
+		speed = ep->lan_link[0].speed;
+		full = ep->lan_link[0].full;
+	}
 	cur = ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, 0));
 	if (cur != want)
 		iowrite32(want, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
-	if (link != ep->lan_link[0].up || !ep->lan_link[0].seen) {
-		bool full = false;
-		u32 speed = link ? rtl9602c_port0_speed(ep, &full) : SPEED_UNKNOWN;
-
+	if (link != ep->lan_link[0].up || !ep->lan_link[0].seen ||
+	    (link && (speed != ep->lan_link[0].speed || full != ep->lan_link[0].full))) {
 		if (link || ep->lan_link[0].seen)
 			rtl9602c_link_log(ep, 2, link, speed, full, want);
-		rtl9602c_lan_link_set(ep, 0, link, speed, full);
+		rtl9602c_lan_link_set(ep, 0, link, link ? speed : SPEED_UNKNOWN, full);
 	}
 	mutex_unlock(&rtl9602c_gphy_lock);
 }
