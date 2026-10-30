@@ -23,6 +23,7 @@
 
 #include "luna_gpon_nic.h"
 #include "luna_xpon_hw.h"
+#include <gpon_ddm.h>
 
 #define GPON_O5		5
 #define OMCI_PDU_LEN	48
@@ -1306,20 +1307,57 @@ static void luna_xpon_deliver_state(struct omci_device *odev, u8 state)
 	xpon_device_report_registration(luna_xpon.xpon, reg);
 }
 
+/* Fixed-point readings, with at least one decimal and no redundant zeroes. */
+static void luna_xpon_format_value(char *buf, size_t len, s32 value, u32 scale)
+{
+	u32 magnitude = value < 0 ? -(s64)value : value;
+	u32 unit = scale;
+	unsigned int digits = 0;
+	char *end, *dot;
+
+	while (unit > 1) {
+		digits++;
+		unit /= 10;
+	}
+	scnprintf(buf, len, "%s%u.%0*u", value < 0 ? "-" : "",
+		  magnitude / scale, digits, magnitude % scale);
+	dot = strchr(buf, '.');
+	end = buf + strlen(buf) - 1;
+	while (dot && end > dot + 1 && *end == '0')
+		*end-- = '\0';
+}
+
+static void luna_xpon_format_power(char *buf, size_t len, u32 nw)
+{
+	if (!nw) {
+		scnprintf(buf, len, "below measurement range");
+		return;
+	}
+	luna_xpon_format_value(buf, len, gpon_ddm_uw10_to_cdbm(nw / 100), 100);
+	strlcat(buf, " dBm", len);
+}
+
 /* Optical I2C reads sleep: sample only on transitions, from work context.
  * TX is a burst-mode sample and can read low between upstream grants. */
 static void luna_xpon_log_optics(void)
 {
 	struct luna_xpon_optics o;
+	char rx[40], tx[40], voltage[24], bias[24], celsius[24], fahrenheit[24];
 	int rc = luna_xpon_hw_optics(&o);
 
 	if (rc) {
 		pr_warn_ratelimited("luna-xpon: optical diagnostics unavailable (%d)\n", rc);
 		return;
 	}
-	pr_info("luna-xpon: optical sample: RX=%u.%03u uW TX=%u.%03u uW (burst sample), bias=%u uA, temperature=%d mC, voltage=%u uV\n",
-		o.rx_nw / 1000, o.rx_nw % 1000, o.tx_nw / 1000, o.tx_nw % 1000,
-		o.bias_ua, o.temp_mc, o.vcc_uv);
+	luna_xpon_format_power(rx, sizeof(rx), o.rx_nw);
+	luna_xpon_format_power(tx, sizeof(tx), o.tx_nw);
+	luna_xpon_format_value(voltage, sizeof(voltage), o.vcc_uv, 1000000);
+	luna_xpon_format_value(bias, sizeof(bias), o.bias_ua, 1000000);
+	luna_xpon_format_value(celsius, sizeof(celsius), o.temp_mc, 1000);
+	luna_xpon_format_value(fahrenheit, sizeof(fahrenheit),
+			       DIV_ROUND_CLOSEST(o.temp_mc * 9, 5) + 32000, 1000);
+	pr_info("luna-xpon: optical sample: RX=%s TX=%s (burst sample), bias=%s A, temperature=%s C / %s F, voltage=%s V\n",
+		rx, tx, bias, celsius, fahrenheit, voltage);
 }
 
 static void luna_xpon_event_fn(struct work_struct *work)
