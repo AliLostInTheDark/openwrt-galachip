@@ -2046,6 +2046,7 @@ int omci_agent_init(struct omci_device *odev)
 	INIT_DELAYED_WORK(&agent->alarm_work, omci_agent_alarm_work);
 	xa_init(&agent->mib);
 	xa_init(&agent->services);
+	xa_init(&agent->uni_attrs);
 	agent->enabled = true;
 	agent->permissive = false;
 	agent->fake_omci = false;
@@ -2115,6 +2116,9 @@ void omci_agent_cleanup(struct omci_device *odev)
 		kfree(object);
 	}
 	mutex_unlock(&agent->lock);
+	xa_for_each(&agent->uni_attrs, index, object)
+		kfree(object);
+	xa_destroy(&agent->uni_attrs);
 	xa_destroy(&agent->services);
 	xa_destroy(&agent->mib);
 }
@@ -3632,63 +3636,98 @@ static int omci_agent_apply_uni_attrs_locked(struct omci_device *odev)
 {
 	struct omci_agent *agent = &odev->agent;
 	const struct omci_device_ops *ops = odev->ops;
-	struct omci_uni_attrs attrs = {};
+	struct omci_uni_attrs attrs, *cached;
 	struct omci_mib_object *port, *pptp, *bsp;
-	unsigned long index;
-	u16 uni_entity = 0;
+	unsigned long index, port_index;
+	u16 entity;
 	int ret;
 
 	if (!ops->set_uni_attrs)
 		return 0;
 
-	/* Physical port controls also apply without a PPTP bridge (e.g. VEIP). */
+	/* A VEIP is a shared service endpoint, not a physical Ethernet port. */
 	xa_for_each(&agent->mib, index, pptp) {
 		if (!omci_mib_object_active(agent, pptp) ||
 		    pptp->class_id != OMCI_CLASS_PPTP_ETHERNET_UNI)
 			continue;
-		uni_entity = pptp->entity_id;
-		attrs.auto_detection = pptp->data[2];
-		attrs.max_frame_size = get_unaligned_be16(pptp->data + 7);
-		attrs.pause_quanta = get_unaligned_be16(pptp->data + 10);
-		break;
-	}
-
-	xa_for_each(&agent->mib, index, port) {
-		if (!omci_mib_object_active(agent, port) ||
-		    port->class_id != OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA ||
-		    port->data[3] != OMCI_BRIDGE_TP_PPTP_ETH_UNI)
-			continue;
-		uni_entity = get_unaligned_be16(port->data + 4);
-		pptp = omci_mib_lookup(agent, OMCI_CLASS_PPTP_ETHERNET_UNI, uni_entity);
-		if (pptp && pptp->data_len >= 12)
+		memset(&attrs, 0, sizeof(attrs));
+		if (pptp->data_len >= 12) {
+			attrs.auto_detection = pptp->data[2];
+			attrs.max_frame_size = get_unaligned_be16(pptp->data + 7);
 			attrs.pause_quanta = get_unaligned_be16(pptp->data + 10);
-		bsp = omci_mib_lookup(agent, OMCI_CLASS_MAC_BRIDGE_SERVICE_PROFILE,
-				      get_unaligned_be16(port->data));
-		if (bsp && bsp->data_len >= 17) {
-			attrs.learn_limit = bsp->data[12];
-			attrs.ageing_s = get_unaligned_be32(bsp->data + 13);
 		}
-		if (port->data_len >= 24 && port->data[23])
-			attrs.learn_limit = port->data[23];
-		if (port->data_len >= 23) {
-			attrs.down_kbps = omci_agent_td_kbps(agent,
+		xa_for_each(&agent->mib, port_index, port) {
+			if (!omci_mib_object_active(agent, port) ||
+			    port->class_id != OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA ||
+			    port->data_len < 6 ||
+			    port->data[3] != OMCI_BRIDGE_TP_PPTP_ETH_UNI ||
+			    get_unaligned_be16(port->data + 4) != pptp->entity_id)
+				continue;
+			bsp = omci_mib_lookup(agent, OMCI_CLASS_MAC_BRIDGE_SERVICE_PROFILE,
+					      get_unaligned_be16(port->data));
+			if (bsp && omci_mib_object_active(agent, bsp) && bsp->data_len >= 17) {
+				attrs.learn_limit = bsp->data[12];
+				attrs.ageing_s = get_unaligned_be32(bsp->data + 13);
+			}
+			if (port->data_len >= 24 && port->data[23])
+				attrs.learn_limit = port->data[23];
+			if (port->data_len >= 23) {
+				attrs.down_kbps = omci_agent_td_kbps(agent,
 					get_unaligned_be16(port->data + 19));
-			attrs.up_kbps = omci_agent_td_kbps(agent,
+				attrs.up_kbps = omci_agent_td_kbps(agent,
 					get_unaligned_be16(port->data + 21));
+			}
+			break;
 		}
-		break;		/* one Ethernet UNI */
+		entity = omci_agent_backend_uni(agent, pptp->entity_id);
+		cached = xa_load(&agent->uni_attrs, entity);
+		if (cached && !memcmp(cached, &attrs, sizeof(attrs)))
+			continue;
+		if (!cached) {
+			cached = kzalloc(sizeof(*cached), GFP_KERNEL);
+			if (!cached)
+				return -ENOMEM;
+			ret = xa_err(xa_store(&agent->uni_attrs, entity, cached, GFP_KERNEL));
+			if (ret) {
+				kfree(cached);
+				return ret;
+			}
+			/* An unsuccessful first write must be retried, including defaults. */
+			ret = ops->set_uni_attrs(odev, entity, &attrs);
+			if (ret) {
+				xa_erase(&agent->uni_attrs, entity);
+				kfree(cached);
+				return ret;
+			}
+		} else {
+			ret = ops->set_uni_attrs(odev, entity, &attrs);
+			if (ret)
+				return ret;
+		}
+		*cached = attrs;
 	}
 
-	if (agent->uni_attrs_set && !memcmp(&attrs, &agent->uni_attrs, sizeof(attrs)))
-		return 0;
-	if (!uni_entity && !agent->uni_attrs_set)
-		return 0;
-	uni_entity = omci_agent_backend_uni(agent, uni_entity);
-	ret = ops->set_uni_attrs(odev, uni_entity, &attrs);
-	if (ret)
-		return ret;
-	agent->uni_attrs = attrs;
-	agent->uni_attrs_set = true;
+	/* Clear the original physical port when its PPTP disappears or moves. */
+	xa_for_each(&agent->uni_attrs, index, cached) {
+		bool present = false;
+
+		xa_for_each(&agent->mib, port_index, pptp) {
+			if (pptp->class_id == OMCI_CLASS_PPTP_ETHERNET_UNI &&
+			    omci_mib_object_active(agent, pptp) &&
+			    omci_agent_backend_uni(agent, pptp->entity_id) == index) {
+				present = true;
+				break;
+			}
+		}
+		if (present)
+			continue;
+		memset(&attrs, 0, sizeof(attrs));
+		ret = ops->set_uni_attrs(odev, index, &attrs);
+		if (ret)
+			return ret;
+		xa_erase(&agent->uni_attrs, index);
+		kfree(cached);
+	}
 	return 0;
 }
 

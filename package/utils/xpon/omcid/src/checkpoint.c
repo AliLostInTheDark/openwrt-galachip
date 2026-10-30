@@ -394,7 +394,15 @@ int omcid_checkpoint_load(struct omcid *ctx)
 	a->ber_valid = !!(h->flags & CP_BER_VALID);
 	a->last_response_fake = !!(h->flags & CP_RESPONSE_FAKE);
 	a->operational = false;
-	a->uni_attrs_set = false;
+	{
+		struct omci_uni_attrs *attrs;
+		unsigned long index;
+
+		xa_for_each(&a->uni_attrs, index, attrs) {
+			xa_erase(&a->uni_attrs, index);
+			kfree(attrs);
+		}
+	}
 	kfree_skb(a->last_request);
 	kfree_skb(a->last_response);
 	a->last_request = request;
