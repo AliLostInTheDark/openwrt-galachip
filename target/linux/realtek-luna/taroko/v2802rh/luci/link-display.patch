@@ -1,0 +1,81 @@
+--- a/view/network/interfaces.js
++++ b/view/network/interfaces.js
+@@ -8,6 +8,7 @@
+ 'require rpc';
+ 'require form';
+ 'require network';
++'require v2802rh.link as ponLink';
+ 'require firewall';
+ 'require tools.widgets as widgets';
+ 'require tools.network as nettools';
+@@ -380,7 +381,8 @@
+ 			network.getDevices(),
+ 			fs.lines('/etc/iproute2/rt_tables'),
+ 			L.resolveDefault(callNetworkDeviceStatus(), {}),
+-			uci.changes()
++			uci.changes(),
++			ponLink.load()
+ 		]);
+ 	},
+ 
+@@ -479,6 +481,7 @@
+ 	},
+ 
+ 	render([dslModemType, netDevs, rtTables, devStatus]) {
++		netDevs = netDevs.filter(function(dev) { return !ponLink.monitor(dev); });
+ 
+ 		if (this.interfaceBridgeWithIfnameSections().length)
+ 			return this.renderBridgeMigration();
+@@ -1796,7 +1799,11 @@
+ 			if (!dev || !dev.getCarrier())
+ 				return '-';
+ 
+-			const cur = dev.getSpeed();
++			const pon = ponLink.pon(dev);
++			if (pon != null)
++				return pon;
++
++			const cur = ponLink.speed(dev);
+ 
+ 			/* getSpeed() returns Mbit/s, -1 with carrier but no negotiated rate, or null if unsupported */
+ 			if (!(cur > 0))
+--- a/view/status/include/29_ports.js
++++ b/view/status/include/29_ports.js
+@@ -5,6 +5,7 @@
+ 'require uci';
+ 'require rpc';
+ 'require network';
++'require v2802rh.link as ponLink';
+ 'require firewall';
+ 
+ const callGetBuiltinEthernetPorts = rpc.declare({
+@@ -380,7 +381,8 @@
+ 			L.resolveDefault(fs.read('/etc/board.json'), '{}'),
+ 			firewall.getZones(),
+ 			network.getNetworks(),
+-			uci.load('network')
++			uci.load('network'),
++			ponLink.load()
+ 		]).then((data) => {
+ 			/* Get all known port names from builtin ports or board.json */
+ 			const builtinPorts = data[0] || [];
+@@ -466,8 +468,8 @@
+ 			return L.naturalCompare(a.device, b.device);
+ 		});
+ 
+-		return E('div', { 'style': 'display:grid;grid-template-columns:repeat(auto-fit, minmax(70px, 1fr));margin-bottom:1em' }, known_ports.map(function(port) {
+-			const speed = port.netdev.getSpeed();
++		return E('div', { 'style': 'display:grid;grid-template-columns:repeat(auto-fit, minmax(70px, 1fr));margin-bottom:1em' }, known_ports.filter(function(port) { return !ponLink.monitor(port.netdev); }).map(function(port) {
++			const speed = ponLink.speed(port.netdev);
+ 			const duplex = port.netdev.getDuplex();
+ 			const carrier = port.netdev.getCarrier();
+ 			const pmap = port_map[port.netdev.getName()];
+@@ -502,7 +504,7 @@
+ 				E('div', { 'class': 'ifacebox-body' }, [
+ 					E('img', { 'src': L.resource('icons/port_%s.svg').format(portIcon) }),
+ 					E('br'),
+-					formatSpeed(carrier, speed, duplex)
++					ponLink.pon(port.netdev) || formatSpeed(carrier, speed, duplex)
+ 				]),
+ 				E('div', { 'class': 'ifacebox-head cbi-tooltip-container', 'style': 'display:flex' }, [
+ 					E([], pzones.map(function(zone) {
