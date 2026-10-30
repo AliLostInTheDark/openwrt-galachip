@@ -7186,12 +7186,17 @@ int luna_xpon_hw_queue_set(u8 qid, bool wfq, u16 weight, u32 pir)
 	u32 rate = PI_PON_QID_PIR_RATE + qid * PI_QID_RATE_STRIDE;
 	int rc = 0;
 
+	if (qid < luna_xpon_hw_bank_qid() ||
+	    qid >= luna_xpon_hw_bank_qid() + LUNA_XPON_BANK_QUEUES ||
+	    !weight || weight > 1023 || pir > LUNA_XPON_PIR_MAX)
+		return -ERANGE;
 	spin_lock_bh(&luna_fsm_lock);
 	pi_field(rate, 17, 0, pir);
 	pi_field(PI_PON_QID_CIR_RATE + qid * PI_QID_RATE_STRIDE, 17, 0, 0);
 	pi_packed_set(PI_PON_WFQ_TYPE, qid, 1, wfq);
 	pi_packed_set(PI_PON_WFQ_WEIGHT, qid, 10, weight);
 	if ((pi_rd(rate) & 0x3ffff) != pir ||
+	    (pi_rd(PI_PON_QID_CIR_RATE + qid * PI_QID_RATE_STRIDE) & 0x3ffff) ||
 	    pi_packed_get(PI_PON_WFQ_TYPE, qid, 1) != wfq ||
 	    pi_packed_get(PI_PON_WFQ_WEIGHT, qid, 10) != weight)
 		rc = -EIO;
@@ -7203,23 +7208,37 @@ int luna_xpon_hw_queue_drain(u8 qid)
 {
 	int rc;
 
+	if (qid < luna_xpon_hw_bank_qid() ||
+	    qid >= luna_xpon_hw_bank_qid() + LUNA_XPON_BANK_QUEUES)
+		return -ERANGE;
 	spin_lock_bh(&luna_fsm_lock);
 	rc = luna_queue_drain(qid);
 	spin_unlock_bh(&luna_fsm_lock);
 	return rc;
 }
 
-void luna_xpon_hw_tcont_queues(unsigned int slot, u32 mask)
+int luna_xpon_hw_tcont_queues(unsigned int slot, u32 mask)
 {
+	int rc = 0;
+
+	if (slot >= LUNA_XPON_TCONTS)
+		return -ERANGE;
 	spin_lock_bh(&luna_fsm_lock);
 	pi_packed_set(PI_PON_SCH_QMAP, GPON_DATA_TCONT + slot, swc->sch_qmap_bits, mask);
+	if (pi_packed_get(PI_PON_SCH_QMAP, GPON_DATA_TCONT + slot,
+			  swc->sch_qmap_bits) != mask)
+		rc = -EIO;
 	spin_unlock_bh(&luna_fsm_lock);
+	return rc;
 }
 
 int luna_xpon_hw_gem_queue(unsigned int slot, u8 qid)
 {
 	int rc;
 
+	if (slot >= LUNA_XPON_GEMS || qid < luna_xpon_hw_bank_qid() ||
+	    qid >= luna_xpon_hw_bank_qid() + LUNA_XPON_BANK_QUEUES)
+		return -ERANGE;
 	spin_lock_bh(&luna_fsm_lock);
 	rc = luna_xpon_sid_commit(luna_xpon_hw_gem_flow(slot), qid);
 	spin_unlock_bh(&luna_fsm_lock);
