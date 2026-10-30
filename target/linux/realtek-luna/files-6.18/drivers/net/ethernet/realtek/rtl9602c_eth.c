@@ -814,6 +814,8 @@ static void rtl9602c_sw_stock_config(struct rtl9602c_eth *ep)
 	 * downstream frames to LAN clients the switch has not learned in the
 	 * service VLAN (all of them while the CPU forwards) are unknown unicast. */
 	iowrite32(0x7 & ~BIT(ep->swm->pon_port), sw + SW_STORM_CTRL_UC_CTRL);
+	if (of_machine_is_compatible("vsol,v2802rh") && v2802_l2_storm(ep, false))
+		dev_warn(ep->dev, "CPU fallback storm control readback failed\n");
 	iowrite32(0x7, sw + SW_STORM_CTRL_BC_CTRL);
 	iowrite32(0x7, sw + SW_STORM_CTRL_DHCP_CTRL);
 

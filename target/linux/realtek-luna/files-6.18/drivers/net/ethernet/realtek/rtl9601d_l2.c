@@ -43,6 +43,19 @@ static struct {
 	DECLARE_BITMAP(wan_vids, VLAN_N_VID);
 } v2802_l2;
 
+/* CPU-forwarded upstream frames have the LAN VID, but the OLT's MAC was
+ * learned in the WAN VID. They are normal traffic, not a unicast storm. */
+static int v2802_l2_storm(struct rtl9602c_eth *ep, bool hardware_only)
+{
+	u32 value = ioread32(ep->sw + SW_STORM_CTRL_UC_CTRL);
+
+	value &= ~(BIT(0) | BIT(1) | BIT(ep->swm->pon_port));
+	if (hardware_only)
+		value |= BIT(0) | BIT(1);
+	iowrite32(value, ep->sw + SW_STORM_CTRL_UC_CTRL);
+	return ioread32(ep->sw + SW_STORM_CTRL_UC_CTRL) == value ? 0 : -EIO;
+}
+
 /* One indirect transaction, called with sw_table_lock held. */
 static int v2802_l2_xact(u8 type, u16 addr, u32 *words, unsigned int n,
 			   bool write)
@@ -503,6 +516,11 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 		}
 	}
 	for (i = 0; i < count; i++) {
+		if (service[i].cpu_only && service[i].local &&
+		    v2802_l2_vlan_reserved(service[i].vid)) {
+			rc = -EBUSY;
+			goto out;
+		}
 		management_service |= service[i].vid == SW_DEFAULT_VID;
 		/* A service on a jack's steering VLAN takes that entry: a
 		 * steered frame would then reach the PON too. Plain frames
@@ -556,7 +574,8 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 	for (i = 0; i < count; i++) {
 		const struct luna_l2_service *s = &service[i];
 
-		members = s->lan_mask | (s->local ? 0 : BIT(2)) | BIT(3);
+		members = (s->cpu_only && !s->local ? 0 : s->lan_mask) |
+			  (s->local ? 0 : BIT(2)) | BIT(3);
 		/* Keep the service VID on CPU copies for accurate forwarding marks. */
 		untag = s->untag_mask;
 		/* IVL, as for the WAN VIDs: a shared FID drops unicast replies. */
@@ -569,7 +588,7 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 				continue;
 			if (s->pvid_mask & BIT(p))
 				pvid = sw_packed_ins(pvid, p, SW_VLAN_PB_VID_BITS, s->vid);
-			if (s->local)
+			if (s->local || s->cpu_only)
 				continue;
 			rc = v2802_l2_rule(V2802_L2_FIRST + 4 * i + 2 * p, s, p,
 					   s->pvid_mask & BIT(p));
@@ -772,7 +791,8 @@ static void v2802_l2_work(struct work_struct *work)
 	struct rtl9602c_eth *ep = v2802_l2.ep;
 	unsigned long flags;
 	unsigned int generation;
-	int count, rc;
+	int count, rc, storm_rc;
+	unsigned int i, cpu_only = 0;
 	bool retry = false;
 
 	rtnl_lock();
@@ -813,9 +833,19 @@ static void v2802_l2_work(struct work_struct *work)
 	rc = v2802_l2_install(services, count, generation);
 	if (rc && !v2802_l2.saved)
 		v2802_l2_unoffload(ep);
-	if (!rc)
-		netdev_info(ep->ndev, "V2802RH L2 offload: %d VLAN bindings\n", count);
+	if (!rc) {
+		for (i = 0; i < count; i++)
+			cpu_only += services[i].cpu_only;
+		netdev_info(ep->ndev, "V2802RH L2 offload: %d VLAN bindings (%u CPU-only)\n",
+			    count, cpu_only);
+	}
 out:
+	storm_rc = v2802_l2_storm(ep, v2802_l2.active && !cpu_only);
+	if (storm_rc) {
+		dev_err_ratelimited(ep->dev, "L2 fallback storm control readback failed: %d\n", storm_rc);
+		rc = storm_rc;
+		retry = true;
+	}
 	WRITE_ONCE(v2802_l2.error, rc);
 	spin_lock_irqsave(&v2802_l2_lock, flags);
 	if (rc && (v2802_l2.saved || retry) && !v2802_l2.stopping) {
@@ -924,7 +954,7 @@ static bool v2802_l2_forwarded(struct sk_buff *skb, unsigned int port,
 		for (i = 0; i < v2802_l2.count; i++) {
 			const struct luna_l2_service *s = &v2802_l2.service[i];
 
-			if ((port == 2 || (s->lan_mask & BIT(port))) &&
+			if (!s->cpu_only && (port == 2 || (s->lan_mask & BIT(port))) &&
 			    tagged && (tci & VLAN_VID_MASK) == s->vid) {
 				/* Keep CPU copies usable until the old PVID is restored. */
 				if (port < 2 && (s->pvid_mask & BIT(port)) &&
@@ -1010,13 +1040,19 @@ static int v2802_l2_parent_id(struct net_device *dev, struct netdev_phys_item_id
 static ssize_t l2_offload_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	unsigned long flags;
+	unsigned int i, hardware = 0, cpu = 0;
 	ssize_t len;
 
 	spin_lock_irqsave(&v2802_l2_lock, flags);
-	len = sysfs_emit(buf, "requested=%u active=%u services=%u error=%d gated=%u generation=%u retries=%u\n",
+	if (v2802_l2.saved)
+		for (i = 0; i < v2802_l2.count; i++) {
+			cpu += v2802_l2.service[i].cpu_only;
+			hardware += !v2802_l2.service[i].cpu_only && !v2802_l2.service[i].local;
+		}
+	len = sysfs_emit(buf, "requested=%u active=%u services=%u error=%d gated=%u generation=%u retries=%u hw_services=%u cpu_bindings=%u\n",
 			v2802_l2.requested, v2802_l2.active,
 			v2802_l2.saved ? v2802_l2.count : 0, v2802_l2.error,
-			v2802_l2.gated, v2802_l2.generation, v2802_l2.retries);
+			v2802_l2.gated, v2802_l2.generation, v2802_l2.retries, hardware, cpu);
 	spin_unlock_irqrestore(&v2802_l2_lock, flags);
 	return len;
 }
@@ -1044,14 +1080,14 @@ static ssize_t l2_offload_bindings_show(struct device *dev,
 	ssize_t len = 0;
 
 	rtnl_lock();
-	for (i = 0; i < v2802_l2.count && len < PAGE_SIZE - 160; i++) {
+	for (i = 0; i < v2802_l2.count && len < PAGE_SIZE - 192; i++) {
 		const struct luna_l2_service *s = &v2802_l2.service[i];
 		u32 vlan = 0;
 		int rc = v2802_l2_table(1, s->vid, &vlan, 1, false);
 
-		len += sysfs_emit_at(buf, len, "vid=%u sid=%u lan_mask=%#x untagged=%u untag_mask=%#x pvid_mask=%#x local=%u vlan=%#x read_error=%d\n",
+		len += sysfs_emit_at(buf, len, "vid=%u sid=%u lan_mask=%#x untagged=%u untag_mask=%#x pvid_mask=%#x local=%u vlan=%#x read_error=%d cpu_only=%u lan_vid=%u\n",
 				    s->vid, s->flow, s->lan_mask, s->untagged, s->untag_mask,
-				    s->pvid_mask, s->local, vlan, rc);
+				    s->pvid_mask, s->local, vlan, rc, s->cpu_only, s->lan_vid);
 	}
 	rtnl_unlock();
 	return len;

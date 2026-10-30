@@ -1052,9 +1052,9 @@ static u8 luna_xpon_lan_mode(const struct luna_xpon_service *s, u16 *uni_vid);
 /* The offload worker holds RTNL; backend transactions serialize this copy. */
 int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 {
-	unsigned int i, j;
+	unsigned int i, j, n = 0, offloaded = 0;
 	u8 priorities[LUNA_L2_SERVICES] = { 0 };
-	int port, n = 0, rc = 0;
+	int port, rc = 0;
 	u16 uni_vid;
 	u8 mode;
 
@@ -1072,7 +1072,8 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 			luna_xpon_lan_mode(s, &uni_vid);
 		if (!s->vlan_valid || !s->vlan || s->vlan >= 4095 ||
 		    s->multicast || s->direction != OMCI_GEM_PORT_DIRECTION_BIDIRECTIONAL ||
-		    (mode != OMCI_UNI_VLAN_SAME && mode != OMCI_UNI_VLAN_UNTAGGED)) {
+		    (mode != OMCI_UNI_VLAN_SAME && mode != OMCI_UNI_VLAN_UNTAGGED &&
+		     mode != OMCI_UNI_VLAN_TRANSLATE)) {
 			rc = -EOPNOTSUPP;
 			goto out;
 		}
@@ -1084,16 +1085,26 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 		}
 		d = (struct luna_l2_service) {
 			.vid = s->vlan,
+			.lan_vid = mode == OMCI_UNI_VLAN_TRANSLATE ? uni_vid : s->vlan,
 			.flow = s->flow,
 			.lan_mask = port < 0 ? 3 : BIT(port),
 			.untagged = mode == OMCI_UNI_VLAN_UNTAGGED,
+			.cpu_only = mode == OMCI_UNI_VLAN_TRANSLATE,
 		};
+		/* CPU LAN relay shares both jacks in this first mixed path. */
+		if (!d.lan_vid || d.lan_vid >= VLAN_VID_MASK ||
+		    (d.cpu_only && d.lan_mask != 3)) {
+			rc = -EOPNOTSUPP;
+			goto out;
+		}
 		d.untag_mask = d.untagged ? d.lan_mask & ~luna_xpon.lan_tagged : 0;
 		d.pvid_mask = d.untag_mask;
 		for (j = 0; j < n; j++) {
 			if (services[j].vid == d.vid) {
 				if (services[j].flow != d.flow ||
 				    services[j].lan_mask != d.lan_mask ||
+				    services[j].lan_vid != d.lan_vid ||
+				    services[j].cpu_only != d.cpu_only ||
 				    services[j].untagged != d.untagged) {
 					rc = -EOPNOTSUPP;
 					goto out;
@@ -1121,8 +1132,41 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 			rc = -EOPNOTSUPP;
 			goto out;
 		}
+	/* A translated service stays on the CPU. Admit its LAN VID separately,
+	 * without a PON member or upstream classifier. Never alias a hardware
+	 * service's VID: that could select its GEM before software translation. */
+	i = n;
+	for (j = 0; j < i; j++) {
+		struct luna_l2_service *s = &services[j];
+		unsigned int k;
+
+		if (!s->cpu_only) {
+			offloaded++;
+			continue;
+		}
+		for (k = 0; k < n && services[k].vid != s->lan_vid; k++)
+			;
+		if (k < n) {
+			rc = -EOPNOTSUPP;
+			goto out;
+		}
+		if (n == LUNA_L2_SERVICES) {
+			rc = -ENOSPC;
+			goto out;
+		}
+		services[n++] = (struct luna_l2_service) {
+			.vid = s->lan_vid, .lan_vid = s->lan_vid,
+			.lan_mask = s->lan_mask, .local = true, .cpu_only = true,
+		};
+	}
+	if (n && !offloaded) {
+		rc = -EOPNOTSUPP;
+		goto out;
+	}
 	rc = n;
 out:
+	if (rc == -EOPNOTSUPP)
+		pr_warn_ratelimited("luna-xpon: L2 offload cannot represent the installed OMCI service set; retaining CPU forwarding\n");
 	spin_unlock_bh(&luna_xpon.svc_lock);
 	mutex_unlock(&luna_xpon.lock);
 	return rc;

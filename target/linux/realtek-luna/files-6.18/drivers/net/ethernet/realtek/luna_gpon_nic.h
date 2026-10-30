@@ -26,12 +26,14 @@ bool luna_gpon_data_ready(void);
 #define LUNA_L2_SERVICES 16
 struct luna_l2_service {
 	u16 vid;
+	u16 lan_vid;
 	u8 flow;
 	u8 lan_mask;
 	u8 untag_mask;
 	u8 pvid_mask;
 	bool local;
 	bool untagged;
+	bool cpu_only;
 };
 void rtl9601d_l2_changed(void);
 
