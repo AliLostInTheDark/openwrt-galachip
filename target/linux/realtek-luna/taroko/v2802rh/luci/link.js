@@ -50,6 +50,14 @@ return baseclass.extend({
 
 	monitor: monitor,
 
+	capacity: function(dev) {
+		if (dev.getName() != 'eth0')
+			return null;
+		return E('span', {
+			'title': _('Switch maximum LAN port rate; not CPU throughput or a negotiated link speed')
+		}, [ '2.5 Gbit/s' ]);
+	},
+
 	speed: function(dev) {
 		return speed(dev, new Set());
 	},

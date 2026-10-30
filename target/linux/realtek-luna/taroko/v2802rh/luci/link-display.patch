@@ -26,7 +26,14 @@
  
  		if (this.interfaceBridgeWithIfnameSections().length)
  			return this.renderBridgeMigration();
-@@ -1796,7 +1799,11 @@
+@@ -1793,10 +1796,18 @@
+ 		o.textvalue = function(section_id) {
+ 			const dev = getDevice(section_id);
+ 
++			const capacity = dev && ponLink.capacity(dev);
++			if (capacity)
++				return capacity;
++
  			if (!dev || !dev.getCarrier())
  				return '-';
  
@@ -65,7 +72,7 @@
  
 -		return E('div', { 'style': 'display:grid;grid-template-columns:repeat(auto-fit, minmax(70px, 1fr));margin-bottom:1em' }, known_ports.map(function(port) {
 -			const speed = port.netdev.getSpeed();
-+		return E('div', { 'style': 'display:grid;grid-template-columns:repeat(auto-fit, minmax(70px, 1fr));margin-bottom:1em' }, known_ports.filter(function(port) { return !ponLink.monitor(port.netdev); }).map(function(port) {
++		return E('div', { 'style': 'display:flex;flex-wrap:wrap;gap:.5em;align-items:flex-start;margin-bottom:1em' }, known_ports.filter(function(port) { return !ponLink.monitor(port.netdev); }).map(function(port) {
 +			const speed = ponLink.speed(port.netdev);
  			const duplex = port.netdev.getDuplex();
  			const carrier = port.netdev.getCarrier();
