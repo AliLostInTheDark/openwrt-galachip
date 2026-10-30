@@ -44,7 +44,9 @@ struct luna_xpon_tcont {
 	u16 entity;
 	u16 alloc;
 	u8 qid;
-	u32 pool;	/* bank-relative queues taken beyond its own */
+	u32 pool;	/* reserved until remap or rollback has completed */
+	int qos_error;
+	bool qos_fault;	/* uncertain hardware; no further remaps until reinstall */
 	bool hw;	/* a data T-CONT installed in the MAC */
 	bool omcc;	/* the ONU-ID's own Alloc-ID: data shares the OMCC queue */
 	bool valid;
@@ -106,6 +108,7 @@ static struct {
 		u32 rate;
 	} gem_rate[LUNA_XPON_GEMS];
 	struct luna_xpon_queue queue[LUNA_XPON_BANK_QUEUES];
+	u32 quarantine;	/* never reuse uncertain queues before reboot */
 	spinlock_t svc_lock;
 	struct luna_xpon_service svc[LUNA_XPON_SERVICES];
 	u16 uni_entity[LUNA_XPON_UNIS];
@@ -208,6 +211,28 @@ static void luna_xpon_update_data(void)
  * replays its MIB on the channel event that follows. */
 static void luna_xpon_forget(void)
 {
+	unsigned int i, bit;
+	u8 base = luna_xpon_hw_bank_qid();
+
+	/* CAMs were scrubbed; detach and clean old pool queues before reuse. */
+	for (i = 0; i < LUNA_XPON_TCONTS; i++) {
+		struct luna_xpon_tcont *t = &luna_xpon.tcont[i];
+		unsigned long pool = t->pool;
+
+		if (!pool)
+			continue;
+		if (t->qos_fault || luna_xpon_hw_tcont_queues(i, 0)) {
+			luna_xpon.quarantine |= pool;
+			continue;
+		}
+		for_each_set_bit(bit, &pool, LUNA_XPON_BANK_QUEUES)
+			if (luna_xpon_hw_queue_drain(base + bit) ||
+			    luna_xpon_hw_queue_set(base + bit, false, 1, LUNA_XPON_PIR_MAX))
+				luna_xpon.quarantine |= BIT(bit);
+	}
+	if (luna_xpon.quarantine)
+		pr_warn_ratelimited("luna-xpon: channel reinstall retains quarantined queues %#x until reboot\n",
+				    luna_xpon.quarantine);
 	rtl9601d_l2_changed();
 	memset(luna_xpon.tcont, 0, sizeof(luna_xpon.tcont));
 	memset(luna_xpon.gem, 0, sizeof(luna_xpon.gem));
@@ -421,10 +446,16 @@ static int luna_xpon_queue_program(u8 qid, bool wfq, u16 weight, u32 pir)
 }
 
 /* Back to the install defaults, drained, for whichever T-CONT takes it next. */
-static void luna_xpon_queue_free(u8 qid)
+static int luna_xpon_queue_free(u8 qid)
 {
-	luna_xpon_hw_queue_drain(qid);
-	luna_xpon_queue_program(qid, false, 1, LUNA_XPON_PIR_MAX);
+	int rc = luna_xpon_hw_queue_drain(qid);
+
+	if (!rc)
+		rc = luna_xpon_queue_program(qid, false, 1, LUNA_XPON_PIR_MAX);
+	if (rc)
+		pr_warn_ratelimited("luna-xpon: queue %u cleanup failed: %d; quarantining\n",
+				    qid, rc);
+	return rc;
 }
 
 static void luna_xpon_qos_release(struct luna_xpon_tcont *t)
@@ -432,16 +463,22 @@ static void luna_xpon_qos_release(struct luna_xpon_tcont *t)
 	u8 base = luna_xpon_hw_bank_qid();
 	unsigned long pool = t->pool;
 	unsigned int bit;
+	int rc;
 
-	luna_xpon_hw_tcont_queues(t - luna_xpon.tcont, BIT(t->qid - base));
-	for_each_set_bit(bit, &pool, LUNA_XPON_BANK_QUEUES)
-		luna_xpon_queue_free(base + bit);
+	rc = luna_xpon_hw_tcont_queues(t - luna_xpon.tcont, BIT(t->qid - base));
+	for_each_set_bit(bit, &pool, LUNA_XPON_BANK_QUEUES) {
+		if (rc || luna_xpon_queue_free(base + bit))
+			luna_xpon.quarantine |= BIT(bit);
+	}
+	if (luna_xpon.quarantine & t->pool)
+		pr_warn_ratelimited("luna-xpon: T-CONT %#x queue cleanup incomplete; quarantined=%#x\n",
+				    t->entity, luna_xpon.quarantine);
 	t->pool = 0;
 }
 
 static u32 luna_xpon_pool_free(const struct luna_xpon_tcont *self)
 {
-	u32 used = GENMASK(LUNA_XPON_TCONTS - 1, 0);
+	u32 used = GENMASK(LUNA_XPON_TCONTS - 1, 0) | luna_xpon.quarantine;
 	unsigned int i;
 
 	for (i = 0; i < LUNA_XPON_TCONTS; i++)
@@ -459,13 +496,22 @@ static int luna_xpon_qos_tcont(struct luna_xpon_tcont *t)
 {
 	const struct omci_tcont_qos *qos = &luna_xpon.tcont_qos[t - luna_xpon.tcont];
 	struct luna_xpon_qgroup grp[LUNA_XPON_GEMS];
+	struct luna_xpon_queue saved[LUNA_XPON_BANK_QUEUES];
+	u8 old_qid[LUNA_XPON_GEMS];
 	u8 gem_grp[LUNA_XPON_GEMS], ord[LUNA_XPON_GEMS];
 	u8 base = luna_xpon_hw_bank_qid();
 	u32 avail = luna_xpon_pool_free(t), pool = 0;
+	u32 old_pool = t->pool, touched = 0, old_mask = BIT(t->qid - base) | old_pool;
 	unsigned long gone;
 	unsigned int i, j, n = 0, bit;
-	bool wfq;
-	int rc;
+	bool wfq, remapping = false;
+	int rc, rollback = 0, err;
+
+	if (t->qos_fault)
+		return -EIO;
+	memcpy(saved, luna_xpon.queue, sizeof(saved));
+	for (i = 0; i < LUNA_XPON_GEMS; i++)
+		old_qid[i] = luna_xpon.gem[i].qid;
 
 	for (i = 0; i < LUNA_XPON_GEMS; i++) {
 		const struct luna_xpon_gem *g = &luna_xpon.gem[i];
@@ -497,10 +543,8 @@ static int luna_xpon_qos_tcont(struct luna_xpon_tcont *t)
 	for (i = 1; i < n; i++) {
 		u32 from = avail & t->pool ? avail & t->pool : avail;
 
-		if (!from) {
-			pr_warn_once("luna-xpon: upstream queue bank exhausted, sharing queues\n");
-			break;
-		}
+		if (!from)
+			return -ENOSPC;
 		bit = __ffs(from);
 		avail &= ~BIT(bit);
 		pool |= BIT(bit);
@@ -517,26 +561,29 @@ static int luna_xpon_qos_tcont(struct luna_xpon_tcont *t)
 		}
 	}
 
+	/* Reserve before the first MMIO: a failed write can still take effect. */
+	t->pool |= pool;
 	wfq = n > 1 && !(qos->enabled && qos->policy == 1);
 	for (i = 0; i < n; i++) {
 		const struct luna_xpon_qgroup *q = &grp[ord[i]];
 		u16 weight = wfq && qos->enabled ? max_t(u16, qos->weight[q->prio], 1) : 1;
 
-		/* merged groups keep the least urgent one's settings */
-		if (i && q->qid == t->qid)
-			continue;
-		if (q->qid != t->qid && !(t->pool & BIT(q->qid - base))) {
+		if (q->qid != t->qid && !(old_pool & BIT(q->qid - base))) {
 			rc = luna_xpon_hw_queue_drain(q->qid);
 			if (rc)
-				return rc;
+				goto rollback;
 		}
+		touched |= BIT(q->qid - base);
 		rc = luna_xpon_queue_program(q->qid, wfq, weight, luna_xpon_pir(q->rate));
 		if (rc)
-			return rc;
+			goto rollback;
 	}
 
 	/* Old and new queues both schedule while SIDs move. */
-	luna_xpon_hw_tcont_queues(t - luna_xpon.tcont, BIT(t->qid - base) | t->pool | pool);
+	remapping = true;
+	rc = luna_xpon_hw_tcont_queues(t - luna_xpon.tcont, old_mask | pool);
+	if (rc)
+		goto rollback;
 	for (i = 0; i < LUNA_XPON_GEMS; i++) {
 		struct luna_xpon_gem *g = &luna_xpon.gem[i];
 		u8 qid;
@@ -548,21 +595,61 @@ static int luna_xpon_qos_tcont(struct luna_xpon_tcont *t)
 			continue;
 		rc = luna_xpon_hw_gem_queue(i, qid);
 		if (rc)
-			return rc;
+			goto rollback;
 		pr_info("luna-xpon: GEM %u -> queue %u (priority %u)\n", g->gem, qid,
 			grp[gem_grp[i]].prio);
 		g->qid = qid;
 	}
-	luna_xpon_hw_tcont_queues(t - luna_xpon.tcont, BIT(t->qid - base) | pool);
-	gone = t->pool & ~pool;
+	rc = luna_xpon_hw_tcont_queues(t - luna_xpon.tcont, BIT(t->qid - base) | pool);
+	if (rc)
+		goto rollback;
+	gone = old_pool & ~pool;
 	t->pool = pool;
 	for_each_set_bit(bit, &gone, LUNA_XPON_BANK_QUEUES)
-		luna_xpon_queue_free(base + bit);
+		if (luna_xpon_queue_free(base + bit))
+			luna_xpon.quarantine |= BIT(bit);
 	return 0;
+
+rollback:
+	/* Restore even the failed SID write: timeout does not mean no mutation. */
+	if (remapping) {
+		rollback = luna_xpon_hw_tcont_queues(t - luna_xpon.tcont, old_mask | pool);
+		for (i = 0; i < LUNA_XPON_GEMS; i++) {
+			if (gem_grp[i] == LUNA_XPON_GEMS)
+				continue;
+			err = luna_xpon_hw_gem_queue(i, old_qid[i]);
+			rollback = rollback ?: err;
+			if (!err)
+				luna_xpon.gem[i].qid = old_qid[i];
+		}
+	}
+	for (bit = 0; bit < LUNA_XPON_BANK_QUEUES; bit++) {
+		const struct luna_xpon_queue *q = &saved[bit];
+
+		if (!(touched & BIT(bit)))
+			continue;
+		err = luna_xpon_queue_program(base + bit, q->valid ? q->wfq : false,
+					    q->valid ? q->weight : 1,
+					    q->valid ? q->pir : LUNA_XPON_PIR_MAX);
+		rollback = rollback ?: err;
+	}
+	if (!rollback && remapping)
+		rollback = luna_xpon_hw_tcont_queues(t - luna_xpon.tcont, old_mask);
+	if (rollback) {
+		for (bit = 0; bit < LUNA_XPON_BANK_QUEUES; bit++)
+			if (touched & BIT(bit))
+				luna_xpon.queue[bit].valid = false;
+		t->qos_fault = true;
+		luna_xpon.quarantine |= t->pool;
+		pr_err_ratelimited("luna-xpon: T-CONT %#x QoS rollback failed: %d (update %d); queues %#x quarantined until reboot\n",
+				   t->entity, rollback, rc, t->pool);
+	} else {
+		t->pool = old_pool;
+	}
+	return rc;
 }
 
-/* Data keeps flowing on whatever queue it had: a failure is logged, never
- * reported to the OLT as a provisioning error. */
+/* Preserve OLT compatibility while exposing hardware application errors. */
 static void luna_xpon_qos_sync(void)
 {
 	unsigned int i;
@@ -574,6 +661,7 @@ static void luna_xpon_qos_sync(void)
 		if (!t->hw)
 			continue;
 		rc = luna_xpon_qos_tcont(t);
+		t->qos_error = rc;
 		if (rc)
 			pr_warn_ratelimited("luna-xpon: T-CONT %#x QoS not applied: %d\n",
 					    t->entity, rc);
@@ -1838,7 +1926,49 @@ static ssize_t bosa_thresholds_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(bosa_thresholds);
 
+/* Cached application state; no clear-on-read counters or MMIO on this path. */
+static ssize_t qos_status_show(struct device *dev,
+			     struct device_attribute *attr, char *buf)
+{
+	ssize_t len;
+	unsigned int i;
+	u8 base = luna_xpon_hw_bank_qid();
+
+	mutex_lock(&luna_xpon.lock);
+	len = sysfs_emit(buf, "quarantined=%#x downstream_gem_rate=unsupported burst=unsupported\n",
+			luna_xpon.quarantine);
+	for (i = 0; i < LUNA_XPON_TCONTS; i++) {
+		const struct luna_xpon_tcont *t = &luna_xpon.tcont[i];
+		const struct omci_tcont_qos *q = &luna_xpon.tcont_qos[i];
+
+		if (t->valid)
+			len += sysfs_emit_at(buf, len,
+				"tcont=%#x installed=%u omcc=%u pool=%#x requested_enabled=%u requested_policy=%u error=%d faulted=%u\n",
+				t->entity, t->hw, t->omcc, t->pool, q->enabled,
+				q->policy, t->qos_error, t->qos_fault);
+	}
+	for (i = 0; i < LUNA_XPON_GEMS; i++) {
+		const struct luna_xpon_gem *g = &luna_xpon.gem[i];
+		const struct luna_xpon_queue *q;
+
+		if (!g->hw || !(g->dir & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI))
+			continue;
+		if (g->qid < base || g->qid >= base + LUNA_XPON_BANK_QUEUES)
+			continue;
+		q = &luna_xpon.queue[g->qid - base];
+		len += sysfs_emit_at(buf, len,
+			"gem=%u tcont=%#x sid=%u cached_qid=%u requested_Bps=%u cached_valid=%u cached_pir=%u cached_weight=%u cached_weighted=%u\n",
+			g->gem, g->tcont, luna_xpon_hw_gem_flow(i), g->qid,
+			luna_xpon_gem_rate(g->gem), q->valid, q->pir,
+			q->weight, q->wfq);
+	}
+	mutex_unlock(&luna_xpon.lock);
+	return len;
+}
+static DEVICE_ATTR_RO(qos_status);
+
 static struct attribute *luna_xpon_attrs[] = {
+	&dev_attr_qos_status.attr,
 	&dev_attr_bosa_ddm.attr,
 	&dev_attr_bosa_thresholds.attr,
 	&dev_attr_sfu_untag_vlan.attr,

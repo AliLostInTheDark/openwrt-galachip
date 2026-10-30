@@ -52,7 +52,7 @@ void luna_xpon_hw_gem_remove(unsigned int slot);
 u8 luna_xpon_hw_bank_qid(void);
 int luna_xpon_hw_queue_set(u8 qid, bool wfq, u16 weight, u32 pir);
 int luna_xpon_hw_queue_drain(u8 qid);
-void luna_xpon_hw_tcont_queues(unsigned int slot, u32 mask);
+int luna_xpon_hw_tcont_queues(unsigned int slot, u32 mask);
 int luna_xpon_hw_gem_queue(unsigned int slot, u8 qid);
 bool luna_xpon_hw_mic_valid(const u8 *msg, unsigned int len);
 int luna_xpon_hw_optics(struct luna_xpon_optics *o);
