@@ -41,8 +41,7 @@ return baseclass.extend({
 			return _('Connected');
 		/* Optical line rates, not Ethernet negotiation or IP throughput. */
 		return E('span', {
-			'title': _('GPON nominal optical line rate: downstream / upstream'),
-			'style': 'white-space:normal'
-		}, [ 'GPON ↓ 2.488 / ↑ 1.244 Gbit/s' ]);
+			'title': _('GPON nominal optical line rate: 2.488 Gbit/s downstream, 1.244 Gbit/s upstream')
+		}, [ '2.5G PON' ]);
 	}
 });
