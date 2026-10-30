@@ -1,5 +1,6 @@
 #!/bin/sh /etc/rc.common
-START=99
+# Start after netifd; the helper waits for the management bridge and address.
+START=21
 USE_PROCD=1
 start_service() {
 	procd_open_instance
