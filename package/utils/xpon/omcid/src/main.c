@@ -368,7 +368,7 @@ static int loop(struct omcid *ctx, int listener)
 				timeout = left;
 		}
 		left = omcid_olt_watch_poll(&ctx->olt, omci_native_now(),
-					    ctx->engine.agent.mib_sync, stdout);
+					    ctx->engine.agent.mib_sync, stdout, true);
 		if (left >= 0 && (timeout < 0 || left < timeout))
 			timeout = left;
 		/* Never while a request waits: that is what the deferral is for. */

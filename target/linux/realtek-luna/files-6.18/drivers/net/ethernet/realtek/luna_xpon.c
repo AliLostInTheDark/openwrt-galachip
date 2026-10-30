@@ -10,6 +10,7 @@
 #include <linux/ctype.h>
 #include <linux/crc32.h>
 #include <linux/if_vlan.h>
+#include <linux/jiffies.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
 #include <linux/of.h>
@@ -128,6 +129,8 @@ static struct {
 	u8 ev_onu_id;
 	u16 ev_gem;
 	bool ev_los;
+	bool los_known;
+	unsigned long loss_started;
 	bool data_up;
 	bool operational;
 } luna_xpon = {
@@ -1122,6 +1125,9 @@ static int luna_xpon_get_telemetry(struct omci_device *odev,
 
 static void luna_xpon_set_operational(struct omci_device *odev, bool operational)
 {
+	if (operational != READ_ONCE(luna_xpon.operational))
+		pr_info("luna-xpon: OMCI agent %s\n",
+			operational ? "operational; service provisioning applied" : "not operational");
 	WRITE_ONCE(luna_xpon.operational, operational);
 	rtl9601d_l2_changed();
 	luna_xpon_update_carrier();
@@ -1190,19 +1196,38 @@ static void luna_xpon_post(unsigned int ev, u8 state, u8 onu_id, u16 gem)
 
 void luna_xpon_report_los(bool los)
 {
-	unsigned long flags;
+	unsigned long flags, lost_ms = 0;
+	bool changed;
 
 	if (!READ_ONCE(luna_xpon.odev))
 		return;
 	spin_lock_irqsave(&luna_xpon.ev_lock, flags);
+	changed = !luna_xpon.los_known || luna_xpon.ev_los != los;
+	if (changed) {
+		if (los)
+			luna_xpon.loss_started = jiffies;
+		else if (luna_xpon.los_known)
+			lost_ms = jiffies_to_msecs(jiffies - luna_xpon.loss_started);
+	}
+	luna_xpon.los_known = true;
 	luna_xpon.ev |= LUNA_XPON_EV_LOS;
 	luna_xpon.ev_los = los;
 	spin_unlock_irqrestore(&luna_xpon.ev_lock, flags);
+	if (changed) {
+		if (los)
+			pr_info("luna-xpon: downstream optical signal lost; waiting for signal\n");
+		else if (lost_ms)
+			pr_info("luna-xpon: downstream optical signal restored after %lu ms; waiting for registration\n", lost_ms);
+		else
+			pr_info("luna-xpon: downstream optical signal detected\n");
+	}
 	schedule_work(&luna_xpon.event_work);
 }
 
 void luna_xpon_report_state(u8 state)
 {
+	if (state == GPON_O5)
+		pr_info("luna-xpon: registered with OLT (O5); restoring service provisioning\n");
 	if (state != GPON_O5)
 		rtl9601d_l2_changed();
 	luna_xpon_post(LUNA_XPON_EV_STATE, state, 0, 0);

@@ -5,6 +5,8 @@
  * once the OLT has been quiet for a while, so steady state costs nothing.
  */
 #include "daemon.h"
+#include <fcntl.h>
+#include <unistd.h>
 
 #define OLT_WATCH_QUIET_MS	10000	/* the OLT is done after this much silence */
 #define OLT_WATCH_MAX_MS	120000	/* report even if it keeps talking */
@@ -46,21 +48,23 @@ static const char *olt_watch_verdict(const struct omcid_olt_watch *w)
 	if (!w->messages)
 		return "no OMCI";
 	if (w->count[OLT_MT_MIB_RESET])
-		return "MIB reset and full reprovision";
+		return "OLT requested MIB reset";
 	if (provision)
 		return "reprovision without MIB reset";
 	if (w->count[OLT_MT_MIB_UPLOAD] || w->count[OLT_MT_GET])
-		return "audit only";
+		return "audit only; no MIB reset observed";
 	return "keepalive only";
 }
 
 /* Returns ms until the summary is due, or -1 when nothing is pending. */
 long omcid_olt_watch_poll(struct omcid_olt_watch *w, unsigned long now,
-			  u16 mib_sync, FILE *out)
+			  u16 mib_sync, FILE *out, bool kernel_log)
 {
 	unsigned long due = w->messages ? w->last_ms + OLT_WATCH_QUIET_MS :
 					  w->up_ms + OLT_WATCH_MAX_MS;
-	char dark[32] = "activation";
+	char dark[48] = "activation";
+	char line[512];
+	int fd;
 
 	if (!w->active)
 		return -1;
@@ -70,15 +74,23 @@ long omcid_olt_watch_poll(struct omcid_olt_watch *w, unsigned long now,
 		return due - now;
 
 	if (w->down_ms)
-		snprintf(dark, sizeof(dark), "%lu s dark", (w->up_ms - w->down_ms) / 1000);
-	fprintf(out, "omcid: OLT after %s: %s; %u messages over %lu s "
+		snprintf(dark, sizeof(dark), "%lu s OMCC unavailable", (w->up_ms - w->down_ms) / 1000);
+	snprintf(line, sizeof(line), "omcid: OLT after %s: %s; %u messages over %lu s "
 		"(MIB reset %u, upload %u/%u, create %u, set %u, delete %u, get %u), "
 		"MIB sync %u\n", dark, olt_watch_verdict(w), w->messages,
 		(w->last_ms - w->up_ms) / 1000, w->count[OLT_MT_MIB_RESET],
 		w->count[OLT_MT_MIB_UPLOAD], w->count[OLT_MT_MIB_UPLOAD_NEXT],
 		w->count[OLT_MT_CREATE], w->count[OLT_MT_SET], w->count[OLT_MT_DELETE],
 		w->count[OLT_MT_GET], mib_sync);
+	fputs(line, out);
 	fflush(out);
+	if (kernel_log) {
+		fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC | O_NONBLOCK);
+		if (fd >= 0) {
+			dprintf(fd, "<6>%s", line);
+			close(fd);
+		}
+	}
 	w->active = false;
 	w->down_ms = 0;
 	return -1;
