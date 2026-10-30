@@ -1,6 +1,7 @@
 'use strict';
 'require baseclass';
 'require rpc';
+'require fs';
 'require poll';
 'require ui';
 'require xpon.widgets as widgets';
@@ -11,6 +12,8 @@
  * the menu has the PON pages; the menu also says which mode runs.
  */
 
+var DEV = '/sys/class/net/pon0/device/';
+
 var callStatus = rpc.declare({
 	object: 'omci.agent',
 	method: 'status_live',
@@ -18,11 +21,16 @@ var callStatus = rpc.declare({
 	expect: { status: {} }
 });
 
-var callPublic = rpc.declare({
-	object: 'xpon.public',
-	method: 'status',
-	expect: { '': {} }
-});
+function parse(raw) {
+	var out = {};
+
+	String(raw || '').split(/\s+/).forEach(function(word) {
+		var i = word.indexOf('=');
+		if (i > 0)
+			out[word.substring(0, i)] = word.substring(i + 1);
+	});
+	return out;
+}
 
 function power(nw) {
 	var dbm = widgets.dbm(nw);
@@ -40,9 +48,14 @@ function gpon() {
 }
 
 function epon() {
-	return L.resolveDefault(callPublic(), {}).then(function(p) {
-		var e = p.epon || {}, hw = e.mac || {}, oam = e.oam || {}, ddm = p.ddm || {}, stage;
+	return Promise.all([
+		L.resolveDefault(fs.read(DEV + 'epon_state'), null),
+		L.resolveDefault(fs.read(DEV + 'bosa_ddm'), null),
+		L.resolveDefault(fs.read('/var/run/epon-oamd.json'), null)
+	]).then(function(data) {
+		var hw = parse(data[0]), ddm = parse(data[1]), oam = {}, stage;
 
+		try { oam = JSON.parse(data[2] || '{}'); } catch (e) {}
 		if (hw.signal != '1')
 			stage = _('no light');
 		else if (!(+hw.registered & 1))

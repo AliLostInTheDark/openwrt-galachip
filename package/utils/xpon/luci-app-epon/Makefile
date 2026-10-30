@@ -3,7 +3,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_VERSION:=0.1
-PKG_RELEASE:=14
+PKG_RELEASE:=13
 LUCI_TITLE:=LuCI support for EPON (epon-oamd)
 LUCI_PKGARCH:=all
 PKG_LICENSE:=GPL-2.0-only

@@ -378,7 +378,7 @@ function oamText(s, hw) {
 
 function eponVlan(s) {
 	var modes = [ _('Transparent'), _('Tag'), _('Translation'), _('N:1 aggregation'), _('Trunk') ];
-	var olt = (modes[s.vlan_mode] || '-') + (s.vlan_mode && s.vlan_default != null ? ', VLAN %d'.format(s.vlan_default) : '');
+	var olt = (modes[s.vlan_mode] || '-') + (s.vlan_mode ? ', VLAN %d'.format(s.vlan_default) : '');
 
 	if (s.vlan_override && s.vlan_override != 'olt')
 		return _('%s (OLT asks for: %s)').format(s.vlan_override.indexOf('tag') == 0 ? _('Tag, set locally') : _('Transparent, set locally'), olt);
@@ -424,7 +424,7 @@ function epon(pub) {
 			[ _('Laser bias'), scaled(d.bias_ua, 1000, 2, 'mA') ],
 			[ _('TX optical power'), dbm(d.tx_nw) ],
 			[ _('RX optical power'), dbm(d.rx_nw) ],
-			[ _('BOSA alarms'), d.alarms == null ? '-' : alarms(d.alarms) ]
+			[ _('BOSA alarms'), alarms(parseInt(d.alarms, 16)) ]
 		])
 	]);
 }

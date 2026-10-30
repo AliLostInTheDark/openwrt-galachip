@@ -20,7 +20,7 @@ const ucode = process.env.UCODE || path.join(repo, 'staging_dir/hostpkg/bin/ucod
 // This G7's BOSA: RX warning -28.9/-7.0 dBm, alarm -30.0/-6.0 dBm; TX 0.0/5.5 and -0.5/6.0.
 const thresholds = {tx_alarm_high_nw: 3981100, tx_alarm_low_nw: 891300, tx_warn_high_nw: 3548100, tx_warn_low_nw: 1000000,
   rx_alarm_high_nw: 251200, rx_alarm_low_nw: 1000, rx_warn_high_nw: 199500, rx_warn_low_nw: 1300};
-const eponDdm = 'temp_mc=45000 vcc_uv=3300000 bias_ua=12000 tx_nw=2000000 rx_nw=12000 alarms=0x0040 raw=00';
+const eponDdm = 'temp_mc=45000 vcc_uv=3300000 bias_ua=12000 tx_nw=2000000 rx_nw=12000 alarms=0x0010 raw=00';
 const oamd = {generation: 3, registered: true, oam: 'send_any', ctc: 'ok', ctc_version: 48, auth: 'ok',
   auth_fail_reason: 0, loid: 'SECRET-LOID', olt_mac: '00:13:25:88:00:00', onu_mac: 'a8:42:a1:85:11:47',
   vlan_mode: 0, vlan_default: 0, vlan_override: 'tag:3766', rx_pdus: 10, tx_pdus: 11, keys: 2, interauth: 'off'};
@@ -48,7 +48,6 @@ if (fs.existsSync(ucode)) {
   assert.equal(eponPublic.mode, 'epon');
   assert.equal(eponPublic.ddm.rx_nw, '12000');
   assert.equal(eponPublic.ddm.raw, undefined);
-  assert.equal(eponPublic.ddm.alarms, 16, 'SFF RX low alarm becomes OPTICAL_FRONTEND_ALARM_RX_LOW_POWER');
   assert.equal(eponPublic.thresholds.rx_warn_low_nw, '1300');
   assert.equal(eponPublic.epon.mac.registered, '0x1');
   assert.equal(eponPublic.epon.oam.olt_mac, '00:13:25:88:00:00');
@@ -60,7 +59,7 @@ if (fs.existsSync(ucode)) {
 } else {
   console.log('xpon.public: skipped, no host ucode');
 }
-eponPublic ??= {mode: 'epon', ddm: {rx_nw: '12000', tx_nw: '2000000', alarms: 16}, thresholds,
+eponPublic ??= {mode: 'epon', ddm: {rx_nw: '12000', tx_nw: '2000000', alarms: '0x0010'}, thresholds,
   epon: {mac: {signal: '1', sync: '1', registered: '0x1'}, oam: {...oamd, loid: undefined}, allow_tx: true, tx_hold: false}};
 
 /* --- xpon-stats on the router, against a fake ONU --- */
@@ -102,16 +101,12 @@ const gponStatus = {state: 5, onu_id: 3, gem_port: 0, agent_operational: 1, fec_
   bosa_tx_power_nw: 1800000, mib_objects: 120, olt_profile_effective_name: 'nokia-alcl',
   identity: {serial: 'TPLG12345678', 'vendor-id': 'TPLG'}, olt: {vendor_id: 'ALCL'},
   omci_alarms: [{class: 11, entity: '0101', reported: true, alarms: ['lan-los']}]};
-const maskedStatus = {...gponStatus, identity: {...gponStatus.identity, serial: 'TPLG********'}};
-const gponOnu = {'omci.agent.status_public': {status: maskedStatus}, 'omci.agent.status_live': {status: {state: 4}},
+const gponOnu = {'omci.agent.status': {status: gponStatus}, 'omci.agent.status_live': {status: {state: 4}},
   'omci.vlan.status': {mode: 'transparent', port: 'pon0'}};
-const oldGponOnu = {'omci.agent.status': {status: gponStatus}, 'omci.agent.status_live': {status: {state: 4}}};
 
 let json = JSON.parse(stats(gponOnu, '--json'));
 assert.deepEqual([json.host, json.mode, json.public, json.status.state], ['10.0.0.2', 'gpon', null, 5]);
 assert.equal(json.vlan.mode, 'transparent');
-assert.equal(json.status.identity.serial, 'TPLG********');
-assert.equal(JSON.parse(stats(oldGponOnu, '--json')).status.state, 5, 'older ONU firmware without status_public');
 json = JSON.parse(stats(gponOnu, '--json', '--live'));
 assert.equal(json.status.state, 4);
 json = JSON.parse(stats({'xpon.public.status': {mode: 'gpon', ddm: {}}, ...gponOnu}, '--json'));
@@ -126,7 +121,6 @@ assert.match(out, /O5 operation, ONU-ID 3, OMCC GEM 0, FEC down\/up on\/set by O
 assert.match(out, /operational, OLT profile nokia-alcl/);
 assert.match(out, /RX -18\.24 dBm\s+TX 2\.55 dBm/);
 assert.match(out, /OLT alarms UNI 1: lan-los/);
-assert.match(out, /Identity\s+TPLG\*{8}, TPLG/);
 out = stats({'xpon.public.status': eponPublic});
 assert.match(out, /^EPON ONU/);
 assert.match(out, /signal present, sync yes, MPCP registered/);

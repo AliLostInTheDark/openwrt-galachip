@@ -25,7 +25,10 @@ static int topology(struct omci_device *d, struct omci_ani_topology *t)
 	*t = (struct omci_ani_topology) { .tcont_base = 0x8000, .scheduler_base = 0x8000,
 		.queue_base = 0x8000, .tcont_count = 15, .queues_per_tcont = 8,
 		.maximum_queue_size = 65535, .allocated_queue_size = 4,
-		.queue_config_option = 1, .scheduler_policy = 1 };
+		.queue_config_option = 1, .scheduler_policy = 1,
+		.gem_port_count = 256, .qos_configuration = BIT(3) | BIT(4),
+		.downstream_queues_per_uni = 8,
+		.flags = OMCI_TOPOLOGY_F_PROFILE_SERVICES };
 	return hardware_error;
 }
 

@@ -4,10 +4,15 @@
 # kernel. internal.h is not: the kernel keeps only the configuration store.
 set -eu
 cd "$(dirname "$0")"
+for target in realtek-luna/files-6.18 galachip/files zte/files; do
+    kernel=../../../../../target/linux/$target
+    [ -d "$kernel/net/xpon/omci" ] || continue
+    cmp ../src/backend.c "$kernel/net/xpon/omci/backend.c"
+    cmp ../src/device.h "$kernel/include/net/xpon/omci.h"
+    cmp ../../libomci-protocol/src/include/linux/omci-backend.h "$kernel/include/uapi/linux/omci-backend.h"
+    cmp ../../libomci-protocol/src/include/linux/omci.h "$kernel/include/uapi/linux/omci.h"
+done
 kernel=../../../../../target/linux/galachip/files
-cmp ../src/backend.c "$kernel/net/xpon/omci/backend.c"
-cmp ../src/device.h "$kernel/include/net/xpon/omci.h"
-cmp ../../libomci-protocol/src/include/linux/omci-backend.h "$kernel/include/uapi/linux/omci-backend.h"
 for copy in libomci-protocol omci-agent omci-monitor; do
     cmp "../../$copy/src/include/linux/omci.h" "$kernel/include/uapi/linux/omci.h"
 done

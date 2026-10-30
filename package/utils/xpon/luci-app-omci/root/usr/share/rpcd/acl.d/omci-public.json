@@ -4,7 +4,7 @@
 		"read": {
 			"ubus": {
 				"omci.agent": [
-					"status_public",
+					"status",
 					"status_live"
 				],
 				"omci.vlan": [

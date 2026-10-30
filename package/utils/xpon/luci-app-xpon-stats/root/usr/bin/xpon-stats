@@ -4,7 +4,7 @@
 #
 #   xpon-stats                show everything once
 #   xpon-stats -w [SEC]       refresh every SEC seconds (default 5), Ctrl+C to stop
-#   xpon-stats --json         the raw data, for scripts and LuCI (serial masked)
+#   xpon-stats --json         the raw data, for scripts and LuCI
 #   xpon-stats --json --live  the same without the ONU's configuration reads
 #
 # The ONU address is xpon-stats.main.host (default 192.168.1.1). This router
@@ -39,12 +39,7 @@ fetch() {
 	MODE=${MODE:-gpon}
 	STATUS= VLAN=
 	if [ "$MODE" = gpon ]; then
-		# Older ONU firmware has no status_public and grants status instead.
-		if [ "$method" = status ]; then
-			STATUS=$(call omci.agent status_public || call omci.agent status)
-		else
-			STATUS=$(call omci.agent "$method")
-		fi && STATUS=$(get "$STATUS" '@.status')
+		STATUS=$(call omci.agent "$method") && STATUS=$(get "$STATUS" '@.status')
 		VLAN=$(call omci.vlan status)
 	fi
 	[ -n "$PUBLIC" ] || [ -n "$STATUS" ]

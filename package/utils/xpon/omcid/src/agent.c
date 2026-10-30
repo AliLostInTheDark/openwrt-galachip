@@ -917,11 +917,12 @@ omci_agent_seed_nokia_locked(struct omci_device *odev, u8 profile)
 	}
 
 	/*
-	 * In Nokia GPON HGU / VEIP mode, the OLT assigns Alloc-ID 256 and 257
-	 * along with GEM ports 256 and 257 via PLOAM without OMCI Create messages.
-	 * Seed the standard VEIP datapath bridge for both GEM 256 and GEM 257.
+	 * Some deployments use a reference service graph without OMCI Create.
+	 * A provider must opt in; selecting an OLT profile alone does not grant
+	 * Alloc-IDs, GEM ports or VLANs on other hardware.
 	 */
-	if (agent->config.onu_type == 2) {
+	if (agent->config.onu_type == OMCI_ONU_TYPE_HGU &&
+	    (agent->topology.flags & OMCI_TOPOLOGY_F_PROFILE_SERVICES)) {
 		u8 veip_slot = omci_agent_veip_slot(agent);
 
 		/* T-CONT 0x8000 -> Alloc-ID 256 */
@@ -1278,8 +1279,7 @@ static void omci_agent_refresh_identity_locked(struct omci_agent *agent)
 
 	/*
 	 * G.988 9.2.1: SR indication says the ONU reports queue status for
-	 * DBA. The GC1601 sends valid DBRu reports, so it is on by default;
-	 * turning it off moves the OLT to traffic-monitoring DBA.
+	 * DBA. Turning it off moves the OLT to traffic-monitoring DBA.
 	 */
 	object = omci_mib_lookup(agent, OMCI_CLASS_ANI_G, OMCI_ANI_G_ENTITY_ID);
 	if (object)
@@ -1297,9 +1297,8 @@ static void omci_agent_refresh_identity_locked(struct omci_agent *agent)
 		schedulers = omci_mib_count_class(agent,
 						  OMCI_CLASS_TRAFFIC_SCHEDULER);
 		object->data[27] = min_t(u16, schedulers, U8_MAX);
-		/* GEM port-IDs the GC1601 classifier holds, as the stock ONU2-G says. */
-		put_unaligned_be16(256, object->data + 29);
-		put_unaligned_be16(BIT(3) | BIT(4), object->data + 32);
+		put_unaligned_be16(agent->topology.gem_port_count, object->data + 29);
+		put_unaligned_be16(agent->topology.qos_configuration, object->data + 32);
 		/*
 		 * G.988 9.1.3. The OLT reads these to decide what it may
 		 * provision. Left at zero they say the ONU supports no
@@ -1409,6 +1408,8 @@ static int omci_agent_get_ani_topology(struct omci_device *odev,
 		.queues_per_tcont = OMCI_DEFAULT_QUEUES_PER_TCONT,
 		.queue_config_option = 1,
 		.scheduler_policy = 1,
+		.gem_port_count = 16,
+		.downstream_queues_per_uni = 1,
 	};
 
 	if (odev->ops && odev->ops->get_ani_topology) {
@@ -1420,7 +1421,14 @@ static int omci_agent_get_ani_topology(struct omci_device *odev,
 	if (!topology->tcont_count ||
 	    topology->tcont_count > OMCI_MAX_TCONT_RESOURCES ||
 	    !topology->queues_per_tcont ||
-	    topology->queues_per_tcont > OMCI_MAX_QUEUES_PER_TCONT)
+	    topology->queues_per_tcont > OMCI_MAX_QUEUES_PER_TCONT ||
+	    !topology->downstream_queues_per_uni ||
+	    topology->downstream_queues_per_uni > OMCI_MAX_QUEUES_PER_TCONT ||
+	    !topology->gem_port_count || topology->gem_port_count > 4096 ||
+	    topology->allocated_queue_size > topology->maximum_queue_size ||
+	    (topology->scheduler_policy != 1 && topology->scheduler_policy != 2) ||
+	    (topology->flags & ~(OMCI_TOPOLOGY_F_PROFILE_SERVICES |
+			       OMCI_TOPOLOGY_F_FULL_UNI_ENTITY)))
 		return -EINVAL;
 
 	last_tcont = topology->tcont_base + topology->tcont_count - 1;
@@ -1431,6 +1439,7 @@ static int omci_agent_get_ani_topology(struct omci_device *odev,
 	    last_queue > U16_MAX)
 		return -ERANGE;
 
+	odev->agent.topology = *topology;
 	return 0;
 }
 
@@ -1858,13 +1867,13 @@ static int omci_agent_populate_defaults(struct omci_device *odev)
 		}
 	}
 
-	/* Downstream queues for every Ethernet UNI and the VEIP, as the stock ONU has. */
+	/* Downstream queues for every Ethernet UNI and the VEIP, as vendor ONUs have. */
 	for (i = 0, queue_id = 0; i <= agent->config.uni_count; i++) {
 		u16 uni = i < agent->config.uni_count ?
 			  OMCI_UNI_ENTITY_ID(OMCI_ETHERNET_SLOT, i + 1) :
 			  OMCI_UNI_ENTITY_ID(veip_slot, 1);
 
-		for (queue = 0; queue < topology.queues_per_tcont; queue++) {
+		for (queue = 0; queue < topology.downstream_queues_per_uni; queue++) {
 			omci_downstream_queue_default_data(&topology, uni, queue, data);
 			ret = omci_mib_add_priority_queue_default(agent, queue_id++, data);
 			if (ret)
@@ -2037,6 +2046,7 @@ int omci_agent_init(struct omci_device *odev)
 	INIT_DELAYED_WORK(&agent->alarm_work, omci_agent_alarm_work);
 	xa_init(&agent->mib);
 	xa_init(&agent->services);
+	xa_init(&agent->uni_attrs);
 	agent->enabled = true;
 	agent->permissive = false;
 	agent->fake_omci = false;
@@ -2049,7 +2059,7 @@ int omci_agent_init(struct omci_device *odev)
 	agent->config.onu_type = OMCI_ONU_TYPE_HGU;
 	agent->config.onu_type_source = OMCI_CONFIG_SOURCE_DEFAULT;
 	agent->config.traffic_mgmt_option = 0;
-	agent->config.dba_status_reporting = 1;	/* the GC1601 sends real DBRu */
+	agent->config.dba_status_reporting = 1;
 	agent->config.olt_profile = OMCI_OLT_PROFILE_AUTO;
 	agent->config.olt_profile_force = OMCI_OLT_PROFILE_UNSPEC;
 	agent->config.olt_profile_source = OMCI_CONFIG_SOURCE_DEFAULT;
@@ -2106,6 +2116,9 @@ void omci_agent_cleanup(struct omci_device *odev)
 		kfree(object);
 	}
 	mutex_unlock(&agent->lock);
+	xa_for_each(&agent->uni_attrs, index, object)
+		kfree(object);
+	xa_destroy(&agent->uni_attrs);
 	xa_destroy(&agent->services);
 	xa_destroy(&agent->mib);
 }
@@ -2862,6 +2875,13 @@ static int omci_agent_gem_rate_locked(struct omci_device *odev,
 	return 0;
 }
 
+static u16 omci_agent_backend_uni(const struct omci_agent *agent, u16 entity)
+{
+	if (agent->topology.flags & OMCI_TOPOLOGY_F_FULL_UNI_ENTITY)
+		return entity;
+	return omci_profile_normalize_uni_entity(agent->profile_effective, entity);
+}
+
 static int omci_agent_hw_update(struct omci_device *odev,
 				struct omci_mib_object *object,
 				u8 action, const u8 *content)
@@ -2910,8 +2930,7 @@ static int omci_agent_hw_update(struct omci_device *odev,
 			enable = object->data[4] == 0;
 		else
 			enable = object->data[0] == 0;
-		entity_id = omci_profile_normalize_uni_entity(
-			odev->agent.profile_effective, object->entity_id);
+		entity_id = omci_agent_backend_uni(&odev->agent, object->entity_id);
 		ret = ops->set_uni(odev, entity_id, enable);
 		ignore_unsupported_uni = odev->agent.profile_quirks &
 					 OMCI_OLT_QUIRK_IGNORE_UNSUPPORTED_UNI;
@@ -3156,8 +3175,8 @@ static bool upstream_queue_tm;
 /*
  * Services whose GEM ports share a priority queue share a hardware queue,
  * so an 802.1p mapper sending every P-bit to one GEM needs one flow.
- * Priority 0 stays on hardware queue 0, where stock puts all traffic;
- * hardware queue 7 drops the ONU to O2 on Airtel.
+ * Priority 0 stays on queue 0, where vendor firmware puts all traffic;
+ * queue 7 dropped an ONU to O2 on an Airtel (Nokia) OLT.
  */
 static int omci_agent_tm_queue_locked(struct omci_agent *agent,
 				      const struct omci_mib_object *gem, u8 *queue)
@@ -3201,16 +3220,19 @@ static bool omci_agent_gem_qos_locked(struct omci_agent *agent,
 /*
  * A VLAN tagging filter on the ANI-side bridge port limits which VLANs reach
  * that port's GEMs (Airtel: VLAN 100 on one mapper, 660 on the other), so a
- * UNI rule must not pair a VLAN with a mapper whose port would drop it.
+ * UNI rule must not pair a VLAN with a mapper whose port would drop it. An
+ * untagged frame does not pass a VID filter either.
  */
 static bool
 omci_agent_vlan_filter_passes(const struct omci_vlan_tagging_filter *filter,
-			      u16 vid)
+			      bool vlan_valid, u16 vid)
 {
 	unsigned int i;
 
-	if (!filter || !filter->valid || !filter->num_entries)
+	if (!filter)
 		return true;
+	if (!vlan_valid)
+		return false;
 	for (i = 0; i < filter->num_entries; i++)
 		if (filter->entries[i].vid == vid)
 			return true;
@@ -3270,8 +3292,7 @@ omci_agent_stage_service_rule_locked(struct omci_device *odev,
 	    omci_agent_has_olt_gem_ctp_locked(agent))
 		return 0;
 
-	service.uni_entity_id = omci_profile_normalize_uni_entity(
-		agent->profile_effective, uni_entity);
+	service.uni_entity_id = omci_agent_backend_uni(agent, uni_entity);
 	service.gem_ctp_entity_id = gem_ctp_entity;
 	service.gem_port_id = get_unaligned_be16(gem->data);
 	service.tcont_entity_id = get_unaligned_be16(gem->data + 2);
@@ -3294,7 +3315,8 @@ omci_agent_stage_service_rule_locked(struct omci_device *odev,
 		service.vlan_id = filter->vid;
 		service.vlan_valid =
 			omci_agent_service_vlan_valid(filter->vid);
-		if (!mapper_pcp_valid) {
+		/* VID-only filtering on the ANI port leaves the P-bit alone. */
+		if (!mapper_pcp_valid && !ani_filter) {
 			service.pcp = filter->pbit;
 			service.pcp_valid = true;
 			service.queue = filter->pbit;
@@ -3366,14 +3388,17 @@ omci_agent_stage_service_rule_locked(struct omci_device *odev,
 		if (!network_vlan)
 			return -EOPNOTSUPP;
 	}
-	if (service.vlan_valid &&
-	    !omci_agent_vlan_filter_passes(ani_filter, service.vlan_id))
+	if (!omci_agent_vlan_filter_passes(ani_filter, service.vlan_valid,
+					   service.vlan_id))
 		return -EOPNOTSUPP;
 	if (upstream_queue_tm || omci_agent_gem_qos_locked(agent, gem)) {
 		int ret = omci_agent_tm_queue_locked(agent, gem, &service.queue);
 
 		if (ret && ret != -ENOENT)
 			return ret;
+	} else if (agent->topology.queues_per_tcont == 1) {
+		/* PCP still selects the service; this provider has one TX queue. */
+		service.queue = 0;
 	}
 	if (!service.vlan_valid && !service.pcp_valid && !*default_installed) {
 		service.default_service = true;
@@ -3440,9 +3465,16 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 	bool has_vlan_rules = false;
 	int ret;
 
+	/*
+	 * A UNI-side VLAN table shared by several ANI ports must not bypass any
+	 * one port's VID filter (forward operation 0x10, the one a VID list
+	 * forwards on). Other operations leave the port unfiltered.
+	 */
 	object = omci_mib_lookup(agent, OMCI_CLASS_VLAN_TAGGING_FILTER_DATA,
 				 bridge_port_entity);
-	if (object && omci_mib_object_active(agent, object))
+	if (object && omci_mib_object_active(agent, object) &&
+	    object->vlan_filter.valid && object->vlan_filter.num_entries &&
+	    object->vlan_filter.forward_operation == 0x10)
 		ani_filter = &object->vlan_filter;
 
 	xa_for_each(&agent->mib, index, object) {
@@ -3490,7 +3522,8 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 		}
 	}
 
-	if (installed || has_vlan_rules)
+	/* A filtered path carries only what its filter allows: no wildcard. */
+	if (installed || has_vlan_rules || ani_filter)
 		return 0;
 
 	return omci_agent_stage_service_rule_locked(
@@ -3603,64 +3636,98 @@ static int omci_agent_apply_uni_attrs_locked(struct omci_device *odev)
 {
 	struct omci_agent *agent = &odev->agent;
 	const struct omci_device_ops *ops = odev->ops;
-	struct omci_uni_attrs attrs = {};
+	struct omci_uni_attrs attrs, *cached;
 	struct omci_mib_object *port, *pptp, *bsp;
-	unsigned long index;
-	u16 uni_entity = 0;
+	unsigned long index, port_index;
+	u16 entity;
 	int ret;
 
 	if (!ops->set_uni_attrs)
 		return 0;
 
-	/* Physical port controls also apply without a PPTP bridge (e.g. VEIP). */
+	/* A VEIP is a shared service endpoint, not a physical Ethernet port. */
 	xa_for_each(&agent->mib, index, pptp) {
 		if (!omci_mib_object_active(agent, pptp) ||
 		    pptp->class_id != OMCI_CLASS_PPTP_ETHERNET_UNI)
 			continue;
-		uni_entity = pptp->entity_id;
-		attrs.auto_detection = pptp->data[2];
-		attrs.max_frame_size = get_unaligned_be16(pptp->data + 7);
-		attrs.pause_quanta = get_unaligned_be16(pptp->data + 10);
-		break;
-	}
-
-	xa_for_each(&agent->mib, index, port) {
-		if (!omci_mib_object_active(agent, port) ||
-		    port->class_id != OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA ||
-		    port->data[3] != OMCI_BRIDGE_TP_PPTP_ETH_UNI)
-			continue;
-		uni_entity = get_unaligned_be16(port->data + 4);
-		pptp = omci_mib_lookup(agent, OMCI_CLASS_PPTP_ETHERNET_UNI, uni_entity);
-		if (pptp && pptp->data_len >= 12)
+		memset(&attrs, 0, sizeof(attrs));
+		if (pptp->data_len >= 12) {
+			attrs.auto_detection = pptp->data[2];
+			attrs.max_frame_size = get_unaligned_be16(pptp->data + 7);
 			attrs.pause_quanta = get_unaligned_be16(pptp->data + 10);
-		bsp = omci_mib_lookup(agent, OMCI_CLASS_MAC_BRIDGE_SERVICE_PROFILE,
-				      get_unaligned_be16(port->data));
-		if (bsp && bsp->data_len >= 17) {
-			attrs.learn_limit = bsp->data[12];
-			attrs.ageing_s = get_unaligned_be32(bsp->data + 13);
 		}
-		if (port->data_len >= 24 && port->data[23])
-			attrs.learn_limit = port->data[23];
-		if (port->data_len >= 23) {
-			attrs.down_kbps = omci_agent_td_kbps(agent,
+		xa_for_each(&agent->mib, port_index, port) {
+			if (!omci_mib_object_active(agent, port) ||
+			    port->class_id != OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA ||
+			    port->data_len < 6 ||
+			    port->data[3] != OMCI_BRIDGE_TP_PPTP_ETH_UNI ||
+			    get_unaligned_be16(port->data + 4) != pptp->entity_id)
+				continue;
+			bsp = omci_mib_lookup(agent, OMCI_CLASS_MAC_BRIDGE_SERVICE_PROFILE,
+					      get_unaligned_be16(port->data));
+			if (bsp && omci_mib_object_active(agent, bsp) && bsp->data_len >= 17) {
+				attrs.learn_limit = bsp->data[12];
+				attrs.ageing_s = get_unaligned_be32(bsp->data + 13);
+			}
+			if (port->data_len >= 24 && port->data[23])
+				attrs.learn_limit = port->data[23];
+			if (port->data_len >= 23) {
+				attrs.down_kbps = omci_agent_td_kbps(agent,
 					get_unaligned_be16(port->data + 19));
-			attrs.up_kbps = omci_agent_td_kbps(agent,
+				attrs.up_kbps = omci_agent_td_kbps(agent,
 					get_unaligned_be16(port->data + 21));
+			}
+			break;
 		}
-		break;		/* one Ethernet UNI */
+		entity = omci_agent_backend_uni(agent, pptp->entity_id);
+		cached = xa_load(&agent->uni_attrs, entity);
+		if (cached && !memcmp(cached, &attrs, sizeof(attrs)))
+			continue;
+		if (!cached) {
+			cached = kzalloc(sizeof(*cached), GFP_KERNEL);
+			if (!cached)
+				return -ENOMEM;
+			ret = xa_err(xa_store(&agent->uni_attrs, entity, cached, GFP_KERNEL));
+			if (ret) {
+				kfree(cached);
+				return ret;
+			}
+			/* An unsuccessful first write must be retried, including defaults. */
+			ret = ops->set_uni_attrs(odev, entity, &attrs);
+			if (ret) {
+				xa_erase(&agent->uni_attrs, entity);
+				kfree(cached);
+				return ret;
+			}
+		} else {
+			ret = ops->set_uni_attrs(odev, entity, &attrs);
+			if (ret)
+				return ret;
+		}
+		*cached = attrs;
 	}
 
-	if (agent->uni_attrs_set && !memcmp(&attrs, &agent->uni_attrs, sizeof(attrs)))
-		return 0;
-	if (!uni_entity && !agent->uni_attrs_set)
-		return 0;
-	uni_entity = omci_profile_normalize_uni_entity(agent->profile_effective,
-						       uni_entity);
-	ret = ops->set_uni_attrs(odev, uni_entity, &attrs);
-	if (ret)
-		return ret;
-	agent->uni_attrs = attrs;
-	agent->uni_attrs_set = true;
+	/* Clear the original physical port when its PPTP disappears or moves. */
+	xa_for_each(&agent->uni_attrs, index, cached) {
+		bool present = false;
+
+		xa_for_each(&agent->mib, port_index, pptp) {
+			if (pptp->class_id == OMCI_CLASS_PPTP_ETHERNET_UNI &&
+			    omci_mib_object_active(agent, pptp) &&
+			    omci_agent_backend_uni(agent, pptp->entity_id) == index) {
+				present = true;
+				break;
+			}
+		}
+		if (present)
+			continue;
+		memset(&attrs, 0, sizeof(attrs));
+		ret = ops->set_uni_attrs(odev, index, &attrs);
+		if (ret)
+			return ret;
+		xa_erase(&agent->uni_attrs, index);
+		kfree(cached);
+	}
 	return 0;
 }
 
@@ -4903,8 +4970,8 @@ found:
 
 /*
  * Activate Software Image restarts the ONU into that image (G.988), and
- * OLTs use it as their "reboot ONT" (Nokia among them; stock gc_omcid
- * reboots five seconds after it). There is one image here, so either
+ * OLTs use it as their "reboot ONT" (Nokia among them; vendor OMCI daemons
+ * reboot a few seconds after it). There is one image here, so either
  * instance is a restart, under the same switch as an ONU-G Reboot.
  */
 static u8 omci_agent_activate_sw_locked(struct omci_device *odev, u16 entity_id)
@@ -4947,10 +5014,10 @@ static u8 omci_agent_reboot_locked(struct omci_device *odev, u16 class_id,
 	}
 
 	if (!agent->reboot) {
-		dev_warn(odev->parent,
-			 "OLT requested an ONU reboot (flags %u): refused, OLT reboots are disabled\n",
+		dev_info(odev->parent,
+			 "OLT requested an ONU reboot (flags %u): ignored, OLT reboots are disabled\n",
 			 flags);
-		return OMCI_RESULT_PROCESSING_ERROR;
+		return OMCI_RESULT_SUCCESS;
 	}
 	if (flags > OMCI_REBOOT_IF_NO_EMERGENCY) {
 		dev_warn(odev->parent,
@@ -5289,9 +5356,11 @@ omci_agent_evaluate_alarms_locked(struct omci_device *odev,
 		if (!test_bit(i, &in->uni_known))
 			continue;
 
-		/* An administratively locked UNI raises no alarms. */
+		/* An administratively locked UNI raises no alarms. A spare LAN
+		 * port is not a fault while another one carries the service:
+		 * LAN LOS is raised only once every UNI has lost its link. */
 		alarms = object->data[OMCI_PPTP_ADMIN_STATE_OFFSET] ||
-			 test_bit(i, &in->uni_up) ?
+			 in->uni_up ?
 			 0 : OMCI_ALARM(OMCI_PPTP_ALARM_LAN_LOS);
 		omci_agent_update_alarms_locked(agent, object, alarms, pdus,
 						&count);
@@ -5834,6 +5903,18 @@ static int omci_agent_resume_retained_locked(struct omci_device *odev)
 	return xa_empty(&agent->services) ? -ENODATA : 0;
 }
 
+static bool omci_mib_has_olt_objects_locked(struct omci_agent *agent)
+{
+	struct omci_mib_object *object;
+	unsigned long index;
+
+	xa_for_each(&agent->mib, index, object)
+		if (object->origin == OMCI_MIB_ORIGIN_OLT && !object->pending_delete)
+			return true;
+
+	return false;
+}
+
 void omci_agent_channel_changed(struct omci_device *odev, bool valid)
 {
 	struct omci_agent *agent = &odev->agent;
@@ -5851,6 +5932,15 @@ void omci_agent_channel_changed(struct omci_device *odev, bool valid)
 		agent->alarm_sequence = 0;
 		omci_agent_clear_services_locked(odev);
 	} else {
+		/*
+		 * A MIB without OLT-created objects, e.g. one re-seeded after a
+		 * profile or ONU type change, cannot be in sync with the OLT.
+		 * A stale non-zero MIB data sync would make the OLT skip the
+		 * MIB reset and upload and leave the ONU unprovisioned.
+		 */
+		if (!omci_mib_has_olt_objects_locked(agent))
+			omci_agent_set_mib_sync_locked(agent, 0);
+
 		/*
 		 * After an optical outage the OLT re-ranges the ONU but sends
 		 * no OMCI while its view of the MIB still matches, so resume

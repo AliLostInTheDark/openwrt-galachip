@@ -1,6 +1,6 @@
 {
 	"luci-app-omci": {
-		"description": "Grant access to the GC1601 OMCI control plane",
+		"description": "Grant access to the OMCI control plane",
 		"read": {
 			"ubus": {
 				"omci.agent": [
@@ -10,8 +10,10 @@
 					"config_details",
 					"config_get",
 					"config_inspect",
+					"class_list",
+					"class_get",
 					"mib_list",
-					"profile_list",
+					"mib_get",
 					"status_live"
 				],
 				"omci.vlan": [
@@ -28,8 +30,10 @@
 				"omci.agent": [
 					"agent_set",
 					"config_set",
-					"apply",
-					"profile_apply"
+					"mib_set",
+					"mib_delete",
+					"mib_reset",
+					"apply"
 				]
 			},
 			"file": {
@@ -38,7 +42,8 @@
 				]
 			},
 			"uci": [
-				"omci"
+				"omci",
+				"network"
 			]
 		}
 	}

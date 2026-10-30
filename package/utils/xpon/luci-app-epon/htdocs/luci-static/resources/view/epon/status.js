@@ -51,7 +51,7 @@ function authText(s) {
 
 function vlanText(s) {
 	var modes = [ _('Transparent'), _('Tag'), _('Translation'), _('N:1 aggregation'), _('Trunk') ];
-	var olt = (modes[s.vlan_mode] || '-') + (s.vlan_mode && s.vlan_default != null ? ', VLAN %d'.format(s.vlan_default) : '');
+	var olt = (modes[s.vlan_mode] || '-') + (s.vlan_mode ? ', VLAN %d'.format(s.vlan_default) : '');
 
 	if (s.vlan_override && s.vlan_override != 'olt')
 		return _('%s (OLT asks for: %s)').format(s.vlan_override == 'tag' ? _('Tag, set locally') : _('Transparent, set locally'), olt);

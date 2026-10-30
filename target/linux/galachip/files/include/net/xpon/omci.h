@@ -128,6 +128,10 @@ struct omci_telemetry {
  * @queues_per_tcont: number of upstream priority queues per T-CONT
  * @queue_config_option: Priority Queue configuration option
  * @scheduler_policy: initial Traffic Scheduler policy
+ * @gem_port_count: simultaneous data GEM bindings supported by the provider
+ * @qos_configuration: ONU2-G QoS configuration flexibility bitmap
+ * @downstream_queues_per_uni: downstream Priority Queue MEs per UNI/VEIP
+ * @flags: OMCI_TOPOLOGY_F_* provider policy
  *
  * The OMCI agent uses this description to seed complete Priority Queue and
  * Traffic Scheduler managed entities before the first MIB upload. Entity IDs
@@ -189,6 +193,11 @@ struct omci_service_config {
 	bool default_service;
 };
 
+/* Permit deployment-specific default GEM/VLAN graphs for this provider. */
+#define OMCI_TOPOLOGY_F_PROFILE_SERVICES BIT(0)
+/* Preserve the UNI type encoded in the high byte for physical port binding. */
+#define OMCI_TOPOLOGY_F_FULL_UNI_ENTITY BIT(1)
+
 struct omci_ani_topology {
 	u16 tcont_base;
 	u16 scheduler_base;
@@ -199,6 +208,10 @@ struct omci_ani_topology {
 	u8 queues_per_tcont;
 	u8 queue_config_option;
 	u8 scheduler_policy;
+	u16 gem_port_count;
+	u16 qos_configuration;
+	u8 downstream_queues_per_uni;
+	u8 flags;
 };
 
 /**

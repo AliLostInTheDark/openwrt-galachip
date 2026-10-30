@@ -1,0 +1,60 @@
+/* Bootstrap owns control sizes, spacing and responsive form layout. */
+:is(.omci-page, .omci-mib-editor) .cbi-value-field {
+	min-width: 0;
+}
+:is(.omci-page, .omci-mib-editor) :is(input, select, textarea, .cbi-dynlist, .control-group) {
+	box-sizing: border-box;
+	max-width: 100%;
+}
+:is(.omci-page, .omci-mib-editor) :is(.cbi-value-title, .cbi-value-description, .cbi-map-descr, .cbi-section-descr) {
+	overflow-wrap: anywhere;
+}
+.omci-page :is(.omci-card, .xpon-panel, .xpon-card) {
+	min-width: 0;
+}
+.omci-page .table td:not(.nowrap) {
+	overflow-wrap: anywhere;
+}
+.omci-page pre {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+.omci-table-scroll {
+	max-width: 100%;
+	overflow-x: auto;
+	padding-bottom: .75rem;
+}
+/* Preserve the MIB column alignment within its own scroll area. */
+.omci-page .omci-mib-table {
+	display: table;
+}
+.omci-page .omci-mib-table .tr {
+	display: table-row;
+}
+.omci-page .omci-mib-table :is(.th, .td) {
+	display: table-cell;
+	vertical-align: top;
+}
+.omci-page .omci-mib-table .td::before {
+	display: none;
+}
+
+:is(.omci-page, .omci-mib-editor) .control-group > input {
+	min-width: 0;
+}
+/* Bootstrap mobile.css uses device width; use the same layout in narrow windows. */
+@media screen and (max-width: 600px) {
+	:is(.omci-page, .omci-mib-editor) .cbi-value:not(.hidden) {
+		display: block;
+	}
+	:is(.omci-page, .omci-mib-editor) .cbi-value-field {
+		width: 100%;
+		margin: 0;
+	}
+	:is(.omci-page, .omci-mib-editor) :is(select, input[type="text"], input[type="password"], .control-group, .cbi-dynlist) {
+		width: 100%;
+	}
+	:is(.omci-page, .omci-mib-editor) input.cbi-input-password {
+		width: calc(100% - 25px);
+	}
+}

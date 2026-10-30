@@ -1,148 +1,9 @@
 'use strict';
+'require omci.layout as layout';
 'require view';
 'require form';
 'require uci';
-'require fs';
-'require ui';
-'require dom';
-'require omci.rpc as omci';
-'require omci.mib as mib';
 'require xpon.widgets as widgets';
-
-/* Untagged, OLT-provisioned VLANs and the extra or full range. */
-function scanCandidates(objects, extra, all) {
-	var candidates = { '0:0': true }, vlans = mib.provisionedVlans(objects), v;
-
-	if (all)
-		for (v = 1; v <= 4094; v++)
-			candidates[v + ':0'] = true;
-
-	Object.keys(vlans).forEach(function(id) {
-		candidates[id + ':0'] = true;
-		vlans[id].priorities.forEach(function(prio) {
-			candidates[id + ':' + prio] = true;
-		});
-	});
-
-	String(extra || '').split(/[\s,]+/).forEach(function(id) {
-		if (/^\d+$/.test(id) && +id >= 1 && +id <= 4094)
-			candidates[+id + ':0'] = true;
-	});
-
-	return Object.keys(candidates).map(function(id) {
-		var parts = id.split(':');
-		return { vid: +parts[0], prio: +parts[1] };
-	}).sort(function(a, b) { return a.vid - b.vid || a.prio - b.prio; });
-}
-
-function applyScanResult(result) {
-	uci.set('omci', 'vlan', 'mode', result.vid ? 'tagged' : 'transparent');
-	if (result.vid) {
-		uci.set('omci', 'vlan', 'vid', String(result.vid));
-		uci.set('omci', 'vlan', 'prio', String(result.prio || 0));
-	}
-
-	return uci.save().then(function() {
-		return ui.changes.apply(true);
-	});
-}
-
-/* One line per OLT rule and probe answer. */
-function priorityLines(objects, vid, answers, route) {
-	var parts = vid ? mib.oltPriorityLines(objects, vid) : [];
-
-	if (vid && !parts.length && mib.mapperPriority(route))
-		parts.push(mib.mapperPriority(route));
-	answers.forEach(function(r) {
-		parts.push(_('%s probe PCP %d, reply PCP %d').format(
-			r.type == 'dhcp' ? 'DHCP' : 'BRAS', r.prio, r.reply_prio));
-	});
-
-	return parts.length ? parts : [ '-' ];
-}
-
-function lines(list) {
-	return list.reduce(function(out, line, i) {
-		return out.concat(i ? [ E('br'), line ] : [ line ]);
-	}, []);
-}
-
-function answerText(answers) {
-	if (!answers.length)
-		return _('No DHCPv4 or PPPoE reply. The service may use IPv6, a static address, VoIP, IPTV or management, or require a bound DHCP client.');
-
-	return answers.map(function(r) {
-		return (r.type == 'dhcp' ? _('DHCPv4: ') : _('PPPoE BRAS: ')) + r.detail;
-	}).join('; ');
-}
-
-function scanResults(results, count, vlans, objects, scanned) {
-	var vids = Object.keys(vlans).map(Number);
-
-	results.forEach(function(r) {
-		if (vids.indexOf(r.vid) < 0)
-			vids.push(r.vid);
-	});
-	vids.sort(function(a, b) { return a - b; });
-
-	if (!vids.length)
-		return E('p', {}, scanned ?
-			_('No DHCPv4 or PPPoE reply on %d candidates, and the OLT has not provisioned any VLAN.').format(count) :
-			_('The OLT has not provisioned any VLAN yet.'));
-
-	/* The action column only when some VLAN answered, so it does not take width for nothing. */
-	var action = results.length > 0, nowrap = 'white-space:nowrap';
-	var titles = [ _('VLAN'), _('OLT rule'), _('GEM route'), _('Priority'), _('Service evidence') ];
-
-	return E('table', { 'class': 'table' }, [
-		E('tr', { 'class': 'tr table-titles' }, titles.concat(action ? [ '' ] : []).map(function(t, i) {
-			return E('th', { 'class': 'th left', 'style': i == 0 ? nowrap : null }, t);
-		}))
-	].concat(vids.map(function(vid) {
-		var answers = results.filter(function(r) { return r.vid == vid; });
-		var entry = vlans[vid], route = entry && entry.route;
-		var cells = [
-			[ vid ? String(vid) : _('untagged'), nowrap ],
-			[ lines(entry ? entry.sources : [ _('Not found in OMCI') ]) ],
-			[ lines(entry ? mib.routeLines(route) : [ '-' ]), nowrap ],
-			[ lines(priorityLines(objects, vid, answers, route)) ],
-			[ answers.length ? _('Internet candidate: %s').format(answerText(answers)) :
-				scanned ? answerText(answers) : _('Provisioned; not probed yet') ]
-		].map(function(c, i) {
-			return E('td', { 'class': 'td left', 'data-title': titles[i], 'style': c[1] || null }, c[0]);
-		});
-
-		if (action)
-			cells.push(E('td', { 'class': 'td right' }, answers.length ? E('button', {
-				'class': 'cbi-button cbi-button-apply',
-				'click': ui.createHandlerFn(this, applyScanResult, answers[0])
-			}, vid ? _('Use tagged') : _('Use transparent')) : ''));
-
-		return E('tr', { 'class': 'tr' }, cells);
-	})));
-}
-
-function runScan(section_id) {
-	var root = document.getElementById('omci-vlanscan-results');
-	var extra = uci.get('omci', section_id, 'scan_vids');
-	var all = uci.get('omci', section_id, 'scan_all') == '1';
-
-	dom.content(root, E('em', { 'class': 'spinning' }, _('Scanning...')));
-
-	return L.resolveDefault(omci.mibList(0), []).then(function(objects) {
-		var candidates = scanCandidates(objects, extra, all);
-
-		return fs.exec_direct('/usr/sbin/omci-vlanscan',
-			[ '-j', '-w', '4' ].concat(candidates.map(function(c) {
-				return c.vid + ':' + c.prio;
-			})), 'json').then(function(results) {
-			dom.content(root, scanResults(results || [], candidates.length,
-						      mib.provisionedVlans(objects), objects, true));
-		});
-	}).catch(function(err) {
-		dom.content(root, E('p', {}, _('VLAN scan failed: %s').format(err.message || err)));
-	});
-}
 
 /*
  * Field limits follow the agent's identity parser (net/xpon/omci/identity.c):
@@ -215,20 +76,18 @@ function numericList(o, keepLabel, choices) {
 }
 
 function hexLabel(value, text) {
-	return '0x%02X / %d (%s)'.format(value, value, text);
+	return '0x%02X — %s'.format(value, text.replace(/\s*\(.*$/, ''));
 }
 
 /*
- * What saving costs. A new serial number or vendor ID ranges the ONU again
- * (gc1601_gpon_set_identity_locked); the password and every attribute the
- * OLT reads from the MIB count from the next registration; the rest the
- * agent and the switch pick up at once.
+ * What saving costs. A new serial number or vendor ID ranges the ONU again;
+ * the password and every attribute the OLT reads from the MIB count from the
+ * next registration; the agent and the PON driver take the rest at once.
  */
 var applyCost = {
 	enabled: 'drop', serial: 'drop', vendor_id: 'drop',
-	permissive: 'live', fake_omci: 'live', reboot: 'live',
+	permissive: 'live', fake_omci: 'live', reboot: 'live', transmit: 'next',
 	vlan_translate: 'live', vlan_stack: 'live', olt_profile: 'live', olt_profile_force: 'live',
-	mode: 'live', vid: 'live', prio: 'live',
 	password: 'next', loid: 'next', loid_password: 'next',
 	hardware_version: 'next', software_version_0: 'next', software_version_1: 'next',
 	equipment_id: 'next', omcc_version: 'next', traffic_management_option: 'next',
@@ -237,16 +96,14 @@ var applyCost = {
 
 return view.extend({
 	load: function() {
-		/* The MIB list is slow to read: the VLAN table fills in after rendering. */
-		return Promise.all([ uci.load('omci'), [],
-				     L.resolveDefault(uci.load('network'), null) ]);
+		return uci.load('omci');
 	},
 
 	render: function(data) {
 		var m, s, o;
 
 		m = new form.Map('omci', _('OMCI configuration'),
-			_('Settings for the GC1601 OMCI agent. Each setting shows when a saved change reaches the OLT. Empty identity fields leave the current values unchanged.'));
+			_('Settings for the OMCI agent. Each setting shows when a saved change reaches the OLT. Empty identity fields leave the current values unchanged.'));
 
 		s = m.section(form.NamedSection, 'main', 'agent');
 		s.anonymous = true;
@@ -279,6 +136,11 @@ return view.extend({
 		o.default = o.disabled;
 		o.rmempty = false;
 
+		o = s.taboption('agent', form.Flag, 'transmit', _('Transmitter'));
+		o.default = o.enabled;
+		o.rmempty = false;
+		o.description = _('Off keeps the ONU receive-only from the next boot: it does not range and the laser stays off.');
+
 		o = s.taboption('rewrite', form.DynamicList, 'vlan_translate', _('VLAN translation'));
 		o.datatype = 'string';
 		o.placeholder = '100:10';
@@ -301,7 +163,7 @@ return view.extend({
 		o.default = 'unspecified';
 
 		o = s.taboption('identity', form.Value, 'serial', _('GPON serial number'));
-		o.placeholder = 'TPLG12345678';
+		o.placeholder = 'ABCD12345678';
 		o.description = _('12 characters: 4 vendor characters followed by 8 hexadecimal digits, or all 16 hexadecimal digits. The limit follows the first 4 characters.');
 		/* Only the vendor part can hold non-hex characters. */
 		limitLength(o, function(value) {
@@ -314,7 +176,7 @@ return view.extend({
 		};
 
 		o = s.taboption('identity', form.Value, 'vendor_id', _('Vendor ID'));
-		o.placeholder = 'TPLG';
+		o.placeholder = 'ABCD';
 		o.description = _('4 characters, or 8 hexadecimal digits.');
 		limitLength(o, asciiOrHexLength(4, 8));
 		o.validate = function(section_id, value) {
@@ -388,27 +250,27 @@ return view.extend({
 		/* ITU-T G.988 9.1.1, ONU-G traffic management option */
 		o = s.taboption('capabilities', form.ListValue, 'traffic_management_option', _('Traffic management option'));
 		numericList(o, _('Keep current value'), [
-			[ 0, _('0 (Priority controlled: upstream traffic uses the traffic schedulers and priority queues)') ],
-			[ 1, _('1 (Rate controlled: each connection\'s maximum upstream rate is enforced by shaping)') ],
-			[ 2, _('2 (Priority and rate controlled: queues and schedulers, plus per-connection shaping)') ]
+			[ 0, _('0 — Priority controlled') ],
+			[ 1, _('1 — Rate controlled') ],
+			[ 2, _('2 — Priority and rate') ]
 		]);
-		o.description = _('Upstream traffic management model advertised in ONU-G; the OLT adapts its provisioning to it. The default is 0. This does not enable hardware traffic shaping.');
+		o.description = _('Upstream traffic management model advertised in ONU-G; the OLT adapts its provisioning to it. Priority control uses queues and schedulers; rate control advertises per-connection shaping. The default is 0. This does not enable hardware traffic shaping.');
 
 		o = s.taboption('capabilities', form.Flag, 'dba_status_reporting', _('Report queue status for DBA'));
 		o.default = o.enabled;
 		o.rmempty = false;
-		o.description = _('ANI-G SR indication. On tells the OLT that the ONU sends valid DBRu queue reports, as the GC1601 does; off makes it use traffic-monitoring DBA. The OLT reads it at its next MIB upload.');
+		o.description = _('ANI-G SR indication. On tells the OLT that the ONU sends valid DBRu queue reports; off makes it use traffic-monitoring DBA. The OLT reads it at its next MIB upload.');
 
 		o = s.taboption('capabilities', form.ListValue, 'onu_type', _('ONU type'));
 		o.value('', _('Keep current value'));
 		[
 			_('Other'),
-			_('SFU (single-family unit: bridged ONU, the router does the routing)'),
-			_('HGU (home gateway unit: ONU with a built-in router)'),
-			_('MDU (multi-dwelling unit: many subscriber ports in one building)'),
-			_('SBU (single-business unit)'),
-			_('MTU (multi-tenant unit: many business subscribers)'),
-			_('CBU (cellular backhaul unit)')
+			_('SFU (bridged ONU)'),
+			_('HGU (router ONU)'),
+			_('MDU (multi-dwelling)'),
+			_('SBU (single-business)'),
+			_('MTU (multi-tenant)'),
+			_('CBU (cellular backhaul)')
 		].forEach(function(name, value) {
 			o.value(String(value), name);
 		});
@@ -427,95 +289,26 @@ return view.extend({
 		o.default = '';
 		o.description = _('Slot of the Virtual Ethernet Interface Point (VEIP). The ONU starts on slot 6 under the Nokia/ALCL profile and slot 10 otherwise, then moves the VEIP to the slot the OLT provisions. Nokia ISAM OLTs mostly use slot 6; some, such as Airtel India, use slot 3. Fix the slot only when the OLT rejects the uploaded one before provisioning.');
 
-		s = m.section(form.NamedSection, 'vlan', 'vlan', _('LAN VLAN mode'),
-			_('How the bridge carries the service VLAN between the OLT and the LAN port.'));
-		s.addremove = false;
-		s.tab('mode', _('LAN VLAN'));
-		s.tab('scan', _('VLAN scan'));
-
-		o = s.taboption('mode', form.ListValue, 'mode', _('Mode'));
-		o.value('transparent', _('Transparent'));
-		o.value('tagged', _('Tagged'));
-		o.value('olt', _('Control by OLT'));
-		o.default = 'transparent';
-		o.rmempty = false;
-		o.description = _('<em>Transparent</em> passes frames unchanged; the router tags the VLAN itself. <em>Tagged</em> adds the VLAN below towards the OLT and removes it towards the LAN, so the router sends untagged frames. <em>Control by OLT</em> does the same with the VLAN that the OLT assigns to untagged traffic. With switch offload, the VLAN is added in hardware and the priority is always 0.');
-
-		o = s.taboption('mode', form.Value, 'vid', _('VLAN ID'));
-		o.datatype = 'range(1,4094)';
-		o.depends('mode', 'tagged');
-		o.rmempty = false;
-
-		/* IEEE 802.1Q traffic types */
-		o = s.taboption('mode', form.ListValue, 'prio', _('VLAN priority'));
-		[
-			_('0 (Best effort, the default)'), _('1 (Background, lowest)'),
-			_('2 (Excellent effort)'), _('3 (Critical applications)'),
-			_('4 (Video)'), _('5 (Voice)'),
-			_('6 (Internetwork control)'), _('7 (Network control, highest)')
-		].forEach(function(name, value) {
-			o.value(String(value), name);
-		});
-		o.default = '0';
-		o.depends('mode', 'tagged');
-
-		o = s.taboption('scan', form.Value, 'scan_vids', _('Extra VLAN IDs to scan'));
-		o.placeholder = '100 200';
-		o.description = _('The scan always tries untagged frames and every VLAN found in the OLT\'s rules, with their priorities.');
-
-		o = s.taboption('scan', form.Flag, 'scan_all', _('Scan all VLAN IDs (1-4094)'));
-		o.description = _('Sends more than 8000 broadcast probes. Only services provisioned for this ONU can reply.');
-
-		o = s.taboption('scan', form.Button, '_scan', _('VLAN scan'));
-		o.inputtitle = _('Start VLAN scan');
-		o.inputstyle = 'action';
-		o.description = _('Lists every VLAN provisioned by the OLT, including those that do not reply. The scan sends PPPoE PADI and DHCPv4 DISCOVER probes; a silent service may use IPv6, a static address or a fixed client binding. Save extra VLAN IDs before scanning. Switch offload and the LAN VLAN setting are paused during the scan, so untagged probes leave untagged.');
-		o.onclick = function(ev, section_id) {
-			return runScan(section_id);
-		};
-
-		o = s.taboption('scan', form.DummyValue, '_scan_results', ' ');
-		o.rawhtml = true;
-		o.cfgvalue = function() {
-			return '<div id="omci-vlanscan-results"></div>';
-		};
-
 		m.children.forEach(function(section) {
 			section.children.forEach(function(option) {
+				/* Empty choices clear an override: keep current or learn from the OLT. */
+				if (option.keylist && option.keylist.indexOf('') >= 0) {
+					option.optional = true;
+					option.rmempty = true;
+				}
 				if (applyCost[option.option])
 					widgets.annotate(option, applyCost[option.option]);
 			});
 		});
 
 		return m.render().then(function(node) {
-			var bridged = [], descr = node.querySelector('.cbi-map-descr');
+			var descr = node.querySelector('.cbi-map-descr');
 
 			widgets.style();
 			node.insertBefore(widgets.legend([ 'live', 'next', 'drop' ]),
 					  descr ? descr.nextSibling : node.firstChild);
 
-			uci.sections('network', 'device', function(dev) {
-				L.toArray(dev.ports).forEach(function(port) {
-					if (/^pon0\.[0-9]+$/.test(port))
-						bridged.push(port + ' (' + (dev.name || dev['.name']) + ')');
-				});
-			});
-			if (bridged.length)
-				node.insertBefore(E('div', { 'class': 'alert-message warning' }, [
-					E('h4', {}, _('PON VLAN device used as bridge port')),
-					E('p', {}, _('The bridge port %h tags traffic that the ONU already tags, so frames leave with two VLAN tags and the service stops working. Use <em>pon0</em> as bridge port and select the VLAN under <em>LAN VLAN mode</em> instead. This is corrected automatically within a few seconds.').format(bridged.join(', ')))
-				]), node.firstChild);
-
-			var root = node.querySelector('#omci-vlanscan-results');
-
-			if (root) {
-				dom.content(root, E('em', {}, _('Reading the VLANs provisioned by the OLT…')));
-				L.resolveDefault(omci.mibList(0), []).then(function(objects) {
-					dom.content(root, scanResults([], 0, mib.provisionedVlans(objects),
-								      objects, false));
-				});
-			}
-			return node;
+			return layout.apply(node);
 		});
 	}
 });

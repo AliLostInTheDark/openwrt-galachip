@@ -104,6 +104,7 @@ struct omci_agent {
 	struct xarray mib;
 	struct xarray services;
 	struct omci_agent_config config;
+	struct omci_ani_topology topology;
 	u32 upload_index;
 	u16 mib_sync;
 	bool enabled;
@@ -115,8 +116,7 @@ struct omci_agent {
 	u8 voice_calls;
 	bool sw_download_seen;	/* an image download began since boot */
 	/* UNI attributes last handed to the device (set_uni_attrs) */
-	struct omci_uni_attrs uni_attrs;
-	bool uni_attrs_set;
+	struct xarray uni_attrs;
 	struct delayed_work reboot_work;
 	/* FEC PM: 15-minute intervals counted from the OLT's Synchronize Time */
 	struct delayed_work pm_work;

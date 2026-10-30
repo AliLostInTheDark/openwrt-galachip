@@ -37,27 +37,6 @@ function words(raw) {
 	return out;
 }
 
-/*
- * bosa_ddm's alarms= is the SFF-8472 flag word at A2h 0x70/0x71; return the
- * OPTICAL_FRONTEND_ALARM_* bitmap that omcid reports for GPON, as
- * gc1601-xpon.c converts it.
- */
-const sff_alarm_bits = [
-	[ 8, 0 ], [ 9, 1 ], [ 10, 2 ], [ 11, 3 ], [ 6, 4 ],
-	[ 7, 5 ], [ 12, 6 ], [ 13, 7 ], [ 14, 8 ], [ 15, 9 ]
-];
-
-function frontend_alarms(raw) {
-	let flags = hex(raw), out = 0;
-
-	if (flags != flags)
-		return null;
-	for (let b in sff_alarm_bits)
-		if (flags & (1 << b[0]))
-			out |= 1 << b[1];
-	return out;
-}
-
 function epon() {
 	let oam = {};
 	let out = { mac: words(read(`${PON}/epon_state`)), oam: {} };
@@ -84,8 +63,6 @@ const methods = {
 			};
 
 			delete out.ddm.raw;
-			if (exists(out.ddm, 'alarms'))
-				out.ddm.alarms = frontend_alarms(out.ddm.alarms);
 			if (mode == 'epon')
 				out.epon = epon();
 			return out;

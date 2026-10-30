@@ -52,7 +52,6 @@ function native_error(request, op) { errors++; return {failed: op}; }
 ${extract(backend, 'function device_arg(')}
 ${extract(backend, 'function decorate_status(')}
 const method = {${extract(backend, 'status_live: {')}}.status_live;
-const public_method = {${extract(backend, 'status_public: {')}}.status_public;
 for (let i = 0; i < 8640; i++) {
   let s = method.call({args: {device: 0}}).status;
   if (s.state != 5 || s.olt_profile_effective_name != 'nokia-alcl' ||
@@ -63,9 +62,6 @@ if (config_reads || mib_reads || status_reads != 8640) die('live status queried 
 let full = decorate_status(0, {onu_type: 1});
 if (config_reads != 1 || mib_reads != 1 || full.identity.serial != 'TEST00000000' || full.olt.vendor_id != 'TEST')
   die('full SSH status changed');
-let pub = public_method.call({args: {device: 0}}).status;
-if (pub.serial != 'TEST********' || pub.identity.serial != pub.serial || pub.olt.vendor_id != 'TEST')
-  die('public status exposed the serial');
 native = true;
 let n = method.call({args: {device: 0}}).status;
 if (n.loid_status != 3 || n.omci_alarms[0].alarms[0] != 'low-rx-power')
@@ -109,6 +105,7 @@ function view(file, data, mode = 'gpon') {
       vlanStatus: () => {count('vlan'); return Promise.resolve(data.vlan || null);},
       mibList: () => {count('mib'); return Promise.resolve(data.mib || []);}
     },
+    layout: {apply: node => node},
     window: {setTimeout: fn => setImmediate(fn)},
     baseclass: {extend: x => x},
     rpc: {declare: () => () => { count('public'); return Promise.resolve(data.public || {}); }},
@@ -133,7 +130,7 @@ function view(file, data, mode = 'gpon') {
   return {result, data, calls, polls, reads, nodes, replaced: () => replacements};
 }
 
-// The module's levels, as xpon.public passes bosa_thresholds (this G7's BOSA).
+// The module's levels, as xpon.public passes bosa_thresholds (a sample module).
 const thresholds = {tx_alarm_high_nw: 3981100, tx_alarm_low_nw: 891300, tx_warn_high_nw: 3548100, tx_warn_low_nw: 1000000,
   rx_alarm_high_nw: 251200, rx_alarm_low_nw: 1000, rx_warn_high_nw: 199500, rx_warn_low_nw: 1300};
 const main = view(path.join(resource, 'view/omci/status.js'), {
@@ -188,6 +185,26 @@ assert.equal(main.nodes.get('omci-status-profile_configured').children, 'auto');
 assert.equal(main.nodes.get('omci-status-olt_vendor').children, 'TEST');
 assert.equal(main.reads.length, 0);
 
+// Channel loss clears the daemon's alarm cache; an empty cache is not an all-clear.
+main.data.live.channel_up = false;
+main.data.live.gem_port = 65535;
+await main.polls[0].fn();
+assert.equal(main.nodes.get('omci-status-gem_port').children, 'Not assigned');
+assert.equal(main.nodes.get('omci-status-omci_alarm_0').children, 'Unavailable (channel down)');
+assert.match(flat(main.nodes.get('omci-summary-root')), /OMCI alarms Unavailable/);
+main.data.live.channel_up = true;
+main.data.live.gem_port = 256;
+main.data.live.omci_alarms = [{class: 263, entity: '8000', alarms: ['low-rx-power'], reported: true}];
+await main.polls[0].fn();
+assert.equal(main.nodes.get('omci-status-gem_port').children, '256');
+assert.equal(main.nodes.get('omci-status-omci_alarm_0').children, 'Active, reported');
+assert.equal(main.nodes.get('omci-status-omci_alarm_1').children, 'Clear');
+assert.match(flat(main.nodes.get('omci-summary-root')), /OMCI alarms 1 active/);
+main.data.live.omci_alarms = [];
+await main.polls[0].fn();
+assert.match(flat(main.nodes.get('omci-summary-root')), /OMCI alarms None/);
+
+
 assert(!fs.existsSync(path.join(resource, 'view/omci/line.js')));
 
 const ep = view(path.join(xpon, 'luci-app-epon/htdocs/luci-static/resources/view/epon/status.js'), {
@@ -208,12 +225,13 @@ assert.match(flat(partial.nodes.get('omci-line-root')), /Near limit -25\.23/);
 assert.equal(ep.polls[0].seconds, 10);
 assert(!ep.reads.some(p => /counters|tcont_stats|gpon_ber/.test(p)));
 
-// The header indicator: GPON from status_live, EPON from xpon.public.
-async function indicator(network, pub, status) {
+// The header indicator: GPON from status_live, EPON from the sysfs and oamd state.
+async function indicator(network, files, status) {
   const shown = [], polls = [];
   const context = vm.createContext({
     baseclass: {extend: x => x}, _: x => x,
-    rpc: {declare: d => () => Promise.resolve(d.object == 'xpon.public' ? pub : status)},
+    rpc: {declare: () => () => Promise.resolve(status)},
+    fs: {read: p => Promise.resolve(files[p] ?? null)},
     poll: {add: (fn, s) => polls.push(s)},
     ui: {menu: {load: () => Promise.resolve({children: {admin: {children: {network: {children: network}}}}})},
          showIndicator: (...args) => shown.push(args)},
@@ -234,10 +252,11 @@ assert.equal(ind.shown[0][1], 'GPON O5 · -18.2 dBm');
 assert.equal(ind.shown[0][3], 'active');
 ind = await indicator({omci: {}}, {}, {state: 3, bosa_rx_power_nw: 0});
 assert.deepEqual([ind.shown[0][1], ind.shown[0][3]], ['GPON O3 · no light', 'inactive']);
-ind = await indicator({epon: {}}, {ddm: {rx_nw: '12000'},
-  epon: {mac: {signal: '1', registered: '0x1'}, oam: {oam: 'send_any', auth: 'ok'}}}, {});
+const D = '/sys/class/net/pon0/device/';
+ind = await indicator({epon: {}}, {[D + 'epon_state']: 'signal=1 registered=0x1', [D + 'bosa_ddm']: 'rx_nw=12000',
+  '/var/run/epon-oamd.json': '{"oam":"send_any","auth":"ok"}'}, {});
 assert.deepEqual([ind.shown[0][1], ind.shown[0][3]], ['EPON · -19.2 dBm', 'active']);
-ind = await indicator({epon: {}}, {epon: {mac: {signal: '0'}}}, {});
+ind = await indicator({epon: {}}, {[D + 'epon_state']: 'signal=0'}, {});
 assert.deepEqual([ind.shown[0][1], ind.shown[0][3]], ['EPON no light', 'inactive']);
 ind = await indicator({}, {}, {});
 assert.equal(ind.shown.length + ind.polls.length, 0);
@@ -245,16 +264,30 @@ const xponAcl = JSON.parse(read(path.join(xpon, 'luci-app-xpon/root/usr/share/rp
 assert.deepEqual(Object.keys(xponAcl.write.file), ['/usr/sbin/xpon-report -o -']);
 
 const menu = JSON.parse(read(path.join(pkg, 'root/usr/share/luci/menu.d/luci-app-omci.json')));
-// The MIB page reads the MIB once when opened; it must not poll.
-assert.deepEqual(Object.keys(menu).filter(k => k.includes('/mib')), ['admin/network/omci/mib']);
-assert(!/\bpoll\b/.test(read(path.join(pkg, 'htdocs/luci-static/resources/view/omci/mib.js'))));
+// MIB reads and edits are on demand; the page must not poll.
+const mibRoot = 'admin/network/omci/mib';
+assert.equal(menu[mibRoot].action.type, 'firstchild');
+assert.deepEqual(Object.keys(menu).filter(k => k.startsWith(mibRoot + '/')),
+  ['inventory', 'gpon', 'bridge', 'multicast', 'other'].map(group => mibRoot + '/' + group));
+assert(!/\bpoll\b/.test(read(path.join(resource, 'omci/mib-editor.js'))));
+for (const group of ['inventory', 'gpon', 'bridge', 'multicast', 'other']) {
+  const route = menu[mibRoot + '/' + group].action.path;
+  assert.equal(route, 'omci/mib/' + group);
+  assert(read(path.join(resource, 'view', route + '.js')).includes('require omci.mib-editor as mib'));
+}
 assert(!Object.keys(menu).some(k => k.endsWith('/line')));
 const acl = JSON.parse(read(path.join(pkg, 'root/usr/share/rpcd/acl.d/luci-app-omci.json')))['luci-app-omci'];
 assert(acl.read.ubus['omci.agent'].includes('status_live'));
-const publicAcl = JSON.parse(read(path.join(pkg, 'root/usr/share/rpcd/acl.d/omci-public.json'))).unauthenticated;
-assert.deepEqual(publicAcl.read.ubus['omci.agent'], ['status_public', 'status_live']);
 assert(acl.read.ubus['omci.agent'].includes('mib_list')); // Explicit VLAN configuration reads.
-assert(!acl.write.ubus['omci.agent'].some(m => /^(mib_|raw_tx)/.test(m)));
+for (const method of ['class_list', 'class_get', 'mib_list', 'mib_get']) {
+  assert(acl.read.ubus['omci.agent'].includes(method));
+  assert(declarations.some(d => d.method === method));
+}
+for (const method of ['mib_set', 'mib_delete', 'mib_reset']) {
+  assert(acl.write.ubus['omci.agent'].includes(method));
+  assert(declarations.some(d => d.method === method));
+}
+assert(!acl.write.ubus['omci.agent'].includes('raw_tx'));
 assert(!acl.read.file);
 assert(!acl.write.ubus.file);
 assert(!Object.keys(acl.write.file).some(p => /tx_hold|xpon-rogue/.test(p)));

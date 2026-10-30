@@ -57,7 +57,10 @@ static int topology(struct omci_device *d, struct omci_ani_topology *t)
 	*t = (struct omci_ani_topology) { .tcont_base = 0x8000, .scheduler_base = 0x8000,
 		.queue_base = 0x8000, .tcont_count = 15, .queues_per_tcont = 8,
 		.maximum_queue_size = 65535, .allocated_queue_size = 4,
-		.queue_config_option = 1, .scheduler_policy = 1 };
+		.queue_config_option = 1, .scheduler_policy = 1,
+		.gem_port_count = 256, .qos_configuration = BIT(3) | BIT(4),
+		.downstream_queues_per_uni = 8,
+		.flags = OMCI_TOPOLOGY_F_PROFILE_SERVICES };
 	return 0;
 }
 static int tcont(struct omci_device *d, u16 entity, u16 alloc, bool valid) { writes++; return 0; }
@@ -113,6 +116,16 @@ int main(void)
 		.priv = &ctx, .started = true, .channel_up = true };
 	hardware.ops = &ops;
 	CHECK(!omci_agent_init(&ctx.engine));
+	{
+		struct omci_ani_topology resources;
+
+		hardware.ops = &offline;
+		CHECK(omcid_get_topology(&ctx.engine, &resources) == -EOPNOTSUPP);
+		hardware.ops = &ops;
+		CHECK(!omcid_get_topology(&ctx.engine, &resources));
+		CHECK(resources.gem_port_count == 256 && resources.downstream_queues_per_uni == 8);
+		CHECK(resources.flags == OMCI_TOPOLOGY_F_PROFILE_SERVICES);
+	}
 	CHECK(!ctx.engine.ops->set_olt_profile);
 	{
 		u8 profile_id = OMCI_OLT_PROFILE_NOKIA_ALCL;
@@ -141,8 +154,9 @@ int main(void)
 	{
 		char line[256];
 
-		/* One omci-monitor -r record: a time comment, then direction/generation/hex. */
+		/* Timing comments precede the omci-monitor record. */
 		rewind(ctx.trace);
+		CHECK(fgets(line, sizeof(line), ctx.trace) && !strncmp(line, "# tx checkpoint ", 16));
 		CHECK(fgets(line, sizeof(line), ctx.trace) && !strncmp(line, "# ms ", 5));
 		CHECK(fgets(line, sizeof(line), ctx.trace) && !strncmp(line, "tx 9 0 0 0001", 13));
 		fclose(ctx.trace);
@@ -150,8 +164,14 @@ int main(void)
 	}
 	CHECK(!omci_agent_mib_get(&ctx.engine, OMCI_CLASS_TCONT, 0x8000, &object));
 	CHECK(get_unaligned_be16(object.data) == 256 && !ctx.error);
+	CHECK(ctx.save_due && omcid_checkpoint_poll(&ctx, ctx.save_due - 1) == 1);
+	CHECK(omcid_checkpoint_poll(&ctx, ctx.save_due) == -1 && !ctx.error && !ctx.save_due);
 	CHECK(!omcid_checkpoint_load(&ctx));
 	CHECK(ctx.engine.agent.last_response && !ctx.engine.agent.services.count);
+	ctx.engine.agent.topology.gem_port_count--;
+	CHECK(omcid_checkpoint_load(&ctx) == -EXDEV);
+	ctx.engine.agent.topology.gem_port_count++;
+	CHECK(!omcid_checkpoint_load(&ctx));
 	before = writes;
 	CHECK(!omci_native_receive(&ctx.engine, pdu, sizeof(pdu)) && transmissions == 2 && writes == before);
 	pdu[1] = 3;

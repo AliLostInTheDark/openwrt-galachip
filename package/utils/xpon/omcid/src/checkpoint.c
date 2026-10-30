@@ -6,13 +6,14 @@
 #include "daemon.h"
 
 #define CHECKPOINT_MAGIC 0x4f4d4331
-#define CHECKPOINT_VERSION 3
+#define CHECKPOINT_VERSION 4
 #define CHECKPOINT_MAX (2U * 1024 * 1024)
 #define CHECKPOINT_MAX_TABLE (256U * 1024)
 
 struct checkpoint_header {
 	u32 magic, version, size, object_size, count, generation, checksum;
 	struct omci_agent_config config;
+	struct omci_ani_topology topology;
 	u32 upload_index, profile_quirks, flags;
 	u16 mib_sync;
 	u16 uni_entity;
@@ -75,6 +76,7 @@ int omcid_checkpoint_save(struct omcid *ctx)
 		return ctx->error;
 	if (ctx->restoring)
 		return 0;
+	ctx->save_due = 0;
 	/* Keep the last accepted identity checkpoint until its retry succeeds. */
 	if (ctx->pending_identity.valid)
 		return 0;
@@ -102,6 +104,7 @@ int omcid_checkpoint_save(struct omcid *ctx)
 	h->count = count;
 	h->generation = ctx->transport.generation;
 	h->config = a->config;
+	h->topology = a->topology;
 	h->mib_sync = a->mib_sync;
 	h->uni_entity = ctx->uni_entity;
 	h->upload_index = a->upload_index;
@@ -172,6 +175,41 @@ int omcid_checkpoint_save(struct omcid *ctx)
 		unlink(temporary);
 	free(blob);
 	return ret;
+}
+
+/*
+ * Saving takes ~200 ms on this CPU, so an answer must not wait for it: save
+ * once the OLT has been quiet for a second, and at least every 5 s while it
+ * is not. A crash loses at most that much; the OLT's MIB data sync audit
+ * then reprovisions.
+ */
+#define CHECKPOINT_IDLE_MS 1000
+#define CHECKPOINT_MAX_DELAY_MS 5000
+
+void omcid_checkpoint_defer(struct omcid *ctx)
+{
+	unsigned long now = omci_native_now();
+
+	if (!ctx->save_due)
+		ctx->save_first = now;
+	ctx->save_due = min(now + CHECKPOINT_IDLE_MS,
+			    ctx->save_first + CHECKPOINT_MAX_DELAY_MS);
+}
+
+/* Saves a due checkpoint; returns ms until the next one, or -1 for none. */
+long omcid_checkpoint_poll(struct omcid *ctx, unsigned long now)
+{
+	int ret;
+
+	if (!ctx->save_due)
+		return -1;
+	if ((long)(ctx->save_due - now) > 0)
+		return ctx->save_due - now;
+	ctx->save_due = 0;
+	ret = omcid_checkpoint_save(ctx);
+	if (ret)
+		ctx->error = ret;
+	return -1;
 }
 
 static bool object_valid(const u8 *raw)
@@ -258,7 +296,8 @@ int omcid_checkpoint_load(struct omcid *ctx)
 		ret = -EBADMSG;
 		goto out;
 	}
-	if (memcmp(h->serial, ctx->identity.serial_number, sizeof(h->serial)) ||
+	if (memcmp(&h->topology, &a->topology, sizeof(h->topology)) ||
+	    memcmp(h->serial, ctx->identity.serial_number, sizeof(h->serial)) ||
 	    memcmp(h->password, ctx->identity.password, sizeof(h->password))) {
 		ret = -EXDEV;
 		goto out;
@@ -355,7 +394,15 @@ int omcid_checkpoint_load(struct omcid *ctx)
 	a->ber_valid = !!(h->flags & CP_BER_VALID);
 	a->last_response_fake = !!(h->flags & CP_RESPONSE_FAKE);
 	a->operational = false;
-	a->uni_attrs_set = false;
+	{
+		struct omci_uni_attrs *attrs;
+		unsigned long index;
+
+		xa_for_each(&a->uni_attrs, index, attrs) {
+			xa_erase(&a->uni_attrs, index);
+			kfree(attrs);
+		}
+	}
 	kfree_skb(a->last_request);
 	kfree_skb(a->last_response);
 	a->last_request = request;

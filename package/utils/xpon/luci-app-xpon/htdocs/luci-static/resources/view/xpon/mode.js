@@ -4,6 +4,7 @@
 'require uci';
 'require ui';
 'require xpon.mode as ponmode';
+'require xpon.widgets as widgets';
 
 return view.extend({
 	load: function() {
@@ -11,6 +12,7 @@ return view.extend({
 	},
 
 	render: function() {
+		widgets.style();
 		var m, s, o;
 
 		m = new form.Map('xpon', _('PON mode'),

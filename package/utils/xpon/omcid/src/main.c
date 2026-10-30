@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <string.h>
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -41,9 +42,10 @@ static int import_status(struct omcid *ctx, const struct nlmsghdr *n, bool initi
 		return ret ? ret : -EBADMSG;
 	gen_changed = ctx->transport.generation != generation;
 	ctx->transport.generation = generation;
-#define READ_STATUS(attr, field) \
+#define READ_STATUS(attr, field) do { \
 	if (tb[OMCI_ATTR_##attr] && omcid_scalar(tb[OMCI_ATTR_##attr], &d->field, sizeof(d->field))) \
-		return -EBADMSG
+		return -EBADMSG; \
+} while (0)
 	READ_STATUS(IFINDEX, ifindex);
 	READ_STATUS(ONU_ID, onu_id);
 	READ_STATUS(GEM_PORT_ID, gem_port_id);
@@ -55,6 +57,9 @@ static int import_status(struct omcid *ctx, const struct nlmsghdr *n, bool initi
 	channel_changed = d->channel_up != new_channel_up;
 	d->channel_up = new_channel_up;
 	if (!initial && (gen_changed || channel_changed)) {
+		/* Preserve the previous activation summary even during rapid flapping. */
+		omcid_olt_watch_poll(&ctx->olt, omci_native_now(),
+				    d->agent.mib_sync, stdout, true, true);
 		omcid_olt_watch_link(&ctx->olt, d->channel_up, omci_native_now());
 		ctx->have_rx_sequence = false;
 		omci_agent_channel_changed(d, d->channel_up);
@@ -148,9 +153,8 @@ static int listener_open(const char *path)
 		ret = connect(probe, (void *)&addr, sizeof(addr));
 		ret = ret ? -errno : -EADDRINUSE;
 		close(probe);
-		if (ret != -ECONNREFUSED) {
+		if (ret != -ECONNREFUSED)
 			goto fail;
-		}
 		if (unlink(path)) {
 			ret = -errno;
 			goto fail;
@@ -367,7 +371,14 @@ static int loop(struct omcid *ctx, int listener)
 				timeout = left;
 		}
 		left = omcid_olt_watch_poll(&ctx->olt, omci_native_now(),
-					    ctx->engine.agent.mib_sync, stdout);
+					    ctx->engine.agent.mib_sync, stdout, true, false);
+		if (left >= 0 && (timeout < 0 || left < timeout))
+			timeout = left;
+		/* Never while a request waits: that is what the deferral is for. */
+		left = ctx->transport.count ? -1 :
+		       omcid_checkpoint_poll(ctx, omci_native_now());
+		if (ctx->error)
+			continue;
 		if (left >= 0 && (timeout < 0 || left < timeout))
 			timeout = left;
 		if (ctx->transport.count)
@@ -407,6 +418,21 @@ static int loop(struct omcid *ctx, int listener)
 	return ctx->error;
 }
 
+/* A missing attribute (another PON driver) is not an error. */
+static void pon_write(const char *attr, const char *value)
+{
+	char path[96];
+	int fd;
+
+	snprintf(path, sizeof(path), "/sys/class/net/pon0/device/%s", attr);
+	fd = open(path, O_WRONLY | O_CLOEXEC);
+	if (fd < 0)
+		return;
+	if (write(fd, value, strlen(value)) < 0)
+		fprintf(stderr, "omcid: cannot write %s to %s\n", value, path);
+	close(fd);
+}
+
 static void reboot_request(struct omci_device *odev)
 {
 	struct omcid *ctx = odev->priv;
@@ -439,19 +465,6 @@ static int checkpoint_lock(const char *path)
 	return fd;
 }
 
-static int bootstrap_topology(struct omci_device *odev, struct omci_ani_topology *t)
-{
-	struct omcid *ctx = odev->priv;
-	struct omci_backend_topology out;
-	int ret = omcid_backend(ctx, OMCI_BACKEND_TOPOLOGY, NULL, 0, &out, sizeof(out));
-
-	if (ret)
-		return ret;
-	*t = (struct omci_ani_topology) { out.tcont_base, out.scheduler_base, out.queue_base,
-		out.maximum_queue_size, out.allocated_queue_size, out.tcont_count,
-		out.queues_per_tcont, out.queue_config_option, out.scheduler_policy };
-	return 0;
-}
 
 int main(int argc, char **argv)
 {
@@ -459,16 +472,16 @@ int main(int argc, char **argv)
 	struct initial_config config;
 	struct omcid_message status;
 	const struct nlattr *tb[OMCI_ATTR_MAX + 1];
-	const struct omci_device_ops bootstrap_ops = { .get_ani_topology = bootstrap_topology };
+	const struct omci_device_ops bootstrap_ops = { .get_ani_topology = omcid_get_topology };
 	const char *path = "/var/run/omcid.sock";
 	char state[128];
 	u32 device = 0, flags = OMCI_BIND_F_AGENT;
 	u8 mode, enabled;
 	int opt, ret, listener = -1, lock = -1;
-	bool initialized = false, fresh = false;
+	bool initialized = false, fresh = false, trace = false, release = false;
 	const char *stage = "lock";
 
-	while ((opt = getopt(argc, argv, "d:s:p:h")) != -1) {
+	while ((opt = getopt(argc, argv, "d:s:p:trh")) != -1) {
 		switch (opt) {
 		case 'd': {
 			char *end;
@@ -481,10 +494,20 @@ int main(int argc, char **argv)
 			device = id;
 			break;
 		}
-		case 's': ctx.checkpoint = optarg; break;
-		case 'p': path = optarg; break;
+		case 's':
+			ctx.checkpoint = optarg;
+			break;
+		case 'p':
+			path = optarg;
+			break;
+		case 't':
+			trace = true;
+			break;
+		case 'r':
+			release = true;
+			break;
 		default:
-			fprintf(stderr, "Usage: omcid [-d device] [-s /tmp/state] [-p control-socket]\n");
+			fprintf(stderr, "Usage: omcid [-d device] [-s /tmp/state] [-p control-socket] [-t] [-r]\n");
 			return opt == 'h' ? 0 : 2;
 		}
 	}
@@ -499,6 +522,9 @@ int main(int argc, char **argv)
 		ret = lock;
 		goto out;
 	}
+	/* -t: record from the first PDU, so a boot's provisioning is in the trace. */
+	if (trace)
+		omcid_trace_toggle(&ctx);
 	stage = "transport";
 	ret = omcid_transport_open(&ctx.transport, device);
 	if (ret)
@@ -621,6 +647,12 @@ int main(int argc, char **argv)
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	fprintf(stderr, "omcid: exclusive userspace owner ready, device %u generation %u\n",
 		device, ctx.transport.generation);
+	/* -r: the identity came from the kernel's config, which gpon_provision
+	 * filled from /etc/config/omci; range now rather than when rpcd loads. */
+	if (release) {
+		pon_write("gpon_identity_wait", "0");
+		pon_write("allow_tx", "1");
+	}
 	stage = "loop";
 	ret = loop(&ctx, listener);
 	if (!ret)

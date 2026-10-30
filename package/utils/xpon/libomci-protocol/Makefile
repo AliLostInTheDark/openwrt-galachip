@@ -3,7 +3,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=libomci-protocol
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 PKG_LICENSE:=GPL-2.0-only
 
 include $(INCLUDE_DIR)/package.mk
@@ -12,7 +12,7 @@ define Package/libomci-protocol
   SECTION:=libs
   CATEGORY:=Libraries
   TITLE:=Shared OMCI catalogue, attribute codec and OLT profiles
-  DEPENDS:=@TARGET_galachip_gc1601
+  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125||TARGET_realtek_luna)
 endef
 
 define Package/libomci-protocol/description

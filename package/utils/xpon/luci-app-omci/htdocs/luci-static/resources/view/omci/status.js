@@ -1,4 +1,5 @@
 'use strict';
+'require omci.layout as layout';
 'require view';
 'require poll';
 'require dom';
@@ -20,16 +21,34 @@ function hex(value, width) {
 	return '0x' + Number(value).toString(16).padStart(width || 2, '0');
 }
 
-/* enum omci_fec_status. Upstream FEC is switched per burst by the OLT's
- * BWmap Use_FEC flag (G.984.3 13.3.3); the MAC exposes no status for it. */
-function fec(value, upstream) {
+/* enum omci_fec_status; absent when the PON driver does not report it. */
+function fec(value) {
 	switch (value) {
 	case 1: return _('Off');
 	case 2: return _('On');
-	case null: case undefined:
-		return upstream ? _('Not reported (switched by the OLT per burst)') : '-';
+	case null: case undefined: return _('Not reported');
 	default: return _('Unknown');
 	}
+}
+
+/* OPTICAL_FRONTEND_ALARM_* bits */
+var opticalAlarms = [
+	[ 0, _('TX power low') ], [ 1, _('TX power high') ],
+	[ 2, _('Bias low') ], [ 3, _('Bias high') ],
+	[ 4, _('RX power low') ], [ 5, _('RX power high') ],
+	[ 6, _('Voltage low') ], [ 7, _('Voltage high') ],
+	[ 8, _('Temperature low') ], [ 9, _('Temperature high') ]
+];
+
+function alarms(value) {
+	if (value == null)
+		return '-';
+	var set = opticalAlarms.filter(function(a) { return value & (1 << a[0]); });
+	return set.length ? set.map(function(a) { return a[1]; }).join(', ') : _('None');
+}
+
+function scaled(value, div, digits, unit) {
+	return value == null ? '-' : '%s %s'.format((Number(value) / div).toFixed(digits), unit);
 }
 
 function state(value) {
@@ -40,14 +59,14 @@ function power(value) {
 	var n = Number(value);
 	if (!Number.isFinite(n) || n <= 0)
 		return '-';
-	return '%s nW (%s dBm)'.format(n, (10 * Math.log10(n / 1000000)).toFixed(2));
+	return '%s dBm / %s mW'.format((10 * Math.log10(n / 1e6)).toFixed(2), (n / 1e6).toFixed(4));
 }
 
 function temperature(value) {
 	if (value == null || value === '')
 		return '-';
 	var n = Number(value);
-	return Number.isFinite(n) ? (n / 1000).toFixed(3) + ' °C' : '-';
+	return Number.isFinite(n) ? '%s °C / %s °F'.format((n / 1000).toFixed(1), (n * 9 / 5000 + 32).toFixed(1)) : '-';
 }
 
 function vlanText(vlan) {
@@ -175,7 +194,7 @@ function summary(status) {
 		[ _('OMCI agent'), status.agent_operational ? _('Operational') : _('Not operational') ],
 		[ _('OLT profile'), text(status.olt_profile_effective_name) ],
 		[ _('MIB objects'), text(status.mib_objects, '0') ],
-		[ _('OMCI alarms'), omciAlarmCount(status.omci_alarms) ]
+		[ _('OMCI alarms'), omciAlarmCount(status.omci_alarms, status.channel_up) ]
 	];
 
 	return E('div', { 'class': 'omci-summary' }, cards.map(function(card) {
@@ -219,9 +238,11 @@ function omciAlarmLabel(row) {
 	return '%s: %s'.format(row[0] == 263 ? 'ANI-G' : 'UNI 1', omciAlarmNames[row[1]]);
 }
 
-function omciAlarmState(list, row) {
+function omciAlarmState(list, row, channelUp) {
 	var entry;
 
+	if (channelUp != null && !channelUp)
+		return _('Unavailable (channel down)');
 	if (!Array.isArray(list))
 		return '-';
 	entry = list.filter(function(a) {
@@ -234,9 +255,11 @@ function omciAlarmState(list, row) {
 	return entry.reported ? _('Active, reported') : _('Active, held by ARC');
 }
 
-function omciAlarmCount(list) {
+function omciAlarmCount(list, channelUp) {
 	var count = 0;
 
+	if (channelUp != null && !channelUp)
+		return _('Unavailable');
 	if (!Array.isArray(list))
 		return '-';
 	list.forEach(function(a) { count += (a.alarms || []).length; });
@@ -252,7 +275,7 @@ function values(status) {
 		responder: text(status.responder),
 		ifindex: text(status.ifindex),
 		onu_id: text(status.onu_id),
-		gem_port: text(status.gem_port),
+		gem_port: status.gem_port == 0xffff ? _('Not assigned') : text(status.gem_port),
 		channel_up: yesno(status.channel_up),
 		agent_enabled: yesno(status.agent_enabled),
 		agent_operational: yesno(status.agent_operational),
@@ -281,15 +304,15 @@ function values(status) {
 		omcc_version: identity['omcc-version'] == null ? '-' : '%s (%s)'.format(hex(identity['omcc-version'], 2), identity['omcc-version']),
 		olt_vendor: text(olt.vendor_id || olt.vendor), olt_equipment: text(olt.equipment_id || olt.model),
 		olt_version: text(olt.version),
-		fec_downstream: fec(status.fec_downstream), fec_upstream: fec(status.fec_upstream, true),
-		bosa_temperature: temperature(status.bosa_temperature_mc), bosa_voltage: status.bosa_voltage_uv == null ? '-' : status.bosa_voltage_uv + ' µV',
-		bosa_bias: status.bosa_bias_ua == null ? '-' : status.bosa_bias_ua + ' µA',
+		fec_downstream: fec(status.fec_downstream), fec_upstream: fec(status.fec_upstream),
+		bosa_temperature: temperature(status.bosa_temperature_mc), bosa_voltage: scaled(status.bosa_voltage_uv, 1e6, 2, 'V'),
+		bosa_bias: scaled(status.bosa_bias_ua, 1e3, 1, 'mA'),
 		bosa_tx_power: power(status.bosa_tx_power_nw), bosa_rx_power: power(status.bosa_rx_power_nw),
-		bosa_alarms: hex(status.bosa_alarms, 8)
+		bosa_alarms: alarms(status.bosa_alarms)
 	};
 
 	omciAlarmRows.forEach(function(row, i) {
-		v['omci_alarm_' + i] = omciAlarmState(status.omci_alarms, row);
+		v['omci_alarm_' + i] = omciAlarmState(status.omci_alarms, row, status.channel_up);
 	});
 
 	return v;
@@ -326,7 +349,7 @@ function loadProvisioned(vlan) {
 return view.extend({
 	load: function() {
 		return Promise.all([
-			L.resolveDefault(omci.status(0), {}),
+			omci.status(0),
 			L.resolveDefault(omci.vlanStatus(), null),
 			widgets.limits()
 		]);
@@ -342,8 +365,10 @@ return view.extend({
 		var mibSync = status.mib_sync, vlan = data[1];
 
 		poll.add(function() {
+			/* A load during an apply finds no configuration, and OLT-G
+			 * comes with provisioning: read it all until both are there. */
 			return Promise.all([
-				omci.liveStatus(0),
+				status.identity && status.olt ? omci.liveStatus(0) : omci.status(0),
 				L.resolveDefault(omci.vlanStatus(), null)
 			]).then(function(next) {
 				if (next[0]) {
@@ -360,7 +385,7 @@ return view.extend({
 		}, 10);
 		window.setTimeout(function() { loadProvisioned(vlan); }, 0);
 
-		return E([], [
+		return layout.apply(E([], [
 			E('h2', {}, _('OMCI status')),
 			E('p', {}, _('Configured identity and agent settings, with live readings refreshed every 10 seconds.')),
 			E('div', { 'id': 'omci-line-root' }, line(status)),
@@ -417,7 +442,7 @@ return view.extend({
 				return row(omciAlarmLabel(alarm), v['omci_alarm_' + i], 'omci_alarm_' + i);
 			})),
 			widgets.report()
-		]);
+		]));
 	},
 
 	handleSaveApply: null,

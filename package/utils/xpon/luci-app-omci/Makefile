@@ -3,12 +3,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_VERSION:=0.9.2
-PKG_RELEASE:=30
-LUCI_TITLE:=LuCI support for GC1601 OMCI
+PKG_RELEASE:=49
+LUCI_TITLE:=LuCI support for OMCI
 LUCI_PKGARCH:=all
 PKG_MAINTAINER:=Matheus Sampaio Queiroga <srherobrine20@gmail.com>
 PKG_LICENSE:=GPL-2.0-only
-LUCI_DEPENDS:=@TARGET_galachip_gc1601 +luci-base +omci-agent +omci-vlanscan +luci-app-xpon
+LUCI_DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125||TARGET_realtek_luna) +luci-base +omci-agent +omci-vlanscan +luci-app-xpon +TARGET_realtek_luna:omci-management
 
 include $(TOPDIR)/feeds/luci/luci.mk
 

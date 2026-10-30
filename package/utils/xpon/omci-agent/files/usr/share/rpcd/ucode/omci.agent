@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * GC1601 rpcd backend for Linux xPON OMCI.
+ * rpcd backend for Linux xPON OMCI.
  *
  * There is intentionally no process execution in this file. Every kernel
  * operation goes through the native ucode module installed as omci.so.
@@ -107,41 +107,6 @@ const class_flag_bits = [
 	[ 1 << 6, 'datapath' ],
 ];
 
-/* Profiles are data, not executable scripts. */
-const profiles = [
-	{
-		id: 'vivo-sp1-mitrastar-gpt2741gnac-n1',
-		name: 'Vivo SP1 - Mitrastar GPT-2741GNAC-N1',
-		description: 'Vivo São Paulo capital profile using the MitraStar identity.',
-		inputs: [
-			{ name: 'serial', label: 'GPON SN', required: true },
-			{ name: 'password', label: 'SLID / GPON password', required: true }
-		],
-		values: {
-			enabled: '1', permissive: '1', fake_omci: '0',
-			vendor_id: 'MSTC', equipment_id: 'GPT-2741GNAC-N1-SV',
-			olt_profile: 'nokia-alcl', olt_profile_force: 'nokia-alcl'
-		}
-	},
-	{
-		id: 'vivo2-askey-rtf8225vw',
-		name: 'Vivo 2 - Askey RTF8225VW',
-		description: 'TLCM/RTF8225VW identity. Vivo 2 does not require a SLID.',
-		inputs: [
-			{ name: 'serial', label: 'GPON SN', required: true }
-		],
-		values: {
-			enabled: '1', permissive: '1', fake_omci: '0',
-			vendor_id: 'TLCM', hardware_version: 'RTF8225VW',
-			software_version_0: 'R8225VWTEF004',
-			software_version_1: 'P8225VWTEF004',
-			equipment_id: 'RTF8225VW-SV', password: '00000000000000000000',
-			traffic_management_option: '2', omcc_version: '161',
-			olt_profile: 'nokia-alcl', olt_profile_force: 'nokia-alcl'
-		}
-	}
-];
-
 function device_arg(request) {
 	let d = request?.args?.device;
 	return d == null ? DEVICE_DEFAULT : d;
@@ -178,7 +143,10 @@ function profile_value(value) {
 	return value;
 }
 
+/* null: no agent reported one, e.g. while omcid is not running */
 function profile_name(value) {
+	if (value == null)
+		return 'none';
 	return profile_names[value] || `unknown-${value}`;
 }
 
@@ -378,6 +346,11 @@ function apply_uci_section(section, device) {
 			value = profile_value(value);
 		else if (spec.name == 'veip-slot' && (value == 'auto' || value == 'default' || value == 'unspecified'))
 			value = 0;
+		/* gpon_provision put most of it in place at boot, and every write
+		 * costs omcid a checkpoint: set only what differs. */
+		let current = omci.config_get(device, spec.key);
+		if (current != null && `${current.value}` == `${value}`)
+			continue;
 		if (omci.config_set(device, spec.key, value) == null)
 			return native_failure(`apply ${spec.name}`);
 		push(applied, spec.name);
@@ -459,13 +432,6 @@ function config_change(type, data) {
 		auto_apply('config.change');
 }
 
-function profile_by_id(id) {
-	for (let p in profiles)
-		if (p.id == id)
-			return p;
-	return null;
-}
-
 const methods = {
 	family: {
 		call: function(request) {
@@ -484,23 +450,6 @@ const methods = {
 			if (data == null)
 				return native_error(request, 'status');
 			return { status: decorate_status(device, data) };
-		}
-	},
-
-	/* status for the unauthenticated session: the serial's digits are the secret part. */
-	status_public: {
-		args: { device: 0 },
-		call: function(request) {
-			let device = device_arg(request);
-			let data = omci.status(device, true);
-			if (data == null)
-				return native_error(request, 'status');
-			let status = decorate_status(device, data);
-			if (status.serial != null) {
-				status.serial = substr(status.serial, 0, 4) + '********';
-				status.identity.serial = status.serial;
-			}
-			return { status };
 		}
 	},
 
@@ -699,49 +648,6 @@ const methods = {
 		call: function(request) {
 			return apply_uci_values(request, device_arg(request));
 		}
-	},
-
-	profile_list: {
-		call: function() {
-			return { profiles: profiles };
-		}
-	},
-
-	profile_apply: {
-		args: { device: 0, profile: '', serial: '', password: '' },
-		call: function(request) {
-			let p = profile_by_id(request.args.profile);
-			if (!p) {
-				request.reply({ error: 'unknown OMCI profile' }, UBUS_STATUS_INVALID_ARGUMENT);
-				return null;
-			}
-			let values = {};
-			for (let spec in config_specs)
-				if (p.values[spec.option] != null)
-					values[spec.option] = p.values[spec.option];
-			if (`${request.args.serial || ''}` != '')
-				values.serial = request.args.serial;
-			if (`${request.args.password || ''}` != '')
-				values.password = request.args.password;
-
-			for (let input in p.inputs) {
-				if (!input.required)
-					continue;
-				if (`${values[input.name] || ''}` == '') {
-					request.reply({ error: `missing profile input: ${input.name}` },
-						      UBUS_STATUS_INVALID_ARGUMENT);
-					return null;
-				}
-			}
-
-			set_uci_options(values);
-			uci.set('omci', 'main', 'profile', p.id);
-			uci.commit('omci');
-			let result = apply_uci_values(request, device_arg(request));
-			if (result == null)
-				return null;
-			return { success: true, profile: p.id, apply: result };
-		}
 	}
 };
 
@@ -752,20 +658,29 @@ const methods = {
  * call the same in-process ucode -> C binding -> Generic Netlink function.
  */
 const config_listener = event_bus?.listener('config.change', config_change);
-/*
- * The laser is on unless omci.main.transmit is '0'. Checked on every poll:
- * the driver refuses it until the BOSA is programmed, and a one-shot write
- * at load left the ONU silent until reboot. With transmit '0' allow_tx is
- * left to the user.
- */
+/* Retry boot-time release until accepted, then honour manual TX holds.
+ * Changing transmit from 0 to 1 requests a new release. */
+let transmit_applied = false;
+let transmit_policy = null;
 function sync_transmit(fresh) {
-	if ((uci_main(fresh).transmit ?? '1') == '0')
+	let policy = uci_main(fresh).transmit ?? '1';
+	if (policy != transmit_policy) {
+		transmit_policy = policy;
+		transmit_applied = false;
+	}
+	if (policy == '0' || transmit_applied)
 		return;
 
 	let path = `${PON_SYSFS}/allow_tx`;
 	let current = readfile(path);
-	if (current != null && trim(current) != '1')
-		writefile(path, '1');
+	if (current == null)
+		return;
+	if (trim(current) != '1') {
+		if (!writefile(path, '1'))
+			return;
+		current = readfile(path);
+	}
+	transmit_applied = current != null && trim(current) == '1';
 }
 
 /*
@@ -786,6 +701,22 @@ function sync_untag_vlan(fresh) {
 		writefile(path, `${vid}`);
 }
 
+/* V2802RH physical port 1 is LAN1, port 0 is LAN2. */
+function sync_lan_tagged(fresh) {
+	let path = `${PON_SYSFS}/sfu_lan_tagged`;
+	let current = readfile(path);
+	if (current == null)
+		return;
+	if (fresh)
+		uci.unload('omci');
+	let config = uci.get_all('omci', 'vlan') || {};
+	let mask = (config.lan1_tagged == '1' ? 2 : 0) |
+		   (config.lan2_tagged == '1' ? 1 : 0);
+
+	if (int(trim(current)) != mask)
+		writefile(path, `${mask}`);
+}
+
 /*
  * A bridge port pon0.N means "the LAN sends VLAN N untagged". With a driver
  * that offloads that (sfu_untag_vlan), pon0.N would tag the switch's frames
@@ -800,6 +731,9 @@ function migrate_pon_vlan_ports() {
 
 	net.foreach('network', 'device', (section) => {
 		let ports = section.ports, out = [], hit = false;
+
+		if (section.vlan_filtering == '1')
+			return;
 
 		if (type(ports) != 'array')
 			return;
@@ -886,6 +820,7 @@ const config_poll = interval(CONFIG_POLL_MS, () => {
 		return;
 	sync_untag_vlan(false);
 	sync_vlan_map(false);
+	sync_lan_tagged(false);
 });
 
 /*
@@ -899,10 +834,18 @@ function wait_for_omcid() {
 		sleep(200);
 }
 
+/* Startup steps in the kernel log, for boot-to-O5 timing. */
+function boot_mark(what) {
+	writefile('/dev/kmsg', `omci.agent: ${what}\n`);
+}
+
 /* Best-effort boot-time UCI application with no external execution. */
 if (!pon_mode_epon()) {
+	boot_mark('loaded');
 	wait_for_omcid();
+	boot_mark('omcid ready');
 	auto_apply('startup');
+	boot_mark('identity applied');
 }
 
 /*
@@ -914,10 +857,12 @@ if (readfile(identity_wait) != null)
 	writefile(identity_wait, '0');
 
 sync_transmit(true);
+boot_mark(transmit_applied ? 'transmitter released' : 'transmitter held or release pending');
 migrate_pon_vlan_ports();
 if (!pon_mode_epon()) {
 	sync_untag_vlan(true);
 	sync_vlan_map(true);
+	sync_lan_tagged(true);
 }
 
 return { 'omci.agent': methods };
