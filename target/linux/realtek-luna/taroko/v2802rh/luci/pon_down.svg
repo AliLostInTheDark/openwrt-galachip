@@ -1,4 +1,4 @@
-<!-- Adapted from LuCI icons/port_up.svg; native housing, socket and cable geometry retained. -->
+<!-- Adapted from LuCI icons/port_up.svg; native housing and cable geometry retained; SC optical socket. -->
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="32" height="32" version="1.1" viewBox="0 0 48 48">
  <defs>
   <linearGradient id="linearGradient7887" x1="-7.975" x2="-11.01" y1="25.36" y2="-6.568" gradientTransform="matrix(2 0 0 1.933 43.5 .5333)" gradientUnits="userSpaceOnUse">
@@ -87,9 +87,10 @@
   </g>
  </g>
  <g transform="matrix(1.785 0 0 1.785 -557 -94.28)" enable-background="new" opacity=".7">
-  <path d="m325 59.07c-0.64 0-1.16 0.516-1.16 1.154v0.288c0 0.293-0.23 0.543-0.54 0.543h-0.12c-0.64 0-1.16 0.704-1.16 1.342v5.445c0 0.638 0.52 1.154 1.16 1.154h6.56c0.64 0 1.16-0.516 1.16-1.154v-5.445c0-0.638-0.52-1.342-1.16-1.342h-0.14c-0.26 0.02-0.55-0.186-0.55-0.526v-0.305c0-0.638-0.51-1.154-1.15-1.154z" fill="url(#linearGradient9)" fill-rule="evenodd" stroke="#fff" stroke-width="2" />
-  <path d="m325 59.07c-0.64 0-1.16 0.516-1.16 1.154v0.288c0 0.293-0.23 0.543-0.54 0.543h-0.12c-0.64 0-1.16 0.704-1.16 1.342v5.445c0 0.638 0.52 1.154 1.16 1.154h6.56c0.64 0 1.16-0.516 1.16-1.154v-5.445c0-0.638-0.52-1.342-1.16-1.342h-0.14c-0.26 0.02-0.55-0.186-0.55-0.526v-0.305c0-0.638-0.51-1.154-1.15-1.154z" fill="url(#linearGradient9)" fill-rule="evenodd" />
-  <rect x="323.1" y="61.7" width="6.8" height="5.5" rx=".35" fill="#658052" stroke="#3c5132" stroke-width=".55" />
+  <path d="M322 59H331A.5.5 0 0 1 331.5 59.5V69A.5.5 0 0 1 331 69.5H322A.5.5 0 0 1 321.5 69V59.5A.5.5 0 0 1 322 59Z" fill="#789964" fill-rule="evenodd" stroke="#e1e7d8" stroke-width="1.1" />
+  <path d="M322.6 60.5H325.5V59.9H327.5V60.5H330.4V68.4H322.6Z" fill="#354b31" fill-rule="evenodd" />
+  <rect x="323.1" y="61.8" width=".9" height="5.4" rx=".2" fill="#769c60" />
+  <rect x="329" y="61.8" width=".9" height="5.4" rx=".2" fill="#769c60" />
   <circle cx="326.5" cy="64.5" r="2" fill="#b9c4b0" stroke="#526c44" stroke-width=".7" />
   <circle cx="326.5" cy="64.5" r=".8" fill="#34432e" />
  </g>

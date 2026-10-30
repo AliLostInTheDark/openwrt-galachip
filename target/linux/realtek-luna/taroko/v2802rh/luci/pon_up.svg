@@ -1,4 +1,4 @@
-<!-- Adapted from LuCI icons/port_up.svg; native housing, socket and cable geometry retained. -->
+<!-- Adapted from LuCI icons/port_up.svg; native housing and cable geometry retained; SC optical socket. -->
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="32" height="32" version="1.1" viewBox="0 0 48 48">
  <defs>
   <linearGradient id="linearGradient7887" x1="-7.975" x2="-11.01" y1="25.36" y2="-6.568" gradientTransform="matrix(2 0 0 1.933 43.5 .5333)" gradientUnits="userSpaceOnUse">
@@ -97,9 +97,8 @@
   </g>
  </g>
  <g transform="matrix(1.785 0 0 1.785 -557 -94.28)" enable-background="new">
-  <path d="m325 59.07c-0.64 0-1.16 0.516-1.16 1.154v0.288c0 0.293-0.23 0.543-0.54 0.543h-0.12c-0.64 0-1.16 0.704-1.16 1.342v5.445c0 0.638 0.52 1.154 1.16 1.154h6.56c0.64 0 1.16-0.516 1.16-1.154v-5.445c0-0.638-0.52-1.342-1.16-1.342h-0.14c-0.26 0.02-0.55-0.186-0.55-0.526v-0.305c0-0.638-0.51-1.154-1.15-1.154z" fill="url(#linearGradient9)" fill-rule="evenodd" stroke="#fff" stroke-width="2" />
-  <path d="m325 59.07c-0.64 0-1.16 0.516-1.16 1.154v0.288c0 0.293-0.23 0.543-0.54 0.543h-0.12c-0.64 0-1.16 0.704-1.16 1.342v5.445c0 0.638 0.52 1.154 1.16 1.154h6.56c0.64 0 1.16-0.516 1.16-1.154v-5.445c0-0.638-0.52-1.342-1.16-1.342h-0.14c-0.26 0.02-0.55-0.186-0.55-0.526v-0.305c0-0.638-0.51-1.154-1.15-1.154z" fill="url(#linearGradient9)" fill-rule="evenodd" />
-  <rect x="325" y="60" width="3" height="2" rx=".3978" ry=".3978" color="#000000" fill="url(#linearGradient11)" />
+  <path d="M322 59H331A.5.5 0 0 1 331.5 59.5V69A.5.5 0 0 1 331 69.5H322A.5.5 0 0 1 321.5 69V59.5A.5.5 0 0 1 322 59Z" fill="#789964" fill-rule="evenodd" stroke="#e1e7d8" stroke-width="1.1" />
+  <path d="M322.6 60.5H325.5V59.9H327.5V60.5H330.4V68.4H322.6Z" fill="#354b31" fill-rule="evenodd" />
   <path d="m327.7 103.7s20-14 12-16-28.06 7.627-38 7c-10.11-0.638 22.5-9.83 24.77-27.71" fill="none" filter="url(#filter4618-7)" opacity=".4944" stroke="url(#radialGradient4612-0)" stroke-width="2" />
   <path d="m325 63.81c-1.03 8.083-9.29 14.95-16.38 19.75-3.54 2.401-6.67 4.247-8.53 5.718-0.46 0.368-0.85 0.712-1.18 1.125-0.34 0.414-0.74 1.02-0.57 1.907 0.17 0.886 0.92 1.362 1.47 1.562 0.56 0.2 1.11 0.299 1.81 0.344 5.52 0.347 13.01-2.019 20.25-4.094 7.25-2.075 14.34-3.76 17.5-2.969 0.73 0.182 0.75 0.332 0.75 0.344 0 0.01 0 0.304-0.25 0.906-0.56 1.204-2.21 3.148-4.15 4.969-3.89 3.642-8.85 7.095-8.85 7.095l1.72 2.47s5.04-3.519 9.16-7.377c2.06-1.93 3.91-3.892 4.84-5.875 0.47-0.992 0.75-2.114 0.32-3.25-0.44-1.137-1.55-1.87-2.82-2.188-4.83-1.209-11.76 0.918-19.03 3-6.88 1.972-13.91 3.965-18.4 3.938 1.62-1.195 4.33-2.874 7.65-5.125 7.26-4.922 16.44-12.08 17.69-21.88z" color="#000000" fill="url(#linearGradient14)" fill-rule="evenodd" stroke="url(#linearGradient15)" stroke-linejoin="round" />
   <rect x="323.1" y="61.7" width="6.8" height="5.5" rx=".35" fill="url(#scPlug)" stroke="#49643c" stroke-width=".55" />
