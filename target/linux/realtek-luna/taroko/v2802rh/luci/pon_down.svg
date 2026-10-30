@@ -1,18 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 48 48">
  <defs>
-  <linearGradient id="plate" x2="0" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#d3d7cf"/></linearGradient>
-  <linearGradient id="socket" x2="0" y2="1"><stop stop-color="#b6b8b3"/><stop offset="1" stop-color="#777c74"/></linearGradient>
-  <linearGradient id="plug" x2="1" y2="0"><stop stop-color="#608f60"/><stop offset=".5" stop-color="#a5c59a"/><stop offset="1" stop-color="#587c53"/></linearGradient>
+  <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#d3d7cf"/></linearGradient>
+  <linearGradient id="socket" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a2c7ad"/><stop offset="1" stop-color="#48765d"/></linearGradient>
+  <linearGradient id="plug" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#327c9f"/><stop offset=".45" stop-color="#8dcae3"/><stop offset="1" stop-color="#357f9f"/></linearGradient>
  </defs>
  <g opacity=".7" stroke-linejoin="round">
   <rect x="5.5" y="1.5" width="41" height="37" rx="3.7" fill="url(#plate)" stroke="#888a85"/>
   <rect x="7" y="3" width="38" height="34" rx="2.5" fill="none" stroke="#fff"/>
-  <rect x="14.5" y="9.5" width="24" height="23" rx="2" fill="url(#socket)" stroke="#536853"/>
-  <path d="M17 12h19v18H17Z" fill="none" stroke="#c4d4be"/>
-  <path d="M21 14h11v13H21Z" fill="#434a42" stroke="#344034"/>
-  <circle cx="26.5" cy="20.5" r="4" fill="#c7cbc0" stroke="#8b9385"/>
-  <circle cx="26.5" cy="20.5" r="1.8" fill="#555b50"/>
-  <path d="M16 16v11m21-11v11" stroke="#426046"/>
-
+  <rect x="14" y="9" width="25" height="24" rx="1.5" fill="url(#socket)" stroke="#4b6554"/>
+  <path d="M16 11h21v20H16Z" fill="none" stroke="#c1d8c7"/>
+  <path d="M18 14h7v-1h3v1h7v15H18Z" fill="#34463a" stroke="#577b60"/>
+  <path d="M19 17h2v10h-2Zm13 0h2v10h-2Z" fill="#719d79" stroke="#46684d" stroke-width=".7"/>
+  <circle cx="26.5" cy="21.5" r="4.5" fill="#73957a" stroke="#2f5138"/>
+  <path d="M25.5 18.2v-1h2v1" fill="#c0cbbb"/>
+  <circle cx="26.5" cy="21.5" r="2.8" fill="#c0cbbb"/>
+  <circle cx="26.5" cy="21.5" r="1.3" fill="#38483b"/>
  </g>
 </svg>

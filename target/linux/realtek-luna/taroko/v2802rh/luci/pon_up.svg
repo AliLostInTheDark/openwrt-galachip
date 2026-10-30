@@ -1,23 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 48 48">
  <defs>
-  <linearGradient id="plate" x2="0" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#d3d7cf"/></linearGradient>
-  <linearGradient id="socket" x2="0" y2="1"><stop stop-color="#90c6dc"/><stop offset="1" stop-color="#36748e"/></linearGradient>
-  <linearGradient id="plug" x2="1" y2="0"><stop stop-color="#287fb1"/><stop offset=".5" stop-color="#81c3e3"/><stop offset="1" stop-color="#26729a"/></linearGradient>
+  <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#d3d7cf"/></linearGradient>
+  <linearGradient id="socket" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a2c7ad"/><stop offset="1" stop-color="#48765d"/></linearGradient>
+  <linearGradient id="plug" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#327c9f"/><stop offset=".45" stop-color="#8dcae3"/><stop offset="1" stop-color="#357f9f"/></linearGradient>
  </defs>
  <g opacity="1" stroke-linejoin="round">
   <rect x="5.5" y="1.5" width="41" height="37" rx="3.7" fill="url(#plate)" stroke="#888a85"/>
   <rect x="7" y="3" width="38" height="34" rx="2.5" fill="none" stroke="#fff"/>
-  <rect x="14.5" y="9.5" width="24" height="23" rx="2" fill="url(#socket)" stroke="#426575"/>
-  <path d="M17 12h19v18H17Z" fill="none" stroke="#c2dfeb"/>
-  <path d="M21 14h11v13H21Z" fill="#434a42" stroke="#344034"/>
-  <circle cx="26.5" cy="20.5" r="4" fill="#c7cbc0" stroke="#8b9385"/>
-  <circle cx="26.5" cy="20.5" r="1.8" fill="#555b50"/>
-  <path d="M16 16v11m21-11v11" stroke="#376175"/>
-  <path d="M26.5 29C26.5 37 13 38 9 45" fill="none" stroke="#8f803d" stroke-width="5" stroke-linecap="round"/>
- <path d="M26.5 29C26.5 37 13 38 9 45" fill="none" stroke="#e9d679" stroke-width="3" stroke-linecap="round"/>
- <path d="M21.5 17h10v15l-2 6h-6l-2-6Z" fill="url(#plug)" stroke="#225779"/>
- <path d="M23 19h7v11h-7Z" fill="none" stroke="#b5e2f4"/>
- <path d="M23 32h7m-6 2h5m-4 2h3" stroke="#265b79"/>
-
+  <rect x="14" y="9" width="25" height="24" rx="1.5" fill="url(#socket)" stroke="#4b6554"/>
+  <path d="M16 11h21v20H16Z" fill="none" stroke="#c1d8c7"/>
+  <path d="M18 14h7v-1h3v1h7v15H18Z" fill="#34463a" stroke="#577b60"/>
+  <path d="M26.5 32c0 7-13.5 8-17.5 13" fill="none" stroke="#8f803d" stroke-width="5" stroke-linecap="round"/>
+  <path d="M26.5 32c0 7-13.5 8-17.5 13" fill="none" stroke="#e9d679" stroke-width="3" stroke-linecap="round"/>
+  <path d="M22 28h9v7l-2 4h-5l-2-4Z" fill="url(#plug)" stroke="#2a5e77"/>
+  <path d="M23 33h7m-6 2h5m-4 2h3" fill="none" stroke="#386a81"/>
+  <rect x="17" y="12" width="19" height="18" rx="1" fill="url(#plug)" stroke="#285b73"/>
+  <path d="M18.5 13.5h16v15h-16Z" fill="none" stroke="#c3e1ee"/>
+  <path d="M20 16h13m-13 2h13m-13 2h13" fill="none" stroke="#4885a0" stroke-width=".8"/>
+  <path d="M22 23h9v5h-9Z" fill="#7ab8d0" stroke="#4e8ba5"/>
  </g>
 </svg>
