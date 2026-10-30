@@ -3463,6 +3463,7 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 	const struct omci_vlan_tagging_filter *ani_filter = NULL;
 	bool installed = false;
 	bool has_vlan_rules = false;
+	bool has_treatment = false, olt_treatment = false;
 	int ret;
 
 	/*
@@ -3478,6 +3479,17 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 		ani_filter = &object->vlan_filter;
 
 	xa_for_each(&agent->mib, index, object) {
+		if (object->class_id != OMCI_CLASS_EXTENDED_VLAN ||
+		    !omci_mib_object_active(agent, object) ||
+		    !object->extended_vlan.valid || !object->extended_vlan.rule_count ||
+		    !omci_agent_vlan_associated(object, lan_port->entity_id, uni_entity,
+					bridge_port_entity, service_entity))
+			continue;
+		has_treatment = true;
+		olt_treatment |= object->origin == OMCI_MIB_ORIGIN_OLT;
+	}
+
+	xa_for_each(&agent->mib, index, object) {
 		unsigned int i;
 
 		if (!omci_mib_object_active(agent, object) ||
@@ -3488,6 +3500,11 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 		if (object->class_id == OMCI_CLASS_VLAN_TAGGING_FILTER_DATA &&
 		    object->vlan_filter.valid) {
 			has_vlan_rules |= object->vlan_filter.num_entries != 0;
+			/* The ANI filter admits the resulting VID; it must not create
+			 * a second transparent path around the UNI's VLAN treatment. */
+			if (has_treatment && (object->entity_id == bridge_port_entity ||
+					      object->entity_id == service_entity))
+				continue;
 			for (i = 0; i < object->vlan_filter.num_entries; i++) {
 				ret = omci_agent_stage_service_rule_locked(
 					odev, services, lan_port->entity_id,
@@ -3504,6 +3521,8 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 			}
 		} else if (object->class_id == OMCI_CLASS_EXTENDED_VLAN &&
 			   object->extended_vlan.valid) {
+			if (olt_treatment && object->origin == OMCI_MIB_ORIGIN_DEFAULT)
+				continue;
 			has_vlan_rules |= object->extended_vlan.rule_count != 0;
 			for (i = 0; i < object->extended_vlan.rule_count; i++) {
 				ret = omci_agent_stage_service_rule_locked(
