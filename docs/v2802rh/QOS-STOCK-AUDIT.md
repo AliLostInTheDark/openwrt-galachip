@@ -1,5 +1,8 @@
 # V2802RH stock comparison and hardware QoS status, 2026-10-26
 
+> Historical audit. For the current +201 implementation, verified status and
+> outstanding QoS findings, see [the 2026-10-30 audit](HARDWARE-QOS-AUDIT-2026-10-30.md).
+
 The subsequent exact-RTOS queue/rate trace is recorded in
 [HARDWARE-QOS-AUDIT.md](HARDWARE-QOS-AUDIT.md), including newly recovered
 rate conversions, priority packing and the bounded allocator design.

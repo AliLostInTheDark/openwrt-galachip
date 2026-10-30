@@ -1,5 +1,8 @@
 # V2802RH hardware QoS audit, 2026-10-26
 
+> Historical audit. For the current +201 implementation, verified status and
+> outstanding QoS findings, see [the 2026-10-30 audit](HARDWARE-QOS-AUDIT-2026-10-30.md).
+
 L2 hardware forwarding is working. OLT-driven hardware QoS is still absent.
 This audit recovered additional queue ordering and rate-conversion behavior
 from this unit's stock RTOS, and checked the shared queue bank against the

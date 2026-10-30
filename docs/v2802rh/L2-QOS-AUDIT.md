@@ -1,5 +1,8 @@
 # V2802RH L2 offload and hardware QoS audit
 
+> Historical audit. For the current +201 implementation, verified status and
+> outstanding QoS findings, see [the 2026-10-30 audit](HARDWARE-QOS-AUDIT-2026-10-30.md).
+
 Audited on 2026-10-26 at `def58e73759a73d9a19a08f6c7e0208a42268da0`
 (`vsol-v2802rh`, tag `v2802rh-boot-36s`). No production source, runtime
 configuration or hardware was changed. This report covers the current
