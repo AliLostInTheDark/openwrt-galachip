@@ -561,6 +561,7 @@ module_param(lan_sds, uint, 0644);
 MODULE_PARM_DESC(lan_sds, "program the LAN SerDes and the 2.5G PHY's SerDes option as stock does and follow the copper speed (default 1; 0 = leave both to the bootloader)");
 
 static int ext_mdio_read_c45(struct rtl9602c_eth *ep, u8 dev, u16 reg);
+static void rtl9602c_uni_rate_replay(struct rtl9602c_eth *ep);
 
 /* The SoC side of one mode. The caller holds what serialises the switch
  * ability registers: the gphy lock, or the bring-up before the rings run. */
@@ -584,6 +585,7 @@ static void rtl9602c_lan_sds_program(struct rtl9602c_eth *ep, bool hsgmii)
 	iowrite32(hsgmii ? LAN_SDS_MISC_HSGMII : LAN_SDS_MISC_SGMII, ep->sw + SW_LAN_SDS_MISC);
 	ep->lan_sds_hsgmii = hsgmii;
 	ep->lan_sds_set = true;
+	rtl9602c_uni_rate_replay(ep);
 }
 
 static int rtl9602c_gphy_wait(struct rtl9602c_eth *ep)
@@ -821,16 +823,27 @@ static int rtl9602c_uni_rate_write(struct rtl9602c_eth *ep, unsigned int port,
 {
 	void __iomem *igr = ep->sw + SW_IGR_BWCTRL_P_CTRL + ep->swm->macpp_stride * port;
 	void __iomem *egr = ep->sw + SW_EGR_BWCTRL_P_CTRL + 4 * port;
+	bool hsgmii = port == 0 && ep->port0_serdes && ep->lan_sds_hsgmii;
+	u32 old_line = hsgmii ? ioread32(ep->sw + SW_LAN_SDS_MISC) : 0;
+	u32 line = down == UNI_RATE_MAX ? LAN_SDS_MISC_HSGMII & UNI_RATE_MAX :
+		min_t(u32, down >> 1, LAN_SDS_MISC_HSGMII & UNI_RATE_MAX);
+	u32 want_line = (old_line & ~UNI_RATE_MAX) | max_t(u32, line, 1);
 	u32 old_igr = ioread32(igr), old_egr = ioread32(egr);
 	u32 want_igr = (old_igr & ~GENMASK(20, 2)) | (up << 2);
 	u32 want_egr = (old_egr & ~GENMASK(19, 1)) | (down << 1);
 
 	iowrite32(want_igr, igr);
 	iowrite32(want_egr, egr);
-	if ((ioread32(igr) & GENMASK(20, 2)) != (want_igr & GENMASK(20, 2)) ||
+	/* Hardware trials: 6250 gives a nominal 100-Mbit/s HSGMII cap.
+	 * The dedicated path uses 16-kbit/s steps, twice the normal field. */
+	if (hsgmii)
+		iowrite32(want_line, ep->sw + SW_LAN_SDS_MISC);
+	if ((hsgmii && ioread32(ep->sw + SW_LAN_SDS_MISC) != want_line) ||(ioread32(igr) & GENMASK(20, 2)) != (want_igr & GENMASK(20, 2)) ||
 	    (ioread32(egr) & GENMASK(19, 1)) != (want_egr & GENMASK(19, 1))) {
 		iowrite32(old_igr, igr);
 		iowrite32(old_egr, egr);
+		if (hsgmii)
+			iowrite32(old_line, ep->sw + SW_LAN_SDS_MISC);
 		return -EIO;
 	}
 	return 0;
@@ -850,6 +863,9 @@ static int rtl9602c_uni_rate_set(void *cookie, unsigned int port,
 		return -EINVAL;
 	if ((down_kbps && down_kbps < 8) || down_kbps > UNI_RATE_MAX * 8 ||
 	    (up_kbps && up_kbps < 8) || up_kbps > UNI_RATE_MAX * 8)
+		return -ERANGE;
+	/* A request must remain representable if LAN2 changes to HSGMII. */
+	if (port == 0 && ep->port0_serdes && down_kbps && down_kbps < 16)
 		return -ERANGE;
 	down = down_kbps ? down_kbps >> 3 : UNI_RATE_MAX;
 	up = up_kbps ? up_kbps >> 3 : UNI_RATE_MAX;
@@ -3067,6 +3083,11 @@ static int rtl9602c_ethdump_show(struct seq_file *m, void *v)
 					   (ioread32(ep->sw + SW_IGR_BWCTRL_P_CTRL + ep->swm->macpp_stride * p) >> 2) & UNI_RATE_MAX);
 			}
 		}
+		if (ep->port0_serdes)
+			seq_printf(m, "uni_rate_hsgmii: active=%u raw=%u word=%08x\n",
+				   ep->lan_sds_hsgmii,
+				   ioread32(ep->sw + SW_LAN_SDS_MISC) & UNI_RATE_MAX,
+				   ioread32(ep->sw + SW_LAN_SDS_MISC));
 		seq_printf(m, "MIB p0(LAN) tx=%08x | p1(LAN) tx=%08x\n",
 			   ioread32(ep->sw + SW_STAT_PORT_TX_MIB), ioread32(ep->sw + SW_STAT_PORT_TX_MIB + 1 * SW_STAT_PORT_MIB_STRIDE));
 		seq_printf(m, "MIB p2(PON) tx=%08x %08x %08x | rx=%08x %08x %08x\n",
