@@ -43,7 +43,7 @@ void omcid_olt_watch_link(struct omcid_olt_watch *w, bool up, unsigned long now)
 void omcid_olt_watch_rx(struct omcid_olt_watch *w, const u8 *pdu, size_t len,
 			unsigned long now);
 long omcid_olt_watch_poll(struct omcid_olt_watch *w, unsigned long now,
-			  u16 mib_sync, FILE *out);
+			  u16 mib_sync, FILE *out, bool kernel_log);
 void omcid_trace(struct omcid *ctx, const char *direction, u64 sequence, u32 flags,
 		 const void *pdu, size_t len);
 int omcid_control(struct omcid *ctx, const struct nlmsghdr *request,

@@ -9,7 +9,7 @@ static void report(struct omcid_olt_watch *w, unsigned long now, char *line, siz
 	FILE *out = fmemopen(line, size, "w");
 
 	CHECK(out);
-	CHECK(omcid_olt_watch_poll(w, now, 34, out) == -1);
+	CHECK(omcid_olt_watch_poll(w, now, 34, out, false) == -1);
 	fclose(out);
 }
 
@@ -29,11 +29,11 @@ int main(void)
 		pdu[2] = 0x40 | 4;
 		omcid_olt_watch_rx(&w, pdu, sizeof(pdu), 119000 + i);
 	}
-	CHECK(omcid_olt_watch_poll(&w, 120000, 34, stdout) == 129011 - 120000);
+	CHECK(omcid_olt_watch_poll(&w, 120000, 34, stdout, false) == 129011 - 120000);
 	report(&w, 129100, line, sizeof(line));
-	CHECK(strstr(line, "after 116 s dark: MIB reset and full reprovision; 13 messages"));
+	CHECK(strstr(line, "after 116 s OMCC unavailable: OLT requested MIB reset; 13 messages"));
 	CHECK(strstr(line, "MIB reset 1,") && strstr(line, "create 12,") && strstr(line, "MIB sync 34"));
-	CHECK(omcid_olt_watch_poll(&w, 200000, 34, stdout) == -1);
+	CHECK(omcid_olt_watch_poll(&w, 200000, 34, stdout, false) == -1);
 
 	/* Short blackout the OLT only audits. */
 	omcid_olt_watch_link(&w, false, 300000);
@@ -41,12 +41,12 @@ int main(void)
 	pdu[2] = 0x40 | 13;
 	omcid_olt_watch_rx(&w, pdu, sizeof(pdu), 312000);
 	report(&w, 322000, line, sizeof(line));
-	CHECK(strstr(line, "after 11 s dark: audit only"));
+	CHECK(strstr(line, "after 11 s OMCC unavailable: audit only"));
 
 	/* First activation with no OMCI at all: reported at the 120 s cap. */
 	w = (struct omcid_olt_watch) {};
 	omcid_olt_watch_link(&w, true, 5000);
-	CHECK(omcid_olt_watch_poll(&w, 6000, 0, stdout) == 119000);
+	CHECK(omcid_olt_watch_poll(&w, 6000, 0, stdout, false) == 119000);
 	report(&w, 125000, line, sizeof(line));
 	CHECK(strstr(line, "OLT after activation: no OMCI; 0 messages"));
 
