@@ -1,4 +1,4 @@
-<!-- Adapted from LuCI icons/port_up.svg; native housing and cable geometry retained; SC optical socket. -->
+<!-- Adapted from LuCI icons/port_up.svg; native LuCI housing with an SC socket and continuous fibre assembly. -->
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="32" height="32" version="1.1" viewBox="0 0 48 48">
  <defs>
   <linearGradient id="linearGradient7887" x1="-7.975" x2="-11.01" y1="25.36" y2="-6.568" gradientTransform="matrix(2 0 0 1.933 43.5 .5333)" gradientUnits="userSpaceOnUse">
@@ -100,12 +100,14 @@
   <path d="M322 59H331A.5.5 0 0 1 331.5 59.5V69A.5.5 0 0 1 331 69.5H322A.5.5 0 0 1 321.5 69V59.5A.5.5 0 0 1 322 59Z" fill="#789964" fill-rule="evenodd" stroke="#e1e7d8" stroke-width="1.1" />
   <path d="M322.6 60.5H325.5V59.9H327.5V60.5H330.4V68.4H322.6Z" fill="#354b31" fill-rule="evenodd" />
   <path d="m327.7 103.7s20-14 12-16-28.06 7.627-38 7c-10.11-0.638 22.5-9.83 24.77-27.71" fill="none" filter="url(#filter4618-7)" opacity=".4944" stroke="url(#radialGradient4612-0)" stroke-width="2" />
-  <path d="m325 63.81c-1.03 8.083-9.29 14.95-16.38 19.75-3.54 2.401-6.67 4.247-8.53 5.718-0.46 0.368-0.85 0.712-1.18 1.125-0.34 0.414-0.74 1.02-0.57 1.907 0.17 0.886 0.92 1.362 1.47 1.562 0.56 0.2 1.11 0.299 1.81 0.344 5.52 0.347 13.01-2.019 20.25-4.094 7.25-2.075 14.34-3.76 17.5-2.969 0.73 0.182 0.75 0.332 0.75 0.344 0 0.01 0 0.304-0.25 0.906-0.56 1.204-2.21 3.148-4.15 4.969-3.89 3.642-8.85 7.095-8.85 7.095l1.72 2.47s5.04-3.519 9.16-7.377c2.06-1.93 3.91-3.892 4.84-5.875 0.47-0.992 0.75-2.114 0.32-3.25-0.44-1.137-1.55-1.87-2.82-2.188-4.83-1.209-11.76 0.918-19.03 3-6.88 1.972-13.91 3.965-18.4 3.938 1.62-1.195 4.33-2.874 7.65-5.125 7.26-4.922 16.44-12.08 17.69-21.88z" color="#000000" fill="url(#linearGradient14)" fill-rule="evenodd" stroke="url(#linearGradient15)" stroke-linejoin="round" />
+  <path d="M326.5 64.2C326.5 69.7 324.3 72.4 320.7 76C315.8 80.9 309.3 85.4 302 90" fill="none" stroke="#9b813b" stroke-width="3.3" stroke-linecap="round" />
+  <path d="M326.5 64.2C326.5 69.7 324.3 72.4 320.7 76C315.8 80.9 309.3 85.4 302 90" fill="none" stroke="#e9cc65" stroke-width="2.4" stroke-linecap="round" />
   <rect x="323.1" y="61.7" width="6.8" height="5.5" rx=".35" fill="url(#scPlug)" stroke="#49643c" stroke-width=".55" />
   <path d="M323.7 66.7V62.3H329.3" fill="none" stroke="#e4edda" stroke-width=".55" stroke-opacity=".8" />
   <path d="M325 60.3H328V62.1H325Z" fill="#c7d8b8" stroke="#5d7850" stroke-width=".35" />
-  <path d="M324.2 64H328.8V66.3C328.2 69.5 326.1 73 323.3 75.8L320.5 73.5C322.7 70.8 324.2 68.2 324.2 66.3Z" fill="url(#scBoot)" stroke="#456139" stroke-width=".55" stroke-linejoin="round" />
-  <path d="M324.4 65.7H328.5M324.1 67.6L328.4 68.4M323.1 69.7L327.4 71M322 71.8L326 73.5" fill="none" stroke="#38532e" stroke-opacity=".7" stroke-width=".55" stroke-linecap="round" />
+  <path d="M324.2 64H328.8V66.3C328.2 70.5 325.1 74 321.9 77.2L319.5 74.8C322.7 71.6 324.2 69 324.2 66.3Z" fill="url(#scBoot)" />
+  <path d="M324.2 64V66.3C324.2 69 322.7 71.6 319.5 74.8M328.8 64V66.3C328.2 70.5 325.1 74 321.9 77.2" fill="none" stroke="#456139" stroke-width=".45" stroke-linecap="round" />
+  <path d="M324.4 65.7H328.5M324.1 67.8L328.2 68.4M323.3 70L327.1 71.3M321.8 72.4L325.2 73.9" fill="none" stroke="#38532e" stroke-opacity=".7" stroke-width=".55" stroke-linecap="round" />
   <path d="M324.8 64.6V66.3C324.6 68.8 323 71.7 321.8 73.3" fill="none" stroke="#d4e3bb" stroke-opacity=".6" stroke-width=".55" stroke-linecap="round" />
  </g>
 </svg>

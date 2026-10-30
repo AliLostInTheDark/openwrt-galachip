@@ -1,4 +1,4 @@
-<!-- Adapted from LuCI icons/port_up.svg; native housing and cable geometry retained; SC optical socket. -->
+<!-- Adapted from LuCI icons/port_up.svg; native LuCI housing with an SC socket and continuous fibre assembly. -->
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="32" height="32" version="1.1" viewBox="0 0 48 48">
  <defs>
   <linearGradient id="linearGradient7887" x1="-7.975" x2="-11.01" y1="25.36" y2="-6.568" gradientTransform="matrix(2 0 0 1.933 43.5 .5333)" gradientUnits="userSpaceOnUse">
