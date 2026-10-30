@@ -13,6 +13,7 @@ cp "$feed/modules/luci-mod-network/htdocs/luci-static/resources/view/network/int
 cp "$feed/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/29_ports.js" "$work/view/status/include/"
 patch --batch --fuzz=0 -d "$work" -p1 < "$here/link-display.patch"
 mkdir -p "$resources/v2802rh"
+cp "$here/pon_up.svg" "$here/pon_down.svg" "$resources/v2802rh/"
 cp "$here/link.js" "$work/link.js"
 for file in view/network/interfaces.js view/status/include/29_ports.js link.js; do
 	if [ "$file" = link.js ]; then
