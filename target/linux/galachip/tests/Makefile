@@ -14,6 +14,6 @@ test:
 	node gpon-dbru.mjs | $(CC) $(CFLAGS) -std=gnu11 -Wall -Wextra -Werror \
 		-Wno-unused-parameter -x c - -o /tmp/gc1601-gpon-dbru-test
 	ASAN_OPTIONS=detect_leaks=0 /tmp/gc1601-gpon-dbru-test
-	node tx-backpressure.mjs --tx-only | $(CC) $(CFLAGS) -std=gnu11 -Wall -Wextra -Werror \
+	node tx-backpressure.mjs | $(CC) $(CFLAGS) -std=gnu11 -Wall -Wextra -Werror \
 		-Wno-unused-function -x c - -o /tmp/gc1601-tx-backpressure-test
 	ASAN_OPTIONS=detect_leaks=0 /tmp/gc1601-tx-backpressure-test

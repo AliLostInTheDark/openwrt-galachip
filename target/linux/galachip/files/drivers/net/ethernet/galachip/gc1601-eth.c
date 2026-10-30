@@ -3218,6 +3218,12 @@ static void gc1601_rx_trim_phantom(struct gc1601_eth *priv, int c)
 	gc1601_rx_ack_phantom(priv, c);
 }
 
+static void gc1601_rx_stall(struct gc1601_eth *priv, unsigned int container)
+{
+	priv->rx_stalled |= BIT(container);
+	timer_reduce(&priv->poll_timer, jiffies + 1);
+}
+
 static int gc1601_rx_poll(struct napi_struct *napi, int budget)
 {
 	struct gc1601_eth *priv = container_of(napi, struct gc1601_eth, napi);
@@ -3254,7 +3260,7 @@ static int gc1601_rx_poll(struct napi_struct *napi, int budget)
 		if (!(priv->rx_synced & BIT(container))) {
 			if (!gc1601_rx_sync(priv, container)) {
 				priv->rx_empty_desc++;
-				priv->rx_stalled |= BIT(container);
+				gc1601_rx_stall(priv, container);
 				continue;
 			}
 			priv->rx_synced |= BIT(container);
@@ -3270,7 +3276,7 @@ static int gc1601_rx_poll(struct napi_struct *napi, int budget)
 				gc1601_rx_trim_phantom(priv, container);
 				priv->rx_late_stalled++;
 				priv->rx_empty_desc++;
-				priv->rx_stalled |= BIT(container);
+				gc1601_rx_stall(priv, container);
 				continue;
 			}
 			priv->rx_late_landed++;
@@ -3489,6 +3495,7 @@ static void gc1601_poll_timer(struct timer_list *t)
 {
 	struct gc1601_eth *priv = timer_container_of(priv, t, poll_timer);
 	unsigned long flags;
+	bool stalled = READ_ONCE(priv->rx_stalled);
 
 	if (!priv->running)
 		return;
@@ -3526,7 +3533,7 @@ static void gc1601_poll_timer(struct timer_list *t)
 	if (priv->running)
 		timer_reduce(&priv->poll_timer, jiffies +
 			  max_t(unsigned long, 1,
-				msecs_to_jiffies(priv->irq_poll_only ||
+				msecs_to_jiffies(priv->irq_poll_only || stalled ||
 						 READ_ONCE(priv->rx_stalled) ||
 						 READ_ONCE(priv->tx_pending) ||
 						 READ_ONCE(priv->tx_buf_wait) ? 1 : 50)));
