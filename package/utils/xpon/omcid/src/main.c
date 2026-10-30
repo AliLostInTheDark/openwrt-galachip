@@ -57,6 +57,9 @@ static int import_status(struct omcid *ctx, const struct nlmsghdr *n, bool initi
 	channel_changed = d->channel_up != new_channel_up;
 	d->channel_up = new_channel_up;
 	if (!initial && (gen_changed || channel_changed)) {
+		/* Preserve the previous activation summary even during rapid flapping. */
+		omcid_olt_watch_poll(&ctx->olt, omci_native_now(),
+				    d->agent.mib_sync, stdout, true, true);
 		omcid_olt_watch_link(&ctx->olt, d->channel_up, omci_native_now());
 		ctx->have_rx_sequence = false;
 		omci_agent_channel_changed(d, d->channel_up);
@@ -368,7 +371,7 @@ static int loop(struct omcid *ctx, int listener)
 				timeout = left;
 		}
 		left = omcid_olt_watch_poll(&ctx->olt, omci_native_now(),
-					    ctx->engine.agent.mib_sync, stdout, true);
+					    ctx->engine.agent.mib_sync, stdout, true, false);
 		if (left >= 0 && (timeout < 0 || left < timeout))
 			timeout = left;
 		/* Never while a request waits: that is what the deferral is for. */

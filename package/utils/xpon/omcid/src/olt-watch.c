@@ -19,11 +19,15 @@ enum {
 void omcid_olt_watch_link(struct omcid_olt_watch *w, bool up, unsigned long now)
 {
 	if (!up) {
-		if (!w->down_ms)
-			w->down_ms = now ?: 1;
+		if (!w->down)
+			w->down_ms = now;
+		w->down = true;
 		w->active = false;
 		return;
 	}
+	w->had_outage = w->down;
+	w->outage_ms = w->down ? now - w->down_ms : 0;
+	w->down = false;
 	memset(w->count, 0, sizeof(w->count));
 	w->messages = 0;
 	w->up_ms = w->last_ms = now;
@@ -58,7 +62,7 @@ static const char *olt_watch_verdict(const struct omcid_olt_watch *w)
 
 /* Returns ms until the summary is due, or -1 when nothing is pending. */
 long omcid_olt_watch_poll(struct omcid_olt_watch *w, unsigned long now,
-			  u16 mib_sync, FILE *out, bool kernel_log)
+			  u16 mib_sync, FILE *out, bool kernel_log, bool force)
 {
 	unsigned long due = w->messages ? w->last_ms + OLT_WATCH_QUIET_MS :
 					  w->up_ms + OLT_WATCH_MAX_MS;
@@ -70,11 +74,11 @@ long omcid_olt_watch_poll(struct omcid_olt_watch *w, unsigned long now,
 		return -1;
 	if (due > w->up_ms + OLT_WATCH_MAX_MS)
 		due = w->up_ms + OLT_WATCH_MAX_MS;
-	if ((long)(due - now) > 0)
+	if (!force && (long)(due - now) > 0)
 		return due - now;
 
-	if (w->down_ms)
-		snprintf(dark, sizeof(dark), "%lu s OMCC unavailable", (w->up_ms - w->down_ms) / 1000);
+	if (w->had_outage)
+		snprintf(dark, sizeof(dark), "%lu s OMCC unavailable", w->outage_ms / 1000);
 	snprintf(line, sizeof(line), "omcid: OLT after %s: %s; %u messages over %lu s "
 		"(MIB reset %u, upload %u/%u, create %u, set %u, delete %u, get %u), "
 		"MIB sync %u\n", dark, olt_watch_verdict(w), w->messages,
@@ -87,8 +91,11 @@ long omcid_olt_watch_poll(struct omcid_olt_watch *w, unsigned long now,
 	if (kernel_log) {
 		fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC | O_NONBLOCK);
 		if (fd >= 0) {
-			dprintf(fd, "<6>%s", line);
+			if (dprintf(fd, "<6>%s", line) < 0)
+				fprintf(stderr, "omcid: cannot write recovery summary to /dev/kmsg: %s\n", strerror(errno));
 			close(fd);
+		} else {
+			fprintf(stderr, "omcid: cannot open /dev/kmsg for recovery summary: %s\n", strerror(errno));
 		}
 	}
 	w->active = false;

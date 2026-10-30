@@ -131,6 +131,7 @@ static struct {
 	bool ev_los;
 	bool los_known;
 	unsigned long loss_started;
+	unsigned long signal_since;
 	bool data_up;
 	bool operational;
 } luna_xpon = {
@@ -1125,9 +1126,13 @@ static int luna_xpon_get_telemetry(struct omci_device *odev,
 
 static void luna_xpon_set_operational(struct omci_device *odev, bool operational)
 {
-	if (operational != READ_ONCE(luna_xpon.operational))
-		pr_info("luna-xpon: OMCI agent %s\n",
-			operational ? "operational; service provisioning applied" : "not operational");
+	if (operational != READ_ONCE(luna_xpon.operational)) {
+		if (operational)
+			pr_info("luna-xpon: OMCI agent operational; service provisioning applied %u ms after signal detection\n",
+				jiffies_to_msecs(jiffies - READ_ONCE(luna_xpon.signal_since)));
+		else
+			pr_info("luna-xpon: OMCI agent not operational\n");
+	}
 	WRITE_ONCE(luna_xpon.operational, operational);
 	rtl9601d_l2_changed();
 	luna_xpon_update_carrier();
@@ -1206,8 +1211,11 @@ void luna_xpon_report_los(bool los)
 	if (changed) {
 		if (los)
 			luna_xpon.loss_started = jiffies;
-		else if (luna_xpon.los_known)
-			lost_ms = jiffies_to_msecs(jiffies - luna_xpon.loss_started);
+		else {
+			if (luna_xpon.los_known)
+				lost_ms = jiffies_to_msecs(jiffies - luna_xpon.loss_started);
+			luna_xpon.signal_since = jiffies;
+		}
 	}
 	luna_xpon.los_known = true;
 	luna_xpon.ev |= LUNA_XPON_EV_LOS;
@@ -1227,7 +1235,8 @@ void luna_xpon_report_los(bool los)
 void luna_xpon_report_state(u8 state)
 {
 	if (state == GPON_O5)
-		pr_info("luna-xpon: registered with OLT (O5); restoring service provisioning\n");
+		pr_info("luna-xpon: registered with OLT (O5), %u ms after signal detection; restoring service provisioning\n",
+			jiffies_to_msecs(jiffies - READ_ONCE(luna_xpon.signal_since)));
 	if (state != GPON_O5)
 		rtl9601d_l2_changed();
 	luna_xpon_post(LUNA_XPON_EV_STATE, state, 0, 0);
@@ -1297,6 +1306,22 @@ static void luna_xpon_deliver_state(struct omci_device *odev, u8 state)
 	xpon_device_report_registration(luna_xpon.xpon, reg);
 }
 
+/* Optical I2C reads sleep: sample only on transitions, from work context.
+ * TX is a burst-mode sample and can read low between upstream grants. */
+static void luna_xpon_log_optics(void)
+{
+	struct luna_xpon_optics o;
+	int rc = luna_xpon_hw_optics(&o);
+
+	if (rc) {
+		pr_warn_ratelimited("luna-xpon: optical diagnostics unavailable (%d)\n", rc);
+		return;
+	}
+	pr_info("luna-xpon: optical sample: RX=%u.%03u uW TX=%u.%03u uW (burst sample), bias=%u uA, temperature=%d mC, voltage=%u uV\n",
+		o.rx_nw / 1000, o.rx_nw % 1000, o.tx_nw / 1000, o.tx_nw % 1000,
+		o.bias_ua, o.temp_mc, o.vcc_uv);
+}
+
 static void luna_xpon_event_fn(struct work_struct *work)
 {
 	struct omci_device *odev = READ_ONCE(luna_xpon.odev);
@@ -1333,6 +1358,9 @@ static void luna_xpon_event_fn(struct work_struct *work)
 	}
 	if (ev & LUNA_XPON_EV_STATE)
 		luna_xpon_deliver_state(odev, state);
+	if ((ev & LUNA_XPON_EV_LOS) ||
+	    ((ev & LUNA_XPON_EV_STATE) && state == GPON_O5))
+		luna_xpon_log_optics();
 }
 
 void luna_xpon_report_alloc(void)

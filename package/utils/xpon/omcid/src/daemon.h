@@ -6,10 +6,10 @@
 #include <linux/omci-backend.h>
 
 struct omcid_olt_watch {
-	unsigned long down_ms, up_ms, last_ms;
+	unsigned long down_ms, up_ms, last_ms, outage_ms;
 	unsigned int messages;
 	u16 count[32];
-	bool active;
+	bool active, down, had_outage;
 };
 
 struct omcid {
@@ -43,7 +43,7 @@ void omcid_olt_watch_link(struct omcid_olt_watch *w, bool up, unsigned long now)
 void omcid_olt_watch_rx(struct omcid_olt_watch *w, const u8 *pdu, size_t len,
 			unsigned long now);
 long omcid_olt_watch_poll(struct omcid_olt_watch *w, unsigned long now,
-			  u16 mib_sync, FILE *out, bool kernel_log);
+			  u16 mib_sync, FILE *out, bool kernel_log, bool force);
 void omcid_trace(struct omcid *ctx, const char *direction, u64 sequence, u32 flags,
 		 const void *pdu, size_t len);
 int omcid_control(struct omcid *ctx, const struct nlmsghdr *request,
