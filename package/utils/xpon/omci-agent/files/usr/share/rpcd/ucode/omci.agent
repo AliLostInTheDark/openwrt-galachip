@@ -658,20 +658,29 @@ const methods = {
  * call the same in-process ucode -> C binding -> Generic Netlink function.
  */
 const config_listener = event_bus?.listener('config.change', config_change);
-/*
- * The laser is on unless omci.main.transmit is '0'. Checked on every poll:
- * the driver refuses it until the BOSA is programmed, and a one-shot write
- * at load left the ONU silent until reboot. With transmit '0' allow_tx is
- * left to the user.
- */
+/* Retry boot-time release until accepted, then honour manual TX holds.
+ * Changing transmit from 0 to 1 requests a new release. */
+let transmit_applied = false;
+let transmit_policy = null;
 function sync_transmit(fresh) {
-	if ((uci_main(fresh).transmit ?? '1') == '0')
+	let policy = uci_main(fresh).transmit ?? '1';
+	if (policy != transmit_policy) {
+		transmit_policy = policy;
+		transmit_applied = false;
+	}
+	if (policy == '0' || transmit_applied)
 		return;
 
 	let path = `${PON_SYSFS}/allow_tx`;
 	let current = readfile(path);
-	if (current != null && trim(current) != '1')
-		writefile(path, '1');
+	if (current == null)
+		return;
+	if (trim(current) != '1') {
+		if (!writefile(path, '1'))
+			return;
+		current = readfile(path);
+	}
+	transmit_applied = current != null && trim(current) == '1';
 }
 
 /*
@@ -848,7 +857,7 @@ if (readfile(identity_wait) != null)
 	writefile(identity_wait, '0');
 
 sync_transmit(true);
-boot_mark('transmitter released');
+boot_mark(transmit_applied ? 'transmitter released' : 'transmitter held or release pending');
 migrate_pon_vlan_ports();
 if (!pon_mode_epon()) {
 	sync_untag_vlan(true);

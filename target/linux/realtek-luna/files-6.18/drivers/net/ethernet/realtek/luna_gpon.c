@@ -5207,13 +5207,15 @@ static int gpon_install_tcont(u8 tcont, u16 alloc)
 		/* Drain out the physical queue BEFORE binding it into */
 		drain_rc = luna_queue_drain(qid);
 		if (drain_rc < 0) {
-			pr_err("luna-gpon: qid %u drain-out failed (%d)\n", qid, drain_rc);
+			pr_err_ratelimited("luna-gpon: qid %u drain-out failed (%d): drain_cmd=%08x US_PBUF=%08x state=O%u activation_ready=%u\n",
+				qid, drain_rc, pi_rd(PI_DRN_CMD), pi_rd(PI_PONIP_CTL_US),
+				gpon_fsm_state, READ_ONCE(luna_activation_ready));
 			return drain_rc;
 		}
 		if (ctrl_queue && tcont == GPON_DATA_TCONT) {
 			drain_rc = luna_queue_drain(qid + 1);
 			if (drain_rc < 0) {
-				pr_err("luna-gpon: control qid %u drain-out failed (%d)\n",
+				pr_err_ratelimited("luna-gpon: control qid %u drain-out failed (%d)\n",
 				       qid + 1, drain_rc);
 				return drain_rc;
 			}
@@ -6993,6 +6995,12 @@ static int luna_activate_locked(bool identity_changed)
 	gpon_send_cpu_ploam(PLM_US_QUEUE_NOMSG, nomsg);
 	if (datapath_rearm)
 		gpon_us_feed_rearm();
+	/* Quiesce disables PBUF even when O5 pool accounting is retained. */
+	pi_field(PI_PONIP_CTL_US, 0, 0, 1);
+	if (!(pi_rd(PI_PONIP_CTL_US) & BIT(0))) {
+		ret = -EIO;
+		goto fail;
+	}
 	bosa_cal_error = 0;
 	luna_optical_init_error = 0;
 	return 0;
@@ -7261,10 +7269,19 @@ int luna_xpon_hw_set_allow_tx(bool on)
 	} else if (READ_ONCE(gpon_hold) == on) {
 		WRITE_ONCE(gpon_hold, !on);
 		WRITE_ONCE(luna_ploam_cfg_live.hold, !on);	/* the PLOAM core's copy */
-		pr_info("luna-gpon: transmitter %s\n", on ? "released" : "held");
 		/* An activation that cannot run yet (no serial) retries later. */
 		if (luna_driver_ready)
-			luna_activate_locked(false);
+			ret = luna_activate_locked(false);
+		if (ret) {
+			if (on) {
+				WRITE_ONCE(gpon_hold, true);
+				WRITE_ONCE(luna_ploam_cfg_live.hold, true);
+			}
+			pr_err_ratelimited("luna-gpon: transmitter %s failed (%d); activation_ready=%u\n",
+					on ? "release" : "hold", ret, READ_ONCE(luna_activation_ready));
+		} else {
+			pr_info("luna-gpon: transmitter %s\n", on ? "released" : "held");
+		}
 		luna_resume_poll();
 	}
 	mutex_unlock(&bosa_lock);
