@@ -2,7 +2,8 @@
  <defs>
   <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#d3d7cf"/></linearGradient>
   <linearGradient id="socket" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a2c7ad"/><stop offset="1" stop-color="#48765d"/></linearGradient>
-  <linearGradient id="plug" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#327c9f"/><stop offset=".45" stop-color="#8dcae3"/><stop offset="1" stop-color="#357f9f"/></linearGradient>
+  <linearGradient id="plug" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#427b46"/><stop offset=".45" stop-color="#b1d39b"/><stop offset="1" stop-color="#4b8250"/></linearGradient>
+  <linearGradient id="fibre" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#c3a13b"/><stop offset=".45" stop-color="#fff0a2"/><stop offset="1" stop-color="#d6b34e"/></linearGradient>
  </defs>
  <g opacity="1" stroke-linejoin="round">
   <rect x="5.5" y="1.5" width="41" height="37" rx="3.7" fill="url(#plate)" stroke="#888a85"/>
@@ -10,13 +11,15 @@
   <rect x="14" y="9" width="25" height="24" rx="1.5" fill="url(#socket)" stroke="#4b6554"/>
   <path d="M16 11h21v20H16Z" fill="none" stroke="#c1d8c7"/>
   <path d="M18 14h7v-1h3v1h7v15H18Z" fill="#34463a" stroke="#577b60"/>
-  <path d="M26.5 32c0 7-13.5 8-17.5 13" fill="none" stroke="#8f803d" stroke-width="5" stroke-linecap="round"/>
-  <path d="M26.5 32c0 7-13.5 8-17.5 13" fill="none" stroke="#e9d679" stroke-width="3" stroke-linecap="round"/>
-  <path d="M22 28h9v7l-2 4h-5l-2-4Z" fill="url(#plug)" stroke="#2a5e77"/>
-  <path d="M23 33h7m-6 2h5m-4 2h3" fill="none" stroke="#386a81"/>
-  <rect x="17" y="12" width="19" height="18" rx="1" fill="url(#plug)" stroke="#285b73"/>
-  <path d="M18.5 13.5h16v15h-16Z" fill="none" stroke="#c3e1ee"/>
-  <path d="M20 16h13m-13 2h13m-13 2h13" fill="none" stroke="#4885a0" stroke-width=".8"/>
-  <path d="M22 23h9v5h-9Z" fill="#7ab8d0" stroke="#4e8ba5"/>
+  <path d="M26 33C26 39 16 44 2 48" fill="none" stroke="#8b7438" stroke-width="5" stroke-linecap="round"/>
+  <path d="M26 33C26 39 16 44 2 48" fill="none" stroke="url(#fibre)" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M25.4 33C25.4 38.5 15.5 43.5 1.5 47.5" fill="none" stroke="#fff6bc" stroke-width=".7" stroke-linecap="round"/>
+  <path d="M22 28h9v4c0 3-2 5-4 7l-4-3c1-1 2-3 2-4h-3Z" fill="url(#plug)" stroke="#355c36"/>
+  <path d="m24 32 6 1m-6 1 5 1m-5 1 4 1" fill="none" stroke="#527547" stroke-width=".8"/>
+  <path d="M23 29h6v3" fill="none" stroke="#d4e6c3" stroke-width=".7"/>
+  <rect x="17" y="12" width="19" height="18" rx="1" fill="url(#plug)" stroke="#355c36"/>
+  <path d="M18.5 13.5h16v15h-16Z" fill="none" stroke="#dcebd0"/>
+  <path d="M20 16h13m-13 2h13m-13 2h13" fill="none" stroke="#668f57" stroke-width=".8"/>
+  <path d="M22 23h9v5h-9Z" fill="#94b780" stroke="#638559"/>
  </g>
 </svg>
