@@ -44,15 +44,32 @@ static unsigned int omci_sid_idx = 4;	/* PON_SID one-hot shift (word3[28:23]); 4
  * a copy per port would deliver each flood twice.
  *   0  plain: no steering, a copy per port floods to both jacks (duplicates)
  *   1  VLAN: each jack has a VLAN of its own, members the jack and the CPU,
- *      untagged on the jack; the CPU tags its copy with it (default)
+ *      untagged on the jack; the CPU tags its copy with it
  *   2  CPU tag: Realtek's in-band 0x8899 tag with the jack's port mask
  * Writable at run time (/sys/module/rtl9602c_eth/parameters/lan_tx_steer);
  * the VLAN entries are installed at open whatever the mode. */
 enum { LAN_STEER_PLAIN, LAN_STEER_VLAN, LAN_STEER_CPUTAG };
-static unsigned int lan_tx_steer = LAN_STEER_VLAN;
-module_param(lan_tx_steer, uint, 0644);
+static int lan_tx_steer = -1;
+
+static int rtl9602c_lan_tx_steer_set(const char *val, const struct kernel_param *kp)
+{
+	int mode, rc = kstrtoint(val, 0, &mode);
+
+	if (rc)
+		return rc;
+	if (mode < -1 || mode > LAN_STEER_CPUTAG)
+		return -EINVAL;
+	WRITE_ONCE(*(int *)kp->arg, mode);
+	return 0;
+}
+
+static const struct kernel_param_ops rtl9602c_lan_tx_steer_ops = {
+	.set = rtl9602c_lan_tx_steer_set,
+	.get = param_get_int,
+};
+module_param_cb(lan_tx_steer, &rtl9602c_lan_tx_steer_ops, &lan_tx_steer, 0644);
 MODULE_PARM_DESC(lan_tx_steer,
-		 "how a lanN netdev's frame is held to its own jack: 0=plain (the switch floods), 1=per-jack VLAN (default), 2=in-band CPU tag");
+		 "how a lanN netdev's frame is held to its own jack: -1=board default (V2802RH CPU tag, others VLAN), 0=plain (the switch floods), 1=per-jack VLAN, 2=in-band CPU tag");
 
 /* The per-jack steering VLANs, from the top of the range: an OLT's service
  * VLANs are low, and the L2 offload refuses a service on one of these. */
@@ -378,6 +395,7 @@ struct rtl9602c_eth {
 	bool		closing;	/* gate recover_work vs ndo_stop teardown */
 	bool		hw_up;		/* rings + DMA live from the first open on: the OMCC
 					 * and gpon0 ride them whatever eth0's state */
+	unsigned int	lan_tx_default;
 	bool		in_recovery;	/* GMAC block may be power-gated: /proc
 					 * diag must not touch its MMIO (bus abort) */
 	u32		dbg_tx_recover;	/* completed GMAC power-cycle recoveries */
@@ -2519,6 +2537,13 @@ static int rtl9602c_cpu_tag_push(struct sk_buff *skb, u16 port_mask)
 	return 0;
 }
 
+static unsigned int rtl9602c_lan_tx_mode(const struct rtl9602c_eth *ep)
+{
+	int mode = READ_ONCE(lan_tx_steer);
+
+	return mode < 0 ? ep->lan_tx_default : (unsigned int)mode;
+}
+
 /* Hold @skb to one jack, by the mode in force. Under tx_lock, after the
  * ring-full test: a frame the ring refuses is requeued by the stack as it
  * was, so it must not carry a tag yet. */
@@ -2527,7 +2552,7 @@ static int rtl9602c_lan_steer(struct rtl9602c_eth *ep, struct sk_buff **pskb,
 {
 	struct sk_buff *skb = *pskb;
 
-	switch (READ_ONCE(lan_tx_steer)) {
+	switch (rtl9602c_lan_tx_mode(ep)) {
 	case LAN_STEER_VLAN:
 		if (READ_ONCE(ep->lan_steer_blocked))
 			return 0;
@@ -2985,7 +3010,7 @@ static int rtl9602c_ethdump_show(struct seq_file *m, void *v)
 	seq_printf(m, "rxring: HW-owned(D_OWN=1)=%u  CPU-owned(filled)=%u\n",
 		   own, hwfilled);
 	seq_printf(m, "lan: steer=%u blocked=%u relay_skipped=%u lan2(p0)=%s/%u lan1(p1)=%s/%u\n",
-		   lan_tx_steer, ep->lan_steer_blocked, ep->dbg_lan_relay_skipped,
+		   rtl9602c_lan_tx_mode(ep), ep->lan_steer_blocked, ep->dbg_lan_relay_skipped,
 		   ep->lan_link[0].up ? "up" : "down", ep->lan_link[0].speed,
 		   ep->lan_link[1].up ? "up" : "down", ep->lan_link[1].speed);
 	if (ep->port0_serdes && ep->sw) {
@@ -3769,6 +3794,10 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	ep = netdev_priv(ndev);
 	ep->ndev = ndev;
 	ep->dev = dev;
+	/* CPU-tag steering bypasses stale shared-LUT destinations and disables
+	 * source learning on CPU copies of client frames. */
+	ep->lan_tx_default = of_machine_is_compatible("vsol,v2802rh") ?
+		LAN_STEER_CPUTAG : LAN_STEER_VLAN;
 	spin_lock_init(&ep->tx_lock);
 	spin_lock_init(&ep->sw_table_lock);
 	INIT_WORK(&ep->recover_work, rtl9602c_eth_recover_work);
