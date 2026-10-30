@@ -257,6 +257,7 @@ struct gc1601_eth {
 	u16 tx_producer;
 	u16 tx_consumer;
 	u16 tx_pending;
+	bool tx_buf_wait;	/* pool empty: retry without discarding the skb */
 	bool tx_replicated;
 	struct sk_buff *tx_skb[GC1601_RING_SIZE];
 	/* Diagnostic counters */
@@ -1667,6 +1668,7 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 	priv->tx_producer = 0;
 	priv->tx_consumer = 0;
 	priv->tx_pending = 0;
+	priv->tx_buf_wait = false;
 	priv->tx_detected_slot = -1;
 	priv->rx_first_slot = -1;
 
@@ -1836,6 +1838,18 @@ static u32 gc1601_tx_depth(struct gc1601_eth *priv)
 
 static struct net_device *gc1601_pon_dev;	/* stopped while the shared ring is full */
 
+static void gc1601_tx_backpressure(struct gc1601_eth *priv)
+{
+	struct net_device *pon_dev = READ_ONCE(gc1601_pon_dev);
+
+	priv->tx_busy_events++;
+	netif_stop_queue(priv->netdev);
+	if (pon_dev)
+		netif_stop_queue(pon_dev);
+	/* Pool exhaustion need not leave a CPU TX completion to wake us. */
+	timer_reduce(&priv->poll_timer, jiffies + 1);
+}
+
 static void gc1601_tx_probe_schedule_locked(struct gc1601_eth *priv)
 {
 	lockdep_assert_held(&priv->tx_lock);
@@ -1983,11 +1997,7 @@ static int gc1601_xmit(struct sk_buff *skb, struct net_device *netdev,
 	}
 
 	if (priv->tx_pending >= qdepth) {
-		priv->tx_busy_events++;
-		netif_stop_queue(netdev);
-		/* Stopped under tx_lock, so the completion that frees a slot wakes it. */
-		if (pon && !pon->omci && gc1601_pon_dev)
-			netif_stop_queue(gc1601_pon_dev);
+		gc1601_tx_backpressure(priv);
 		spin_unlock_irqrestore(&priv->tx_lock, flags);
 		return -EBUSY;
 	}
@@ -2004,11 +2014,12 @@ static int gc1601_xmit(struct sk_buff *skb, struct net_device *netdev,
 
 	buf_id = readl(priv->base[GC1601_RX] + GC_RX_ALLOC_RESP);
 	if (!(buf_id & BIT(31))) {
+		priv->tx_buf_wait = true;
+		gc1601_tx_backpressure(priv);
 		spin_unlock_irqrestore(&priv->tx_lock, flags);
-		netdev->stats.tx_dropped++;
-		dev_kfree_skb_any(skb);
-		return -EIO;
+		return -EBUSY;
 	}
+	priv->tx_buf_wait = false;
 
 	buf_id &= 0x7fffffff;
 	if (buf_id >= GC1601_BUFFER_COUNT) {
@@ -2083,6 +2094,8 @@ static int gc1601_xmit(struct sk_buff *skb, struct net_device *netdev,
 	priv->tx_buf_id[tx_idx] = buf_id;
 	priv->tx_producer = (tx_idx + 1) % GC1601_RING_SIZE;
 	priv->tx_pending++;
+	if (priv->tx_pending == 1)
+		timer_reduce(&priv->poll_timer, jiffies + 1);
 
 	/* Probes are the only TX before handoff, so octet deltas isolate each one. */
 	if (probe)
@@ -3498,7 +3511,8 @@ static void gc1601_poll_timer(struct timer_list *t)
 			gc1601_irq_mask(priv, true);
 		spin_unlock_irqrestore(&priv->irq_lock, flags);
 	}
-	if (gc1601_rx_any_pending(priv) || priv->tx_pending > 0) {
+	if (gc1601_rx_any_pending(priv) || READ_ONCE(priv->tx_pending) ||
+	    READ_ONCE(priv->tx_buf_wait)) {
 		spin_lock_irqsave(&priv->irq_lock, flags);
 		if (priv->running &&
 		    !test_bit(NAPI_STATE_SCHED, &priv->napi.state) &&
@@ -3510,10 +3524,12 @@ static void gc1601_poll_timer(struct timer_list *t)
 	}
 
 	if (priv->running)
-		mod_timer(&priv->poll_timer, jiffies +
+		timer_reduce(&priv->poll_timer, jiffies +
 			  max_t(unsigned long, 1,
 				msecs_to_jiffies(priv->irq_poll_only ||
-						 priv->rx_stalled ? 1 : 50)));
+						 READ_ONCE(priv->rx_stalled) ||
+						 READ_ONCE(priv->tx_pending) ||
+						 READ_ONCE(priv->tx_buf_wait) ? 1 : 50)));
 }
 
 /*
