@@ -75,7 +75,7 @@
  					E('img', { 'src': L.resource('icons/port_%s.svg').format(portIcon) }),
  					E('br'),
 -					formatSpeed(carrier, speed, duplex)
-+					ponLink.pon(port.netdev) || formatSpeed(carrier, speed, duplex)
++					ponLink.pon(port.netdev, true) || formatSpeed(carrier, speed, duplex)
  				]),
  				E('div', { 'class': 'ifacebox-head cbi-tooltip-container', 'style': 'display:flex' }, [
  					E([], pzones.map(function(zone) {
