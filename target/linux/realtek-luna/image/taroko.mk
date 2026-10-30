@@ -5,6 +5,8 @@
 # The V2802RH is a 4 MiB L2 bridge: LuCI keeps only the views and menus that
 # apply to one.
 define Image/Prepare
+	$(SHELL) $(TOPDIR)/target/linux/realtek-luna/taroko/v2802rh/luci/install.sh \
+		$(TARGET_DIR) $(TOPDIR)/feeds/luci
 	rm -f $(TARGET_DIR)/www/luci-static/resources/view/network/wireless.js \
 		$(TARGET_DIR)/www/luci-static/resources/view/network/dhcp.js \
 		$(TARGET_DIR)/www/luci-static/resources/view/network/dns.js \
