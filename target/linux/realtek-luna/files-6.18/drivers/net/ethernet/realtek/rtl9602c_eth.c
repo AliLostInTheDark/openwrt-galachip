@@ -469,6 +469,7 @@ struct rtl9602c_eth {
 	bool		port0_serdes;
 	bool		stock_switch;
 	struct delayed_work link_work;	/* once a second: the SerDes mirror, every jack's carrier */
+	u32		lan_drops[LAN_PORTS];	/* link losses, including those a poll would miss */
 	u32		gphy_sts[LAN_PORTS];	/* last logged GPHY link/speed/duplex, per port */
 
 	/* The external PHY's MDIO bus, bit-banged on two GPIOs as stock does it
@@ -3189,6 +3190,8 @@ static int rtl9602c_ethdump_show(struct seq_file *m, void *v)
 			for (p = 0; p < LAN_PORTS; p++) {
 				if (!ep->lan_ndev[p])
 					continue;
+				seq_printf(m, "link_drops %s: %u\n", ep->lan_ndev[p]->name,
+					   ep->lan_drops[p]);
 				seq_printf(m, "uni_rate %s: cached=%u down_raw=%u up_raw=%u hw_down_raw=%u hw_up_raw=%u\n",
 					   ep->lan_ndev[p]->name, ep->uni_rate[p].valid,
 					   ep->uni_rate[p].down, ep->uni_rate[p].up,
@@ -3734,6 +3737,22 @@ static void rtl9602c_gphy_link_poll(struct rtl9602c_eth *ep, unsigned int port)
 	u32 sts = ioread32(ep->sw + ep->swm->p_ablty + 4 * port) &
 		  (ABLTY_LINK | BIT(2) | BIT(5) | BIT(6) | 0x3);
 	bool up = sts & ABLTY_LINK;
+	u16 bmsr = BMSR_LSTATUS;
+
+	/* BMSR's link bit latches low until read: low with the link up on both
+	 * polls means it dropped and came back in between. */
+	mutex_lock(&rtl9602c_gphy_lock);
+	if (rtl9602c_gphy_read__locked(ep, port, MII_BMSR, &bmsr))
+		bmsr = BMSR_LSTATUS;
+	mutex_unlock(&rtl9602c_gphy_lock);
+	if (ep->lan_link[port].seen && ep->lan_link[port].up && !up)
+		ep->lan_drops[port]++;
+	else if (ep->lan_link[port].seen && ep->lan_link[port].up && up &&
+		 !(bmsr & BMSR_LSTATUS)) {
+		ep->lan_drops[port]++;
+		dev_info(ep->dev, "lan%u: link dropped and recovered within a second (%u drops)\n",
+			 port == 0 ? 2 : 1, ep->lan_drops[port]);
+	}
 
 	if (sts == ep->gphy_sts[port] && ep->lan_link[port].seen)
 		return;
