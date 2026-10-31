@@ -280,6 +280,7 @@ static DEFINE_SPINLOCK(luna_ploam_cap_lock);
 /* When the downstream PLOAM being handled landed: its record is timed from
  * arrival, as G.984.3's 750 us answer budget is. 0 outside a drain. */
 static u64 luna_ds_rx_ns;
+static u32 luna_fsm_gap_max_ms, luna_ds_latency_max_ms;	/* worst seen since boot */
 static u32 luna_ds_irqs, luna_ds_unsignalled, luna_ds_parks;	/* interrupts; drains the tick found unannounced; times the line went off */
 
 static void luna_ploam_capture(enum gpon_olt_dir dir, const u8 *m, unsigned int len)
@@ -5092,6 +5093,8 @@ static int luna_timing_show(struct seq_file *s, void *v)
 		   luna_marks.o5_ms, luna_marks.omci_ms, luna_marks.data_ms);
 	seq_printf(s, "ds_ploam irq=%u unsignalled=%u parked=%u\n", luna_ds_irqs, luna_ds_unsignalled,
 		   luna_ds_parks);
+	seq_printf(s, "fsm_tick_gap_max_ms %u\nds_ploam_latency_max_ms %u\n",
+		   luna_fsm_gap_max_ms, luna_ds_latency_max_ms);
 	seq_printf(s, "omci_turnaround_us n=%u max=%u sum=%llu\nomci_turnaround_ring",
 		   t->lat.n, t->lat.max_us, t->lat.sum_us);
 	for (i = 0; i < n; i++)
@@ -5964,6 +5967,20 @@ static void luna_diag(const char *fmt, u32 a, u32 b)
 }
 
 /*
+ * Whether the ONU itself was held up: PLOAM and the FSM run at bottom-half
+ * priority, so only interrupts or bottom halves held off can delay them this
+ * far. Late activation without these lines points at the OLT instead.
+ */
+#define LUNA_DIAG_LATE_MS	100
+
+static void luna_diag_late(const char *fmt, u32 ms, u32 *max)
+{
+	*max = max(*max, ms);
+	if (ms >= LUNA_DIAG_LATE_MS)
+		luna_diag(fmt, ms, READ_ONCE(gpon_fsm_state));
+}
+
+/*
  * The downstream BIP and FEC counters clear on read. REI and the OMCI
  * telemetry both want them, so every read is folded into totals since boot
  * and each consumer takes what it needs from those.
@@ -6640,6 +6657,9 @@ static void luna_ds_ploam_drain(bool from_irq)
 	}
 	luna_ds_carry_ns = 0;
 	luna_ds_waited = false;
+	luna_diag_late("ONU: PLOAM read %u ms after its interrupt, in O%u",
+		       div_u64(ktime_get_boottime_ns() - arrival, NSEC_PER_MSEC),
+		       &luna_ds_latency_max_ms);
 	while (!(gpon_rd(GPON_GTC_DS_PLOAM_IND) & GPON_DS_PLM_BUF_EMPTY)) {
 		u8 m[13];
 
@@ -6733,7 +6753,15 @@ static void luna_gpon_irq_request(void)
 
 static void gpon_fsm_poll(struct timer_list *t)
 {
+	static u64 prev_ns;
+	u64 now_ns = ktime_get_boottime_ns();
+
 	spin_lock(&luna_fsm_lock);
+	if (prev_ns)
+		luna_diag_late("ONU: FSM ticks %u ms apart, in O%u",
+			       div_u64(now_ns - prev_ns, NSEC_PER_MSEC),
+			       &luna_fsm_gap_max_ms);
+	prev_ns = now_ns;
 	gpon_fsm_ticks++;
 	if (!luna_fsm_first_ms)
 		luna_fsm_first_ms = luna_now_ms();

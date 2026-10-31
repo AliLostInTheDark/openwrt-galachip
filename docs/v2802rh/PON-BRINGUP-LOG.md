@@ -109,3 +109,12 @@ FEC showed off for five minutes after boot, whatever the O5 time (first seen on
 at 300.1 s with O5 at 41 s, 300.0 s with O5 at 27 s). The driver's once-a-second
 PM tick compared jiffies with a zero start value, so it did not run until jiffies
 wrapped at 300 s. FEC status and codeword counts now start at O5.
+
+Two first boots after flashing got `Deactivate_ONU-ID` right after Ranging_Time
+(3 and 1), and one did not. The boot with one spent 2.36 s in O4 against the
+usual 1.16 s, and re-ranged in 2.5 s. The cause is not settled: the NOR driver
+sleeps while waiting and PLOAM runs at bottom-half priority, so flash work should
+not delay it, and the OLT sends in bursts, so messages in one millisecond prove
+nothing. To separate the two, dmesg now reports `ONU: FSM ticks N ms apart` and
+`ONU: PLOAM read N ms after its interrupt` from 100 ms, with the worst of each
+in `/proc/gpon_timing`. A slow O4 without those lines points at the OLT.
