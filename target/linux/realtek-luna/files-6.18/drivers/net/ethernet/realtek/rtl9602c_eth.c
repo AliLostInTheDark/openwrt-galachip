@@ -36,7 +36,7 @@
 #include "gpon_hwaddr.h"	/* the ONE station-address ladder (drivers/net/gpon) */
 
 /* US-OMCI TX tuning knobs (see rtl9602c_eth_omci_xmit) */
-static unsigned int omci_sid_idx = 4;	/* PON_SID one-hot shift (word3[28:23]); 4 = SID-64 classify slot (RX_SID group [4]) */
+static const unsigned int omci_sid_idx = 4;	/* PON_SID one-hot shift (word3[28:23]); 4 = SID-64 classify slot (RX_SID group [4]) */
 /* One netdev per LAN jack (the DT ethernet-ports node): the switch tells the
  * CPU which port a frame came in on (the RX descriptor's source port), and
  * this is how a frame the CPU sends reaches ONE jack. The switch's own
@@ -78,92 +78,39 @@ MODULE_PARM_DESC(lan_tx_steer,
 #define SW_LAN_STEER_VID(port)	(SW_LAN_STEER_VID_BASE + (port))
 #define LAN_PORTS		2u	/* jacks a board may declare: switch ports 0..1 */
 
-module_param(omci_sid_idx, uint, 0644);
-MODULE_PARM_DESC(omci_sid_idx, "US-OMCI PON_SID one-hot shift count (default 4 = SID-64 classify slot)");
 
 /* ExtSpa / PON port (word3[22:16] = (port&0x7F)<<16). */
-static unsigned int omci_pon_port = 2;	/* ExtSpa / PON port (word3[22:16]) = our PON switch port */
-module_param(omci_pon_port, uint, 0644);
-MODULE_PARM_DESC(omci_pon_port, "US-OMCI PON port / ExtSpa (default 2 = PON switch port)");
+static const unsigned int omci_pon_port = 2;	/* ExtSpa / PON port (word3[22:16]) = our PON switch port */
 
 /* DEV sweep: raw descriptor overrides. 0 = use the computed value. Lets us sweep
  * the runtime-unknown opts fields (gmac_id[19:18], extspa[15:13], portmask) live at
  * O5 (echo to the param) without a rebuild, watching RX_SID_GOOD_CNT_US. */
-static unsigned int omci_word2_ovr;
-module_param(omci_word2_ovr, uint, 0644);
-static unsigned int omci_word3_ovr;
-module_param(omci_word3_ovr, uint, 0644);
-static unsigned int omci_minimal;	/* TEST: 1 = LAN-identical desc (no word0 keep/dislrn/psel, opts2/3=0) to isolate the GMAC TX halt-after-~3 */
-module_param(omci_minimal, uint, 0644);
+static const unsigned int omci_word2_ovr;
+static const unsigned int omci_word3_ovr;
 
 /* HW ring for the US-OMCI descriptor ring */
-static unsigned int omci_tx_ring = 0;	/* 0 = LAN ring (GMAC FETCHES it; ring 4 dedicated does NOT fetch — dirty stays 0); 4 = dedicated */	/* dedicated HW-descriptor TX ring (opts3 carries the SID). The ring0 SW 0x8899-tag path only works on the FPGA model — on real silicon the L2 switch strips the inline tag so US OMCI never reaches the US-NIC; the HW descriptor (word3=0x00b20040, DST_SID 64) is the only path that classifies to SID-64 group[4]. */
-module_param(omci_tx_ring, uint, 0644);
-MODULE_PARM_DESC(omci_tx_ring, "US-OMCI HW TX ring: 0=shared LAN ring0 (test default), 1..5=dedicated ring");
+static const unsigned int omci_tx_ring = 0;	/* 0 = LAN ring (GMAC FETCHES it; ring 4 dedicated does NOT fetch — dirty stays 0); 4 = dedicated */	/* dedicated HW-descriptor TX ring (opts3 carries the SID). The ring0 SW 0x8899-tag path only works on the FPGA model — on real silicon the L2 switch strips the inline tag so US OMCI never reaches the US-NIC; the HW descriptor (word3=0x00b20040, DST_SID 64) is the only path that classifies to SID-64 group[4]. */
 
 /* Doorbell override. 0xff = "auto": compute the kick from the SAME HW ring used
  * to arm TxFDP (h<4 -> R_IO_CMD bit h; h==4 -> R_IO_CMD1 |= 0x100). Any other
  * value forces an explicit R_IO_CMD bit number (debug only). */
-static unsigned int omci_doorbell_bit = 0xff;
-module_param(omci_doorbell_bit, uint, 0644);
-MODULE_PARM_DESC(omci_doorbell_bit,
-		 "US-OMCI doorbell override (0xff=auto from HW ring, default auto)");
+static const unsigned int omci_doorbell_bit = 0xff;
 
 /* GMAC bring-up mode. */
-static unsigned int gmac_reset = 1;	/* now safe to reset: rtl9602c_uboot_swcore_bringup() re-runs U-Boot's GMAC<->switch resync after the IP-block reset, breaking the old "reset kills egress" catch-22, and the stock GMAC init re-establishes the GMAC0-TX->US-NIC direct link */
-/* Same-board diff (stock-WORKING vs mine-BROKEN) SoC-ctrl bits 0x18000100[8]/0x18000104[2]
- * (stock sets, mine doesn't; candidate IP-mux/US-NIC clock/power). Default 1 (test); 0=off. */
-static unsigned int ipmux_soc = 1;
-module_param(ipmux_soc, uint, 0644);
-MODULE_PARM_DESC(ipmux_soc, "1=set the same-board-diff SoC-ctrl bits 0x18000100[8]/0x18000104[2] at reset");
-/* Same-board diff (stock vs mine) NETWORK-ENGINE / IP-mux bits: 0x18001000 bit19 (stock set, mine clear)
- * and 0x18001098 (stock=0x0004e123, mine=0x0018a123: clear bits19,20; set bits14,18). These were ONLY
- * live-poked before (in the cycling/false-negative state) — NEVER baked at init before the US-NIC latches.
- * The IP-mux is exactly where the cpu-tag US-OMCI frame vanishes (RX_OK=0), so bake them quiescent. */
-static unsigned int ipmux_neteng = 1;
-module_param(ipmux_neteng, uint, 0644);
-MODULE_PARM_DESC(ipmux_neteng, "1=bake same-board-diff network-engine IP-mux bits 0x18001000[19]/0x18001098 at reset");
-module_param(gmac_reset, uint, 0644);	/* sampled at open(): ifdown/ifup re-applies */
-MODULE_PARM_DESC(gmac_reset, "1=cold GMAC bring-up (IP-block reset + stock IO_CMD edge), 0=legacy inherited");
+static const unsigned int gmac_reset = 1;	/* now safe to reset: rtl9602c_uboot_swcore_bringup() re-runs U-Boot's GMAC<->switch resync after the IP-block reset, breaking the old "reset kills egress" catch-22, and the stock GMAC init re-establishes the GMAC0-TX->US-NIC direct link */
 
-/* TX-DMA stall watchdog */
-static unsigned int tx_recover;
-module_param(tx_recover, uint, 0644);
-MODULE_PARM_DESC(tx_recover, "1=escalate a persistent TX-DMA park to a full GMAC reset (kills switch egress on this board!)");
 
-/* The stock device pokes the network-engine GO (0x18001038[31] + poll-clear) on
- * EVERY submit, not just OMCI injects; mirror it on the LAN xmit path too. */
-static unsigned int txgo_xmit = 1;
-module_param(txgo_xmit, uint, 0644);
-MODULE_PARM_DESC(txgo_xmit, "1=stock per-packet TX GO handshake on the LAN xmit path too");
 
-/* Park-buster */
-static unsigned int tx_softrearm = 1;
-module_param(tx_softrearm, uint, 0644);
-MODULE_PARM_DESC(tx_softrearm, "1=re-arm TxFDP at the pending slot on every empty-ring publish (un-parks the drained fetch engine)");
 
-/* Un-park flavor for the soft re-arm */
-static unsigned int unpark_mode;	/* HW A/B 2026-06-11: mode 1 showed no
-					 * park-rate benefit (33/100s vs 60/150s)
-					 * and ran in the boot that hard-hung the
-					 * SoC; default to the proven plain mode */
-module_param(unpark_mode, uint, 0644);
-MODULE_PARM_DESC(unpark_mode, "soft re-arm flavor: 0=FDP re-point only, 1=+IO_CMD bit5 off/on edge");
 
 /* MSR (0x58) top byte. */
-static unsigned int msr_top = 0x10;
-module_param(msr_top, uint, 0644);
-MODULE_PARM_DESC(msr_top, "MSR(0x58) top byte (0x10=LAN-healthy w/ our init; 0xf0=stock value, stalls our LAN)");
+static const unsigned int msr_top = 0x10;
 
 /* SW_MAC_CPU_TAG_CTRL (0x23030) = 0x300 */
-static unsigned int sw_tagaware = 0x300;
-module_param(sw_tagaware, uint, 0644);
-MODULE_PARM_DESC(sw_tagaware, "SW MAC_CPU_TAG_CTRL at open (0x300=cpu-tag parse for US-OMCI, 0=plain-LAN-only)");
+static const unsigned int sw_tagaware = 0x300;
 
 /* Recovery flavor */
-static unsigned int recover_rst = 1;
-module_param(recover_rst, uint, 0644);
-MODULE_PARM_DESC(recover_rst, "1=CMD.RST soft-reset recovery instead of the IP-block power-cycle");
+static const unsigned int recover_rst = 1;
 
 /* GMAC register offsets (from the NIC base). */
 #define R_TxFDP1	0x1300	/* TX ring0 fetch-descriptor pointer (phys) */
@@ -590,12 +537,6 @@ static const struct rtl9602c_sds_reg lan_sds_hsgmii_analog[] = {
 #define RTL8221B_SDS_OPTION_SGMII	1
 #define RTL8221B_SDS_OPTION_HSGMII	3
 
-/* 0 leaves the SerDes and the PHY's option as the bootloader did (the
- * behaviour before 2026-10-27), for an A/B on the bench. */
-static unsigned int lan_sds = 1;
-module_param(lan_sds, uint, 0644);
-MODULE_PARM_DESC(lan_sds, "program the LAN SerDes and the 2.5G PHY's SerDes option as stock does and follow the copper speed (default 1; 0 = leave both to the bootloader)");
-
 static int ext_mdio_read_c45(struct rtl9602c_eth *ep, u8 dev, u16 reg);
 static void ext_mdio_write_c45(struct rtl9602c_eth *ep, u8 dev, u16 reg, u16 val);
 static int rtl9602c_lan_phy_read__locked(struct rtl9602c_eth *ep, unsigned int port, u8 reg);
@@ -725,11 +666,6 @@ static void rtl9602c_tx_align(struct rtl9602c_eth *ep)
 {
 	ep->tx_rot = ioread16(ep->base + R_TxCDO1) % TX_RING_SIZE;
 	ep->otx_rot = 0;
-	if (omci_tx_ring) {
-		unsigned int h = rtl9602c_omci_hwring(omci_tx_ring);
-
-		ep->otx_rot = ioread16(ep->base + R_TxCDO(h)) % OTX_RING_SIZE;
-	}
 	ep->dbg_rearm++;
 }
 
@@ -1155,22 +1091,9 @@ module_param(wan_mac_offset, uint, 0644);
 MODULE_PARM_DESC(wan_mac_offset, "WAN (gpon0) MAC = board/LAN MAC + this offset (default 3, this model)");
 
 /* OMCI MIB-Data-Sync (ME 2 attr 1) seed. */
-static unsigned int omci_mds_seed = OMCI_MDS_POISON_SEED;	/* 1..30: satisfies `rsync < 31` unconditionally, so the
+static const unsigned int omci_mds_seed = OMCI_MDS_POISON_SEED;	/* 1..30: satisfies `rsync < 31` unconditionally, so the
 					 * OLT provisions whatever it has stored. NOT 0 -- see above. */
-module_param(omci_mds_seed, uint, 0644);
-MODULE_PARM_DESC(omci_mds_seed, "OMCI ME2 MIB-Data-Sync boot seed (1..30 forces the OLT to re-provision: its gate takes rsync<31 as not-in-sync)");
-/* mds_reset0: on an on-wire MIB-Reset (MT 0x4f), zero */
-static bool mds_reset0 = true;
-module_param(mds_reset0, bool, 0644);
-MODULE_PARM_DESC(mds_reset0, "on MIB-Reset zero ME2 MIB-Data-Sync (G.988/stock, default) vs re-seed");
 
-/* THE MIB-DATA-SYNC SEED IS A GUESS, AND A GUESS CANNOT */
-static bool omci_mds_adapt = true;
-module_param(omci_mds_adapt, bool, 0644);
-MODULE_PARM_DESC(omci_mds_adapt, "walk the reported ME2 MIB-Data-Sync when the OLT reads but never provisions (default on)");
-static unsigned int omci_mds_adapt_reads = 12;
-module_param(omci_mds_adapt_reads, uint, 0644);
-MODULE_PARM_DESC(omci_mds_adapt_reads, "DS OMCI reads with no provisioning before the MIB-Data-Sync is advanced");
 
 /* The MDS walk's step is the CORE's */
 static void rtl9602c_wan_mac(u8 *out, const u8 *base)
@@ -1292,8 +1215,7 @@ static void txd_publish(struct rtl9602c_eth *ep, unsigned int i, u32 word0,
 	wmb();
 	ep->tx_head++;
 	/* THE SAME KNOB AS THE LAN PATH, AND IT WAS ONLY ON ONE */
-	if (txgo_xmit || !may_skip_go)
-		rtl9602c_eth_tx_fetch(ep);	/* stock per-packet TX-fetch GO (0x18001038[31]) */
+	rtl9602c_eth_tx_fetch(ep);	/* stock per-packet TX-fetch GO (0x18001038[31]) */
 	ep_wr(ep, R_IO_CMD, ep_rd(ep, R_IO_CMD) | BIT(0));	/* kick LAN ring 0 */
 }
 
@@ -1376,13 +1298,6 @@ static int rtl9602c_eth_omci_xmit_ring0(struct rtl9602c_eth *ep, const u8 *omci,
 	ep->tx_ring[i].opts3 = rtl9602c_omci_txd_word3(omci_word3_ovr,
 						       RTL9602C_OMCC_SID);
 	ep->tx_ring[i].opts4 = 0;
-	if (omci_minimal) {	/* TEST: descriptor IDENTICAL to the draining LAN path (no keep/dislrn/psel, no cpu-tag) */
-		word0 = D_FS | D_LS | D_TXCRC | (len & TXD_LEN_MASK);
-		if (i == tx_eor_slot(ep))
-			word0 |= D_EOR;
-		ep->tx_ring[i].opts2 = 0;
-		ep->tx_ring[i].opts3 = 0;
-	}
 	/* Recorded BEFORE the publish, not after it as this used to be: it is a
 	 * diagnostic, and naming the slot while it is still ours is the half that
 	 * can never describe a descriptor the engine has already eaten. */
@@ -1579,8 +1494,7 @@ static int rtl9602c_eth_omci_xmit(struct rtl9602c_eth *ep, const u8 *omci,
 	 * ring 0 with the OMCI steering descriptor (isolates steering from the
 	 * "ring 4 won't fetch" problem). All ring instances 1..5 use the dedicated
 	 * ring below. */
-	if (omci_tx_ring == 0)
-		return rtl9602c_eth_omci_xmit_ring0(ep, omci, len);
+	return rtl9602c_eth_omci_xmit_ring0(ep, omci, len);
 	/* omci_tx_ring is the HW ring h directly — the SAME h used to arm R_TxFDP(h)
 	 * in open(). Derive the doorbell from h so they can never disagree (the prior
 	 * bug: ring armed at h=4/0x1340 but kicked R_IO_CMD bit0 = h=0). Stock kick
@@ -1652,13 +1566,6 @@ static int rtl9602c_eth_omci_xmit(struct rtl9602c_eth *ep, const u8 *omci,
 	word3 = rtl9602c_omci_txd_word3(omci_word3_ovr,
 					RTL9602C_OMCC_SID);	/* 9602C: pmask[28:23]|SID[22:16] */
 
-	if (omci_minimal) {	/* TEST: descriptor IDENTICAL to the draining LAN path */
-		word0 = D_FS | D_LS | D_TXCRC | (len & TXD_LEN_MASK);
-		if (i == otx_eor_slot(ep))
-			word0 |= D_EOR;
-		word2 = 0;
-		word3 = 0;
-	}
 	ep->otx_ring[i].opts2 = word2;		/* body first */
 	ep->otx_ring[i].opts3 = word3;
 	ep->otx_ring[i].opts4 = 0;
@@ -1907,23 +1814,9 @@ static void rtl9602c_eth_tx_rekick(struct rtl9602c_eth *ep)
 		parked = true;
 		ep_wr(ep, R_IO_CMD, ep_rd(ep, R_IO_CMD) | BIT(0));
 	}
-	if (omci_tx_ring && ep->otx_head != ep->otx_dirty &&
-	    (ep->otx_ring[otx_slot(ep, ep->otx_dirty)].opts1 & D_OWN)) {
-		unsigned int h;
-		u32 dmask;
-
-		parked = true;
-		/* 0xff = the stock derivation: the re-kick deliberately keeps
-		 * ignoring the omci_doorbell_bit debug override, exactly as
-		 * before the hoist (only the xmit-time kick honours it). */
-		if (rtl9602c_omci_doorbell(omci_tx_ring, 0xff, &h, &dmask))
-			ep_wr(ep, R_IO_CMD1, ep_rd(ep, R_IO_CMD1) | dmask);
-		else
-			ep_wr(ep, R_IO_CMD, ep_rd(ep, R_IO_CMD) | dmask);
-	}
 
 	/* Park watchdog. */
-	if ((!tx_recover && !tx_softrearm) || ep->closing) {
+	if (ep->closing) {
 		ep->stall_since = 0;
 	} else if (!parked) {
 		ep->stall_since = 0;
@@ -1936,13 +1829,6 @@ static void rtl9602c_eth_tx_rekick(struct rtl9602c_eth *ep)
 		ep->stall_lastdirty = ep->tx_dirty + ep->otx_dirty;
 	} else if (time_after(jiffies,
 			      ep->stall_since + msecs_to_jiffies(60))) {
-		if (tx_recover) {
-			/* Level 1: full GMAC reset + reprogram (CMD.RST by
-			 * default; BSP_IP_SEL power-cycle if recover_rst=0). */
-			ep->stall_since = 0;
-			ep->stall_level = 0;
-			schedule_work(&ep->recover_work);
-		}
 	}
 }
 
@@ -2179,10 +2065,6 @@ static void rtl9602c_hw_program(struct rtl9602c_eth *ep)
 	 * writable only in this stopped state). */
 	ep_wr(ep, R_TxFDP1, ep->tx_ring_dma | DMA_BUS_WINDOW);
 	iowrite16(0, ep->base + R_TxCDO1);
-	if (omci_tx_ring != 0) {
-		ep_wr(ep, R_TxFDP(oring), ep->otx_ring_dma | DMA_BUS_WINDOW);
-		iowrite16(0, ep->base + R_TxCDO(oring));
-	}
 	for (k = 1; k <= 4; k++) {	/* idle dummy on the unused HW rings */
 		if (k == oring)
 			continue;
@@ -2590,18 +2472,9 @@ static int rtl9602c_uboot_swcore_bringup(struct rtl9602c_eth *ep)
 	iowrite32(0x00000196, ep->sw + SW_FORCE_P_ABLTY(ep, ep->swm->cpu_port));
 	iowrite32(0x00000fff, ep->sw + SW_ABLTY_FORCE_MODE(ep, ep->swm->cpu_port));
 	if (ep->port0_serdes) {
-		if (lan_sds) {
-			/* SGMII first, the mode the PHY was given at probe; the
-			 * link poll moves both to HSGMII behind a 2.5G link. */
-			rtl9602c_lan_sds_program(ep, ep->lan_sds_hsgmii);
-		} else {
-			u32 v = SW_ABLTY_SERDES_UP & ~ep->port0_pause_off;
-
-			if (rtl9602c_uni_port_locked(0))
-				v &= ~ABLTY_LINK;
-			iowrite32(v, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
-			iowrite32(0xfff, ep->sw + SW_ABLTY_FORCE_MODE(ep, 0));
-		}
+		/* SGMII first, the mode the PHY was given at probe; the
+		 * link poll moves both to HSGMII behind a 2.5G link. */
+		rtl9602c_lan_sds_program(ep, ep->lan_sds_hsgmii);
 	}
 	iowrite32(0x00012bbd, ep->sw + SW_METER_TB_CTRL);	/* meter tick-token */
 	iowrite32(0,          ep->sw + SW_VLAN_CTRL);	/* VLAN function disable */
@@ -2630,52 +2503,43 @@ static int rtl9602c_eth_hw_start(struct rtl9602c_eth *ep)
 	ep->stall_since = 0;
 
 	/* THE FULL SWITCH BRING-UP IS A ONE-TIME COST, NOT A */
-	if (gmac_reset) {
-		/* Stock-faithful cold start (the TX-park fix) */
-		rtl9602c_hw_stop(ep);
-		rtl9602c_ipsel_cycle();
-		/* re-establish the GMAC<->switch sync the reset tore down (the
-		 * catch-22 breaker) -- and it is the FABRIC, so a failure is not
-		 * something to carry on past. */
-		ret = rtl9602c_uboot_swcore_bringup(ep);
-		if (ret)
-			goto fail;
-		/* Faithful full stock-equivalent datapath init, in */
-		rtl9602c_datapath_tables_init();
-		rtl9602c_hw_program(ep);
-		rtl9602c_tx_align(ep);	/* fresh engine: CDO=0 -> rot 0 */
-		/* SAME-BOARD DIFF FIX (stock-WORKING vs ours-BROKEN) */
-		if (ipmux_soc) {
-			void __iomem *s100 = (void __iomem *)0xb8000100ul;
-			void __iomem *s104 = (void __iomem *)0xb8000104ul;
-			writel(readl(s100) | BIT(8), s100);	/* 0x18000100 bit8 -> stock */
-			writel(readl(s104) | BIT(2), s104);	/* 0x18000104 bit2 -> stock */
-		}
-		if (ipmux_neteng) {
-			/* network-engine / IP-mux page 0x18001000 (KSEG1 0xb8001000). RMW the exact
-			 * same-board-diff bits to stock-WORKING values (don't clobber dynamic bits):
-			 *   0x18001000: set bit19 (stock 0x10281e6f vs mine 0x10201e6f)
-			 *   0x18001098: clear bits19,20; set bits14,18 (stock 0x0004e123 vs mine 0x0018a123) */
-			void __iomem *n000 = (void __iomem *)0xb8001000ul;
-			void __iomem *n098 = (void __iomem *)0xb8001098ul;
-			writel(readl(n000) | BIT(19), n000);
-			writel((readl(n098) & ~(BIT(19) | BIT(20))) | BIT(14) | BIT(18), n098);
-		}
-		/* Re-establish the FULL PON US/DS-NIC datapath against */
-		gpon_pbo_init();
-		/* Once per boot: ndo_stop never takes this down. sec 96. */
-		goto hw_ready;
+	/* Stock-faithful cold start (the TX-park fix) */
+	rtl9602c_hw_stop(ep);
+	rtl9602c_ipsel_cycle();
+	/* re-establish the GMAC<->switch sync the reset tore down (the
+	 * catch-22 breaker) -- and it is the FABRIC, so a failure is not
+	 * something to carry on past. */
+	ret = rtl9602c_uboot_swcore_bringup(ep);
+	if (ret)
+		goto fail;
+	/* Faithful full stock-equivalent datapath init, in */
+	rtl9602c_datapath_tables_init();
+	rtl9602c_hw_program(ep);
+	rtl9602c_tx_align(ep);	/* fresh engine: CDO=0 -> rot 0 */
+	/* SAME-BOARD DIFF FIX (stock-WORKING vs ours-BROKEN) */
+	{
+		void __iomem *s100 = (void __iomem *)0xb8000100ul;
+		void __iomem *s104 = (void __iomem *)0xb8000104ul;
+		writel(readl(s100) | BIT(8), s100);	/* 0x18000100 bit8 -> stock */
+		writel(readl(s104) | BIT(2), s104);	/* 0x18000104 bit2 -> stock */
+	
 	}
+	/* network-engine / IP-mux page 0x18001000 (KSEG1 0xb8001000). RMW the exact
+	 * same-board-diff bits to stock-WORKING values (don't clobber dynamic bits):
+	 *   0x18001000: set bit19 (stock 0x10281e6f vs mine 0x10201e6f)
+	 *   0x18001098: clear bits19,20; set bits14,18 (stock 0x0004e123 vs mine 0x0018a123) */
+	void __iomem *n000 = (void __iomem *)0xb8001000ul;
+	void __iomem *n098 = (void __iomem *)0xb8001098ul;
+	writel(readl(n000) | BIT(19), n000);
+	writel((readl(n098) & ~(BIT(19) | BIT(20))) | BIT(14) | BIT(18), n098);
+	/* Re-establish the FULL PON US/DS-NIC datapath against */
+	gpon_pbo_init();
+	/* Once per boot: ndo_stop never takes this down. sec 96. */
+	goto hw_ready;
 
 	/* Program the ring pointers. */
 	ep_wr(ep, R_TxFDP1, ep->tx_ring_dma | DMA_BUS_WINDOW);
 	/* TxCDO is NOT writable on the live inherited engine */
-	if (omci_tx_ring != 0) {
-		unsigned int oring = rtl9602c_omci_hwring(omci_tx_ring);
-
-		ep_wr(ep, R_TxFDP(oring), ep->otx_ring_dma | DMA_BUS_WINDOW);
-		/* NOTE: a TX ring needs ONLY its TxFDP armed + the */
-	}
 	/* Arm the UNUSED HW TX rings */
 	{
 		unsigned int k, oring = rtl9602c_omci_hwring(omci_tx_ring);
@@ -2910,8 +2774,7 @@ static netdev_tx_t rtl9602c_eth_lan_submit(struct rtl9602c_eth *ep,
 	wmb();
 
 	ep->tx_head++;
-	if (txgo_xmit)
-		rtl9602c_eth_tx_fetch(ep);	/* stock GO handshake on every submit */
+	rtl9602c_eth_tx_fetch(ep);	/* stock GO handshake on every submit */
 	ep_wr(ep, R_IO_CMD, ep_rd(ep, R_IO_CMD) | BIT(0));	/* kick ring 0 */
 	spin_unlock_irqrestore(&ep->tx_lock, flags);
 
@@ -3624,51 +3487,22 @@ static int rtl9602c_ethdump_show(struct seq_file *m, void *v)
 		seq_printf(m, "omci_rx_drop: bad_mic=%u runt=%u\n", bad_mic, runt);
 	}
 	{
-		unsigned int oring;
-		u32 dmask;
 		/* Same flowcore derivation as the xmit kick, so the diag can
 		 * never disagree with the doorbell actually used. */
-		bool dk1 = rtl9602c_omci_doorbell(omci_tx_ring, omci_doorbell_bit,
-						  &oring, &dmask);
 
-		if (omci_tx_ring == 0) {
-			/* Shared-ring-0 OMCI test path */
-			int own_omci = -1;
-			int slot = ep->omci_r0_last_slot;
+		/* Shared-ring-0 OMCI test path */
+		int own_omci = -1;
+		int slot = ep->omci_r0_last_slot;
 
-			if (ep->tx_ring && slot >= 0 && slot < TX_RING_SIZE)
-				own_omci = !!(ep->tx_ring[slot].opts1 & D_OWN);
+		if (ep->tx_ring && slot >= 0 && slot < TX_RING_SIZE)
+			own_omci = !!(ep->tx_ring[slot].opts1 & D_OWN);
 
-			seq_printf(m,
-				"omci_txring: PATH=shared-LAN-ring0 sid_idx=%u pon=%u doorbell=R_IO_CMD bit0  LANring head=%u dirty=%u  omci_slot=%d own[omci_slot]=%d  TxFDP1=%08x lanRingDMA=%08x IO_CMD=%08x\n",
-				omci_sid_idx, omci_pon_port,
-				ep->tx_head, ep->tx_dirty, slot, own_omci,
-				ep_rd(ep, R_TxFDP1), (u32)ep->tx_ring_dma,
-				ep_rd(ep, R_IO_CMD));
-		} else {
-			/* Dedicated-ring path. OWN-bit */
-			int own_hm1 = -1, own_d = -1;
-			/* IO_CMD1 bit(16+h) is the RX multiring bitmap (NOT a TX-fetch
-			 * enable); reported only as an info bit, it does not gate TX. */
-			unsigned int en_mask = 1u << (16 + oring);
-
-			if (ep->otx_ring && ep->otx_head != ep->otx_dirty) {
-				unsigned int hm1 = otx_slot(ep, ep->otx_head - 1);
-				unsigned int di  = otx_slot(ep, ep->otx_dirty);
-
-				own_hm1 = !!(ep->otx_ring[hm1].opts1 & D_OWN);
-				own_d   = !!(ep->otx_ring[di].opts1  & D_OWN);
-			}
-
-			seq_printf(m,
-				"omci_txring: PATH=dedicated hwring=%u sid_idx=%u pon=%u doorbell=%s head=%u dirty=%u own[h-1]=%d own[d]=%d TxFDP%u=%08x ringDMA=%08x rxmring(IO_CMD1 bit%u)=%u\n",
-				oring, omci_sid_idx, omci_pon_port,
-				(omci_doorbell_bit != 0xff) ? "R_IO_CMD(forced)" :
-					(dk1 ? "R_IO_CMD1|0x100" : "R_IO_CMD bit h"),
-				ep->otx_head, ep->otx_dirty, own_hm1, own_d, oring,
-				ep_rd(ep, R_TxFDP(oring)), (u32)ep->otx_ring_dma,
-				16 + oring, !!(ep_rd(ep, R_IO_CMD1) & en_mask));
-		}
+		seq_printf(m,
+			"omci_txring: PATH=shared-LAN-ring0 sid_idx=%u pon=%u doorbell=R_IO_CMD bit0  LANring head=%u dirty=%u  omci_slot=%d own[omci_slot]=%d  TxFDP1=%08x lanRingDMA=%08x IO_CMD=%08x\n",
+			omci_sid_idx, omci_pon_port,
+			ep->tx_head, ep->tx_dirty, slot, own_omci,
+			ep_rd(ep, R_TxFDP1), (u32)ep->tx_ring_dma,
+			ep_rd(ep, R_IO_CMD));
 	}
 	seq_printf(m, "rxring: HW-owned(D_OWN=1)=%u  CPU-owned(filled)=%u\n",
 		   own, hwfilled);
@@ -3686,7 +3520,7 @@ static int rtl9602c_ethdump_show(struct seq_file *m, void *v)
 		}
 		/* soc mode: 02 SGMII, 12 HSGMII, 1f off; phy mode: 02 SGMII, 12 HSGMII, 16 2500BASE-X */
 		seq_printf(m, "lan2 serdes: lan_sds=%u set=%u soc 0x214=%08x (%s) force_ablty=%08x phy 0x697a=%04x (wrote %u) 0x7580=%04x\n",
-			   lan_sds, ep->lan_sds_set, ioread32(ep->sw + SW_LAN_SDS_MODE),
+			   1, ep->lan_sds_set, ioread32(ep->sw + SW_LAN_SDS_MODE),
 			   ep->lan_sds_hsgmii ? "hsgmii" : "sgmii",
 			   ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, 0)), opt, ep->ext_phy_option, mode);
 	}
@@ -3716,7 +3550,7 @@ static int rtl9602c_ethdump_show(struct seq_file *m, void *v)
 		   ioread16(ep->base + R_TxCDO(2)), ioread16(ep->base + R_TxCDO(3)),
 		   ioread16(ep->base + R_TxCDO(4)), ep->tx_rot, ep->otx_rot,
 		   ep->stall_since ? jiffies_to_msecs(jiffies - ep->stall_since) : 0,
-		   ep->dbg_rearm, ep->dbg_tx_recover, gmac_reset);
+		   ep->dbg_rearm, ep->dbg_tx_recover, 1);
 	seq_printf(m, "GMAC RCR=%08x TCR=%08x CONFIG=%08x CPUTAGCR=%08x\n",
 		   ep_rd(ep, R_RCR), ep_rd(ep, R_TCR), ep_rd(ep, R_CONFIG),
 		   ep_rd(ep, R_CPUTAGCR));
@@ -4272,7 +4106,7 @@ static int rtl9602c_ext_phy_init(struct rtl9602c_eth *ep)
 		return 0;
 
 	/* The SoC side starts in SGMII (rtl9602c_uboot_swcore_bringup). */
-	if (rtl9602c_ext_phy_setup(ep, lan_sds ? RTL8221B_SDS_OPTION_SGMII : 0))
+	if (rtl9602c_ext_phy_setup(ep, RTL8221B_SDS_OPTION_SGMII))
 		dev_warn(dev, "[PHY-015] RTL8221B SerDes setup pending; link polling will retry\n");
 	return 0;
 }
@@ -4413,9 +4247,9 @@ static void rtl9602c_port0_link_poll(struct rtl9602c_eth *ep)
 	}
 	if (up)
 		speed = rtl9602c_port0_speed(ep, &full);
-	if (lan_sds && !ep->lan_sds_set) {
+	if (!ep->lan_sds_set) {
 		up = false;
-	} else if (lan_sds) {
+	} else {
 		bool hsgmii = ep->ext_phy_target == RTL8221B_SDS_OPTION_HSGMII;
 		unsigned int option;
 
@@ -4444,7 +4278,7 @@ static void rtl9602c_port0_link_poll(struct rtl9602c_eth *ep)
 			up = false;
 		}
 	}
-	if (lan_sds && speed == SPEED_UNKNOWN && !ep->lan_link[0].up)
+	if (speed == SPEED_UNKNOWN && !ep->lan_link[0].up)
 		up = false;
 	link = up && !rtl9602c_uni_port_locked(0);
 	if (!link)
