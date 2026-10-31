@@ -56,6 +56,10 @@ return baseclass.extend({
 		return L.resource('v2802rh/pon_%s.svg').format(dev.getCarrier() ? 'up' : 'down');
 	},
 
+	type: function(dev) {
+		return dev && dev.getName() == 'pon0' ? _('Fiber Optic Port') : null;
+	},
+
 	capacity: function(dev) {
 		if (dev.getName() != 'eth0')
 			return null;

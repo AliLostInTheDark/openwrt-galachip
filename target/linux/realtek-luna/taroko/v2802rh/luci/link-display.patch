@@ -8,7 +8,7 @@
  'require firewall';
  'require tools.widgets as widgets';
  'require tools.network as nettools';
-@@ -65,11 +66,11 @@
+@@ -65,14 +66,14 @@
  	    up   = dev ? dev.isUp() : false;
  
  	return E('span', { class: 'cbi-tooltip-container' }, [
@@ -21,7 +21,29 @@
 +			E('img', { 'src': ponLink.icon(dev) || L.resource('icons/%s%s.svg').format(
  				type, up ? '' : '_disabled') }),
  			L.itemlist(E('span', { 'class': 'left' }), [
- 				_('Type'),      dev ? dev.getTypeI18n() : null,
+-				_('Type'),      dev ? dev.getTypeI18n() : null,
++				_('Type'),      dev ? ponLink.type(dev) || dev.getTypeI18n() : null,
+ 				_('Device'),    dev ? dev.getName() : _('Not present'),
+ 				_('Connected'), up ? _('yes') : _('no'),
+ 				_('MAC'),       dev ? dev.getMAC() : null,
+@@ -137,7 +138,7 @@
+ 	dom.content(node, [
+ 		E('img', {
+ 			'src': L.resource('icons/%s%s.svg').format(dev ? dev.getType() : 'ethernet', ifc && ifc.isUp() ? '' : '_disabled'),
+-			'title': dev ? dev.getTypeI18n() : _('Not present')
++			'title': dev ? ponLink.type(dev) || dev.getTypeI18n() : _('Not present')
+ 		}),
+ 		ifc ? render_status(E('span'), ifc, true) : E('em', _('Interface not present or not connected yet.'))
+ 	]);
+@@ -331,7 +332,7 @@
+ 				dom.content(stat, [
+ 					E('img', {
+ 						'src': L.resource('icons/%s%s.svg').format(dev ? dev.getType() : 'ethernet', ifc.isUp() ? '' : '_disabled'),
+-						'title': dev ? dev.getTypeI18n() : _('Not present')
++						'title': dev ? ponLink.type(dev) || dev.getTypeI18n() : _('Not present')
+ 					}),
+ 					render_status(E('span'), ifc, true)
+ 				]);
 @@ -380,7 +381,8 @@
  			network.getDevices(),
  			fs.lines('/etc/iproute2/rt_tables'),
