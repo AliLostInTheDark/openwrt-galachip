@@ -98,6 +98,7 @@ static struct {
 	bool (*uni_link)(void *, unsigned int);
 	int (*uni_rate)(void *, unsigned int, u32, u32);
 	int (*uni_l2)(void *, unsigned int, u32, u32, u32);
+	int (*uni_autodetect)(void *, unsigned int, u8);
 	struct mutex lock;
 	struct luna_xpon_tcont tcont[LUNA_XPON_TCONTS];
 	struct luna_xpon_gem gem[LUNA_XPON_GEMS];
@@ -933,8 +934,9 @@ static int luna_xpon_set_uni(struct omci_device *odev, u16 entity, bool enable)
 	return luna_xpon.uni_admin_set(luna_xpon.cookie, port, !enable);
 }
 
-/* The switch has no per-port control for the other attributes. Refusing them
- * would fail the OLT's write and lose the rate, so they are only reported. */
+/* The driver has no control for pause time. Refusing it, or an auto-detection
+ * mode the port cannot do, would fail the OLT's write and lose the rate, so
+ * they are only reported. */
 static int luna_xpon_set_uni_attrs(struct omci_device *odev, u16 entity,
 				   const struct omci_uni_attrs *a)
 {
@@ -945,11 +947,15 @@ static int luna_xpon_set_uni_attrs(struct omci_device *odev, u16 entity,
 				   a->learn_limit, a->max_frame_size))
 		pr_warn_ratelimited("luna-xpon: UNI %#x: ageing, learn limit or max frame not applied\n",
 				    entity);
-	if (a->pause_quanta || a->auto_detection ||
+	if (port >= 0 && luna_xpon.uni_autodetect &&
+	    luna_xpon.uni_autodetect(luna_xpon.cookie, port, a->auto_detection))
+		pr_warn_ratelimited("luna-xpon: UNI %#x: auto-detection %#x not applied\n",
+				    entity, a->auto_detection);
+	if (a->pause_quanta ||
 	    (!l2 && (a->ageing_s || a->learn_limit || a->max_frame_size)))
-		pr_info("luna-xpon: UNI %#x: not applied: pause %u, ageing %u s, learn limit %u, auto-detection %u, max frame %u\n",
+		pr_info("luna-xpon: UNI %#x: not applied: pause %u, ageing %u s, learn limit %u, max frame %u\n",
 			entity, a->pause_quanta, a->ageing_s, a->learn_limit,
-			a->auto_detection, a->max_frame_size);
+			a->max_frame_size);
 	if (port < 0 || !luna_xpon.uni_rate)
 		return a->down_kbps || a->up_kbps ? -EOPNOTSUPP : 0;
 	return luna_xpon.uni_rate(luna_xpon.cookie, port, a->down_kbps,
@@ -2117,6 +2123,7 @@ int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 		     bool (*uni_link)(void *, unsigned int),
 		     int (*uni_rate)(void *, unsigned int, u32, u32),
 		     int (*uni_l2)(void *, unsigned int, u32, u32, u32),
+		     int (*uni_autodetect)(void *, unsigned int, u8),
 		     struct led_classdev *pon_led, struct led_classdev *los_led)
 {
 	struct xpon_device_desc desc = {
@@ -2145,6 +2152,7 @@ int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 	luna_xpon.uni_link = uni_link;
 	luna_xpon.uni_rate = uni_rate;
 	luna_xpon.uni_l2 = uni_l2;
+	luna_xpon.uni_autodetect = uni_autodetect;
 	luna_xpon_load_unis();
 	netif_carrier_off(wan);
 

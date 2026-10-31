@@ -58,6 +58,7 @@ int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 		     bool (*uni_link)(void *, unsigned int),
 		     int (*uni_rate)(void *, unsigned int, u32, u32),
 		     int (*uni_l2)(void *, unsigned int, u32, u32, u32),
+		     int (*uni_autodetect)(void *, unsigned int, u8),
 		     struct led_classdev *pon_led, struct led_classdev *los_led);
 void luna_xpon_detach(void *cookie);
 void luna_xpon_omci_rx(const u8 *msg, unsigned int len);
@@ -81,6 +82,7 @@ static inline int luna_xpon_attach(struct device *dev, struct net_device *wan,
 				   bool (*uni_link)(void *, unsigned int),
 				   int (*uni_rate)(void *, unsigned int, u32, u32),
 				   int (*uni_l2)(void *, unsigned int, u32, u32, u32),
+				   int (*uni_autodetect)(void *, unsigned int, u8),
 				   struct led_classdev *pon_led,
 				   struct led_classdev *los_led)
 {

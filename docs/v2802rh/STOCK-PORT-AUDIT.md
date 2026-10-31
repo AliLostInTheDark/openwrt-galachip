@@ -44,4 +44,18 @@ PON flow-control watermarks `0x2311c`/`0x23120` use stock's values.
 | VLAN translation and QinQ in hardware | `svlan_*` functions, `0x14000`–`0x1400c` | Tracing them; runs correctly on the CPU today |
 | Downstream GEM rates | Share meters at `0x25004`: rate [50:32], bucket [16:1] | How a GEM binds to a meter |
 | Multicast GEM, IGMP/MLD snooping | `l2_ipMcastAddr_*`, `l2_ipmcMode_*` | Not started; needs an IPTV service to test |
-| UNI auto-detection and pause | ME 11 values reach the driver and are logged | No PHY control path in the driver yet |
+| UNI pause time | ME 11 value reaches the driver and is logged | No control for the MAC's pause quanta |
+| eFuse memory patches | Read and logged at bring-up | Written only if a chip turns out to carry any: the addresses are unchecked fuse data |
+
+## LAN PHYs
+
+Compared with `switch_init` and `port_init` in the XZ005 kernel. The patch table is byte-identical in the board's RTOS image.
+
+| Stock | Driver |
+|---|---|
+| `phyPatchArray_20160413`, 55 writes | Applied at bring-up, then a power cycle as `phyPower_set` does |
+| `_switch_default_patch`, eFuse PHY writes | Applied at bring-up |
+| Autonegotiation ability and enable | `ethtool -s`, and ME 11 auto-detection as an advertisement |
+| Pause | `ethtool -A`; LAN2's forced MAC bits follow |
+| EEE advertisement, page 0xa5d | `ethtool --set-eee`; stock's power-on default is kept |
+| RTCT cable test, green, `switch_eeePatch` | Not ported: RTCT and green are empty stubs in stock, and `switch_eeePatch` has no direct caller |
