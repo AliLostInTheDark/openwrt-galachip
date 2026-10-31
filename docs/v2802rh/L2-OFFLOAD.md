@@ -32,7 +32,7 @@ For each supported bidirectional service:
   the last observed reason for board validation.
 
 Eight p-bit mappings to the same GEM collapse into one binding. Split-GEM
-priority policies, partial p-bit coverage, VLAN translation/stacking, multicast
+priority policies, partial p-bit coverage, multicast
 GEM services and conflicting bindings retain the CPU path. There can be only
 one untagged service on each physical LAN port. The configured ONU identity
 and advertised UNI count are preserved.
@@ -40,6 +40,24 @@ and advertised UNI count are preserved.
 The backend advertises `OMCI_TOPOLOGY_F_FULL_UNI_ENTITY`, so omcid preserves
 full UNI IDs for service and administrative operations. Profile truncation
 would otherwise turn both VEIP 0x0601 and PPTP 0x0101 into 1.
+
+A translated service (`sfu_vlan_map` `tWAN:LAN`, or class 171) forwards in
+hardware. Upstream, a rule on port and LAN VID selects the GEM and rewrites the
+C-tag; downstream, a rule on the service VID rewrites it back. The LAN VID gets a
+VLAN of its own, and both VLANs share FID 0 under SVL: clients are learned in the
+LAN VID and looked up in the service VID, which IVL would flood at the storm meter.
+Measured 2026-11-01 with `t100:200` on LAN1: 302.81/296.48 Mbit/s, 2,776 bytes on
+the CPU port over 40 s, CPU 81-96% idle.
+A stacked service (`sWAN:LAN`) does the same, adding an outer 0x8100 tag upstream
+and deleting it downstream. It stays off unless `luna_xpon.hw_qinq=1`, as no OLT
+here carries one; until then a stacked service keeps the whole offload off.
+
+With bridge VLAN filtering on, the map still applies. The bridge holds only the
+LAN VLAN, tagged on `pon0` and on the jacks that carry it, and those jacks become
+the service's. An untagged or PVID member is refused with `[L2-014]`: use the
+untagged service for that. Measured 2026-11-01 with filtering on: 303.60/303.25
+Mbit/s and no change in the CPU port's byte counters across the test. `[L2-014]`
+also appears while the map is set before the bridge VLAN, and clears once it exists.
 
 ## Default enablement and runtime control
 

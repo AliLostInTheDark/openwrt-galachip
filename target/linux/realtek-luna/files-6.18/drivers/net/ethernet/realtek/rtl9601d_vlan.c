@@ -26,6 +26,35 @@ static bool v2802_l2_vlan_reserved(u16 vid)
 	       (vid >= SW_LAN_STEER_VID_BASE && vid < SW_LAN_STEER_VID_BASE + LAN_PORTS);
 }
 
+/* A rewritten service takes its LAN VLAN's jacks. The bridge sees only that VLAN,
+ * tagged on pon0 too. Its VLAN rules can't rewrite an untagged frame's tag. */
+static int v2802_l2_vlan_rewrites(struct rtl9602c_eth *ep,
+				  struct luna_l2_service *services, int count)
+{
+	struct bridge_vlan_info info;
+	unsigned int i, j;
+
+	for (i = 0; i < count; i++) {
+		struct luna_l2_service *s = &services[i];
+
+		if (!v2802_l2_rewritten(s) || s->local)
+			continue;
+		for (j = 0; j < count && services[j].vid != s->lan_vid; j++)
+			;
+		if (j == count || !v2802_l2_vlan_info(ep->wan_ndev, s->lan_vid, &info) ||
+		    services[j].untag_mask || services[j].pvid_mask) {
+			netdev_warn(ep->ndev,
+				    "[L2-014] VLAN %u maps to VLAN %u, which must be a tagged bridge VLAN on pon0 and the jacks\n",
+				    s->vid, s->lan_vid);
+			return -EOPNOTSUPP;
+		}
+		s->lan_mask = services[j].lan_mask;
+		s->untag_mask = 0;
+		s->pvid_mask = 0;
+	}
+	return count;
+}
+
 /* The bridge owns admission and egress format; OMCI still owns the GEM. */
 static int v2802_l2_vlan_plan(struct rtl9602c_eth *ep,
 			    struct luna_l2_service *services, int count)
@@ -42,7 +71,8 @@ static int v2802_l2_vlan_plan(struct rtl9602c_eth *ep,
 	for (i = 0; i < count; i++) {
 		services[i].untag_mask = 0;
 		services[i].pvid_mask = 0;
-		services[i].local = !v2802_l2_vlan_info(ep->wan_ndev, services[i].vid, &info);
+		if (!v2802_l2_rewritten(&services[i]))
+			services[i].local = !v2802_l2_vlan_info(ep->wan_ndev, services[i].vid, &info);
 	}
 	for (vid = 1; vid < VLAN_VID_MASK; vid++) {
 		u8 members = 0, untag = 0, pvid = 0;
@@ -82,7 +112,7 @@ static int v2802_l2_vlan_plan(struct rtl9602c_eth *ep,
 		services[i].untag_mask = untag & members;
 		services[i].pvid_mask = pvid & members;
 	}
-	return count;
+	return v2802_l2_vlan_rewrites(ep, services, count);
 }
 
 static void v2802_l2_vlan_ingress(struct rtl9602c_eth *ep, u32 *pvid, u32 *accept)

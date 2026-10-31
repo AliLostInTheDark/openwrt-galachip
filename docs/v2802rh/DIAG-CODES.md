@@ -106,6 +106,9 @@ New messages take the next free number in their group, and a removed code is not
 | `L2-009` | ERR | L2 offload rollback incomplete |
 | `L2-010` | ERR | L2 fallback storm control readback failed: %d |
 | `L2-011` | ERR | L2 offload teardown incomplete; data isolation retained |
+| `L2-012` | WARN | VLAN %u is the untagged service, which overrides its map to VLAN %u |
+| `L2-013` | WARN | VLAN %u stacked over %u needs hw_qinq, or L2 offload stays off |
+| `L2-014` | WARN | VLAN %u maps to VLAN %u, which must be a tagged bridge VLAN on pon0 and the jacks |
 
 ## LAN: LAN jacks and UNI administrative state
 

@@ -38,6 +38,10 @@
 
 static bool omcid = true;
 module_param(omcid, bool, 0444);
+/* No OLT here carries a stacked service, so this has never passed traffic. */
+static bool hw_qinq;
+module_param(hw_qinq, bool, 0644);
+MODULE_PARM_DESC(hw_qinq, "Stack VLANs in the switch; otherwise offload stays off with a stacked service");
 MODULE_PARM_DESC(omcid, "Let a board whose device tree asks for it run omcid (0: the in-kernel responder everywhere)");
 
 struct luna_xpon_tcont {
@@ -1117,8 +1121,17 @@ static int luna_xpon_delete_service(struct omci_device *odev, u32 cookie)
 }
 
 static u8 luna_xpon_lan_mode(const struct luna_xpon_service *s, u16 *uni_vid);
+static bool luna_xpon_mapped(u16 wan);
 
 /* The offload worker holds RTNL; backend transactions serialize this copy. */
+/* The VLAN a service's frames carry on the LAN side. */
+static u16 luna_xpon_lan_vid(const struct luna_xpon_service *s, u8 mode,
+			     u16 uni_vid)
+{
+	return mode == OMCI_UNI_VLAN_TRANSLATE || mode == OMCI_UNI_VLAN_STACKED ?
+	       uni_vid : s->vlan;
+}
+
 int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 {
 	unsigned int i, j, n = 0, offloaded = 0;
@@ -1137,12 +1150,16 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 
 		if (!s->used)
 			continue;
-		mode = vlan_filtering ? OMCI_UNI_VLAN_SAME :
-			luna_xpon_lan_mode(s, &uni_vid);
+		/* The bridge owns the LAN side, but only the map can rewrite a VID. */
+		mode = luna_xpon_lan_mode(s, &uni_vid);
+		if (vlan_filtering && mode != OMCI_UNI_VLAN_STACKED &&
+		    !luna_xpon_mapped(s->vlan))
+			mode = OMCI_UNI_VLAN_SAME;
 		if (!s->vlan_valid || !s->vlan || s->vlan >= 4095 ||
 		    s->multicast || s->direction != OMCI_GEM_PORT_DIRECTION_BIDIRECTIONAL ||
 		    (mode != OMCI_UNI_VLAN_SAME && mode != OMCI_UNI_VLAN_UNTAGGED &&
-		     mode != OMCI_UNI_VLAN_TRANSLATE)) {
+		     mode != OMCI_UNI_VLAN_TRANSLATE &&
+		     !(mode == OMCI_UNI_VLAN_STACKED && READ_ONCE(hw_qinq)))) {
 			rc = -EOPNOTSUPP;
 			goto out;
 		}
@@ -1154,15 +1171,14 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 		}
 		d = (struct luna_l2_service) {
 			.vid = s->vlan,
-			.lan_vid = mode == OMCI_UNI_VLAN_TRANSLATE ? uni_vid : s->vlan,
+			.lan_vid = luna_xpon_lan_vid(s, mode, uni_vid),
 			.flow = s->flow,
 			.lan_mask = port < 0 ? 3 : BIT(port),
 			.untagged = mode == OMCI_UNI_VLAN_UNTAGGED,
-			.cpu_only = mode == OMCI_UNI_VLAN_TRANSLATE,
+			.translated = mode == OMCI_UNI_VLAN_TRANSLATE,
+			.stacked = mode == OMCI_UNI_VLAN_STACKED,
 		};
-		/* CPU LAN relay shares both jacks in this first mixed path. */
-		if (!d.lan_vid || d.lan_vid >= VLAN_VID_MASK ||
-		    (d.cpu_only && d.lan_mask != 3)) {
+		if (!d.lan_vid || d.lan_vid >= VLAN_VID_MASK) {
 			rc = -EOPNOTSUPP;
 			goto out;
 		}
@@ -1173,7 +1189,8 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 				if (services[j].flow != d.flow ||
 				    services[j].lan_mask != d.lan_mask ||
 				    services[j].lan_vid != d.lan_vid ||
-				    services[j].cpu_only != d.cpu_only ||
+				    services[j].translated != d.translated ||
+				    services[j].stacked != d.stacked ||
 				    services[j].untagged != d.untagged) {
 					rc = -EOPNOTSUPP;
 					goto out;
@@ -1201,18 +1218,16 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 			rc = -EOPNOTSUPP;
 			goto out;
 		}
-	/* A translated service stays on the CPU. Admit its LAN VID separately,
-	 * without a PON member or upstream classifier. Never alias a hardware
-	 * service's VID: that could select its GEM before software translation. */
+	/* Admit a rewritten service's LAN VID as a VLAN of its own. Never alias
+	 * another service's VID: its rule would select that service's GEM. */
 	i = n;
 	for (j = 0; j < i; j++) {
 		struct luna_l2_service *s = &services[j];
 		unsigned int k;
 
-		if (!s->cpu_only) {
-			offloaded++;
+		offloaded++;
+		if (!s->translated && !s->stacked)
 			continue;
-		}
 		for (k = 0; k < n && services[k].vid != s->lan_vid; k++)
 			;
 		if (k < n) {
@@ -1225,7 +1240,8 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 		}
 		services[n++] = (struct luna_l2_service) {
 			.vid = s->lan_vid, .lan_vid = s->lan_vid,
-			.lan_mask = s->lan_mask, .local = true, .cpu_only = true,
+			.lan_mask = s->lan_mask, .local = true,
+			.translated = s->translated, .stacked = s->stacked,
 		};
 	}
 	if (n && !offloaded) {
@@ -1702,6 +1718,34 @@ static u8 luna_xpon_lan_mode(const struct luna_xpon_service *s, u16 *uni_vid)
 	return mode;
 }
 
+/* Called with svc_lock held. */
+static bool luna_xpon_mapped(u16 wan)
+{
+	unsigned int i;
+
+	for (i = 0; i < luna_xpon.vlan_maps; i++)
+		if (luna_xpon.vlan_map[i].wan == wan)
+			return true;
+	return false;
+}
+
+/* Called with svc_lock held. */
+static void luna_xpon_map_warn(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < luna_xpon.vlan_maps; i++) {
+		const struct luna_xpon_vlan_map *m = &luna_xpon.vlan_map[i];
+
+		if (m->wan == luna_xpon.untag_vlan)
+			pr_warn("luna-xpon: [L2-012] VLAN %u is the untagged service, which overrides its map to VLAN %u\n",
+				m->wan, m->lan);
+		if (m->mode == OMCI_UNI_VLAN_STACKED && !READ_ONCE(hw_qinq))
+			pr_warn("luna-xpon: [L2-013] VLAN %u stacked over %u needs hw_qinq, or L2 offload stays off\n",
+				m->wan, m->lan);
+	}
+}
+
 /* Physical bits: LAN2 is port 0, LAN1 is port 1. */
 u8 luna_xpon_lan_tagged(void)
 {
@@ -1733,14 +1777,6 @@ int luna_xpon_native_vlan(void)
 	return vid;
 }
 EXPORT_SYMBOL(luna_xpon_native_vlan);
-
-/* The VLAN a service's frames carry on the LAN side. */
-static u16 luna_xpon_lan_vid(const struct luna_xpon_service *s, u8 mode,
-			     u16 uni_vid)
-{
-	return mode == OMCI_UNI_VLAN_TRANSLATE || mode == OMCI_UNI_VLAN_STACKED ?
-	       uni_vid : s->vlan;
-}
 
 /* The better of two candidate services for a frame with priority @pcp. */
 static bool luna_xpon_better(const struct luna_xpon_service *s,
@@ -1912,6 +1948,7 @@ static ssize_t sfu_untag_vlan_store(struct device *dev,
 		return -ERANGE;
 	spin_lock_bh(&luna_xpon.svc_lock);
 	luna_xpon.untag_vlan = vid;
+	luna_xpon_map_warn();
 	spin_unlock_bh(&luna_xpon.svc_lock);
 	rtl9601d_l2_changed();
 	return count;
@@ -1997,6 +2034,7 @@ static ssize_t sfu_vlan_map_store(struct device *dev,
 	spin_lock_bh(&luna_xpon.svc_lock);
 	memcpy(luna_xpon.vlan_map, map, n * sizeof(map[0]));
 	luna_xpon.vlan_maps = n;
+	luna_xpon_map_warn();
 	spin_unlock_bh(&luna_xpon.svc_lock);
 	rtl9601d_l2_changed();
 	return count;

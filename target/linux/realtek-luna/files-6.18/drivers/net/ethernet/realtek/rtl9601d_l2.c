@@ -187,6 +187,11 @@ static bool v2802_l2_lan_member(struct rtl9602c_eth *ep, const struct net_device
 
 static u32 v2802_l2_cpu_vlan(bool present);
 
+static bool v2802_l2_rewritten(const struct luna_l2_service *s)
+{
+	return s->translated || s->stacked;
+}
+
 #include "rtl9601d_vlan.c"
 
 static void v2802_l2_own_mac_add(const u8 *mac)
@@ -222,6 +227,9 @@ static int v2802_l2_own_macs(const struct luna_l2_service *service, int count, b
 	}
 	for (m = 0; m < v2802_l2.own_macs; m++)
 		for (i = 0; i < count; i++) {
+			/* These look up in the shared FID, where the CPU learns anyway. */
+			if (v2802_l2_rewritten(&service[i]))
+				continue;
 			rc = v2802_l2_own_entry(v2802_l2.own_mac[m], service[i].vid, add);
 			if (rc && add)
 				return rc;
@@ -441,13 +449,63 @@ EXPORT_SYMBOL(__rtl9601d_l2_changed);
 /* Pattern 0 TCAM stores positive and negative care bits separately.
  * Rule bit 48 is validity; direction 31, C-tag 3, VID 11..22, UNI 0..2.
  */
+static int v2802_l2_rule_write(unsigned int idx, u32 data, u32 care, u32 *action, u32 enable)
+{
+	u32 rule[2] = { data & care, BIT(16) }, mask[2] = { ~data & care, 0 };
+	int rc;
+
+	rc = v2802_l2_table(4, idx, mask, 2, true);
+	if (!rc)
+		rc = v2802_l2_table(5, idx, action, 3, true);
+	if (rc)
+		return rc;
+	iowrite32(enable, v2802_l2.ep->sw + L34_CF_ACTION_CTRL + 4 * idx);
+	__set_bit(idx - V2802_L2_FIRST, v2802_l2.rules);
+	return v2802_l2_table(4, 256 + idx, rule, 2, true);
+}
+
+/* CF_ACTION_US and _DS share these, (lsb, width): CS_ACT 0,3; SVID 3,12; SPRI
+ * 15,3; CSPRI_ACT 18,3; CSVID_ACT 21,2; CACT 33,2; CVID 35,12; CPRI 47,3;
+ * CVID_ACT 50,3; CPRI_ACT 53,3. Raw values, from Realtek's cfg2raw tables: tag
+ * action 1 adds or rewrites, C-tag 2 deletes; VID and priority action 1 assigns,
+ * priority action 2 copies the frame's. S-tag action 2 uses TPID 0x8100, like
+ * luna_xpon_tx_flow(). */
+#define V2802_CF_CTAG_REWRITE(vid)	(BIT(1) | ((u32)(vid) << 3) | BIT(18) | (2 << 21))
+#define V2802_CF_CTAG_DELETE		(2 << 1)
+#define V2802_CF_STAG_ADD(vid)		(2 | ((u32)(vid) << 3) | (2 << 18) | BIT(21))
+#define V2802_CF_ENABLE_ALL		0x3f	/* stock's, on every rule */
+
+/* Upstream on the LAN VID, downstream on the service's. The switch's VLAN rules
+ * can't rewrite a VID, so the tag operation comes from the classifier. */
+static int v2802_l2_rewrite_up(unsigned int idx, const struct luna_l2_service *s,
+			       unsigned int port)
+{
+	u32 action[3] = { ((u32)s->flow << 24) | BIT(23), 0, 0 };
+
+	if (s->stacked)
+		action[0] |= V2802_CF_STAG_ADD(s->vid);
+	else
+		action[1] = V2802_CF_CTAG_REWRITE(s->vid);
+	return v2802_l2_rule_write(idx, ((u32)s->lan_vid << 11) | BIT(3) | port,
+				   BIT(31) | (VLAN_VID_MASK << 11) | BIT(3) | 7,
+				   action, V2802_CF_ENABLE_ALL);
+}
+
+static int v2802_l2_rewrite_down(unsigned int idx, const struct luna_l2_service *s)
+{
+	u32 action[3] = { 0, s->stacked ? V2802_CF_CTAG_DELETE :
+			     V2802_CF_CTAG_REWRITE(s->lan_vid), 0 };
+
+	return v2802_l2_rule_write(idx, BIT(31) | ((u32)s->vid << 11) | BIT(3),
+				   BIT(31) | (VLAN_VID_MASK << 11) | BIT(3),
+				   action, V2802_CF_ENABLE_ALL);
+}
+
 static int v2802_l2_rule(unsigned int idx, const struct luna_l2_service *s,
 			  unsigned int port, bool untagged)
 {
-	u32 care[2] = { BIT(31) | BIT(3) | 7, 0 };
-	u32 data[2] = { port, 0 }, rule[2], mask[2];
+	u32 care = BIT(31) | BIT(3) | 7, data = port;
 	u32 action[3] = { ((u32)s->flow << 24) | BIT(23), 0, 0 };
-	int rc;
 	u32 enable = L34_CF_SID_ENABLE;
 	int pcp = READ_ONCE(v2802_l2.pcp[port]);
 
@@ -458,22 +516,11 @@ static int v2802_l2_rule(unsigned int idx, const struct luna_l2_service *s,
 		enable |= BIT(1);
 	}
 	if (!untagged) {
-		care[0] |= VLAN_VID_MASK << 11;
-		data[0] |= ((u32)s->vid << 11) | BIT(3);
+		care |= VLAN_VID_MASK << 11;
+		data |= ((u32)s->vid << 11) | BIT(3);
 	}
-	rule[0] = data[0] & care[0];
-	rule[1] = BIT(16);
-	mask[0] = ~data[0] & care[0];
-	mask[1] = 0;
-	rc = v2802_l2_table(4, idx, mask, 2, true);
-	if (!rc)
-		rc = v2802_l2_table(5, idx, action, 3, true);
-	if (rc)
-		return rc;
 	/* Switch VLAN rules own tag insertion; CF may override upstream PCP. */
-	iowrite32(enable, v2802_l2.ep->sw + L34_CF_ACTION_CTRL + 4 * idx);
-	__set_bit(idx - V2802_L2_FIRST, v2802_l2.rules);
-	return v2802_l2_table(4, 256 + idx, rule, 2, true);
+	return v2802_l2_rule_write(idx, data, care, action, enable);
 }
 
 static int v2802_l2_install(const struct luna_l2_service *service, int count,
@@ -519,7 +566,7 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 		}
 	}
 	for (i = 0; i < count; i++) {
-		if (service[i].cpu_only && service[i].local &&
+		if ((service[i].cpu_only || v2802_l2_rewritten(&service[i])) && service[i].local &&
 		    v2802_l2_vlan_reserved(service[i].vid)) {
 			rc = -EBUSY;
 			goto out;
@@ -578,11 +625,13 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 		const struct luna_l2_service *s = &service[i];
 
 		members = (s->cpu_only && !s->local ? 0 : s->lan_mask) |
-			  (s->local ? 0 : BIT(2)) | BIT(3);
+			  (s->local && !v2802_l2_rewritten(s) ? 0 : BIT(2)) | BIT(3);
 		/* Keep the service VID on CPU copies for accurate forwarding marks. */
 		untag = s->untag_mask;
-		/* IVL, as for the WAN VIDs: a shared FID drops unicast replies. */
-		w[0] = BIT(11) | SW_VLAN_IVL | (untag << 4) | members;
+		/* IVL, as for the WAN VIDs: a shared FID drops unicast replies. A
+		 * rewritten service needs one though: clients are learned in the LAN
+		 * VID and looked up in the service's, both of which hold their port. */
+		w[0] = BIT(11) | (v2802_l2_rewritten(s) ? 0 : SW_VLAN_IVL) | (untag << 4) | members;
 		rc = v2802_l2_table(1, s->vid, w, 1, true);
 		if (rc)
 			goto rollback;
@@ -593,6 +642,12 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 				pvid = sw_packed_ins(pvid, p, SW_VLAN_PB_VID_BITS, s->vid);
 			if (s->local || s->cpu_only)
 				continue;
+			if (v2802_l2_rewritten(s)) {
+				rc = v2802_l2_rewrite_up(V2802_L2_FIRST + 4 * i + 2 * p, s, p);
+				if (rc)
+					goto rollback;
+				continue;
+			}
 			rc = v2802_l2_rule(V2802_L2_FIRST + 4 * i + 2 * p, s, p,
 					   s->pvid_mask & BIT(p));
 			if (rc)
@@ -603,6 +658,11 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 				if (rc)
 					goto rollback;
 			}
+		}
+		if (v2802_l2_rewritten(s) && !s->local) {
+			rc = v2802_l2_rewrite_down(V2802_L2_FIRST + 4 * i + 1, s);
+			if (rc)
+				goto rollback;
 		}
 	}
 	rc = v2802_l2_own_macs(service, count, true);
@@ -911,7 +971,8 @@ static bool v2802_l2_plan_unchanged(struct rtl9602c_eth *ep)
 		if (a->vid != b->vid || a->flow != b->flow || a->lan_vid != b->lan_vid ||
 		    a->lan_mask != b->lan_mask || a->untag_mask != b->untag_mask ||
 		    a->pvid_mask != b->pvid_mask || a->local != b->local ||
-		    a->untagged != b->untagged || a->cpu_only != b->cpu_only)
+		    a->untagged != b->untagged || a->cpu_only != b->cpu_only ||
+		    a->translated != b->translated || a->stacked != b->stacked)
 			return false;
 	}
 	return true;
@@ -1099,17 +1160,17 @@ static DEVICE_ATTR_RW(l2_ds_rate_debug);
  *   r <off> [words]             read switch registers
  *   w <off> <value>             write an ACL or meter register
  *   t <type> <addr> [words]     read a table entry
- *   T <type> <addr> <word>...   write an ACL table entry (types 2, 3), unchecked
+ *   T <type> <addr> <word>...   write a VLAN, ACL or classifier entry (types 1-5), unchecked
  *   s <ms>                      sample ACL hits and meter exceed under traffic
  * Only ranges known to answer: a stray switch access can hang the bus. */
 static const u32 v2802_dbg_rd[][2] = {
 	{ 0x11000, 0x111fc }, { 0x13000, 0x1300c }, { 0x15000, 0x153fc },
-	{ 0x16000, 0x1601c }, { 0x17000, 0x1700c }, { 0x1c000, 0x1c2fc },
+	{ 0x16000, 0x16434 }, { 0x17000, 0x1700c }, { 0x1c000, 0x1c2fc },
 	{ 0x23000, 0x2311c }, { 0x25000, 0x25090 }, { 0x2a000, 0x2a024 },
 	{ 0x2d800, 0x2d8bc },
 };
 static const u32 v2802_dbg_wr[][2] = {
-	{ 0x15000, 0x153fc }, { 0x25000, 0x25090 },
+	{ 0x15000, 0x153fc }, { 0x16038, 0x16434 }, { 0x25000, 0x25090 },
 };
 
 static bool v2802_dbg_allowed(const u32 (*range)[2], unsigned int n, u32 off)
@@ -1203,8 +1264,7 @@ static ssize_t l2_sw_debug_store(struct device *dev,
 			w[0], w[1], w[2], w[3], w[4], rc);
 		break;
 	case 'T':
-		if (n < 3 || (a[0] != V2802_ACL_MATCH_TYPE && a[0] != V2802_ACL_ACTION_TYPE) ||
-		    a[1] > 0x1ff)
+		if (n < 3 || a[0] < 1 || a[0] > 5 || a[1] > 0x1ff)
 			return -EINVAL;
 		spin_lock_irqsave(&ep->sw_table_lock, flags);
 		rc = v2802_l2_xact(a[0], a[1], &a[2], n - 2, true);
@@ -1454,9 +1514,10 @@ static ssize_t l2_offload_bindings_show(struct device *dev,
 		u32 vlan = 0;
 		int rc = v2802_l2_table(1, s->vid, &vlan, 1, false);
 
-		len += sysfs_emit_at(buf, len, "vid=%u sid=%u lan_mask=%#x untagged=%u untag_mask=%#x pvid_mask=%#x local=%u vlan=%#x read_error=%d cpu_only=%u lan_vid=%u\n",
+		len += sysfs_emit_at(buf, len, "vid=%u sid=%u lan_mask=%#x untagged=%u untag_mask=%#x pvid_mask=%#x local=%u vlan=%#x read_error=%d cpu_only=%u lan_vid=%u translated=%u stacked=%u\n",
 				    s->vid, s->flow, s->lan_mask, s->untagged, s->untag_mask,
-				    s->pvid_mask, s->local, vlan, rc, s->cpu_only, s->lan_vid);
+				    s->pvid_mask, s->local, vlan, rc, s->cpu_only, s->lan_vid,
+				    s->translated, s->stacked);
 	}
 	rtnl_unlock();
 	return len;
