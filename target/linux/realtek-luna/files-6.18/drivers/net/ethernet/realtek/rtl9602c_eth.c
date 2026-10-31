@@ -705,7 +705,7 @@ u32 rtl9602c_eth_omci_tx_dirty(void)
 
 	if (!ep)
 		return 0;
-	return (omci_tx_ring == 0) ? ep->tx_dirty : ep->otx_dirty;
+	return ep->tx_dirty;
 }
 EXPORT_SYMBOL(rtl9602c_eth_omci_tx_dirty);
 
@@ -1469,124 +1469,10 @@ static const struct net_device_ops rtl9602c_eth_wan_ops = {
 static int rtl9602c_eth_omci_xmit(struct rtl9602c_eth *ep, const u8 *omci,
 				  unsigned int len)
 {
-	struct sk_buff *skb;
-	unsigned long flags;
-	unsigned int i, hwring;
-	bool kick_iocmd1;
-	dma_addr_t da;
-	u32 word0, word2, word3, dmask;
-
 	if (len < 8 || len > 1500)
 		return -EINVAL;
-	/*
-	 * Enqueue on LAN ring 0 with the OMCI steering descriptor. The
-	 * dedicated ring path below is not used.
-	 */
+	/* LAN ring 0, with the OMCI steering descriptor. */
 	return rtl9602c_eth_omci_xmit_ring0(ep, omci, len);
-	/*
-	 * omci_tx_ring is HW ring h directly, the same h used to arm R_TxFDP(h)
-	 * in open(). The doorbell is derived from h so they can never disagree.
-	 * Stock kick behaviour: h<4 -> R_IO_CMD |= 1<<h; h==4 -> R_IO_CMD1 |=
-	 * 0x100.
-	 */
-	kick_iocmd1 = rtl9602c_omci_doorbell(omci_tx_ring, omci_doorbell_bit,
-					     &hwring, &dmask);
-
-	{	/* Pad a runt OMCI PDU up to the min Ethernet frame. The GMAC TX engine
-		 * stalls when fed sub-60B frames (the LAN path never sends runts; the
-		 * 48B selftest PDU did — the ring drained ~3 then froze, OWN stuck). Zero-
-		 * pad to 60 so the GMAC fetch engine keeps draining. */
-		unsigned int srclen = len;
-		if (len < 60)
-			len = 60;
-		skb = netdev_alloc_skb(ep->ndev, len);
-		if (!skb) {
-			ep->dbg_omci_tx_drop++;
-			return -ENOMEM;
-		}
-		skb_put(skb, len);
-		memset(skb->data, 0, len);
-		memcpy(skb->data, omci, srclen);	/* bare OMCI PDU, zero-padded to 60 */
-	}
-
-	da = dma_map_single(ep->dev, skb->data, len, DMA_TO_DEVICE);
-	if (dma_mapping_error(ep->dev, da)) {
-		dev_kfree_skb_any(skb);
-		ep->dbg_omci_tx_drop++;
-		return -ENOMEM;
-	}
-
-	spin_lock_irqsave(&ep->tx_lock, flags);
-	if (ep->closing || !ep->otx_ring) {	/* see the ring0-path guard */
-		spin_unlock_irqrestore(&ep->tx_lock, flags);
-		dma_unmap_single(ep->dev, da, len, DMA_TO_DEVICE);
-		dev_kfree_skb_any(skb);
-		ep->dbg_omci_tx_drop++;
-		return -ENODEV;
-	}
-	rtl9602c_eth_omci_reclaim(ep);
-	if (luna_gmac_tx_ring_full(ep->otx_head, ep->otx_dirty,
-				   OTX_RING_SIZE, 0)) {
-		spin_unlock_irqrestore(&ep->tx_lock, flags);
-		dma_unmap_single(ep->dev, da, len, DMA_TO_DEVICE);
-		dev_kfree_skb_any(skb);
-		ep->dbg_omci_tx_drop++;
-		return -EBUSY;		/* ring full; OLT retransmits the request */
-	}
-	i = otx_slot(ep, ep->otx_head);
-	ep->otx_skb[i] = skb;
-	ep->otx_buf_dma[i] = da;
-	ep->otx_buf_len[i] = len;
-	ep->otx_ring[i].addr = da | DMA_BUS_WINDOW;
-
-	/* word0 (opts1) = */
-	word0 = D_FS | D_LS | D_TXCRC | D_IPCS | (len & TXD_LEN_MASK);
-	word0 |= TXD0_OMCI_KEEP_DISLRN_PSEL;
-	/*
-	 * Do not OR in TXD0_DESC_FLAGS (0xf8800000): it sets D_EOR (bit30) on
-	 * every descriptor, so the GMAC treats each as end-of-ring and never
-	 * drains the ring (OWN stuck, dirty stalls). D_EOR belongs only on the
-	 * wrap slot, set just below, as in the LAN TX path.
-	 */
-	if (i == otx_eor_slot(ep))
-		word0 |= D_EOR;
-
-	/* word2 (opts2) = cputag(31) | efid(19), tx_portmask */
-	word2 = rtl9602c_omci_txd_word2(omci_word2_ovr);	/* stock cputag|efid; hoisted encode */
-
-	/* word3 (opts3) */
-	word3 = rtl9602c_omci_txd_word3(omci_word3_ovr,
-					RTL9602C_OMCC_SID);	/* 9602C: pmask[28:23]|SID[22:16] */
-
-	ep->otx_ring[i].opts2 = word2;		/* body first */
-	ep->otx_ring[i].opts3 = word3;
-	ep->otx_ring[i].opts4 = 0;
-	wmb();				/* descriptor body before ownership */
-	ep->otx_ring[i].opts1 = word0 | D_OWN;	/* publish: OWN in opts1 (word0) */
-	wmb();
-	ep->otx_head++;
-	/* Kick the per-ring poll doorbell for THIS HW ring (h). HW ring 4 is special-
-	 * cased to R_IO_CMD1 |= 0x100; rings 0..3 use R_IO_CMD bit h -- register and
-	 * mask both come from rtl9602c_omci_doorbell(), the SAME derivation as the
-	 * R_TxFDP(h) arm in open(), so the engine fetches the ring we filled. */
-	if (kick_iocmd1)
-		/* HW ring 4 (TxFDP5) poll "go" = IO_CMD1 |= TX_POLL5 */
-		ep_wr(ep, R_IO_CMD1, ep_rd(ep, R_IO_CMD1) | dmask);
-	else
-		ep_wr(ep, R_IO_CMD, ep_rd(ep, R_IO_CMD) | dmask);
-	spin_unlock_irqrestore(&ep->tx_lock, flags);
-
-	if (IS_ENABLED(CONFIG_LUNA_DEBUG) && ep->dbg_omci_tx < 8)
-		netdev_info(ep->ndev,
-			"omci_tx: w0=%08x w2=%08x w3=%08x hwring=%u doorbell=%s (sid_idx=%u pon=%u len=%u)\n",
-			word0, word2, word3, hwring,
-			kick_iocmd1 ? "R_IO_CMD1|0x100" : "R_IO_CMD bit",
-			omci_sid_idx, omci_pon_port, len);
-
-	ep->dbg_omci_tx++;
-	ep->ndev->stats.tx_packets++;
-	ep->ndev->stats.tx_bytes += len;
-	return 0;
 }
 
 /* OLT-INDEPENDENT US-OMCI datapath self-test */
