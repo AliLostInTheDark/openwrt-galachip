@@ -33,6 +33,7 @@
 #include <linux/limits.h>	/* S32_MIN: the "no optical reading" sentinel */
 #include <linux/string.h>	/* strscpy for the n/a fields in /proc/gpon */
 #include <linux/module.h>
+#include <linux/platform_device.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/ktime.h>	/* the far-end capture timestamps its records */
@@ -1138,7 +1139,7 @@ static u32 led_los_idx = LED_IDX_NONE;
 static u32 led_ports[8];
 static int led_nports;
 
-static void __init luna_led_map_from_dt(void)
+static void luna_led_map_from_dt(void)
 {
 	struct device_node *np = of_find_node_by_path("/gpon");
 	int n;
@@ -1702,7 +1703,7 @@ static void luna_selftest_read(struct gpon_optic_reading *v)
 	{ (base) + 0x78, 0x0000071e }
 
 /* Full SerDes analog + WSDS configuration */
-static const struct { u32 off; u32 val; } sds_analog_golden[] __initconst = {
+static const struct { u32 off; u32 val; } sds_analog_golden[] = {
 	/* WSDS analog front + digital RX-path config */
 	{ 0x22000, 0x00000805 }, { 0x22008, 0x0000ffff }, { 0x2201c, 0x0000ffff },
 	{ 0x22020, 0x0000ffff }, { 0x22038, 0x00000900 }, { 0x22048, 0x000000ff },
@@ -1769,7 +1770,7 @@ static const struct { u32 off; u32 val; } sds_analog_golden[] __initconst = {
 
 /* FIB_REG0 bank bases; FP_CFG_FIB_PDOWN (bit11) cleared = fiber power on. */
 #define FIB_REG0_PDOWN		BIT(11)
-static const u32 fib_reg0_banks[] __initconst = {
+static const u32 fib_reg0_banks[] = {
 	0x22c00, 0x22c80, 0x22d00, 0x22d80,
 };
 
@@ -1895,7 +1896,7 @@ static int gpon_serdes_init(void)	/* not __init: re-run on re-range from gpon_cd
  * Wait (bounded) for the GPON MAC to report RST_DONE after the SerDes sequence
  * has issued the SDS+MAC reset. Returns 0 on RST_DONE, -ETIMEDOUT otherwise.
  */
-static int __init gpon_wait_rst_done(void)
+static int gpon_wait_rst_done(void)
 {
 	int i;
 
@@ -6562,7 +6563,7 @@ next_poll:
 }
 
 /* Stock's omitted LDO init step, byte-exact. */
-static void __init rtl9602c_sc_ldo_init(void)
+static void rtl9602c_sc_ldo_init(void)
 {
 	u32 fdca, t130 = sw_rd(THERMAL_CTRL_0);
 
@@ -6633,7 +6634,7 @@ static void gpon_optical_work_fn(struct work_struct *w)
 		schedule_delayed_work(&gpon_optical_work, msecs_to_jiffies(50));
 }
 
-static void __init luna_laser_gpio_from_dt(void)
+static void luna_laser_gpio_from_dt(void)
 {
 	struct device_node *np = of_find_node_by_path("/pon-optics");
 	u32 v;
@@ -7287,7 +7288,7 @@ static void luna_omci_seq_show(struct seq_file *s)
 		   READ_ONCE(luna_data.armed.gem), READ_ONCE(luna_data_qid), READ_ONCE(luna_data.error));
 }
 
-static int __init rtl9602c_gpon_init(void)
+static int rtl9602c_gpon_init(void)
 {
 	u32 ver, rst, test;
 	const char *missing;
@@ -7628,7 +7629,7 @@ fail_maps:
 	return ret;
 }
 
-static void __exit rtl9602c_gpon_exit(void)
+static void rtl9602c_gpon_exit(void)
 {
 	/* Before any unmap: a class device outliving its register window is a
 	 * write through a stale ioremap the moment someone echoes to it. */
@@ -7679,8 +7680,32 @@ static void __exit rtl9602c_gpon_exit(void)
 		iounmap(gpon_base);
 }
 
-module_init(rtl9602c_gpon_init);
-module_exit(rtl9602c_gpon_exit);
+static int luna_gpon_probe(struct platform_device *pdev)
+{
+	return rtl9602c_gpon_init();
+}
+
+static void luna_gpon_remove(struct platform_device *pdev)
+{
+	rtl9602c_gpon_exit();
+}
+
+static const struct of_device_id luna_gpon_of_match[] = {
+	{ .compatible = "realtek,luna-gpon" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, luna_gpon_of_match);
+
+static struct platform_driver luna_gpon_driver = {
+	.probe	= luna_gpon_probe,
+	.remove	= luna_gpon_remove,
+	.driver	= {
+		.name = "luna-gpon",
+		.of_match_table = luna_gpon_of_match,
+		.suppress_bind_attrs = true,
+	},
+};
+module_platform_driver(luna_gpon_driver);
 
 MODULE_DESCRIPTION("Realtek RTL9602C GPON MAC foundation driver");
 MODULE_LICENSE("GPL");
