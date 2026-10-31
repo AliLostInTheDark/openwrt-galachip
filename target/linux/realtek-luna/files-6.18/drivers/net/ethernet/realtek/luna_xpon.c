@@ -106,6 +106,8 @@ static struct {
 	struct {
 		u16 gem;
 		u32 rate;
+		u32 burst;	/* requested, not applied */
+		u32 down;	/* requested, not applied */
 	} gem_rate[LUNA_XPON_GEMS];
 	struct luna_xpon_queue queue[LUNA_XPON_BANK_QUEUES];
 	u32 quarantine;	/* never reuse uncertain queues before reboot */
@@ -506,7 +508,7 @@ static int luna_xpon_qos_tcont(struct luna_xpon_tcont *t)
 	u32 old_pool = t->pool, touched = 0, old_mask = BIT(t->qid - base) | old_pool;
 	unsigned long gone;
 	unsigned int i, j, n = 0, bit;
-	bool wfq, remapping = false;
+	bool wfq, ranked = false, remapping = false;
 	int rc, rollback = 0, err;
 
 	if (t->qos_fault)
@@ -565,7 +567,11 @@ static int luna_xpon_qos_tcont(struct luna_xpon_tcont *t)
 
 	/* Reserve before the first MMIO: a failed write can still take effect. */
 	t->pool |= pool;
-	wfq = n > 1 && !(qos->enabled && qos->policy == 1);
+	/* Strict order needs different priorities: a rated GEM's own queue must
+	 * not outrank its equal, so equals share by weight. */
+	for (i = 1; i < n; i++)
+		ranked |= grp[i].prio != grp[0].prio;
+	wfq = n > 1 && !(qos->enabled && qos->policy == 1 && ranked);
 	for (i = 0; i < n; i++) {
 		const struct luna_xpon_qgroup *q = &grp[ord[i]];
 		u16 weight = wfq && qos->enabled ? max_t(u16, qos->weight[q->prio], 1) : 1;
@@ -869,19 +875,19 @@ static int luna_xpon_set_gem_rate(struct omci_device *odev, u16 gem,
 {
 	unsigned int i, slot = LUNA_XPON_GEMS;
 
-	if (!upstream) {
-		if (rate)
-			pr_info_once("luna-xpon: downstream GEM rate limits are not applied\n");
-		return 0;
-	}
-	if (burst)
+	if (!upstream && rate)
+		pr_info_once("luna-xpon: downstream GEM rate limits are not applied\n");
+	if (upstream && burst)
 		pr_info_once("luna-xpon: GEM burst sizes are not applied\n");
 	for (i = 0; i < LUNA_XPON_GEMS; i++) {
-		if (luna_xpon.gem_rate[i].rate && luna_xpon.gem_rate[i].gem == gem) {
+		bool used = luna_xpon.gem_rate[i].rate || luna_xpon.gem_rate[i].burst ||
+			    luna_xpon.gem_rate[i].down;
+
+		if (used && luna_xpon.gem_rate[i].gem == gem) {
 			slot = i;
 			break;
 		}
-		if (slot == LUNA_XPON_GEMS && !luna_xpon.gem_rate[i].rate)
+		if (slot == LUNA_XPON_GEMS && !used)
 			slot = i;
 	}
 	if (slot == LUNA_XPON_GEMS) {
@@ -889,7 +895,12 @@ static int luna_xpon_set_gem_rate(struct omci_device *odev, u16 gem,
 		return 0;
 	}
 	luna_xpon.gem_rate[slot].gem = gem;
+	if (!upstream) {
+		luna_xpon.gem_rate[slot].down = rate;
+		return 0;
+	}
 	luna_xpon.gem_rate[slot].rate = rate;
+	luna_xpon.gem_rate[slot].burst = burst;
 	luna_xpon_qos_sync();
 	return 0;
 }
@@ -2015,11 +2026,32 @@ static ssize_t qos_status_show(struct device *dev,
 	for (i = 0; i < LUNA_XPON_GEMS; i++) {
 		const struct luna_xpon_gem *g = &luna_xpon.gem[i];
 		const struct luna_xpon_queue *q;
+		unsigned int j;
+		u32 burst = 0, down = 0;
 
-		if (!g->hw || !(g->dir & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI))
+		if (!g->hw)
 			continue;
-		if (g->qid < base || g->qid >= base + LUNA_XPON_BANK_QUEUES)
+		for (j = 0; j < LUNA_XPON_GEMS; j++) {
+			if (luna_xpon.gem_rate[j].gem != g->gem)
+				continue;
+			/* A freed slot may still name this GEM, with zeros. */
+			burst |= luna_xpon.gem_rate[j].burst;
+			down |= luna_xpon.gem_rate[j].down;
+		}
+		if (burst || down)
+			len += sysfs_emit_at(buf, len,
+				"gem=%u unapplied_burst=%u unapplied_downstream_Bps=%u\n",
+				g->gem, burst, down);
+		if (!(g->dir & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI))
 			continue;
+		/* On the OMCC's T-CONT: the shared queue is not ours to shape. */
+		if (g->qid < base || g->qid >= base + LUNA_XPON_BANK_QUEUES) {
+			len += sysfs_emit_at(buf, len,
+				"gem=%u tcont=%#x sid=%u cached_qid=%u requested_Bps=%u qos=unavailable\n",
+				g->gem, g->tcont, luna_xpon_hw_gem_flow(i), g->qid,
+				luna_xpon_gem_rate(g->gem));
+			continue;
+		}
 		q = &luna_xpon.queue[g->qid - base];
 		len += sysfs_emit_at(buf, len,
 			"gem=%u tcont=%#x sid=%u cached_qid=%u requested_Bps=%u cached_valid=%u cached_pir=%u cached_weight=%u cached_weighted=%u\n",

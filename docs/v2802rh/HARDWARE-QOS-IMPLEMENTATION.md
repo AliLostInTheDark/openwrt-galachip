@@ -22,6 +22,9 @@ and silently changing a requested rate limit. QoS callbacks retain their current
 OLT compatibility behavior; internal errors are logged and exposed separately.
 Successful source tests do not establish that an ISP OLT exercises this path.
 
+GEMs of equal priority under a strict policy share by weight, because a rated
+GEM's separate queue would otherwise outrank its equal.
+
 Hardware helpers reject OMCC QID 64 and out-of-bank/invalid inputs before MMIO.
 Scheduler masks now have checked readback; queue configuration additionally
 checks CIR-zero readback. Existing drain/SID operations remain bounded. This
@@ -43,6 +46,10 @@ The read-only file reports:
 - T-CONT installed/OMCC flags, reserved pool, requested policy/enabled state,
   last QoS reconciliation error and rollback-fault flag.
 - Upstream GEM SID, cached QID, requested bytes/s and cached PIR/weight/type.
+- `unapplied_burst` and `unapplied_downstream_Bps` lines for a GEM whose OLT
+  request has no hardware path; the OLT still sees success.
+- `qos=unavailable` for a GEM on the T-CONT shared with the OMCC, which is not
+  shaped.
 
 `cached_*` is the last application cache, **not a fresh hardware-register dump**.
 A failed rollback invalidates affected queue-cache entries. PIR is raw scheduler
