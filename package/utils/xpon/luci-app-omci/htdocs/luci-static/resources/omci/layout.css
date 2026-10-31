@@ -45,9 +45,9 @@
 .omci-mib-table { min-width: 760px; }
 .omci-mib-table th { white-space: nowrap; }
 .omci-page .omci-mib-class { margin: 0 0 8px; padding: 0; }
-.omci-mib-class > summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding: 10px 12px; cursor: pointer; border: 1px solid var(--border, var(--border-color-medium, #ccc)); border-radius: 6px; }
-.omci-mib-class[open] > summary { margin-bottom: 8px; }
-.omci-page .omci-mib-class .xpon-grid { gap: 8px; margin: 0; }
+.omci-page .omci-mib-class { border: 1px solid var(--border, var(--border-color-medium, #ccc)); border-radius: 6px; }
+.omci-mib-class > summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding: 10px 12px; cursor: pointer; }
+.omci-page .omci-mib-class > .xpon-grid { gap: 8px; margin: 0; padding: 0 8px 8px; }
 .omci-mib-class-info, .omci-mib-origin { font-size: 12px; opacity: .72; }
 .omci-mib-object-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 8px; }
 .omci-mib-wide { grid-column: 1 / -1; }
