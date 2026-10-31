@@ -94,6 +94,10 @@ attach() {
 			pref=$((pref + 1))
 		done
 	done
+	# Traffic arrives once this hook exists, and mirred warns about a veth
+	# with no carrier, so a port with link needs its path up first.
+	[ "$(cat "/sys/class/net/$port/carrier" 2>/dev/null)" != 1 ] ||
+		ip link set "$end" up || return 1
 	tc filter add dev "$port" ingress protocol all pref "$CHAIN" handle 1 \
 		matchall action goto chain "$CHAIN" || return 1
 	sed -i "s/^$port $peer 0$/$port $peer 1/" "$STATE/links"
