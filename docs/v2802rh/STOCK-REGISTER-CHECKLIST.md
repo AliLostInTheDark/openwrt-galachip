@@ -138,7 +138,7 @@ VLAN.
 | 0x16030, 0x16034 | CF_PATTERN0_TEMPLATE_CFG | 0x16, 0xe | 0 | Classifier templates: the US LAN→GEM path for L2 offload |
 | 0x1c0b0–0x1c0f8 | QOS_INTPRI_TO_QID, QOS_PORT_QMAP_CTRL, PRI_SEL_TBL_CTRL | set | 0 | Priority→queue maps for T-CONT queues |
 | 0x2d800, 0x2d80c | WFQ_CTRL, EGR_BWCTRL_P_CTRL port 2 | 0x23fff, 0x3fffe | 0x3fff, 0xffffe | PON egress shaping |
-| 0x2311c, 0x23120 | FC_PON_GLB_HI_TH / LO_TH | 0x02300224 / 0x02160207 | 0x020001f4 / 0x01e601d7 | PON flow-control thresholds |
+| 0x2311c, 0x23120 | FC_PON_GLB_HI_TH / LO_TH | 0x02300224 / 0x02160207 | 0x020001f4 / 0x01e601d7 | PON flow-control thresholds; stock's values applied since 2026-10-31 |
 | 0x1106c, 0x11130, 0x111b4, 0x2a0c0–0x2a0c4 | L34_GLB_CFG, DSLITE_CTRL, L3MCR_TBL, L34_IPMC_TRAN_TBL | set | mostly 0 | L3/L4 engine; not used by an L2 bridge |
 | 0x17090, 0x1c100 | OAM_CTRL_1, OAM_CTRL_0 | 1, 7 | 0, 0 | 802.3ah OAM (EPON); luna_gpon.c clears it on purpose |
 | 0x22058–0x220e0 | WSDS_DIG_0A / 0B / 14 / 2C | | | PON SerDes digital enables that luna_gpon.c sets |

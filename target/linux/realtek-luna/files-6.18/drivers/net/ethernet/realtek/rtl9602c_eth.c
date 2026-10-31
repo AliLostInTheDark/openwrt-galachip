@@ -246,6 +246,14 @@ static bool rtl9602c_uni_port_locked(unsigned int port)
 #define SW_ACCEPT_MAX_LEN_CTRL(p)	(0x11008 + 4 * (p))	/* [1:0] max-length profile */
 #define SW_MAX_LENGTH_CFG1		0x11018
 #define SW_MAX_LENGTH_CFG0		0x23034	/* [13:0] bytes */
+#define SW_LUT_LRN_LIMITNO(p)		(0x17008 + 4 * ((p) / 2))	/* 11 bits per port */
+#define SW_LUT_LRN_LIMIT_MAX		2047	/* the reset value: no limit */
+#define SW_LUT_LEARN_OVER_CTRL		0x1c00c	/* 2 bits per port: 0 forward, 1 drop */
+#define SW_LUT_AGE_DEFAULT		3000	/* [20:0] in 0.1 s; stock's 300 s */
+#define SW_LAN_MAX_FRAME		1600	/* stock's LAN and CPU limit */
+#define SW_PON_MAX_FRAME		2031	/* stock's PON limit */
+#define SW_FC_PON_GLB_HI_TH		0x2311c
+#define SW_FC_PON_GLB_LO_TH		0x23120
 #define SW_STORM_CTRL_UM_CTRL		0x1703c	/* per-port enable, likewise UC/BC/DHCP */
 #define SW_STORM_CTRL_UC_CTRL		0x17040
 #define SW_STORM_CTRL_BC_CTRL		0x17048
@@ -432,6 +440,10 @@ struct rtl9602c_eth {
 		u32 down, up;
 		bool valid;
 	} uni_rate[LAN_PORTS];
+	struct {
+		u32 ageing_s, learn_limit, max_frame;
+	} uni_l2[LAN_PORTS];
+	bool uni_l2_used;
 	struct rtl9602c_l34 l34;	/* switch L3/L4 (NAPT) hardware-offload engine */
 #ifdef CONFIG_GPON_FLOW_OFFLOAD
 	struct gpon_flow_offload *fo;	/* the COMMON TC lifecycle, drivers/net/gpon/ */
@@ -830,6 +842,10 @@ static void rtl9602c_sw_stock_config(struct rtl9602c_eth *ep)
 
 	iowrite32(ioread32(sw + SW_LUT_CFG) | BIT(28) | BIT(26) | BIT(23),
 		  sw + SW_LUT_CFG);
+
+	/* Stock's PON flow-control watermarks, as it runs them once ranged. */
+	iowrite32(0x02300224, sw + SW_FC_PON_GLB_HI_TH);
+	iowrite32(0x02160207, sw + SW_FC_PON_GLB_LO_TH);
 	iowrite32(ioread32(sw + SW_IGR_BWCTRL_P_CTRL) | BIT(1),
 		  sw + SW_IGR_BWCTRL_P_CTRL);
 	iowrite32(ioread32(sw + SW_FIB_REG0) | BMCR_PDOWN, sw + SW_FIB_REG0);
@@ -907,6 +923,71 @@ static int rtl9602c_uni_rate_set(void *cookie, unsigned int port,
 	return rc;
 }
 
+/* Ageing and the frame limit are one setting for the whole switch, so the
+ * shortest ageing and the largest frame any port asked for win. An OLT's usual
+ * 1518 must not lose tagged frames, so the frame limit only rises from stock's. */
+static int rtl9602c_uni_l2_write(struct rtl9602c_eth *ep)
+{
+	void __iomem *sw = ep->sw;
+	u32 age = 0, frame = SW_LAN_MAX_FRAME, over, cfg;
+	unsigned int p;
+	int rc = 0;
+
+	over = ioread32(sw + SW_LUT_LEARN_OVER_CTRL);
+	for (p = 0; p < LAN_PORTS; p++) {
+		u32 limit = ep->uni_l2[p].learn_limit;
+		void __iomem *reg = sw + SW_LUT_LRN_LIMITNO(p);
+		unsigned int shift = (p % 2) * 11;
+		u32 word = ioread32(reg) & ~(SW_LUT_LRN_LIMIT_MAX << shift);
+
+		/* Drop before lowering the limit: no frame floods in between. */
+		over = (over & ~(3u << (p * 2))) | ((limit ? 1u : 0u) << (p * 2));
+		iowrite32(over, sw + SW_LUT_LEARN_OVER_CTRL);
+		limit = limit ? min_t(u32, limit, SW_LUT_LRN_LIMIT_MAX) : SW_LUT_LRN_LIMIT_MAX;
+		word |= limit << shift;
+		iowrite32(word, reg);
+		if (ioread32(reg) != word)
+			rc = -EIO;
+		if (ep->uni_l2[p].ageing_s) {
+			u32 ticks = min_t(u32, ep->uni_l2[p].ageing_s, GENMASK(20, 0) / 10) * 10;
+
+			age = age ? min(age, ticks) : ticks;
+		}
+		frame = max(frame, min_t(u32, ep->uni_l2[p].max_frame, SW_PON_MAX_FRAME));
+	}
+	cfg = (ioread32(sw + SW_LUT_CFG) & ~GENMASK(20, 0)) | (age ?: SW_LUT_AGE_DEFAULT);
+	iowrite32(cfg, sw + SW_LUT_CFG);
+	iowrite32(frame, sw + SW_MAX_LENGTH_CFG1);
+	if (ioread32(sw + SW_LUT_LEARN_OVER_CTRL) != over ||
+	    (ioread32(sw + SW_LUT_CFG) & GENMASK(20, 0)) != (cfg & GENMASK(20, 0)) ||
+	    ioread32(sw + SW_MAX_LENGTH_CFG1) != frame)
+		rc = -EIO;
+	return rc;
+}
+
+static int rtl9602c_uni_l2_set(void *cookie, unsigned int port, u32 ageing_s,
+			       u32 learn_limit, u32 max_frame)
+{
+	struct rtl9602c_eth *ep = cookie;
+	unsigned long flags;
+	int rc = 0;
+
+	if (!of_machine_is_compatible("vsol,v2802rh"))
+		return ageing_s || learn_limit || max_frame ? -EOPNOTSUPP : 0;
+	if (port >= LAN_PORTS || !ep->lan_ndev[port])
+		return -EINVAL;
+	spin_lock_irqsave(&ep->sw_table_lock, flags);
+	ep->uni_l2[port].ageing_s = ageing_s;
+	ep->uni_l2[port].learn_limit = learn_limit;
+	ep->uni_l2[port].max_frame = max_frame;
+	/* Defaults alone leave the switch untouched, as for the UNI rate. */
+	ep->uni_l2_used |= ageing_s || learn_limit || max_frame;
+	if (ep->uni_l2_used && !READ_ONCE(ep->in_recovery) && READ_ONCE(ep->hw_up))
+		rc = rtl9602c_uni_l2_write(ep);
+	spin_unlock_irqrestore(&ep->sw_table_lock, flags);
+	return rc;
+}
+
 static void rtl9602c_uni_rate_replay(struct rtl9602c_eth *ep)
 {
 	unsigned long flags;
@@ -919,6 +1000,8 @@ static void rtl9602c_uni_rate_replay(struct rtl9602c_eth *ep)
 				    ep->uni_rate[p].up))
 			dev_warn(ep->dev, "UNI port %u rate replay failed\n", p);
 	}
+	if (ep->uni_l2_used && rtl9602c_uni_l2_write(ep))
+		dev_warn(ep->dev, "UNI L2 settings replay failed\n");
 	spin_unlock_irqrestore(&ep->sw_table_lock, flags);
 }
 
@@ -3980,6 +4063,7 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 		ret = luna_xpon_attach(dev, ep->wan_ndev, ep, rtl9602c_eth_omci_send,
 				       rtl9602c_uni_admin_set, rtl9602c_uni_link,
 				       rtl9602c_uni_rate_set,
+				       rtl9602c_uni_l2_set,
 				       ep->pon_led, ep->los_led);
 		if (ret)
 			dev_err(dev, "omcid backend not registered: %d\n", ret);
