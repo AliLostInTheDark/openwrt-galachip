@@ -118,3 +118,11 @@ not delay it, and the OLT sends in bursts, so messages in one millisecond prove
 nothing. To separate the two, dmesg now reports `ONU: FSM ticks N ms apart` and
 `ONU: PLOAM read N ms after its interrupt` from 100 ms, with the worst of each
 in `/proc/gpon_timing`. A slow O4 without those lines points at the OLT.
+
+The next boot answered part of it: `FSM ticks 1660 ms apart, in O5` and `PLOAM
+read 1603 ms after its interrupt`, ending at network start, then a deactivation.
+`rtl9602c_eth_hw_start()` stops the state machine on the first open of any
+netdev, and with failsafe disabled nothing opens one before netifd. So a link at
+O5 before S20 also had no OMCI path. `gpon_provision` now opens eth0 at S09. An
+earlier deactivation on that boot, 5 ms after Assign_Alloc-ID at 31.09 s with no
+late-tick line, may be the missing OMCI path, but that is not proven.

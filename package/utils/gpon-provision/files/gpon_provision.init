@@ -94,6 +94,12 @@ provision() {
 
 	apply_mac "$base" "$mac"
 
+	# V2802RH: the first open of any netdev brings up the GMAC that carries OMCI,
+	# and stops the PON state machine while it does. Failsafe no longer opens
+	# eth0 in preinit, so do it here, before the transmitter is released: left to
+	# netifd, OMCI has no path until then and the stall can deactivate the ONU.
+	[ -e /sys/class/net/pon0/device/l2_port_priority ] && ip link set dev "$base" up
+
 	# netifd builds br-lan after this script and resets the bridge MAC to the
 	# driver's: pin this unit's MAC on the bridge sections in UCI too.
 	if [ -n "$mac" ] && [ -f /etc/config/network ]; then
