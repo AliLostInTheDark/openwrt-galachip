@@ -33,9 +33,9 @@ function fec(value) {
 
 /* OPTICAL_FRONTEND_ALARM_* bits */
 var opticalAlarms = [
-	[ 0, _('TX power low') ], [ 1, _('TX power high') ],
+	[ 0, _('1310nm (TX) power low') ], [ 1, _('1310nm (TX) power high') ],
 	[ 2, _('Bias low') ], [ 3, _('Bias high') ],
-	[ 4, _('RX power low') ], [ 5, _('RX power high') ],
+	[ 4, _('1490nm (RX) power low') ], [ 5, _('1490nm (RX) power high') ],
 	[ 6, _('Voltage low') ], [ 7, _('Voltage high') ],
 	[ 8, _('Temperature low') ], [ 9, _('Temperature high') ]
 ];
@@ -145,12 +145,12 @@ function line(status) {
 	return E('div', { 'class': 'xpon-grid' }, [
 		widgets.panel(_('Activation'), widgets.stages(items, current, status.state >= 6, stateText(status))),
 		widgets.panel(null, widgets.gauge({
-			title: _('Receive'), value: widgets.dbm(status.bosa_rx_power_nw), limits: limits.rx,
+			title: _('1490nm (RX)'), value: widgets.dbm(status.bosa_rx_power_nw), limits: limits.rx,
 			min: -35, max: -5, lo: -27, hi: -8, loName: _('sensitivity'), hiName: _('overload'),
 			note: _('Class B+ receive window, -27 to -8 dBm'), empty: _('No light'), emptyBad: true
 		})),
 		widgets.panel(null, widgets.gauge({
-			title: _('Transmit'), value: widgets.dbm(status.bosa_tx_power_nw), limits: limits.tx,
+			title: _('1310nm (TX)'), value: widgets.dbm(status.bosa_tx_power_nw), limits: limits.tx,
 			min: -2, max: 8, lo: 0.5, hi: 5, loName: _('minimum'), hiName: _('maximum'),
 			note: _('Class B+ launch power, 0.5 to 5 dBm'), empty: _('Laser off')
 		}))
@@ -221,9 +221,9 @@ function injectStyle() {
 
 /* Alarm names from omcid's status */
 var omciAlarmNames = {
-	'low-rx-power': _('Low RX power'), 'high-rx-power': _('High RX power'),
+	'low-rx-power': _('Low 1490nm (RX) power'), 'high-rx-power': _('High 1490nm (RX) power'),
 	'sf': _('Signal fail'), 'sd': _('Signal degrade'),
-	'low-tx-power': _('Low TX power'), 'high-tx-power': _('High TX power'),
+	'low-tx-power': _('Low 1310nm (TX) power'), 'high-tx-power': _('High 1310nm (TX) power'),
 	'laser-bias': _('Laser bias'), 'lan-los': _('LAN LOS')
 };
 
@@ -435,8 +435,8 @@ return view.extend({
 			section(_('Optical telemetry'), [
 				row(_('Downstream FEC'), v.fec_downstream, 'fec_downstream'), row(_('Upstream FEC'), v.fec_upstream, 'fec_upstream'),
 				row(_('BOSA temperature'), v.bosa_temperature, 'bosa_temperature'), row(_('BOSA voltage'), v.bosa_voltage, 'bosa_voltage'),
-				row(_('BOSA bias current'), v.bosa_bias, 'bosa_bias'), row(_('TX optical power'), v.bosa_tx_power, 'bosa_tx_power'),
-				row(_('RX optical power'), v.bosa_rx_power, 'bosa_rx_power'), row(_('BOSA alarms'), v.bosa_alarms, 'bosa_alarms')
+				row(_('BOSA bias current'), v.bosa_bias, 'bosa_bias'), row(_('1310nm (TX) optical power'), v.bosa_tx_power, 'bosa_tx_power'),
+				row(_('1490nm (RX) optical power'), v.bosa_rx_power, 'bosa_rx_power'), row(_('BOSA alarms'), v.bosa_alarms, 'bosa_alarms')
 			]),
 			section(_('OMCI alarms'), omciAlarmRows.map(function(alarm, i) {
 				return row(omciAlarmLabel(alarm), v['omci_alarm_' + i], 'omci_alarm_' + i);

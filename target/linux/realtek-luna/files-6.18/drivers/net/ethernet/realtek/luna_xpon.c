@@ -1523,7 +1523,7 @@ static void luna_xpon_log_optics(void)
 	luna_xpon_format_value(celsius, sizeof(celsius), o.temp_mc, 1000);
 	luna_xpon_format_value(fahrenheit, sizeof(fahrenheit),
 			       DIV_ROUND_CLOSEST(o.temp_mc * 9, 5) + 32000, 1000);
-	pr_info("luna-xpon: optical sample: RX=%s%s TX=%s (burst sample), bias=%s A / %s mA, temperature=%s C / %s F, voltage=%s V / %s mV\n",
+	pr_info("luna-xpon: optical sample: 1490nm (RX) %s%s, 1310nm (TX) %s (burst sample), bias=%s A / %s mA, temperature=%s C / %s F, voltage=%s V / %s mV\n",
 		rx_los && o.rx_nw ? "LOS, sample " : "", rx, tx,
 		bias, ma, celsius, fahrenheit, voltage, mv);
 }

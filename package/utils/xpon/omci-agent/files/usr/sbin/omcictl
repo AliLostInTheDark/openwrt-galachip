@@ -77,8 +77,8 @@ function maybe(value) {
 	return value == null || `${value}` == '' ? 'unavailable' : `${value}`;
 }
 
-function optical_power(nw) {
-	return nw > 0 ? sprintf('%.2f dBm / %.4f mW', 10 * math.log(nw / 1e6) / math.log(10), nw / 1e6) : 'no light';
+function optical_power(label, nw) {
+	return label + (nw > 0 ? sprintf(' %.2f dBm / %.4f mW', 10 * math.log(nw / 1e6) / math.log(10), nw / 1e6) : ' no light');
 }
 
 /* The agent reports integer milli/micro/nano units; print readable ones. */
@@ -86,8 +86,8 @@ const optics = [
 	[ 'bosa_temperature_mc', 'bosa_temperature', (v) => sprintf('%.1f °C / %.1f °F', v / 1000.0, v * 9 / 5000.0 + 32) ],
 	[ 'bosa_voltage_uv', 'bosa_voltage', (v) => sprintf('%.2f V', v / 1e6) ],
 	[ 'bosa_bias_ua', 'bosa_bias', (v) => sprintf('%.1f mA', v / 1000.0) ],
-	[ 'bosa_tx_power_nw', 'bosa_tx_power', optical_power ],
-	[ 'bosa_rx_power_nw', 'bosa_rx_power', optical_power ]
+	[ 'bosa_tx_power_nw', 'bosa_tx_power', (v) => optical_power('1310nm (TX)', v) ],
+	[ 'bosa_rx_power_nw', 'bosa_rx_power', (v) => optical_power('1490nm (RX)', v) ]
 ];
 
 function format_optics(status) {
