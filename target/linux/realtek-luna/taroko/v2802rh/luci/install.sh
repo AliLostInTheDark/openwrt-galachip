@@ -3,9 +3,11 @@
 set -eu
 root=$1
 feed=$2
+jsmin=$3
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 resources=$root/www/luci-static/resources
 [ -d "$resources" ] || exit 0
+[ -x "$jsmin" ] || { echo "install.sh: no jsmin at $jsmin" >&2; exit 1; }
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 mkdir -p "$work/view/network" "$work/view/status/include"
@@ -22,10 +24,6 @@ for file in view/network/interfaces.js view/status/include/29_ports.js link.js; 
 		dest=$resources/$file
 		[ -f "$dest" ] || continue
 	fi
-	if command -v jsmin >/dev/null 2>&1; then
-		jsmin < "$work/$file" > "$work/min.js"
-		cp "$work/min.js" "$dest"
-	else
-		cp "$work/$file" "$dest"
-	fi
+	"$jsmin" < "$work/$file" > "$work/min.js"
+	cp "$work/min.js" "$dest"
 done

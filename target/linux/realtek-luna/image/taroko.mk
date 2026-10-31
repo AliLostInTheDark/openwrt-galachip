@@ -6,7 +6,7 @@
 # apply to one.
 define Image/Prepare
 	$(SHELL) $(TOPDIR)/target/linux/realtek-luna/taroko/v2802rh/luci/install.sh \
-		$(TARGET_DIR) $(TOPDIR)/feeds/luci
+		$(TARGET_DIR) $(TOPDIR)/feeds/luci $(STAGING_DIR_HOSTPKG)/bin/jsmin
 	rm -f $(TARGET_DIR)/www/luci-static/resources/view/network/wireless.js \
 		$(TARGET_DIR)/www/luci-static/resources/view/network/dhcp.js \
 		$(TARGET_DIR)/www/luci-static/resources/view/network/dns.js \
