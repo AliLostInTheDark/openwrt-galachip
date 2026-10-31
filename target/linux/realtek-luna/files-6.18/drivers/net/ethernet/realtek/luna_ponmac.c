@@ -285,17 +285,19 @@ static int rtl9602c_serdes_cdr_reset(const struct luna_ops *o)
 	return 0;
 }
 
-/* GPON SerDes bring-up, a faithful translation of the */
+/* GPON SerDes bring-up */
 static const struct r960_op c2_sds_pre[] = {
 	FLD(C2_SDS_CFG, 4, 0, C2_SDS_MODE_OFF),	/* park CFG_SDS_MODE = off (0x1f) */
 	WR(C2_WSDS_DIG_01, 0),			/* clear force-SDS dummy          */
 	FLD(C2_WSDS_DIG_00, 0, 0, 0),		/* STOP_CLK = 0                   */
 };
 
-/* Stock rev-A GPON ModeV1 pulses ONLY CMD_SDS_RST_PS (bit0). Our field-writes
+/*
+ * Stock rev-A GPON ModeV1 pulses only CMD_SDS_RST_PS (bit0). The field-writes
  * are RMW, so asserting CMD_SDS_CFG_RST_PS (bit7) here would leave a reset
  * domain latched through the whole bring-up; it is applied conditionally in
- * rtl9602c_ponmac_mode_set behind luna_c2_sds_cfgrst. */
+ * rtl9602c_ponmac_mode_set behind luna_c2_sds_cfgrst.
+ */
 static const struct r960_op c2_sds_reset[] = {
 	FLD(C2_SW_SOFTWARE_RST, 0, 0, 1),	/* CMD_SDS_RST_PS (bit0 only, stock)  */
 	DLY(10),
@@ -333,7 +335,7 @@ static const struct r960_op c2_sds_rx_arm[] = {
 	FLD(C2_SDS_FORCE_BEN, 0, 0, 0),		/* BEN_FORCE_MODE = 0 (GTC gates) */
 };
 
-/* Step 6b + TX drive, with serdes_modev1_tx */
+/* Step 6b + TX drive */
 static const struct r960_op c2_sds_tx[] = {
 	FLD(C2_WSDS_DIG_1E,    5,  4, 0),	/* D2A interconnect = 0 (stock)   */
 	FLD(C2_SDS_REG7,      14, 14, 0),	/* SP_CFG_NEG_CLKWR_A2D = 0       */
@@ -373,8 +375,10 @@ static const struct r960_op c2_sds_mode[] = {
 	DLY(50),
 };
 
-/* Post-GPON-mode TX-interface reset-B re-sync (DIG_1D[16] 0->1) — stock rev-A
- * OMITS this; gated by luna_c2_postmode_perturb. */
+/*
+ * Post-GPON-mode TX-interface reset-B re-sync (DIG_1D[16] 0->1). Stock rev-A
+ * omits this; gated by luna_c2_postmode_perturb.
+ */
 static const struct r960_op c2_sds_txresync[] = {
 	FLD(C2_WSDS_DIG_1D, 16, 16, 0),		/* TX interface reset-B 0         */
 	DLY(2),
@@ -510,7 +514,7 @@ static int rtl9602c_ponmac_mode_set(const struct luna_ops *o,
 	}, 1);
 }
 
-/* NO CALLER TODAY */
+/* No caller today */
 int luna_ponmac_init(enum luna_chip chip, int rev, int subtype,
 			const struct luna_ops *o)
 {

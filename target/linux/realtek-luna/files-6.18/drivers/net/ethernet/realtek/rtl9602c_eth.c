@@ -35,7 +35,7 @@
 #include "luna_gmac_logic.h"	/* family GMAC ring packings (flowcore) */
 #include "gpon_hwaddr.h"	/* the ONE station-address ladder (drivers/net/gpon) */
 
-/* US-OMCI TX tuning knobs (see rtl9602c_eth_omci_xmit) */
+/* US-OMCI TX settings (see rtl9602c_eth_omci_xmit) */
 static const unsigned int omci_sid_idx = 4;	/* PON_SID one-hot shift (word3[28:23]); 4 = SID-64 classify slot (RX_SID group [4]) */
 /* One netdev per LAN jack (the DT ethernet-ports node): the switch tells the
  * CPU which port a frame came in on (the RX descriptor's source port), and
@@ -82,14 +82,16 @@ MODULE_PARM_DESC(lan_tx_steer,
 /* ExtSpa / PON port (word3[22:16] = (port&0x7F)<<16). */
 static const unsigned int omci_pon_port = 2;	/* ExtSpa / PON port (word3[22:16]) = our PON switch port */
 
-/* DEV sweep: raw descriptor overrides. 0 = use the computed value. Lets us sweep
- * the runtime-unknown opts fields (gmac_id[19:18], extspa[15:13], portmask) live at
- * O5 (echo to the param) without a rebuild, watching RX_SID_GOOD_CNT_US. */
+/* Raw descriptor overrides. 0 = use the computed value. */
 static const unsigned int omci_word2_ovr;
 static const unsigned int omci_word3_ovr;
 
-/* HW ring for the US-OMCI descriptor ring */
-static const unsigned int omci_tx_ring = 0;	/* 0 = LAN ring (GMAC FETCHES it; ring 4 dedicated does NOT fetch — dirty stays 0); 4 = dedicated */	/* dedicated HW-descriptor TX ring (opts3 carries the SID). The ring0 SW 0x8899-tag path only works on the FPGA model — on real silicon the L2 switch strips the inline tag so US OMCI never reaches the US-NIC; the HW descriptor (word3=0x00b20040, DST_SID 64) is the only path that classifies to SID-64 group[4]. */
+/*
+ * HW ring for the US-OMCI descriptor ring. Real silicon's L2 switch strips an
+ * inline 0x8899 tag, so US OMCI classifies only through the HW descriptor
+ * (word3=0x00b20040, DST_SID 64).
+ */
+static const unsigned int omci_tx_ring = 0;	/* 0 = LAN ring; 4 = dedicated ring */
 
 /* Doorbell override. 0xff = "auto": compute the kick from the SAME HW ring used
  * to arm TxFDP (h<4 -> R_IO_CMD bit h; h==4 -> R_IO_CMD1 |= 0x100). Any other
@@ -97,7 +99,7 @@ static const unsigned int omci_tx_ring = 0;	/* 0 = LAN ring (GMAC FETCHES it; ri
 static const unsigned int omci_doorbell_bit = 0xff;
 
 /* GMAC bring-up mode. */
-static const unsigned int gmac_reset = 1;	/* now safe to reset: rtl9602c_uboot_swcore_bringup() re-runs U-Boot's GMAC<->switch resync after the IP-block reset, breaking the old "reset kills egress" catch-22, and the stock GMAC init re-establishes the GMAC0-TX->US-NIC direct link */
+static const unsigned int gmac_reset = 1;	/* safe to reset: rtl9602c_uboot_swcore_bringup() re-runs U-Boot's GMAC<->switch resync after the IP-block reset, and the stock GMAC init re-establishes the GMAC0-TX->US-NIC direct link */
 
 
 
@@ -127,17 +129,16 @@ static const unsigned int recover_rst = 1;
 #define R_RxMRingCfg(k)	(0x1380 + (k) * 16)	/* RX multiring k config block (stock stride 16) */
 #define R_RxFDP		0x13F0	/* RX ring0 fetch-descriptor pointer (phys) */
 #define R_RxCDO		0x13F4	/* RX ring0 current-descriptor offset */
-/* ★ RX multiring k's {FDP, CDO} pair sits at +0 / +4 of its 16-byte block --
- * the layout ring 0 has at R_RxFDP/R_RxCDO and every TX ring has at
- * R_TxFDP/R_TxCDO, and stock's own hw_reg dump lists RxFDPk/RxCDOk per ring
- * (dev/STOCK_GMAC_REGS.md).  Read only, by the /proc dump (2026-09-05). */
+/*
+ * RX multiring k's {FDP, CDO} pair sits at +0/+4 of its 16-byte block, the
+ * layout ring 0 has at R_RxFDP/R_RxCDO and every TX ring has at
+ * R_TxFDP/R_TxCDO. Read only, by the /proc dump.
+ */
 #define R_RxMRingCDO(k)	(R_RxMRingCfg(k) + 4)	/* [RxCDO:RxRingSize] of ring k */
 static_assert(R_RxMRingCDO(1) == 0x1394 && R_RxMRingCDO(5) == 0x13d4,
 	      "the RX multiring block moved");
-/* MSR was a bare literal at five sites here while luna_eth.c already named it
- * (2026-09-05); its right home is the family header, beside R_IMR. */
 #define R_MSR		0x58	/* media/flow status; top byte = force flow ctl (msr_top) */
-/* THE GMAC0 MAC-LEVEL MIB COUNTERS ARE ONE ARRAY */
+/* The GMAC0 MAC-level MIB counters are one array. */
 #define R_MIB16(n)	(0x10 + 2 * (n))
 #define R_TXOKCNT	R_MIB16(0)	/* word = [TXOKCNT:RXOKCNT] */
 #define R_TXERR		R_MIB16(2)	/* word = [TXERR:RXERR]     */
@@ -228,17 +229,17 @@ static bool rtl9602c_uni_port_locked(unsigned int port)
 #define SW_FC_P_FCOFF_LO_TH	0x230F8
 #define SW_TAG_AWARE		BIT(9)
 #define SW_TRAP_TAG_INSERT_EN	BIT(8)
-/* VLAN filtering: VLAN_CTRL @ 0x13008 bit0 = VLAN_FILTERING; VLAN_INGRESS @ * 0x13004 = per-port ingress filter, and that one is the HEADER's * (luna_eth_regs.h) since 2026-09-04. SW_VLAN_FILTERING below has no twin in the * header and stays here. */
+/*
+ * VLAN filtering: VLAN_CTRL @ 0x13008 bit0 = VLAN_FILTERING; VLAN_INGRESS @
+ * 0x13004 = per-port ingress filter, in luna_eth_regs.h. SW_VLAN_FILTERING has
+ * no twin in that header.
+ */
 #define SW_VLAN_FILTERING	BIT(0)
 /* Operational value: VLAN_CTRL=0x19 (filtering + VID0/VID4095 type bits). */
-#define SW_VLAN_CTRL_VAL	0x19	/* VLAN filtering ON at init — required during ranging/config-apply for
-					 * reliable onlining (VLAN-off cold boots failed config-apply 4x; VLAN-on
-					 * onlines + stays stable). BUT with filtering ON this switch does NOT pass
-					 * LAN port<->CPU traffic (ping 192.168.1.1 fails), so LAN management access
-					 * needs filtering OFF. HYBRID (gpon-rtl960x.c gpon_fsm_poll): keep 0x19 for
-					 * config, then auto-clear bit0 (filtering off) once the ONU is stably at O5
-					 * (config done) to open LAN; re-assert on any re-range. Proven viable: online
-					 * with 0x19 then poke 0x13008=0 -> stays online 6h + LAN reachable. */
+#define SW_VLAN_CTRL_VAL	0x19	/* filtering on at init: required for reliable
+					 * onlining during ranging and config-apply.
+					 * luna_lan_keep_open_poll() later sets bit0 from
+					 * luna_vlan_filter_ok. */
 #define SW_DEFAULT_VID		1
 /* The PON port's own VLAN (members PON + CPU), as stock does (PON 4025, LAN 4005): a WAN
  * broadcast then floods to the CPU only, never to a LAN port. 0 = the PON shares VID 1. */
@@ -255,12 +256,13 @@ MODULE_PARM_DESC(pon_vid, "VLAN of the PON port, apart from the LAN's (default 4
 #define SW_TBL_BUSY		BIT(13)
 #define SW_TBL_TRIES		1000u	/* the bound the poll below refuses at */
 #define SW_TBL_VLAN_WR(vid)	(BIT(31) | (((vid) & 0xfff) << 9) | (1u << 4) | (1u << 3) | 1u)
-/* THE SAME THREE ADDRESSES ARE SPELLED THREE TIMES IN */
 #define CPUTAG1_OMCI_SID(s)	(((s) & 0x7f) << 8)	/* R_CPUTAG1CR[14:8] */
 #define CPUTAG1_B1		0x2	/* bit1: live 9602C stock reads CPUTAG1CR=0x4002; not present in the 9607C register map */
-/* SUPERSEDED: an earlier reading had stock OR-ing 0x4070 (bits 4/5/6 as the
- * cpu-tag format/enable).  The live 9602C devmem read below is 0x4002. */
-#define CPUTAG1_LOW		0x02	/* live-stock ref ONU devmem: CPUTAG1CR = 0x4002 (the earlier 0x4070 derivation was wrong) */
+/*
+ * Stock does not OR in 0x4070: a live 9602C devmem read gives CPUTAG1CR =
+ * 0x4002.
+ */
+#define CPUTAG1_LOW		0x02	/* live-stock ref ONU devmem: CPUTAG1CR = 0x4002 */
 
 /* The switch L34 (NAPT) offload module is compiled in via this driver's TU to
  * avoid a separate Kbuild object; it carries its own header include guard. */
@@ -268,47 +270,21 @@ MODULE_PARM_DESC(pon_vid, "VLAN of the PON port, apart from the LAN's (default 4
 #ifdef CONFIG_GPON_FLOW_OFFLOAD
 #include <net/pkt_cls.h>	/* enum tc_setup_type, for the ndo below */
 #include "gpon_flow_offload.h"	/* the core TC-offload lifecycle */
-/* FORWARD-DECLARED BECAUSE BOTH NETDEVS NEED IT AND ONE */
+/* Forward-declared because both netdevs need it. */
 static int rtl9602c_l34_setup_tc(struct net_device *dev,
 				 enum tc_setup_type type, void *type_data);
 #endif
 
-/* HW NAT (switch L34 offload) gate, module-param rather than Kconfig so the
- * offload-vs-AQM comparison is one bootarg apart rather than one build.  The
- * default is the OPERATOR'S: it decides which datapath ships, and that decision
- * is taken with measured throughput and loaded latency, never quietly here. */
-static int hw_nat;	/* the V2802RH bridges: no L3/L4 NAT to offload */
-/* ★★★ THE DEFAULT IS 1, AND IT IS THE OPERATOR'S CALL, NOT AN INFERENCE.
- * (2026-09-15: *"=1 por defecto y corrigir"*.)  The standing objective has
- * always been *"mantener el acelerador de hardware activo por defecto"*, and 0
- * contradicted it silently: at 0 neither the TC lifecycle handle nor the
- * /proc node exists, so the board forwarded in software at 11% of stock with
- * its CPU at 100% and nothing could say why.
- *
- * MEASURED before flipping it, not after: `hwnat_wedge_ab.py` booted BOTH arms
- * twice on the same image bytes and neither wedged -- 0/2 each, the host
- * pinging the board's own LAN address as the deciding witness.  ⚠ That was at
- * 10 pps, which is not traffic: it says the gate can be OPENED safely, never
- * that the engine survives load.  The load question belongs to the benchmark.
- *
- * ⚠ AND OPENING IT IS NOT SUFFICIENT, which is why the old comment's "armed
- * lazily on first offload" was wrong twice over: the thing it claimed to arm
- * was CONSTRUCTED INSIDE THIS GATE, so nothing could arm it.
- *
- * ✔ MEASURED 2026-09-16, and this comment used to end "with the gate open the
- * engine still reads provisioned 0 and offered=0 ... what installs a flow is
- * still owed".  That was true for one day.  With a forwarded connection through
- * the board the engine reads offered=28988 installed=372 hits=3012 -- it
- * installs flows and the hardware path counts hits.  What is still owed is
- * narrower and is NOT about this gate: the case's own forged flow is software
- * forwarded, and the leading explanation is our INSTRUMENT (the NAPT hit
- * bitmap is clear-on-read and has two readers).
+/*
+ * HW NAT (switch L34 offload) gate, a module parameter rather than Kconfig so
+ * the offload-vs-AQM comparison is one bootarg apart rather than one build.
  */
+static int hw_nat;	/* the V2802RH bridges: no L3/L4 NAT to offload */
 module_param(hw_nat, int, 0444);
 MODULE_PARM_DESC(hw_nat, "enable RTL9602C switch L34 hardware NAT offload (0=off)");
 
 struct rtl9602c_eth {
-	/* THE PER-CHIP TABLE. */
+	/* The per-chip table. */
 	const struct luna_sw_map *swm;
 	void __iomem	*base;
 	void __iomem	*sw;	/* switch core */
@@ -339,9 +315,11 @@ struct rtl9602c_eth {
 	 * numbering is unchanged; only the EOR placement and the TxCDO->slot
 	 * translation depend on rot. */
 	unsigned int	tx_rot, otx_rot;
-	/* TX-DMA park watchdog (see tx_recover). stall_since = jiffies of the
-	 * first tick that saw OWN stuck at the HW cursor with no dirty progress;
-	 * 0 = healthy. recover_work runs the IP-block power-cycle + re-arm. */
+	/*
+	 * TX-DMA park watchdog. stall_since = jiffies of the first tick that
+	 * saw OWN stuck at the HW cursor with no dirty progress; 0 = healthy.
+	 * recover_work runs the IP-block power-cycle + re-arm.
+	 */
 	unsigned long	stall_since;
 	unsigned int	stall_lastdirty;
 	unsigned int	stall_level;	/* 0: next escalation = soft re-arm;
@@ -369,7 +347,7 @@ struct rtl9602c_eth {
 	/* Idle dummy TX ring armed on the UNUSED HW TX rings */
 	struct tx_desc	*dummy_ring;
 	dma_addr_t	dummy_ring_dma;
-	/* Shared-ring-0 OMCI test path (omci_tx_ring==0) */
+	/* Shared-ring-0 OMCI path (omci_tx_ring==0) */
 	int		omci_r0_last_slot;
 	/* US OMCI (OMCC) responder state. */
 	u8		omci_sn[8];	/* G.984.3 ONU-SN (4 ASCII ID + 4 serial),
@@ -490,21 +468,23 @@ static bool rtl9602c_eth_want_promisc(const struct rtl9602c_eth *ep)
 static inline u32 ep_rd(struct rtl9602c_eth *ep, u32 r) { return ioread32(ep->base + r); }
 static inline void ep_wr(struct rtl9602c_eth *ep, u32 r, u32 v) { iowrite32(v, ep->base + r); }
 
-/* ---- the LAN SerDes: port 0 to the external PHY -----------------------------
- * Its mode register. [4:0] is the SerDes mode in the family's coding (0x02
- * SGMII, 0x12 HSGMII, 0x1f off), and 0x1f, every bit set, is also what a die
- * with no SerDes port shows: the UNI gate reads it as PHY_PWRDN_GUARD.
+/*
+ * The LAN SerDes: port 0 to the external PHY. This is its mode register. [4:0]
+ * is the SerDes mode in the family's coding (0x02 SGMII, 0x12 HSGMII, 0x1f
+ * off), and 0x1f, every bit set, is also what a die with no SerDes port shows:
+ * the UNI gate reads it as PHY_PWRDN_GUARD.
  *
- * The sequences below are the stock U-Boot's `sdsmode` command (2011.12.NA
- * for rtl9602C: sds_sgmii at 0x80d80854, sds_hisgmii at 0x80d808fc, read from
- * the V2802RH's flash) and are, register for register, what the stock RTOS's
+ * The sequences below are the stock U-Boot's sdsmode command (2011.12.NA for
+ * rtl9602C: sds_sgmii at 0x80d80854, sds_hisgmii at 0x80d808fc, read from the
+ * V2802RH's flash) and are, register for register, what the stock RTOS's
  * _rtl9602c_lan_sds_mode_set writes for its modes 3 (SGMII) and 5 (HSGMII):
- * park the mode, the analog block, the mode, the forced ability, a reset
- * pulse, one misc word. U-Boot runs them only when the command is typed, so
- * a Linux that does not run them leaves the SerDes at its reset defaults --
- * which linked, and carried traffic, but not at the link's rate (2026-10-27).
- * The stock RTOS's link task re-runs them, with the PHY's own SerDes option,
- * whenever the copper speed crosses 1G (rtl9602c_port0_link_poll). */
+ * park the mode, the analog block, the mode, the forced ability, a reset pulse,
+ * one misc word. U-Boot runs them only when the command is typed, so a Linux
+ * that does not run them leaves the SerDes at its reset defaults, which link
+ * and carry traffic, but not at the link's rate. The stock RTOS's link task
+ * re-runs them, with the PHY's own SerDes option, whenever the copper speed
+ * crosses 1G (rtl9602c_port0_link_poll).
+ */
 #define SW_LAN_SDS_MODE		0x00214
 #define   LAN_SDS_MODE_MASK	0x1f
 #define   LAN_SDS_MODE_OFF	0x1f
@@ -587,8 +567,10 @@ static int rtl9602c_gphy_ocp_read__locked(struct rtl9602c_eth *ep, unsigned int 
 {
 	u32 adr = GPHY_IND_PHY(phyad) | ocp;
 
-	/* PREFLIGHT: a command issued while the previous transaction is still
-	 * BUSY makes the window answer for the wrong one. */
+	/*
+	 * Preflight: a command issued while the previous transaction is still
+	 * busy makes the window answer for the wrong one.
+	 */
 	if (rtl9602c_gphy_wait(ep))
 		return -ETIMEDOUT;
 	iowrite32(adr | GPHY_IND_EN, ep->sw + SW_GPHY_IND_CMD);
@@ -603,8 +585,10 @@ static int rtl9602c_gphy_ocp_write__locked(struct rtl9602c_eth *ep, unsigned int
 {
 	u32 adr = GPHY_IND_PHY(phyad) | ocp;
 
-	/* PREFLIGHT BEFORE THE DATA REGISTER: the value would otherwise be
-	 * consumed by a transaction still in flight. */
+	/*
+	 * Preflight before the data register: the value would otherwise be
+	 * consumed by a transaction still in flight.
+	 */
 	if (rtl9602c_gphy_wait(ep))
 		return -ETIMEDOUT;
 	iowrite32(val, ep->sw + SW_GPHY_IND_WD);
@@ -970,9 +954,11 @@ static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 	/* Stock switch-init prerequisites */
 	writel(readl(SOC_SW_ENABLE) | SW_EN_BIT, SOC_SW_ENABLE);
 
-	/* (b) CFG_UNHIOL.IPG_COMPENSATION — swcore 0x23040 bit0. ORACLE-CONFIRMED real
-	 * value diff (ours read 0xa8, working stock 0xa9) that demonstrably changed the
-	 * OMCI forwarding class when poked live. The stock switch init sets it. */
+	/*
+	 * (b) CFG_UNHIOL.IPG_COMPENSATION, swcore 0x23040 bit0. The stock
+	 * switch init sets it (0xa9 against 0xa8 without it), and poking it
+	 * live changed the OMCI forwarding class.
+	 */
 	if (ep->swm->cfg_unhiol)
 		iowrite32(ioread32(ep->sw + ep->swm->cfg_unhiol) | BIT(0),
 			  ep->sw + ep->swm->cfg_unhiol);
@@ -1014,7 +1000,10 @@ static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 				    "[L2-005] swcore VLAN table BUSY writing the PON VLAN %u: WAN broadcasts may reach the LAN ports\n",
 				    pon_vid);
 		iowrite32(0, ep->sw + SW_VLAN_PORT_ACCEPT_FRAME_TYPE);	/* accept all frame types */
-		/* PVID is a 12-bit element array packed TWO PER WORD, so */
+		/*
+		 * PVID is a 12-bit element array packed two per word; see
+		 * SW_VLAN_PB_VID.
+		 */
 		for (p = 0; p < SW_VLAN_PB_VID_PORTS; p++) {
 			void __iomem *w;
 			u32 vid = p == ep->swm->pon_port ? SW_WAN_PVID : SW_DEFAULT_VID;
@@ -1048,7 +1037,7 @@ static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 		iowrite32(SW_VLAN_CTRL_VAL, ep->sw + SW_VLAN_CTRL); /* enable VLAN function */
 		luna_gpon_vlan_filter_ok(pon_vid != 0);
 	}
-	/* Force the CPU port link UP. CRITICAL */
+	/* Force the CPU port link up. */
 	iowrite32(SW_ABLTY_1G_FD_UP, ep->sw + SW_FORCE_P_ABLTY(ep, ep->swm->cpu_port));
 	iowrite32(0xfff, ep->sw + SW_ABLTY_FORCE_MODE(ep, ep->swm->cpu_port));
 
@@ -1068,7 +1057,7 @@ static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 	rtl9602c_uni_rate_replay(ep);
 }
 
-/* THE FIRST RUNG of the declared precedence */
+/* The first rung of the declared precedence */
 static char *mac_param;
 module_param_named(mac, mac_param, charp, 0444);
 MODULE_PARM_DESC(mac, "station MAC handed in at boot, aa:bb:cc:dd:ee:ff");
@@ -1132,9 +1121,10 @@ static int rtl9602c_eth_set_mac_address(struct net_device *ndev, void *p)
 }
 
 /* Give RX descriptor @idx a fresh buffer and hand it to HW (own=1). */
-/* The body is the FAMILY's (luna_eth_regs.h): both drivers had it character
- * for character apart from the struct that reached `->rx_ring`.  The wrapper
- * keeps the old name and signature so every call site is untouched. */
+/*
+ * The body is in luna_eth_regs.h; this wrapper keeps the name and signature for
+ * the call sites.
+ */
 static int rtl9602c_eth_refill(struct rtl9602c_eth *ep, unsigned int idx)
 {
 	return luna_rx_refill(ep->ndev, ep->dev, ep->rx_ring, ep->rx_skb,
@@ -1214,12 +1204,12 @@ static void txd_publish(struct rtl9602c_eth *ep, unsigned int i, u32 word0,
 	ep->tx_ring[i].opts1 = word0 | D_OWN;	/* OWN in opts1: publish to HW */
 	wmb();
 	ep->tx_head++;
-	/* THE SAME KNOB AS THE LAN PATH, AND IT WAS ONLY ON ONE */
+	/* Same TX-fetch GO as the LAN path. */
 	rtl9602c_eth_tx_fetch(ep);	/* stock per-packet TX-fetch GO (0x18001038[31]) */
 	ep_wr(ep, R_IO_CMD, ep_rd(ep, R_IO_CMD) | BIT(0));	/* kick LAN ring 0 */
 }
 
-/* Shared-ring-0 US-OMCI transmit (omci_tx_ring==0) */
+/* Shared-ring-0 US-OMCI transmit */
 static int rtl9602c_eth_omci_xmit_ring0(struct rtl9602c_eth *ep, const u8 *omci,
 					unsigned int len)
 {
@@ -1229,15 +1219,12 @@ static int rtl9602c_eth_omci_xmit_ring0(struct rtl9602c_eth *ep, const u8 *omci,
 	dma_addr_t da;
 	u32 word0;
 
-	/* LAN-ring HW-descriptor path: the bare OMCI PDU on the proven-to-fetch LAN
-	 * ring 0 (kick R_IO_CMD bit0) with the CORRECTED HW cpu-tag descriptor -- NOT
-	 * the SW 0x8899 tag.  Isolates RING from DESCRIPTOR: HW ring 4 does fetch, yet
-	 * RX_SID_GOOD stays 0. */
-	{	/* Stock sends the OMCI PDU RAW (48 bytes, no Ethernet pad) — the
-		 * working stock ref ONU's TX descriptor is len=0x30=48. The old
-		 * pad-to-60 was a TX-stall workaround, now obsolete (the SW-follows-
-		 * HW ring alignment fixed the runt stall). Send exactly what stock
-		 * sends so the US-NIC sees the same frame. */
+	/*
+	 * LAN-ring HW-descriptor path: the bare OMCI PDU on LAN ring 0 (kick
+	 * R_IO_CMD bit0) with the HW cpu-tag descriptor, not the SW 0x8899 tag.
+	 */
+	{	/* Stock sends the OMCI PDU raw (48 bytes, no Ethernet pad; its TX
+		 * descriptor has len=0x30), so the US-NIC sees the same frame. */
 		skb = netdev_alloc_skb(ep->ndev, len);
 		if (!skb) {
 			ep->dbg_omci_tx_drop++;
@@ -1298,9 +1285,10 @@ static int rtl9602c_eth_omci_xmit_ring0(struct rtl9602c_eth *ep, const u8 *omci,
 	ep->tx_ring[i].opts3 = rtl9602c_omci_txd_word3(omci_word3_ovr,
 						       RTL9602C_OMCC_SID);
 	ep->tx_ring[i].opts4 = 0;
-	/* Recorded BEFORE the publish, not after it as this used to be: it is a
-	 * diagnostic, and naming the slot while it is still ours is the half that
-	 * can never describe a descriptor the engine has already eaten. */
+	/*
+	 * Recorded before the publish: naming the slot while it is still ours
+	 * can never describe a descriptor the engine has already eaten.
+	 */
 	ep->omci_r0_last_slot = (int)i;
 	txd_publish(ep, i, word0, false);  /* US OMCI: the GO is NOT optional */
 	spin_unlock_irqrestore(&ep->tx_lock, flags);
@@ -1372,7 +1360,7 @@ static netdev_tx_t rtl9602c_eth_wan_xmit(struct sk_buff *skb, struct net_device 
 		return NETDEV_TX_OK;
 	}
 	rtl9602c_eth_tx_reclaim(ep);	/* shared LAN ring 0; drop on full (DHCP retransmits) */
-	/* THE OMCI RESERVE IS HONOURED HERE TOO (2026-09-04). */
+	/* The OMCI reserve is honoured here too. */
 	if (luna_gmac_tx_ring_full(ep->tx_head, ep->tx_dirty,
 				   TX_RING_SIZE, OMCI_RESV)) {
 		spin_unlock_irqrestore(&ep->tx_lock, flags);
@@ -1391,7 +1379,7 @@ static netdev_tx_t rtl9602c_eth_wan_xmit(struct sk_buff *skb, struct net_device 
 		       GPON_CTRL_FLOW : GPON_DATA_FLOW;
 	ep->tx_ring[i].opts3 = rtl9602c_omci_txd_word3(0, flow);
 	ep->tx_ring[i].opts4 = 0;
-	txd_publish(ep, i, word0, true);   /* WAN: the throughput A/B may skip it */
+	txd_publish(ep, i, word0, true);   /* WAN: may skip the GO */
 	spin_unlock_irqrestore(&ep->tx_lock, flags);
 
 	ndev->stats.tx_packets++;
@@ -1490,15 +1478,17 @@ static int rtl9602c_eth_omci_xmit(struct rtl9602c_eth *ep, const u8 *omci,
 
 	if (len < 8 || len > 1500)
 		return -EINVAL;
-	/* omci_tx_ring==0: shared-ring-0 test path — enqueue on the proven LAN
-	 * ring 0 with the OMCI steering descriptor (isolates steering from the
-	 * "ring 4 won't fetch" problem). All ring instances 1..5 use the dedicated
-	 * ring below. */
+	/*
+	 * Enqueue on LAN ring 0 with the OMCI steering descriptor. The
+	 * dedicated ring path below is not used.
+	 */
 	return rtl9602c_eth_omci_xmit_ring0(ep, omci, len);
-	/* omci_tx_ring is the HW ring h directly — the SAME h used to arm R_TxFDP(h)
-	 * in open(). Derive the doorbell from h so they can never disagree (the prior
-	 * bug: ring armed at h=4/0x1340 but kicked R_IO_CMD bit0 = h=0). Stock kick
-	 * behavior: h<4 -> R_IO_CMD |= 1<<h; h==4 -> R_IO_CMD1 |= 0x100. */
+	/*
+	 * omci_tx_ring is HW ring h directly, the same h used to arm R_TxFDP(h)
+	 * in open(). The doorbell is derived from h so they can never disagree.
+	 * Stock kick behaviour: h<4 -> R_IO_CMD |= 1<<h; h==4 -> R_IO_CMD1 |=
+	 * 0x100.
+	 */
 	kick_iocmd1 = rtl9602c_omci_doorbell(omci_tx_ring, omci_doorbell_bit,
 					     &hwring, &dmask);
 
@@ -1552,10 +1542,12 @@ static int rtl9602c_eth_omci_xmit(struct rtl9602c_eth *ep, const u8 *omci,
 	/* word0 (opts1) = */
 	word0 = D_FS | D_LS | D_TXCRC | D_IPCS | (len & TXD_LEN_MASK);
 	word0 |= TXD0_OMCI_KEEP_DISLRN_PSEL;
-	/* Same fix as the ring-0 path: DO NOT OR TXD0_DESC_FLAGS (0xf8800000) — it sets
-	 * D_EOR (bit30) on EVERY descriptor, so the GMAC treats each as end-of-ring and
-	 * never drains the ring (OWN stuck, dirty stalls). D_EOR belongs ONLY on the wrap
-	 * slot (set just below), exactly like the working LAN TX path. */
+	/*
+	 * Do not OR in TXD0_DESC_FLAGS (0xf8800000): it sets D_EOR (bit30) on
+	 * every descriptor, so the GMAC treats each as end-of-ring and never
+	 * drains the ring (OWN stuck, dirty stalls). D_EOR belongs only on the
+	 * wrap slot, set just below, as in the LAN TX path.
+	 */
 	if (i == otx_eor_slot(ep))
 		word0 |= D_EOR;
 
@@ -1616,7 +1608,7 @@ void rtl9602c_eth_omci_selftest(void)
 }
 EXPORT_SYMBOL(rtl9602c_eth_omci_selftest);
 
-/* OMCI (ITU-T G.988): THE RESPONDER IS THE COMMON CORE'S */
+/* OMCI (ITU-T G.988): the responder is the common core's. */
 static struct omci_onu luna_onu;
 
 /* RX copies the original baseline prefix and length to the shared timer owner. */
@@ -1634,7 +1626,6 @@ static void rtl9602c_eth_omci_input(struct rtl9602c_eth *ep, const u8 *msg,
 		ep->dbg_omci_unhandled++;
 }
 
-/* LAYER BOUNDARY -- RESOLVED 2026-09-02 */
 void rtl9602c_eth_omci_set_optical(s16 rx_level, s16 tx_level)
 {
 	luna_omci_set_optical((u16)rx_level, (u16)tx_level);
@@ -1731,10 +1722,13 @@ static int rtl9602c_eth_rx(struct rtl9602c_eth *ep, int budget, bool napi_ctx)
 				else if (sp < LAN_PORTS && ep->lan_ndev[sp] &&
 					 netif_running(ep->lan_ndev[sp]))
 					rdev = ep->lan_ndev[sp];
-				/* DS-OFFER diag (find why the WAN DHCP OFFER misses gpon0):
-				 * log any DHCP-to-client (UDP dst port 68) DS frame + where
-				 * it routed. dst = eth hdr; [12:13]=ethertype 0x0800,
-				 * [23]=IP proto 0x11(UDP), [36:37]=UDP dst port 0x0044(68). */
+				/*
+				 * DS-OFFER diag: log any DHCP-to-client (UDP
+				 * dst port 68) DS frame and where it routed.
+				 * dst = eth hdr; [12:13]=ethertype 0x0800,
+				 * [23]=IP proto 0x11(UDP), [36:37]=UDP dst port
+				 * 0x0044(68).
+				 */
 				if (IS_ENABLED(CONFIG_LUNA_DEBUG) &&
 				    len >= RX_CPU_PREFIX + 38 &&
 				    dst[12] == 0x08 && dst[13] == 0x00 &&
@@ -2033,8 +2027,10 @@ static void rtl9602c_cpu_tag_arm(struct rtl9602c_eth *ep)
 	iowrite32(0, ep->sw + SW_MAC_CPU_TAG_CTRL);
 	wmb();					/* clear must land before the re-arm edge */
 	iowrite32(sw_tagaware, ep->sw + SW_MAC_CPU_TAG_CTRL);
-	/* aux flow-control thresholds, live-stock, NAMED from the chip's own
-	 * chipdef (2026-08-29) */
+	/*
+	 * aux flow-control thresholds, live-stock, named from the chip's own
+	 * chipdef
+	 */
 	iowrite32(0x00400034, ep->sw + SW_FC_P_LO_TH);
 	iowrite32(0x00f000ea, ep->sw + SW_FC_P_FCOFF_HI_TH);
 	iowrite32(0x00400034, ep->sw + SW_FC_P_FCOFF_LO_TH);
@@ -2056,7 +2052,7 @@ static void rtl9602c_hw_program(struct rtl9602c_eth *ep)
 	 * after a true reset the split bit must be set by us, the per-ring
 	 * IMR0/ISR1 model the driver already uses assumes it. */
 	ep_wr(ep, R_CONFIG, 0x21000000);
-	/* ⚠ R_RXOKMUL IS A MIB COUNTER WORD ([RXOKMUL:TXABT]), NOT */
+	/* R_RXOKMUL is a MIB counter word ([RXOKMUL:TXABT]). */
 	ep_wr(ep, R_RXOKMUL, 0x010c0000);	/* stock O5 counter snapshot */
 	/* cpu-tag ADD engine: off-then-on edge re-latches it (see open notes) */
 	rtl9602c_cpu_tag_arm(ep);
@@ -2078,7 +2074,7 @@ static void rtl9602c_hw_program(struct rtl9602c_eth *ep)
 	for (k = 0; k < 7; k++)		/* every RX class -> ring 0 */
 		ep_wr(ep, R_RRING_ROUTING1 + k * 4, 0);
 
-	/* MSR top byte: see the msr_top param note (0xf0 kills sparse TX). */
+	/* MSR top byte: 0xf0 kills sparse TX. */
 	ep_wr(ep, R_MSR, (ep_rd(ep, R_MSR) & 0x00ffffff) | ((msr_top & 0xffu) << 24));
 	rtl9602c_eth_set_hwaddr(ep, ndev->dev_addr);	/* IDR wiped by the reset */
 	iowrite32(0xffffffff, ep->base + R_MAR0);		/* MAR0 */
@@ -2111,7 +2107,7 @@ static void rtl9602c_eth_recover_work(struct work_struct *work)
 	struct net_device *ndev = ep->ndev;
 	unsigned long flags;
 	unsigned int i;
-	bool use_rst = !!recover_rst;	/* snapshot: param is runtime-writable */
+	bool use_rst = !!recover_rst;
 
 	if (ep->closing || !ep->hw_up)
 		return;
@@ -2153,9 +2149,10 @@ static void rtl9602c_eth_recover_work(struct work_struct *work)
 	}
 
 	spin_lock_irqsave(&ep->tx_lock, flags);
-	/* Last-resort path (off by default — resets kill the switch egress on
-	 * this board): drop everything in flight, re-arm both rings from
-	 * scratch (engine stopped => CDO genuinely resets), align at 0. */
+	/*
+	 * Drop everything in flight and re-arm both rings from scratch (engine
+	 * stopped => CDO genuinely resets), align at 0.
+	 */
 	while (ep->tx_dirty != ep->tx_head) {
 		i = tx_slot(ep, ep->tx_dirty);
 		if (ep->tx_skb[i]) {
@@ -2399,10 +2396,12 @@ static int rtl9602c_uboot_swcore_bringup(struct rtl9602c_eth *ep)
 			rc = rtl9602c_gphy_raw_cmd__locked(ep, patch_cmd[i]);
 		mutex_unlock(&rtl9602c_gphy_lock);
 	}
-	/* ★ THE SELECTOR IS PUT BACK BEFORE ANY RETURN.  SW_CHIP_INFO is left
-	 *   pointing at the variant window while the patch runs, and a bail-out
-	 *   that skipped this would hand the rest of the driver a register block
-	 *   that answers for something else. */
+	/*
+	 * The selector is put back before any return. SW_CHIP_INFO is left
+	 * pointing at the variant window while the patch runs, and a bail-out
+	 * that skipped this would hand the rest of the driver a register block
+	 * that answers for something else.
+	 */
 	iowrite32(0x0, ep->sw + SW_CHIP_INFO);
 	if (rc) {
 		netdev_err(ep->ndev,
@@ -2417,7 +2416,7 @@ static int rtl9602c_uboot_swcore_bringup(struct rtl9602c_eth *ep)
 		iowrite32(1, ep->sw + ep->swm->gphy_misc);	/* PATCH_PHY_DONE */
 	msleep(500);
 	rtl9602c_gphy_tune(ep);
-	/* THE BOOT LOADER'S OWN BMCR PAIR, and NEITHER of */
+	/* The boot loader's own BMCR pair */
 	{
 		static const u16 bringup_bmcr[2] = { 0x3000, 0x1140 };
 		unsigned int phy;
@@ -2439,7 +2438,7 @@ static int rtl9602c_uboot_swcore_bringup(struct rtl9602c_eth *ep)
 					   phy, v, rc);
 				break;
 			}
-			/* A DESIRED MASK IS NOT PROOF THE PHY STAYED DOWN. */
+			/* A desired mask is not proof the PHY stayed down. */
 			if (want_down && !(back & BMCR_PDOWN)) {
 				netdev_err(ep->ndev,
 					   "gphy: [PHY-005] phy %u is administratively LOCKED and reads BMCR %04x -- the power-down did not hold across the reset; refusing to bring the interface up over it\n",
@@ -2447,7 +2446,7 @@ static int rtl9602c_uboot_swcore_bringup(struct rtl9602c_eth *ep)
 				rc = -EIO;
 				break;
 			}
-			/* ⚠ AND THE UNLOCKED CASE IS A FAILURE TOO. */
+			/* The unlocked case is a failure too. */
 			if (!want_down && (back & BMCR_PDOWN)) {
 				netdev_err(ep->ndev,
 					   "gphy: [PHY-006] phy %u is not locked and reads BMCR %04x -- it is powered DOWN, so that socket would link and carry nothing\n",
@@ -2461,14 +2460,15 @@ static int rtl9602c_uboot_swcore_bringup(struct rtl9602c_eth *ep)
 		if (rc)
 			return rc;
 	}
-	/* ⚠ 0x230c4 STAYS A LITERAL: this chip's chipdef calls it SVLAN_UPLINK_PMSK,
-	 * luna_gpon_regs.h calls the same address SMI_CTRL_3, and the two never run
-	 * on one silicon -- dev/FINDING-one-address-two-blocks-smi-vs-svlan.md.
-	 * Naming it either way would make the disagreement look settled. */
+	/*
+	 * 0x230c4 stays a literal: this chip's chipdef calls it
+	 * SVLAN_UPLINK_PMSK, luna_gpon_regs.h calls the same address
+	 * SMI_CTRL_3, and the two never run on one silicon.
+	 */
 	iowrite32(0,          ep->sw + 0x230c4);	/* SVLAN uplink port */
 	iowrite32(0x003fffff, ep->sw + SW_PISO_PORT);	/* port isolation, element 0 */
 	iowrite32(0x003fffff, ep->sw + SW_PISO_PORT + 1 * SW_PISO_PORT_STRIDE);
-	/* THE SAME TWO REGISTERS THIS FILE ALREADY REACHES */
+	/* The same two registers this file already reaches */
 	iowrite32(0x00000196, ep->sw + SW_FORCE_P_ABLTY(ep, ep->swm->cpu_port));
 	iowrite32(0x00000fff, ep->sw + SW_ABLTY_FORCE_MODE(ep, ep->swm->cpu_port));
 	if (ep->port0_serdes) {
@@ -2502,7 +2502,6 @@ static int rtl9602c_eth_hw_start(struct rtl9602c_eth *ep)
 	ep->closing = false;
 	ep->stall_since = 0;
 
-	/* THE FULL SWITCH BRING-UP IS A ONE-TIME COST, NOT A */
 	/* Stock-faithful cold start (the TX-park fix) */
 	rtl9602c_hw_stop(ep);
 	rtl9602c_ipsel_cycle();
@@ -2516,7 +2515,10 @@ static int rtl9602c_eth_hw_start(struct rtl9602c_eth *ep)
 	rtl9602c_datapath_tables_init();
 	rtl9602c_hw_program(ep);
 	rtl9602c_tx_align(ep);	/* fresh engine: CDO=0 -> rot 0 */
-	/* SAME-BOARD DIFF FIX (stock-WORKING vs ours-BROKEN) */
+	/*
+	 * Registers a same-board diff of stock against this driver found set
+	 * only on stock
+	 */
 	{
 		void __iomem *s100 = (void __iomem *)0xb8000100ul;
 		void __iomem *s104 = (void __iomem *)0xb8000104ul;
@@ -2568,7 +2570,7 @@ static int rtl9602c_eth_hw_start(struct rtl9602c_eth *ep)
 	ep_wr(ep, R_IMR0, IMR0_TX_BITS);	/* per-ring TX-completion IRQ mask, rings 0-5 (stock 0x3f) */
 	iowrite16(IMR_RX_BITS, ep->base + R_IMR);	/* RX IRQ mask: RX_OK + RX-err + RDU (stock 0xf835) */
 	ep_wr(ep, R_MSR, (ep_rd(ep, R_MSR) & 0x00ffffff) |
-			((msr_top & 0xffu) << 24));	/* MSR top byte: param (0xf0 kills sparse TX, see msr_top) */
+			((msr_top & 0xffu) << 24));	/* MSR top byte (0xf0 kills sparse TX) */
 	iowrite32(0xffffffff, ep->base + R_MAR0);	/* MAR0: accept-all-multicast */
 	iowrite32(0xffffffff, ep->base + R_MAR4);	/* MAR4 */
 	/* IO_CMD1 = the exact stock start value 0x323f0001 */
@@ -2643,9 +2645,11 @@ static int rtl9602c_eth_open(struct net_device *ndev)
 	return 0;
 }
 
-/* The GMAC keeps running: the DS/US OMCI and gpon0 ride its rings, and an OLT
- * gives up on an ONU whose OMCI stops (the laptop X111W, 2026-09-30, O5 reached
- * between preinit's close and netifd's open). */
+/*
+ * The GMAC keeps running: the DS/US OMCI and gpon0 ride its rings, and an OLT
+ * gives up on an ONU whose OMCI stops, for example with O5 reached between
+ * preinit's close and netifd's open.
+ */
 static int rtl9602c_eth_stop(struct net_device *ndev)
 {
 	netif_stop_queue(ndev);
@@ -3476,10 +3480,11 @@ static int rtl9602c_ethdump_show(struct seq_file *m, void *v)
 	seq_printf(m, "omci_tx: resp=%u drop=%u unhandled=%u mds=%u sn=%*ph\n",
 		   ep->dbg_omci_tx, ep->dbg_omci_tx_drop, ep->dbg_omci_unhandled,
 		   ep->omci_mds, 8, ep->omci_sn);
-	/* the shared core's own DS discard counters.  ★ Two numbers, not one: a
-	 * runt is a framing / GEM-reassembly fault upstream of OMCI, a bad MIC
-	 * is corruption on a well-framed PDU, and one figure for both would make
-	 * a broken reassembler read as a noisy fibre. */
+	/*
+	 * The shared core's own DS discard counters. Two numbers, not one: a
+	 * runt is a framing or GEM-reassembly fault upstream of OMCI, and a bad
+	 * MIC is corruption on a well-framed PDU.
+	 */
 	{
 		u32 bad_mic, runt;
 
@@ -3587,11 +3592,11 @@ static int rtl9602c_ethdump_show(struct seq_file *m, void *v)
 		seq_printf(m, "SW vlan_ctrl(13008)=%08x cputag_ctrl(23030)=%08x\n",
 			   ioread32(ep->sw + SW_VLAN_CTRL),
 			   ioread32(ep->sw + SW_MAC_CPU_TAG_CTRL));
-		/* ⚠ THESE FOUR ARE READ, NOT UNDERSTOOD (2026-09-04). */
+		/* These four are read, not understood. */
 		seq_printf(m, "SW sw(198)=%08x sw(1b8)=%08x sw(1d8)=%08x sw(1f8)=%08x\n",
 			   ioread32(ep->sw + 0x198), ioread32(ep->sw + 0x1b8),
 			   ioread32(ep->sw + 0x1d8), ioread32(ep->sw + 0x1f8));
-		/* THE RX ADDRESSES BELOW DO NOT FOLLOW THE FORMULA, and */
+		/* The RX addresses below do not follow the formula. */
 		{
 			unsigned int p;
 
@@ -3743,7 +3748,7 @@ static int rtl9602c_uni_gate_apply(struct rtl9602c_eth *ep, unsigned int port,
 		phy_allowed = (guard & PHY_PWRDN_GUARD_OK) == PHY_PWRDN_GUARD_OK;
 	}
 	if (!phy_allowed) {
-		/* ⚠ THIS IS A FAILURE, NOT A PARTIAL SUCCESS. */
+		/* This is a failure, not a partial success. */
 		mutex_unlock(&rtl9602c_gphy_lock);
 		dev_err(ep->dev,
 			"[PHY-008] UNI port %u: the MAC gate took but this die guards port 0's PHY power on %#05x, which reads %08x -- the administrative state is NOT fully applied and stays owed\n",
@@ -3759,7 +3764,7 @@ static int rtl9602c_uni_gate_apply(struct rtl9602c_eth *ep, unsigned int port,
 			port, rc);
 		return rc;
 	}
-	/* ONLY THE POWER BIT MOVES */
+	/* Only the power bit moves. */
 	want = (u16)(bmcr | BMCR_PDOWN);
 	rtl9602c_lan_own_drop(ep, port);
 	rc = rtl9602c_gphy_write__locked(ep, port, 0, want);
@@ -4420,7 +4425,7 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	ep->ub_iocmd = ep_rd(ep, R_IO_CMD);
 	ep->ub_iocmd1 = ep_rd(ep, R_IO_CMD1);
 
-	/* THE BRING-UP DEFAULT IS REFUSED, not merely validated. */
+	/* The bring-up default is refused, not merely validated. */
 	{
 		u8 dt[GPON_HWADDR_BYTES], eng[GPON_HWADDR_BYTES];
 		bool have_dt = of_get_mac_address(dev->of_node, dt) == 0;
@@ -4439,14 +4444,11 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	}
 
 	/* Bring up the switch L3/L4 NAT engine */
-	/* ★★★ THE DIAGNOSTIC IS REGISTERED WHATEVER THE GATE DOES.  It used to sit
-	 * inside the `if (hw_nat)` below, which put the one file that can say WHY
-	 * the engine installed nothing behind the very thing it diagnoses: with
-	 * the knob at its default 0 the node did not exist, and an absent file
-	 * reads as "this image carries no accelerator instrumentation" rather than
-	 * "the knob is off".  It is READ-ONLY and it changes no datapath
-	 * behaviour; `l34_proc_show()` reports the gate's state and returns before
-	 * touching a lock the closed gate never initialised.
+	/*
+	 * The diagnostic is registered whatever the gate does, so it can report
+	 * why the engine installed nothing. It is read-only and changes no
+	 * datapath behaviour; l34_proc_show() reports the gate's state and
+	 * returns before touching a lock the closed gate never initialised.
 	 */
 	rtl9602c_l34_proc_init(&ep->l34);
 
@@ -4467,7 +4469,10 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 				dev_warn(dev, "L34: [NAT-003] the common TC lifecycle could not be created; software forwarding\n");
 			} else if (devm_add_action_or_reset(dev, rtl9602c_l34_fo_release,
 							   ep)) {
-				/* THE HANDLE IS OWNED BY THE DEVICE, not by a .remove */
+				/*
+				 * The handle is owned by the device, not by a
+				 * .remove
+				 */
 				dev_warn(dev, "L34: [NAT-004] could not bind the TC lifecycle to the device; software forwarding\n");
 				ep->fo = NULL;
 			}

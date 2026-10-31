@@ -46,12 +46,11 @@ static inline void l34_wr(struct rtl9602c_l34 *l, u32 off, u32 val)
 }
 
 /* l34_field_get() moved to rtl9602c_l34_logic.c */
-/* ★ THE BODY MOVED TO FAMILY TIER, 2026-09-16 (luna_l34_acc.h).  This is the ONE
- * thing this family's two L3/L4 engines share -- the NAPT model here and the
- * FLOWBASED model on the RTL9603CVD -- and it lived as `static` inside the file
- * belonging to exactly one of them, so a second die could only get it by copying.
- * Nothing the engine sees changes: this chip's four addresses and its command-word
- * layout are the same values, now expressed as a per-die TABLE. */
+/*
+ * The indirect table access lives in luna_l34_acc.h, shared with the
+ * RTL9603CVD's flow-based engine. These are this chip's four addresses and
+ * command-word layout.
+ */
 static int l34_tbl_op(struct rtl9602c_l34 *l, enum l34_tbl type, u16 idx,
 		      u32 *w, unsigned int n, bool write)
 {
@@ -99,29 +98,27 @@ static void l34_engine_on(struct rtl9602c_l34 *l)
 	v |=  (0x3u << L34_SWTCR0_NATMODE_SH);		/* L3 + L4 NAT enable */
 	v &= ~(0x3u << L34_SWTCR0_LIMDBC_SH);
 	v |=  (0x2u << L34_SWTCR0_LIMDBC_SH);		/* what stock also holds */
-	/* ★★★ THE FLOW-ROUTE PATH IS NOT OURS, AND WE WERE LEAVING IT ON.
-	 * This is a read-modify-write, so every bit we do not name keeps whatever
-	 * the reset/bootloader left -- and V4FLRT_EN/V6FLRT_EN arrive SET. Stock
-	 * clears them: a SAME-DAY differential on this board (swcore_diff, both
-	 * captures inside 15 minutes) reads SWTCR0 84801e10 on stock against
-	 * 64000e20 on ours, with V4FLRT_EN and V6FLRT_EN the inverted pair.
-	 * FLRT is the die's FLOW-ROUTE lookup and it has its own tables
-	 * (FLOW_ROUTING_TABLE_IPV4, access type 12) which this driver never
-	 * programs -- so with the bit set the engine consults a table we leave
-	 * empty instead of the NAPT/NAPTR pair we fill. That is exactly the
-	 * measured state: an entry installed, live, never removed and never hit
-	 * while 272 MB of matching traffic passed.
-	 * ⚠ The VALUE is not a datasheet reading: it is what the vendor's own
-	 * firmware holds on this very board, captured the same hour. */
+	/*
+	 * This is a read-modify-write, so every bit not named keeps what the
+	 * reset or bootloader left, and V4FLRT_EN/V6FLRT_EN arrive set. FLRT is
+	 * the die's flow-route lookup, with its own tables
+	 * (FLOW_ROUTING_TABLE_IPV4, access type 12) that this driver never
+	 * programs. With the bit set the engine consults an empty table instead
+	 * of the NAPT/NAPTR pair, so an installed entry is never hit. Stock
+	 * clears both bits; the value is what the vendor firmware holds on this
+	 * board, not a datasheet reading.
+	 */
 	v &= ~(L34_SWTCR0_V4FLRT_EN | L34_SWTCR0_V6FLRT_EN);
 	v |= L34_SWTCR0_TTL_MINUS | L34_SWTCR0_FRAG2CPU;
 	l34_wr(l, L34_SWTCR0, v);
 
 #if IS_ENABLED(CONFIG_GPON_FLOW_DIAG)
-	/* ★ ASK THE DIE TO KEEP ITS OWN LOOKUP LOG. Purely diagnostic: it changes
-	 * no forwarding decision, it only makes HSB/HSA hold the last lookup
-	 * instead of zeroes. Behind the declared flag, so a shipped image without
-	 * the diagnostics costs nothing. Stock runs in this mode permanently. */
+	/*
+	 * Ask the die to keep its own lookup log. Purely diagnostic: it changes
+	 * no forwarding decision, only makes HSB/HSA hold the last lookup
+	 * instead of zeroes. Behind the declared flag, so an image without the
+	 * diagnostics costs nothing. Stock runs in this mode permanently.
+	 */
 	v = l34_rd(l, L34_HSBA_CTRL);
 	v &= ~(L34_HSBA_TST_LOG_MD_M << L34_HSBA_TST_LOG_MD_SH);
 	v |=  ((u32)L34_HSBA_MODE_FIRST_DROP << L34_HSBA_TST_LOG_MD_SH);
@@ -141,22 +138,15 @@ int rtl9602c_l34_init(struct rtl9602c_l34 *l, void __iomem *sw)
 	mutex_init(&l->lock);
 	l->ready = true;	/* table-access ready; the engine is enabled lazily */
 
-	/* ⚠ DRAIN THE HIT BITMAP ONCE, AND DISCARD IT.  MEASURED 2026-09-16 on the
-	 * X111W with ZERO flows installed: L34_NAPT_HIT read back 82 of 128 words
-	 * NON-ZERO, 1278 of 2624 bits set (48.7%), no two words alike -- power-on
-	 * state, or what the vendor firmware left behind on a TFTP->RAM boot.
-	 * Either way it is not our traffic.
+	/*
+	 * Drain the hit bitmap once and discard it. It holds non-zero state
+	 * from power-on or the vendor firmware with no flows installed (82 of
+	 * 128 words on the X111W). hit_shadow is sticky, so sweeping this into
+	 * it would hide genuine hits behind a half-set background.
 	 *
-	 * Nothing cleared it, so the FIRST sweep OR'd all of it into `hit_shadow`
-	 * -- which is STICKY (`|=`) and is only ever cleared one slot at a time by
-	 * the liveness op.  A genuine hit is then invisible against a half-set
-	 * background and `hits_seen` carries a constant that has nothing to do
-	 * with packets, which is why `accel_witness_calibration` could not tell
-	 * offload-ON from software forwarding.
-	 *
-	 * The register is CLEAR-ON-READ, so reading it IS the clear: this loop
-	 * needs no write, and it deliberately does NOT touch `hit_shadow` or
-	 * `hits_seen` -- draining into them is exactly the bug. */
+	 * The register is clear-on-read, so this loop needs no write and must
+	 * not touch hit_shadow or hits_seen.
+	 */
 	{
 		unsigned int i;
 
@@ -266,9 +256,11 @@ int rtl9602c_l34_flow_add(struct rtl9602c_l34 *l, struct l34_flow *f)
 		goto out;
 	}
 
-	/* ★ RESERVE BOTH IDENTITIES BEFORE EITHER COMMAND CAN BECOME VISIBLE.
-	 * A timeout does not establish whether hardware accepted the write, so
-	 * from here on the cleanup path must be able to name both rows. */
+	/*
+	 * Reserve both identities before either command can become visible. A
+	 * timeout does not establish whether hardware accepted the write, so
+	 * from here on the cleanup path must be able to name both rows.
+	 */
 	f->hw_index = napt_idx;
 	f->naptr_index = naptr_idx;
 	__set_bit(napt_idx, l->out_reserved);
@@ -307,13 +299,15 @@ int rtl9602c_l34_flow_del(struct rtl9602c_l34 *l, struct l34_flow *f)
 		ret = l34_neigh_del(l, f);
 		goto out;
 	}
-	/* ★ THE ORDER IS THE SAFETY PROPERTY.  The outbound slot is what the
-	 * lookup matches, so clearing it FIRST stops the flow; the rewrite entry
-	 * it points at is then unreachable and harmless.  The reverse order
-	 * would leave a live flow rewriting through a zeroed entry -- and a
-	 * failed outbound clear must NOT go on to remove a rewrite entry that is
-	 * still referenced.  An index is released only once its row is proven
-	 * gone, so a retry finds both halves exactly where it left them. */
+	/*
+	 * The order matters. The outbound slot is what the lookup matches, so
+	 * clearing it first stops the flow, and the rewrite entry it points at
+	 * is then unreachable. The reverse order would leave a live flow
+	 * rewriting through a zeroed entry, and a failed outbound clear must
+	 * not go on to remove a rewrite entry that is still referenced. An
+	 * index is released only once its row is proven gone, so a retry finds
+	 * both halves where it left them.
+	 */
 	if (f->out_owned) {
 		ret = l34_tbl_write(l, L34_TBL_NAPT_OUT, f->hw_index, zero,
 				    L34_WORDS_NAPT_OUT);
@@ -339,11 +333,11 @@ out:
 	return ret;
 }
 
-/* Sweep the clear-on-read hit bitmap into the sticky shadow, at most once per
- * jiffy.  ⚠ THE COST IS BOUNDED AND IT IS THE POINT: the old per-flow read was
- * ONE word per flow per GC cycle, so N flows cost N reads; this is at most 128
- * reads per jiffy however many flows there are, i.e. cheaper above 128 entries
- * and negligible below.  Caller holds `l->lock`. */
+/*
+ * Sweep the clear-on-read hit bitmap into the sticky shadow, at most once per
+ * jiffy: at most 128 reads per jiffy however many flows there are. Caller holds
+ * l->lock.
+ */
 static void l34_hit_sweep(struct rtl9602c_l34 *l)
 {
 	unsigned int i, now = 0;
@@ -374,8 +368,10 @@ int rtl9602c_l34_flow_hit(struct rtl9602c_l34 *l, u16 hw_index, bool *active)
 	mutex_lock(&l->lock);
 	l34_hit_sweep(l);
 	*active = !!(l->hit_shadow[w] & BIT(b));
-	/* consume THIS slot only: liveness is per flow, and clearing a
-	 * neighbour's bit is how the old single-word read aged other flows out */
+	/*
+	 * consume this slot only: liveness is per flow, and clearing a
+	 * neighbour's bit ages other flows out
+	 */
 	l->hit_shadow[w] &= ~BIT(b);
 	mutex_unlock(&l->lock);
 	return 0;
@@ -658,12 +654,13 @@ int rtl9602c_l34_wan_setup(struct rtl9602c_l34 *l, u8 idx, u32 wan_ip,
 			   const u8 *wan_mac, u32 gw_ip, const u8 *gw_mac,
 			   u8 wan_port, u16 vlan, u16 pppoe_sid)
 {
-	/* ★ THE PPPoE SLOT IS STEP 7, AND IT IS IN THE SAME ATOMIC PROGRAM AS
-	 * THE NEXT HOP THAT POINTS AT IT.  Writing them separately would leave a
-	 * window in which the next hop is typed PPPoE while its slot still holds
-	 * the PREVIOUS session -- an entry that installs, counts hits, and puts
-	 * the wrong session id on the wire.  `pppoe_sid == 0` keeps the ethernet
-	 * next hop and writes no slot, so an IPoE WAN is bit-for-bit unchanged. */
+	/*
+	 * The PPPoE slot is step 7, in the same atomic program as the next hop
+	 * that points at it. Writing them separately would leave a window in
+	 * which the next hop is typed PPPoE while its slot still holds the
+	 * previous session, putting the wrong session id on the wire. pppoe_sid
+	 * == 0 keeps the ethernet next hop and writes no slot.
+	 */
 	struct l34_prog_step step[8] = { { 0 } };
 	unsigned int nsteps = 7;
 	int l2idx, ret;
@@ -698,9 +695,11 @@ int rtl9602c_l34_wan_setup(struct rtl9602c_l34 *l, u8 idx, u32 wan_ip,
 		goto out;
 	}
 
-	/* ★ STEP 0 IS THE CLAIM -- see struct l34_prog_step (flowcore): a NETIF
+	/*
+	 * Step 0 is the claim (see struct l34_prog_step in flowcore): a NETIF
 	 * entry takes traffic the instant it is written, so it is what a later
-	 * failure must revoke. NETIF[idx]: egress source MAC + VLAN/MTU/IP. */
+	 * failure must revoke. NETIF[idx]: egress source MAC + VLAN/MTU/IP.
+	 */
 	step[0].tbl = L34_TBL_NETIF;
 	step[0].idx = idx;
 	step[0].words = L34_WORDS_NETIF;
@@ -752,7 +751,12 @@ int rtl9602c_l34_wan_setup(struct rtl9602c_l34 *l, u8 idx, u32 wan_ip,
 	step[4].words = L34_WORDS_ARP;
 	l34_arp_encode(step[4].w, gw_ip, l2idx);
 
-	/* The /32 CPU self-route for the WAN address. The LAN side has always * written one and this side never did, so l34_iface_blackholes() -- our * own predicate, "the engine claims traffic for this interface and * nothing terminates its OWN address locally" -- was true for the WAN * netif on every boot, and /proc/flowdump printed `netif[0] blackholes * 1` while nobody acted on it. A NATed reply is addressed to this very * address. */
+	/*
+	 * The /32 CPU self-route for the WAN address, which a NATed reply is
+	 * addressed to. Without it l34_iface_blackholes() is true for the WAN
+	 * netif: the engine claims traffic for this interface and nothing
+	 * terminates its own address locally.
+	 */
 	step[5].tbl = L34_TBL_L3ROUTE;
 	step[5].idx = idx + L34_RT_CPU_SLOT_OFF;
 	step[5].words = L34_WORDS_L3ROUTE;
@@ -782,7 +786,7 @@ int rtl9602c_l34_lan_setup(struct rtl9602c_l34 *l, u8 idx, u32 lan_ip,
 	if (idx >= L34_EXTIP_SLOTS || prefix < 1 || prefix > 32)
 		return -EINVAL;
 
-	/* STEP 0 IS THE CLAIM, AND ON THIS SIDE IT IS THE ONU'S */
+	/* Step 0 is the claim; on this side it is the ONU's. */
 	step[0].tbl = L34_TBL_NETIF;
 	step[0].idx = idx;
 	step[0].words = L34_WORDS_NETIF;
@@ -817,15 +821,18 @@ out:
 	return ret;
 }
 
-/* The WAN address the tables describe has left the kernel: invalidate every
- * WAN row wan_setup() programs, the NETIF claim first. Left in place, NETIF[WAN]
+/*
+ * The WAN address the tables describe has left the kernel: invalidate every WAN
+ * row wan_setup() programs, the NETIF claim first. Left in place, NETIF[WAN]
  * keeps claiming frames to the WAN MAC and routes a unicast DHCP OFFER away
- * from the CPU -- and with no lease no flow re-provisions it (X111W after a
- * PPPoE session, 2026-09-23). Refused while a flow still owns the tables. */
-/* Caller holds the table mutex. `core_empty`: the offload core holds no flow,
- * so a reservation still standing belongs to nobody. A SAFETY NET that must
- * never fire: the leak it was written for (2026-09-23) was the core flush
- * missing entries, fixed there. Its row is zeroed and its index returned. */
+ * from the CPU, and with no lease no flow re-provisions it. Refused while a
+ * flow still owns the tables.
+ */
+/*
+ * Caller holds the table mutex. core_empty: the offload core holds no flow, so
+ * a reservation still standing belongs to nobody. A safety net that must never
+ * fire. Its row is zeroed and its index returned.
+ */
 static int l34_sweep_orphans(struct rtl9602c_l34 *l, unsigned int *swept)
 {
 	u32 zero[L34_WORDS_NAPTR_IN] = { 0 };
@@ -971,11 +978,13 @@ static ssize_t l34_proc_write(struct file *fp, const char __user *ub,
 					     prefix, vlan);
 		pr_info("rtl9602c_l34: lan_setup -> %d\n", ret);
 	} else if (buf[0] == 'f') {
-		/* ⚠ RETIRED, and not for tidiness: a stack-local l34_flow now
-		 * RESERVES both indices, and nothing outlives this call to
-		 * release them -- one manual add would take a NAPT pair out of
-		 * service until the module is reloaded.  Install through TC,
-		 * whose per-entry owner can retry the cleanup. */
+		/*
+		 * Retired: a stack-local l34_flow now reserves both indices,
+		 * and nothing outlives this call to release them, so one manual
+		 * add would take a NAPT pair out of service until the module is
+		 * reloaded. Install through TC, whose per-entry owner can retry
+		 * the cleanup.
+		 */
 		return -EOPNOTSUPP;
 	} else if (buf[0] == 'x') {
 		/* Raw indirect table write */
@@ -987,11 +996,11 @@ static ssize_t l34_proc_write(struct file *fp, const char __user *ub,
 		if (got < 3)
 			return -EINVAL;
 		mutex_lock(&l->lock);
-		/* The raw verb can address a row a live flow owns, and the
-		 * owner would never learn its entry had been rewritten.  ONE
-		 * exit: an early unlock here puts an unlock BEFORE the write in
-		 * the source, which is how a reader (and l34_iface_safety's
-		 * ordering arm) checks that the write is held. */
+		/*
+		 * The raw verb can address a row a live flow owns, and the
+		 * owner would never learn its entry had been rewritten. One
+		 * exit, so no unlock appears before the write in the source.
+		 */
 		ret = -EBUSY;
 		if (!l34_has_owners(l))
 			ret = l34_tbl_write(l, (enum l34_tbl)tbl, tidx, w,
@@ -1005,10 +1014,11 @@ static ssize_t l34_proc_write(struct file *fp, const char __user *ub,
 	return ret ? ret : n;
 }
 
-/* ⚠ `hits_seen` IS RATE-DEPENDENT AND THE NODE SAYS SO. */
-/* ★ CONFIG_GPON_FLOW_DIAG gates the READ only.  The bring-up WRITE below is a
- * control, not a measurement: dropping it with a diagnostic flag would change
- * behaviour, and this family is DIAG -- it reports, it never decides. */
+/* hits_seen is rate-dependent, and the node says so. */
+/*
+ * CONFIG_GPON_FLOW_DIAG gates the read only. The write below is a control, not
+ * a measurement: dropping it with a diagnostic flag would change behaviour.
+ */
 #if IS_ENABLED(CONFIG_GPON_FLOW_DIAG)
 
 static const char *const l34_rt_process_name[4] = { "CPU", "DROP", "ARP", "NH" };
@@ -1052,7 +1062,7 @@ static void l34_proc_show_iface(struct seq_file *sf, struct rtl9602c_l34 *l)
 		seq_puts(sf, "engine off -- interface tables not read back\n");
 		return;
 	}
-	/* THE ENGINE CONTROL WORDS, READ BACK. */
+	/* The engine control words, read back. */
 	v = l34_rd(l, L34_SWTCR0);
 	seq_printf(sf,
 		   "swtcr0 %08x natmode %u limdbc %u v4flrt %u v6flrt %u\nglb_cfg %08x\n",
@@ -1061,17 +1071,15 @@ static void l34_proc_show_iface(struct seq_file *sf, struct rtl9602c_l34 *l)
 		   (v & L34_SWTCR0_V4FLRT_EN) ? 1 : 0,
 		   (v & L34_SWTCR0_V6FLRT_EN) ? 1 : 0,
 		   l34_rd(l, L34_GLB_CFG));
-	/* ★★★ THE DIE'S OWN LOOKUP LOG. HSB is the hash source block the engine
-	 * BUILT from the last frame it looked up; HSA is what it DECIDED. Printed
-	 * raw and whole: this is a POINTER for reading, not a verdict, and a field
-	 * split invented here would be a decode nobody measured.
-	 * ⚠ ALL-ZERO MEANS THE LOG IS OFF, NOT THAT NOTHING WAS LOOKED UP -- the
-	 * mode lives in HSBA_CTRL and is printed beside it so the two can never be
-	 * confused. ⚠ AND THE MODE MATTERS AS MUCH AS THE DATA: under LOG_ALL the
-	 * last lookup is the ssh packet that carried the reading command, so the
-	 * log answered with this host's own port 22 instead of the flow. FIRST_DROP
-	 * latches. That confusion is why this surface sat unread while two
-	 * register hypotheses were settled by rebuilding the image instead. */
+	/*
+	 * The die's own lookup log. HSB is the hash source block the engine
+	 * built from the last frame it looked up; HSA is what it decided.
+	 * Printed raw and whole, with no field split that has not been
+	 * measured. All-zero means the log is off, not that nothing was looked
+	 * up, so the mode in HSBA_CTRL is printed beside it. Under LOG_ALL the
+	 * last lookup is the ssh packet carrying the reading command;
+	 * FIRST_DROP latches.
+	 */
 	v = l34_rd(l, L34_HSBA_CTRL);
 	seq_printf(sf, "hsba_ctrl %08x log_mode %u (1=off 2=all[SELF-CAPTURING] 3=first-drop)\n",
 		   v, (v >> L34_HSBA_TST_LOG_MD_SH) & L34_HSBA_TST_LOG_MD_M);
@@ -1128,27 +1136,21 @@ static void l34_proc_show_iface(struct seq_file *sf, struct rtl9602c_l34 *l)
 		seq_printf(sf, "netif[%u] blackholes %u\n", i,
 			   l34_iface_blackholes(netif, cpu_rt, ip, i) ? 1 : 0);
 	}
-	/* ★★ THE GENERAL LPM POOL, WHICH THE LOOP ABOVE COULD NOT REACH.  It
-	 * prints route[i] and route[i+8] for VALID netifs only, so an entry in
-	 * L3ROUTE[2..7] -- where a real route goes, netifs 2..7 never being
-	 * provisioned -- was written and then INVISIBLE.  Adding a table entry a
-	 * dump cannot show is how a repair becomes unverifiable: the upper half
-	 * of the default route landed there and could not be confirmed. */
+	/*
+	 * The general LPM pool, which the loop above cannot reach. It prints
+	 * route[i] and route[i+8] for valid netifs only, and a real route goes
+	 * in L3ROUTE[2..7], since netifs 2..7 are never provisioned.
+	 */
 	for (i = 0; i < L34_RT_POOL_N; i++)
 		l34_proc_show_rt(sf, l, L34_RT_POOL_BASE + i);
 
 }
 
-/* The NAPT entries this driver most recently INSTALLED, read BACK from the
- * silicon and decoded.  Until 2026-09-16 this node showed the hit BITMAP and
- * the interface tables and never an entry, so the one question a non-matching
- * flow raises -- does the installed key match the traffic? -- could not be
- * asked from the board.  Nothing could disagree with us, so no measurement
- * could catch a wrong field.  MEASURED that day: installs=15, live=1, hits=11
- * across a 105 Mbps flow, with the CPU still at 83%.
- *
- * It reads what the HARDWARE holds, never what the driver believes it wrote:
- * an entry the silicon rejected or rewrote is exactly the case worth seeing.
+/*
+ * The NAPT entries this driver most recently installed, read back from the
+ * silicon and decoded, to answer whether an installed key matches the traffic.
+ * It reads what the hardware holds, never what the driver believes it wrote: an
+ * entry the silicon rejected or rewrote is the case worth seeing.
  */
 static void l34_proc_show_recent(struct seq_file *sf, struct rtl9602c_l34 *l)
 {
@@ -1173,16 +1175,13 @@ static void l34_proc_show_recent(struct seq_file *sf, struct rtl9602c_l34 *l)
 		u32 out[L34_WORDS_NAPT_OUT] = { 0 };
 		u32 intip, extport, intport, tcp, valid, in_idx;
 
-		/* ⚠⚠ TWO INDEX SPACES, AND CONFLATING THEM READS ZEROS FOREVER.
-		 * `hw_index` addresses NAPT_OUT (the hash slot), and that word
-		 * CARRIES the NAPTR_IN index -- L34_NAPT_HASHIN_IDX says so in
-		 * as many words. The first cut of this renderer read NAPTR_IN
-		 * AT the NAPT_OUT index and printed seven all-zero entries,
-		 * which reads exactly like "the silicon holds nothing" and is
-		 * a bug in the reader. The hit bitmap is indexed by hw_index
-		 * too, which is the cross-check: hits were non-zero while this
-		 * showed empty entries, and that contradiction is what caught
-		 * it. */
+		/*
+		 * Two index spaces. hw_index addresses NAPT_OUT (the hash
+		 * slot), and that word carries the NAPTR_IN index
+		 * (L34_NAPT_HASHIN_IDX). Reading NAPTR_IN at the NAPT_OUT index
+		 * prints all-zero entries. The hit bitmap is indexed by
+		 * hw_index too.
+		 */
 		if (l34_tbl_read(l, L34_TBL_NAPT_OUT, idx, out,
 				 L34_WORDS_NAPT_OUT)) {
 			seq_printf(sf, "  napt_out[%4u] READ FAILED\n", idx);
@@ -1217,19 +1216,14 @@ static int l34_proc_show(struct seq_file *sf, void *v)
 	struct rtl9602c_l34 *l = sf->private;
 	unsigned int i, now = 0;
 
-	/* ★★★ THE GATE'S OWN STATE COMES FIRST, AND BEFORE THE LOCK.  This node
-	 * used to be created INSIDE `if (hw_nat)`, so the one question it exists
-	 * to answer -- why does the engine install nothing? -- could not be asked
-	 * while the engine was off: the file simply did not exist, which reads as
-	 * "this image has no accelerator instrumentation" rather than "the knob is
-	 * 0".  It is registered unconditionally now, so the ANSWER has to live
-	 * here.
+	/*
+	 * The gate's own state comes first, because this node exists even when
+	 * the engine is off and has to say why it installs nothing.
 	 *
-	 * ⚠ BEFORE `mutex_lock`, NOT AFTER: with the gate closed
-	 * `rtl9602c_l34_init()` never ran, so `l->lock` was never `mutex_init`ed
-	 * and taking it is undefined behaviour.  `l->ready` is safe to read
-	 * because the private area of the netdev is zeroed by
-	 * devm_alloc_etherdev() long before this can be opened.
+	 * Before mutex_lock: with the gate closed rtl9602c_l34_init() never
+	 * ran, so l->lock was never initialised. l->ready is safe to read
+	 * because the netdev's private area is zeroed by devm_alloc_etherdev()
+	 * long before this can be opened.
 	 */
 	if (!l || !l->ready) {
 		seq_puts(sf,
@@ -1246,16 +1240,14 @@ static int l34_proc_show(struct seq_file *sf, void *v)
 	 * snapshot against flow installs, raw writes and other readers. */
 	mutex_lock(&l->lock);
 
-	/* ★ A DIAG READS THE SHADOW AND CONSUMES NOTHING.  This used to read the
-	 * clear-on-read register itself, so looking at the diagnostic cleared the
-	 * bits the flowtable's own liveness op was about to test -- a witness
-	 * that aged out the flows it was measuring.
+	/*
+	 * A diag reads the shadow and consumes nothing: reading the
+	 * clear-on-read register itself would clear bits the flowtable's
+	 * liveness op is about to test.
 	 *
-	 * ⚠ AND IT SWEEPS HERE, NOT BESIDE THE BITMAP PRINT.  It used to run AFTER
-	 * the flow-diag line was built, so that line reported `hits_seen` from
-	 * BEFORE this read's own sweep -- always one sweep stale, and 0 on the
-	 * first read however many bits the bitmap held.  MEASURED: a read with
-	 * nothing installed printed `hits=0` and then dumped 1278 set bits. */
+	 * The sweep runs here so the flow-diag line reports hits_seen from this
+	 * read's own sweep, not the previous one.
+	 */
 	l34_hit_sweep(l);
 	seq_printf(sf, "provisioned %u\n", l->provisioned ? 1 : 0);
 	{
@@ -1270,11 +1262,12 @@ static int l34_proc_show(struct seq_file *sf, void *v)
 			   &l->edge.wan_ip, &l->edge.gw_ip, l->edge.gw_mac,
 			   L34_NETIF_WAN, &l->edge.lan_net, l->edge.lan_prefix,
 			   l->edge.lan_mac, L34_NETIF_LAN);
-	/* THE THREE COUNTS THAT SEPARATE FOUR DIFFERENT */
-	/* ★ THE CORE'S OWN LINE, identical on every family: which of the
-	 * lifecycle's sixteen refusal causes fired, and how often.  The four
-	 * fields below it are what only THIS shell can read; `cap` is the chip's
-	 * own table size and `hits` its hit witness. */
+	/*
+	 * The core's own line, identical on every family: which of the
+	 * lifecycle's sixteen refusal causes fired, and how often. The four
+	 * fields below it are what only this driver can read; cap is the chip's
+	 * own table size and hits its hit witness.
+	 */
 	{
 		struct gpon_flow_diag d = {
 			.valid = GPON_FDIAG_HAS_OFFERED |
@@ -1294,15 +1287,17 @@ static int l34_proc_show(struct seq_file *sf, void *v)
 	seq_printf(sf, "binds %u\noffered %u\ninstalls %u\nremovals %u\nrefusals %u\nds_legs %u\n",
 		   l->binds, l->offered, l->installs,
 		   l->removals, l->refusals, l->ds_legs);
-	/* THE FEW LINES THAT DECIDE, ON DEMAND -- not a log flood. */
+	/* The few lines that decide, on demand rather than as a log flood. */
 	if (l->vlan_refused)
 		seq_printf(sf, "vlan_refused %u last_vid %u\n",
 			   l->vlan_refused, l->vlan_refused_vid);
 	if (l->refuse_why)
 		seq_printf(sf, "last_refusal %s\n", l->refuse_why);
-	/* ★ AND THE SPLIT, which is the half `last_refusal` cannot give: it names a
-	 * cause without saying whether it was 1 of 722 or 722 of 722. Only
-	 * non-zero rows, so a healthy run prints nothing here. */
+	/*
+	 * The split, which last_refusal cannot give: it names a cause without
+	 * saying whether it was 1 of 722 or 722 of 722. Only non-zero rows, so
+	 * a healthy run prints nothing here.
+	 */
 	{
 		unsigned int i;
 

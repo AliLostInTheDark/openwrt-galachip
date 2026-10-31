@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* luna_ponmac.h - board-agnostic bring-up of the */
+/* luna_ponmac.h - board-agnostic bring-up of the PON MAC */
 #ifndef _LUNA_PONMAC_H
 #define _LUNA_PONMAC_H
 

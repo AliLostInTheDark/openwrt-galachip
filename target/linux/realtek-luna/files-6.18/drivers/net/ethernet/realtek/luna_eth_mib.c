@@ -20,7 +20,7 @@ struct luna_mib_field {
 	bool		wide;
 };
 
-/* ── STAT_PORT_RX_MIB, one 0x80 window per */
+/* STAT_PORT_RX_MIB, one 0x80 window per port */
 static const struct luna_mib_field luna_mib_rx[] = {
 	{ "rx_octets",		0x00, true },	/* ifInOctets, 64-bit pair	*/
 	{ "rx_crc_align_err",	0x08 },		/* etherStatsCRCAlignErrors	*/
@@ -44,7 +44,7 @@ static const struct luna_mib_field luna_mib_rx[] = {
 	{ "rx_1024_to_1518_frames", 0x54 },
 };
 
-/* ── STAT_PORT_TX_MIB, base 0x32000 on every Luna */
+/* STAT_PORT_TX_MIB, base 0x32000 on every Luna die */
 static const struct luna_mib_field luna_mib_tx[] = {
 	{ "tx_multicast_ethstat", 0x00 },	/* etherStatsMulticastPkts	*/
 	{ "tx_broadcast_ethstat", 0x04 },	/* etherStatsBroadcastPkts	*/
@@ -226,7 +226,6 @@ static const struct ethtool_ops luna_mib_ethtool_ops = {
 	.get_ethtool_stats	= luna_mib_get_stats,
 };
 
-/* THE NAME-LENGTH CHECK IS HERE AND NOT IN A */
 static void luna_mib_check_names(struct device *dev, unsigned int ports)
 {
 	char buf[ETH_GSTRING_LEN * 2];

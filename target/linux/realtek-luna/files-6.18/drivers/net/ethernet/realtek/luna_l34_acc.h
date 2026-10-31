@@ -18,11 +18,11 @@
  * @rd_exe:	start-read bit (self-clearing)
  * @wr_exe:	start-write bit (self-clearing)
  * @type_shift:	shift of the table-type field
- * @type_mask:	mask of the table-type field, AFTER the shift
+ * @type_mask:	mask of the table-type field, after the shift
  * @idx_mask:	mask of the entry index, which sits at bit 0
  *
- * A die whose layout nobody has measured has NO instance of this -- see the
- * file header.  There is deliberately no "default" layout to fall back to.
+ * A die whose layout is unmeasured has no instance of this; there is deliberately
+ * no default layout to fall back to.
  */
 struct luna_l34_cmd_layout {
 	u32	rd_exe;
@@ -38,7 +38,7 @@ struct luna_l34_cmd_layout {
  * @clr:	per-table-type reset (self-clearing)
  * @rdata:	read-data bank base (word 0)
  * @wdata:	write-data bank base (word 0)
- * @cmd_layout:	the command word's field positions, or NULL when NOT ESTABLISHED
+ * @cmd_layout:	the command word's field positions, or NULL when not established
  */
 struct luna_l34_acc {
 	u32					cmd;
@@ -96,10 +96,10 @@ static const struct luna_l34_acc luna_l34_acc_rtl9603cvd = {
  * @n:		how many words this table moves
  * @write:	true to write, false to read
  *
- * ⚠ THREE ANSWERS, never two: -ENXIO means this die's command-word layout was
- * never measured, so nothing was attempted; -ETIMEDOUT means the engine did not
- * clear EXE, which is a fact about the silicon; 0 means it completed.  An
- * unmeasured layout must never read as a failed engine.
+ * Three outcomes: -ENXIO means this die's command-word layout was never measured,
+ * so nothing was attempted; -ETIMEDOUT means the engine did not clear EXE, which is
+ * a fact about the silicon; 0 means it completed.  An unmeasured layout must never
+ * read as a failed engine.
  */
 static inline int luna_l34_tbl_op(void __iomem *sw,
 				  const struct luna_l34_acc *a,
@@ -118,15 +118,16 @@ static inline int luna_l34_tbl_op(void __iomem *sw,
 		return -EINVAL;
 	exe = write ? L->wr_exe : L->rd_exe;
 
-	/* ★★ A COMMAND THAT TIMED OUT CAN STILL OWN THE SHARED DATA BANK.  The
-	 * bank is four registers, not a per-command buffer: the engine reads it
-	 * while EXE is set, so writing the next op's words into it before BOTH
-	 * request bits have cleared hands the engine a mixture of two entries
-	 * and it will store one of them.  Nothing reports that -- the entry
-	 * reads back exactly as written.  Wait for the previous op to let go,
-	 * and refuse rather than proceed if it never does.
-	 * ⚠ It is BOTH bits, not `exe`: a read left executing owns the bank just
-	 * as a write does, and the poll below only ever clears our own. */
+	/*
+	 * A command that timed out can still own the shared data bank. The bank
+	 * is four registers, not a per-command buffer: the engine reads it
+	 * while EXE is set, so writing the next op's words before both request
+	 * bits have cleared hands the engine a mixture of two entries, and the
+	 * stored entry reads back as written. Wait for the previous op to let
+	 * go, and refuse if it never does. Check both bits, not exe: a read
+	 * left executing owns the bank just as a write does, and the poll below
+	 * only clears this op's own.
+	 */
 	for (t = 0; t < LUNA_L34_EXE_POLL_US; t++) {
 		if (!(readl(sw + a->cmd) & (L->rd_exe | L->wr_exe)))
 			break;

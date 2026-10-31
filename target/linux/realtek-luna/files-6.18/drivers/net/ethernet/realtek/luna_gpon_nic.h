@@ -111,9 +111,11 @@ static inline int luna_xpon_tx_flow(struct sk_buff **pskb, bool network_vlan)
 static inline void luna_xpon_rx_fixup(struct sk_buff *skb) { }
 #endif
 void luna_gpon_vlan_filter_ok(bool ok);
-/* The CPU's WAN control frames ride their own flow on the data T-CONT's next queue
- * (luna_gpon.c ctrl_queue): an offloaded flood fills the data queue, and the PPP LCP
- * echo replies queued behind it were lost (X100DG, V2801RGW, 2026-10-04). */
+/*
+ * The CPU's WAN control frames ride their own flow on the data T-CONT's next
+ * queue (see luna_gpon.c): an offloaded flood fills the data queue, and PPP LCP
+ * echo replies queued behind it would be lost.
+ */
 bool luna_gpon_ctrl_flow_ready(void);
 
 /* A WAN frame the session's life depends on: PPPoE discovery, a PPP control protocol

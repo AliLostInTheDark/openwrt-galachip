@@ -7,7 +7,6 @@
 #include <net/pkt_cls.h>	/* FLOW_CLS_*, FLOW_BLOCK_*, flow_block_cb_*   */
 #include "gpon_flow_block.h"
 
-/* THE INSTALL REFUSED UNCONDITIONALLY UNTIL 2026-09-11 */
 static const struct net_device_ops rtl9602c_eth_netdev_ops;
 
 /* The driver behind a netdev. */
@@ -29,10 +28,11 @@ struct rtl9602c_l34_priv {
 
 static bool rtl9602c_l34_is_lan_side(void *sh, struct net_device *dev)
 {
-	/* Structural, never a name.
-	 * A VLAN upper is on its real device's side: the flowtable offers a tagged
-	 * WAN->LAN leg from gpon0.<vid> when gpon0 itself is not a flowtable device
-	 * (X100DG, 2026-10-05: every such leg was decoded as upstream and refused). */
+	/*
+	 * Structural, never a name. A VLAN upper is on its real device's side:
+	 * the flowtable offers a tagged WAN->LAN leg from gpon0.<vid> when
+	 * gpon0 itself is not a flowtable device.
+	 */
 	if (dev && is_vlan_dev(dev))
 		dev = vlan_dev_real_dev(dev);
 	return dev && dev->netdev_ops != &rtl9602c_eth_wan_ops;
@@ -61,13 +61,11 @@ static int l34_refuse(struct rtl9602c_l34 *l, const char *why)
 		}
 	}
 	if (i == L34_REFUSE_REASONS) {
-		/* Table full and this reason is new: still COUNTED, in the last slot,
-		 * under a name saying the split stopped being exact there.
-		 * ⚠ The first cut could never reach this -- the overflow branch sat
-		 * inside a condition that had already excluded the only case that
-		 * reaches it, so a ninth reason was dropped in SILENCE while the
-		 * comment beside it promised the opposite. And the second cut returned
-		 * early from the loop, which skipped the log line below. */
+		/*
+		 * Table full and this reason is new: still counted, in the last
+		 * slot, under a name saying the split stopped being exact
+		 * there.
+		 */
 		l->refuse_tally[L34_REFUSE_REASONS - 1].why =
 			"(further reasons, table full)";
 		l->refuse_tally[L34_REFUSE_REASONS - 1].n++;
@@ -119,23 +117,27 @@ static int rtl9602c_l34_op_install(void *sh, const struct gpon_flow_key *k,
 		return ret;
 	}
 
-	/* THE VALUES FIRST, THE FLOW SECOND. */
-	/* ★ TELL IT WHAT THE FLOWTABLE ALREADY RESOLVED. `ctx->odev` is the egress
-	 * the infrastructure picked (FLOW_ACTION_REDIRECT) after walking past any
-	 * VLAN or PPPoE device, and `a->gw_dmac` is the L2 destination this flow
-	 * rewrites to -- on a PPPoE link that is the access concentrator, which no
-	 * neighbour table can ever supply. */
+	/* The values first, the flow second. */
+	/*
+	 * Tell it what the flowtable already resolved. ctx->odev is the egress
+	 * the infrastructure picked (FLOW_ACTION_REDIRECT) after walking past
+	 * any VLAN or PPPoE device, and a->gw_dmac is the L2 destination this
+	 * flow rewrites to: on a PPPoE link that is the access concentrator,
+	 * which no neighbour table can supply.
+	 */
 	ret = gpon_edge_read_via(ep->ndev, ep->wan_ndev, k->ip_da, ctx->odev,
 				 a->dmac_valid ? a->gw_dmac : NULL, &edge, &why);
 	if (ret)
 		return l34_refuse(&ep->l34, why);
-	/* ★ THE SESSION COMES FROM THE FLOW, NOT FROM THE NETDEVICE. `gpon_edge`
-	 * reads the live kernel, and the kernel offers no portable way to ask a
-	 * ppp device for its session id -- but the flowtable already parsed it
-	 * and handed it over as FLOW_ACTION_PPPOE_PUSH, which the core kept in
-	 * `a->pppoe_sid`. Putting it in the edge here is what makes a RE-DIALLED
-	 * session a different edge, so the interface tables are rewritten instead
-	 * of encapsulating with a session the far end has forgotten. */
+	/*
+	 * The session comes from the flow, not the netdevice. gpon_edge reads
+	 * the live kernel, which offers no portable way to ask a ppp device for
+	 * its session id, but the flowtable parsed it as FLOW_ACTION_PPPOE_PUSH
+	 * and the core kept it in a->pppoe_sid. Putting it in the edge makes a
+	 * re-dialled session a different edge, so the interface tables are
+	 * rewritten instead of encapsulating with a session the far end has
+	 * forgotten.
+	 */
 	edge.wan_pppoe_sid = a->pppoe_sid;
 	/* The tag comes from the flow too: on PPPoE over gpon0.<vid> the routed
 	 * device is the ppp one, which carries no VID of its own. */
@@ -155,19 +157,18 @@ static int rtl9602c_l34_op_install(void *sh, const struct gpon_flow_key *k,
 				  "interface does not hold");
 
 	if (!ep->l34.provisioned || !gpon_edge_same(&edge, &ep->l34.edge)) {
-		/* ⚠ THE INSTALLED FLOWS BELONG TO THE OLD EDGE. */
-		/* ⚠⚠ ONE NEXT HOP, AND AN ON-LINK PEER WANTS ITS OWN.  Since the
-		 * core started serving on-link destinations (the next hop IS
-		 * the peer), a second WAN-subnet peer produces an edge that
-		 * differs ONLY in the next hop -- and these interface tables
-		 * hold exactly one.  Flushing here would retire every flow the
-		 * FIRST peer is using, once per new peer, so a change meant to
-		 * accelerate more traffic would accelerate less.  Refuse this
-		 * flow instead: it stays on the software path, the installed
-		 * ones keep theirs, and nothing is ever wrong on the wire.
-		 * ⇒ WHAT WOULD LIFT IT is a per-peer NEXTHOP/ARP allocator --
-		 * l34_flow already carries a `nexthop` index for it -- which is
-		 * a feature, not this repair. */
+		/* The installed flows belong to the old edge. */
+		/*
+		 * One next hop, and an on-link peer wants its own. The core
+		 * serves on-link destinations (the next hop is the peer), so a
+		 * second WAN-subnet peer produces an edge that differs only in
+		 * the next hop, and these interface tables hold exactly one.
+		 * Flushing here would retire every flow the first peer is
+		 * using, once per new peer. Refuse this flow instead: it stays
+		 * on the software path and the installed ones keep theirs.
+		 * Lifting this needs a per-peer NEXTHOP/ARP allocator; l34_flow
+		 * already carries a nexthop index for it.
+		 */
 		if (ep->l34.provisioned &&
 		    gpon_edge_same_iface(&edge, &ep->l34.edge) &&
 		    rtl9602c_l34_has_owners(&ep->l34))
@@ -176,10 +177,12 @@ static int rtl9602c_l34_op_install(void *sh, const struct gpon_flow_key *k,
 					  "hop and the interface tables hold one");
 		if (ep->l34.provisioned) {
 			ret = gpon_flow_offload_flush(ep->fo);
-			/* A flow that would not retire STILL FORWARDS, and it
-			 * forwards through the interface tables we are about to
-			 * re-point at the new edge.  Re-pointing them now sends
-			 * that live flow to a gateway it was never NAT'd for. */
+			/*
+			 * A flow that would not retire still forwards, through
+			 * the interface tables about to be re-pointed at the
+			 * new edge. Re-pointing them now sends that live flow
+			 * to a gateway it was never NAT'd for.
+			 */
 			if (ret)
 				return l34_refuse(&ep->l34,
 						  "a flow installed for the "
@@ -216,19 +219,13 @@ static int rtl9602c_l34_op_install(void *sh, const struct gpon_flow_key *k,
 		return ret;
 	}
 	*idx_out = f->hw_index;
-	/* ⚠⚠ SEED THE LIVENESS CLOCK, OR THE FLOW IS TORN DOWN BEFORE IT CAN EVER
-	 * BE HIT.  `priv` arrives ZEROED, `op_stats` writes `last_hit` only inside
-	 * its `if (active)` branch, and it reports `*lastused = p->last_hit` -- so
-	 * a flow installed and polled before its first packet matched answers
-	 * `lastused = 0`, which the flowtable GC reads as "idle since jiffies 0"
-	 * and retires immediately.
-	 *
-	 * MEASURED on the X111W: `installs == removals` EXACTLY on every sitting
-	 * (408/408, 30/30, 30/30) while the engine really was matching packets
-	 * (`hits=414`).  The asymmetry is the evidence -- Cortina seeds this at
-	 * install (`cortina-ni-flowoffload.c`, `entry->last_hit = jiffies` beside
-	 * `installed_at`) and its offload has always held.  A newly installed flow
-	 * is not an idle one. */
+	/*
+	 * Seed the liveness clock, or the flow is torn down before it can be
+	 * hit. priv arrives zeroed, op_stats writes last_hit only inside its if
+	 * (active) branch and reports *lastused = p->last_hit, so a flow polled
+	 * before its first matched packet answers lastused = 0, which the
+	 * flowtable GC reads as idle since jiffies 0 and retires immediately.
+	 */
 	p->last_hit = jiffies;
 	/* Remember it so the dump can read the entry back -- see L34_RECENT. */
 	ep->l34.recent_idx[ep->l34.recent_n % L34_RECENT] = (u16)f->hw_index;
@@ -241,11 +238,12 @@ static int rtl9602c_l34_op_remove(void *sh, u32 idx, void *priv)
 	struct rtl9602c_eth *ep = sh;
 	struct rtl9602c_l34_priv *p = priv;
 
-	/* ⚠ `idx` IS THE CORE'S PUBLISHED INDEX AND IT IS NOT AN IDENTITY.  This
-	 * used to assign it over p->f.hw_index -- so a cleanup after an install
-	 * that failed BEFORE publishing arrived with 0 and retired entry zero,
-	 * which belongs to somebody else.  The flow's own retained indices are
-	 * the only ones that name what it actually claimed. */
+	/*
+	 * idx is the core's published index, not an identity: a cleanup after
+	 * an install that failed before publishing arrives with 0, which would
+	 * retire entry zero, belonging to somebody else. The flow's own
+	 * retained indices name what it actually claimed.
+	 */
 	(void)idx;
 	if (!p->f.out_owned && !p->f.in_owned && !p->f.neigh_owned)
 		return 0;	/* nothing claimed: cleanup succeeds, engine or not */
@@ -284,7 +282,6 @@ static void rtl9602c_l34_fo_release(void *data)
 	ep->fo = NULL;
 }
 
-/* THE CORE OFFERS THIS ATTRIBUTION AND THIS FAMILY */
 static void rtl9602c_l34_op_note_vlan(void *sh, bool ds_leg, u16 vid)
 {
 	struct rtl9602c_eth *ep = sh;
@@ -306,7 +303,7 @@ static const struct gpon_flow_ops rtl9602c_l34_flow_ops = {
 	.priv_size	= sizeof(struct rtl9602c_l34_priv),
 };
 
-/* ── the TC block, same shape as the Cortina */
+/* The TC block. */
 static DEFINE_MUTEX(rtl9602c_l34_tc_mutex);
 static LIST_HEAD(rtl9602c_l34_block_cb_list);
 
@@ -367,7 +364,7 @@ static int rtl9602c_l34_setup_block(struct net_device *dev,
 {
 	struct rtl9602c_eth *ep = rtl9602c_eth_of(dev);
 
-	/* DO NOT CLAIM A BLOCK WE CANNOT HONOUR. */
+	/* Do not claim a block this driver cannot honour. */
 	if (!ep || !ep->fo)
 		return -EOPNOTSUPP;
 
