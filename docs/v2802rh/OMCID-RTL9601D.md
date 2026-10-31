@@ -24,6 +24,12 @@ The current RTL9601D backend describes the resources it implements:
 | Advertised mutable QoS bitmap | 0 |
 | Profile-created GEM/VLAN service graph | disabled |
 
+**Superseded for the MIB:** `luna_xpon_get_ani_topology()` now advertises what
+Nokia requires: 8 queues per T-CONT and per UNI, 256 GEM ports, QoS bitmap
+`BIT(3) | BIT(4)`, and profile services enabled (Nokia's VEIP service arrives
+without OMCI Creates). The eight queues drain through one hardware queue per
+T-CONT, and the driver holds 64 service slots.
+
 These are backend limits, not claims about the chip's full capacity.
 The MAC binding still uses hardware T-CONTs 8–15 and physical queues
 32–39 on the RTL9602C register map used by RTL9601D. The OMCC remains
@@ -77,5 +83,6 @@ its MIB into the current backend. The existing configuration is preserved.
 
 The local extracted-function harness is under `tmp/v2802rh/omcid-audit/`
 and is not part of the published source. No device access, firmware
-installation or live forwarding test was performed. Full hardware QoS,
-policing and LAN-to-PON offload remain separate implementation work.
+installation or live forwarding test was performed. For later offload and
+QoS work, see [L2-OFFLOAD.md](L2-OFFLOAD.md) and
+[HARDWARE-QOS-IMPLEMENTATION.md](HARDWARE-QOS-IMPLEMENTATION.md).

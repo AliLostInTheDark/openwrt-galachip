@@ -8,7 +8,7 @@ continues to use `epon-oamd`; it is not an OMCI protocol mode.
 It is the only GPON OMCI responder; the kernel has no OMCI engine of its
 own. `/etc/init.d/omcid` (START=11) binds before the ONU ranges; it is
 skipped when `xpon.main.mode` is `epon`.
-UAPI v16 kernel and userspace packages must be installed together.
+UAPI v17 kernel and userspace packages must be installed together.
 
 `omcictl`, ubus and LuCI administration use the root-only
 `/var/run/omcid.sock`. `omcictl status` identifies the responder as

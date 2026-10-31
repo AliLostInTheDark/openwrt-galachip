@@ -76,7 +76,7 @@ first failed write. Shell staging checks cover successful publication,
 missing LAN_TYPE, and missing OSK data; failure withdraws both staged files.
 
 A full firmware build, RAM boot, cold boot, optical measurements, and
-LAN-to-PON forwarding validation are still pending. Explicit multi-queue
-QoS, per-GEM policing and hardware LAN-to-PON offload are not implemented
-by this change. ONU-ID/OMCC values and the LAN2 alarm require live evidence;
+LAN-to-PON forwarding validation were pending when this was written. Explicit
+multi-queue QoS, per-GEM policing and hardware LAN-to-PON offload were not part
+of this change; see [L2-OFFLOAD.md](L2-OFFLOAD.md) for offload. ONU-ID/OMCC values and the LAN2 alarm require live evidence;
 the supplied output alone does not establish their cause.

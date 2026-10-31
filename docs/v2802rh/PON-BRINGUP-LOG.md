@@ -93,3 +93,18 @@ ways, with answer timing; `omci.main.trace=1` records from boot.
   no longer re-sets unchanged keys (10 s).
 - Remaining before the laser: preinit (~8.5 s on a RAM boot) and init
   scripts up to omcid (S11, ~19 s).
+
+## 2026-10-31: where the earlier open items stand
+
+The debug ISP defaults above are gone (1488beaa3a), LuCI shows FEC, and L2
+offload is on by default.
+
+dmesg now separates `luna-gpon: OLT: ...` (PLOAM received, FEC seen in the
+OLT's frames) from `luna-gpon: ONU: ...` (state changes, keys sent, T-CONT and
+GEM binds, watchdogs). The console is synchronous, so these are queued and
+printed only outside O2-O4 and 15 s after O5; each line carries its event's own
+time. The full protocol log stays in `/proc/gpon_log`.
+
+To check the FEC timing, read `dmesg | grep FEC`. It gives seconds after O5, so
+boots with different O5 times separate an OLT decision from anything tied to
+the 300 s jiffies wrap. Not yet run on the board.

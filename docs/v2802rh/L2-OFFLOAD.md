@@ -54,10 +54,12 @@ An upgrade that preserves `/etc/config/network` also preserves its bridge
 settings. If snooping is enabled there, offload remains inactive until that
 setting is changed. `requested=1` alone does not mean forwarding is active.
 
-The existing `br-lan` must contain only `eth0` and `pon0`, with both ports
-forwarding, bridge VLAN filtering off and multicast snooping off. This first
-path does not program the bridge MDB. The L34 NAT engine and per-port VLAN
-mode must also be off. Non-local user FDB entries and enabled isolation-leak
+The existing `br-lan` must contain `pon0` and either `eth0` or the `lan1`/`lan2`
+jacks, with all ports forwarding and multicast snooping off. Bridge VLAN
+filtering works only with the jacks: the bridge then sets each jack's
+membership, egress format and PVID (`rtl9601d_vlan.c`), and LuCI's VLAN table
+writes that configuration. This first path does not program the bridge MDB. The
+L34 NAT engine must also be off. Non-local user FDB entries and enabled isolation-leak
 settings prevent offload; their forwarding policies are not implemented.
 To enable it again after a runtime disable, with a compatible bridge:
 
