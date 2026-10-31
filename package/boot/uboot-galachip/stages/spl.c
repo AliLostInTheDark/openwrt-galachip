@@ -35,6 +35,17 @@ static int wait_bits(uint32_t address, uint32_t mask, uint32_t expected)
 	return -1;
 }
 
+/* The GPL accepts either lock bit; a healthy unit reads both set. */
+static int wait_ddr_lock(void)
+{
+	uint32_t n;
+
+	for (n = WAIT; n; n--)
+		if (REG(DDR + 0x20) & 0x03000000)
+			return 0;
+	return -1;
+}
+
 static int ddr_init(void)
 {
 	unsigned int i;
@@ -43,14 +54,11 @@ static int ddr_init(void)
 
 	/* A software reset may retain DDR. Never replay cold init when ready. */
 	if (REG(DDR + 4) != 0xc100) {
-		if (REG(DDR + 0x20) & 0x03000000)
-			return -1;
 		for (i = 0; i < sizeof(ddr_table) / sizeof(ddr_table[0]); i++)
 			REG(DDR + ddr_table[i][0]) = ddr_table[i][1];
 		REG(DDR + 4) = 1;
 	}
-	if (wait_bits(DDR + 4, ~0U, 0xc100) ||
-	    wait_bits(DDR + 0x20, 0x03000000, 0x03000000))
+	if (wait_bits(DDR + 4, ~0U, 0xc100) || wait_ddr_lock())
 		return -1;
 	/* Scratch is below DMA and separate from wrapper, output, heap and stack. */
 	for (i = 0; i < sizeof(patterns) / sizeof(patterns[0]); i++) {
