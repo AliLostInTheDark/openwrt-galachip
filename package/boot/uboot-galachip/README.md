@@ -1,7 +1,8 @@
 # XZ000-G7 U-Boot development port
 
 U-Boot **v2026.10** for the GC1601/FA626TE XZ000-G7 with 32 MiB DDR and
-4 MiB EN25QH32B NOR. **RAM-only: this port has not been tested on hardware.**
+4 MiB EN25QH32B NOR. **RAM-only: the RAM image and wrapper have run on hardware; SPL, ROM recovery
+and flash installation have not.** See [HARDWARE-TESTS.md](HARDWARE-TESTS.md).
 The experimental `gc1601-loader` package is separate and unchanged.
 
 ## Scope
@@ -95,9 +96,10 @@ Without VBAR, vectors at zero belong to ROM: vector relocation is suppressed.
 Unexpected synchronous exceptions still depend on the ROM handlers; their
 behavior is an unresolved hardware gate.
 
-SPL uses the installed 36-entry DDR table for a cold controller. If both ready
-and lock state survive a software reset, it preserves that state and verifies
-scratch accesses; inconsistent state fails in SRAM. Never manually launch this
+SPL uses the installed 36-entry DDR table unless the controller already reports
+ready. As in the GPL, a not-ready controller is always programmed and either
+lock bit is accepted. Ready state is preserved, and scratch accesses are verified
+on both paths. Never manually launch this
 SPL over a running Linux/U-Boot session as a DDR test.
 
 TFTP, serial and NOR command destinations exclude DMA and relocated U-Boot.
@@ -118,7 +120,7 @@ python3 package/boot/uboot-galachip/tests/test_drivers.py
 The tests execute the production C validators, decoder and receiver, plus the
 unmodified SPI/Ethernet driver C against mocked MMIO/driver-model interfaces.
 They cover corrupt/truncated images, lengths/overflow, CRC retries, duplicates,
-sequence wrap, timeout/cancellation, FIFO tails, SPI abort failures, descriptor
+sequence wrap, line purge, timeout/cancellation, FIFO tails, SPI abort failures, descriptor
 bounds and TX ownership. They do not emulate PHY timing, actual DMA arbitration,
 NOR electrical behavior or DDR training.
 
