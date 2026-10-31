@@ -52,7 +52,7 @@ typedef unsigned char u8;
 #define UBOOT_SIZE		0x1e000
 #define UBOOT_ENTRY		0x40100000	/* where the stock SPL runs it */
 #define FW_FLASH		0x20000
-#define FW_MAX			0x3b0000	/* firmware partition minus the tag */
+#define FW_SIZE			0x3b0000
 #define TAG_MAGIC		0x03000003
 #define TAG_KERNEL_LEN		0x78
 #define TAG_SIZE		0x200
@@ -244,7 +244,7 @@ static int boot_flash(void)
 		return -1;
 	}
 	len = tag[TAG_KERNEL_LEN / 4];
-	if (tag[0] != TAG_MAGIC || !len || len > FW_MAX) {
+	if (tag[0] != TAG_MAGIC || !len || len > FW_SIZE - TAG_SIZE) {
 		con_puts("No kernel at flash ");
 		con_puthex(FW_FLASH);
 		con_puts(" (tag ");
