@@ -1135,6 +1135,7 @@ static u32 gpon_fsm_ticks;
 static u32 luna_fsm_first_ms;
 static u8 gpon_sds_synced;	/* one-shot SDS TX re-sync done */
 static u32 gpon_ds_rx;		/* total downstream PLOAMs drained (DS-lock liveness) */
+static u32 gpon_ds_blank;	/* of which all zero: not a message, see gpon_fsm_handle() */
 /* The GEM the install SUCCEEDED on.  Deliberately NOT gpon_omcc_gem_port, which
  * gpon_install_omcc() stamps on entry and therefore also holds the port of an
  * install that FAILED -- believing that one would latch the failure as done and
@@ -3646,6 +3647,7 @@ static int v2802rh_gpon_show_locked(struct seq_file *s)
 		struct luna_xpon_pm pm;
 
 		luna_xpon_hw_pm(&pm);
+		seq_printf(s, "ds_ploam_blank: %u\n", gpon_ds_blank);
 		seq_printf(s, "pm: fec ds=%d us=%d corrected_bytes=%llu corrected_cw=%llu uncorrectable_cw=%llu total_cw=%llu fec_seconds=%llu bip_errors=%llu\n",
 			   pm.ds_fec, pm.us_fec, pm.fec_corrected_bytes,
 			   pm.fec_corrected_codewords, pm.fec_uncorrectable_codewords,
@@ -6520,6 +6522,13 @@ static void gpon_fsm_handle(const u8 *m)
 {
 	u8 onu_id = m[0], type = m[1];
 	const u8 *d = &m[2];		/* 10 data octets */
+
+	/* All zero is no G.984.3 type, and its CRC of zero still passes. The line
+	 * counters did not move when these arrived: count them, do not act. */
+	if (!memchr_inv(m, 0, GPON_PLOAM_DS_LEN)) {
+		gpon_ds_blank++;
+		return;
+	}
 
 	/* Surface any DS PLOAM that is not the repetitive broadcast acquisition
 	 * traffic, so activation progress is visible. */
