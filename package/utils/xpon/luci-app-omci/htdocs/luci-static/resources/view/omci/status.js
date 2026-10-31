@@ -94,13 +94,15 @@ function vlanText(vlan) {
 function updateVlan(vlan) {
 	var node = document.getElementById('omci-status-lan_vlan');
 	if (node)
-		dom.content(node, vlanText(vlan));
+		dom.content(node, [ vlanText(vlan) ]);
 }
 
+/* Identity and OLT text can come from the OLT: a string given to E() or
+ * dom.content() alone would be parsed as HTML, one in an array stays text. */
 function row(label, value, id) {
 	return E('tr', { 'class': 'tr' }, [
 		E('td', { 'class': 'td left', 'width': '42%' }, label),
-		E('td', { 'class': 'td left', 'id': 'omci-status-' + id }, text(value))
+		E('td', { 'class': 'td left', 'id': 'omci-status-' + id }, [ text(value) ])
 	]);
 }
 
@@ -178,7 +180,7 @@ function provisioned(objects, vlan) {
 	lead.push(_('Towards the LAN: %s.').format(vlanText(vlan)));
 
 	return E([], [
-		E('p', { 'class': 'xpon-lead' }, lead.join(' ')),
+		E('p', { 'class': 'xpon-lead' }, [ lead.join(' ') ]),
 		vids.length ? E('div', { 'class': 'xpon-cards' }, vids.map(function(vid) {
 			var entry = vlans[vid], route = entry.route;
 
@@ -203,7 +205,7 @@ function summary(status) {
 	return E('div', { 'class': 'omci-summary' }, cards.map(function(card) {
 		return E('div', { 'class': 'omci-card' }, [
 			E('div', { 'class': 'omci-card-label' }, card[0]),
-			E('div', { 'class': 'omci-card-value' }, card[1])
+			E('div', { 'class': 'omci-card-value' }, [ card[1] ])
 		]);
 	}));
 }
@@ -326,7 +328,7 @@ function update(status) {
 	Object.keys(v).forEach(function(key) {
 		var node = document.getElementById('omci-status-' + key);
 		if (node)
-			dom.content(node, v[key]);
+			dom.content(node, [ v[key] ]);
 	});
 
 	var summaryNode = document.getElementById('omci-summary-root');

@@ -101,9 +101,10 @@ function scanResults(results, count, vlans, objects, scanned) {
 			E('td', { 'class': 'td left' }, entry ? entry.sources.join(', ') : _('Not found in OMCI')),
 			E('td', { 'class': 'td left' }, entry ? mib.routeText(route) : '-'),
 			E('td', { 'class': 'td left' }, priorityText(objects, vid, answers, route)),
-			E('td', { 'class': 'td left' }, answers.length ?
+			/* A reply's text comes from whichever server answered the probe. */
+			E('td', { 'class': 'td left' }, [ answers.length ?
 				_('Internet candidate: %s').format(answerText(answers)) :
-				scanned ? answerText(answers) : _('Provisioned; not probed yet')),
+				scanned ? answerText(answers) : _('Provisioned; not probed yet') ]),
 			E('td', { 'class': 'td right' }, answers.length ? E('button', {
 				'class': 'cbi-button cbi-button-apply',
 				'data-vlan-apply': '',
@@ -132,7 +133,7 @@ function runScan(section_id) {
 						      mib.provisionedVlans(objects), objects, true));
 		});
 	}).catch(function(err) {
-		dom.content(root, E('p', {}, _('VLAN scan failed: %s').format(err.message || err)));
+		dom.content(root, E('p', {}, [ _('VLAN scan failed: %s').format(err.message || err) ]));
 	});
 }
 

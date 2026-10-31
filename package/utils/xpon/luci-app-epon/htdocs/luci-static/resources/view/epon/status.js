@@ -113,7 +113,7 @@ function line(s, hw, ddm, limits) {
 function row(label, value) {
 	return E('tr', { 'class': 'tr' }, [
 		E('td', { 'class': 'td left', 'width': '33%' }, label),
-		E('td', { 'class': 'td left' }, value)
+		E('td', { 'class': 'td left' }, [ value ])
 	]);
 }
 

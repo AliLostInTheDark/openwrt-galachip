@@ -159,13 +159,13 @@ function stages(title, items, current, failed, sentence) {
 			return E('div', { 'class': 'xs-stage' + cls, 'title': item[1],
 					  'aria-current': i == current ? 'step' : null }, [ item[0], E('span', {}, item[1]) ]);
 		})),
-		E('p', { 'class': 'xs-text' }, sentence)
+		E('p', { 'class': 'xs-text' }, [ sentence ])
 	]);
 }
 
 function cards(list) {
 	return E('div', { 'class': 'xs-cards' }, list.map(function(c) {
-		return E('div', { 'class': 'xs-card' }, [ E('div', {}, c[0]), E('div', {}, c[1]) ]);
+		return E('div', { 'class': 'xs-card' }, [ E('div', {}, [ c[0] ]), E('div', {}, [ c[1] ]) ]);
 	}));
 }
 
@@ -175,7 +175,7 @@ function section(title, rows) {
 		E('table', { 'class': 'table' }, rows.map(function(row) {
 			return E('tr', { 'class': 'tr' }, [
 				E('td', { 'class': 'td left', 'width': '40%' }, row[0]),
-				E('td', { 'class': 'td left' }, row[1])
+				E('td', { 'class': 'td left' }, [ row[1] ])
 			]);
 		}))
 	]);
