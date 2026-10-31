@@ -120,6 +120,12 @@ error, and retries after 100 ms. Data can be interrupted while gated;
 waits for reconciliation and returns its error. Successful disable has
 `requested=0 active=0 services=0 error=0 gated=0`.
 
+## Test a VLAN split by p-bit
+
+`omci-diag split 60` prints the OMCI state, the decoded rules
+(`l2_offload_rules`) and the fault codes, then each GEM's upstream bytes every 5 s.
+Run it over SSH during traffic: the bytes should land on the GEM of the p-bit sent.
+
 ## Capture an off/on/off comparison
 
 After each phase, run the same traffic test from a LAN client to an existing

@@ -9,6 +9,9 @@
 #                      everything, the full report included; a recording
 #                      started earlier with "trace" (or at boot with
 #                      omci.main.trace=1) is kept
+#   omci-diag split [S] everything "full" prints without its wait, then S
+#                      seconds (default 60) of per-GEM upstream bytes every
+#                      5 s, for a run with traffic on a VLAN split by p-bit
 trace=/tmp/omcid-trace.txt
 
 trace_toggle() {
@@ -55,17 +58,37 @@ for dev in /sys/class/xpon/*; do
 done
 section "PON driver" /proc/gpon
 section "PON driver log" /proc/gpon_log 120
-for attr in l2_offload l2_offload_bindings l2_offload_counters; do
+for attr in l2_offload l2_offload_bindings l2_offload_rules l2_offload_counters \
+	qos_status sfu_untag_vlan sfu_vlan_map sfu_lan_tagged; do
 	section "L2 $attr" "/sys/class/net/pon0/device/$attr"
 done
-if [ "$1" = full ]; then
+if [ "$1" = full ] || [ "$1" = split ]; then
 	section "OLT PLOAM capture" /proc/ploamcap
 	section "OLT OMCI capture" /proc/oltcap
 	section "PLOAM not understood" /proc/ploam_unknown
 	section "OMCI not understood" /proc/gpon_unknown
 fi
 echo
-if [ "$1" = full ]; then omci-report; else omci-report -b; fi
+if [ "$1" = full ] || [ "$1" = split ]; then omci-report; else omci-report -b; fi
 echo
 echo "== log"
 logread | grep -i "omci\|gpon\|xpon\|Alloc-ID" | tail -n 200
+
+[ "$1" = split ] || exit 0
+echo
+echo "== fault codes"
+dmesg | grep -E '\[(L2|PON|OMC|QOS|SYS)-[0-9]+\]|L2 offload' | tail -n 60
+echo "== bridge"
+cat /sys/class/net/br-lan/bridge/vlan_filtering
+uci show network | grep -A4 bridge-vlan
+echo "== per-GEM upstream, bytes since the last line, for ${2:-60} s"
+grep '^xflow' /proc/gpon > /dev/null
+left=${2:-60}
+while [ "$left" -gt 0 ]; do
+	sleep 5
+	left=$((left - 5))
+	echo "-- ${left} s left, $(cut -d' ' -f1 /proc/uptime) s up; CPU: $(top -b -n1 | grep '^CPU:')"
+	grep '^xflow' /proc/gpon | sed 's/ tcfg=[^ ]*//; s/ | .*//'
+done
+echo "== port counters"
+ethtool -S eth0 | grep -E 'p[0-3]_(rx|tx)_octets|p[0-3]_tx_(discards|bridge_discards)'

@@ -95,7 +95,7 @@ New messages take the next free number in their group, and a removed code is not
 
 | Code | Level | Message |
 |---|---|---|
-| `L2-001` | WARN | L2 offload cannot represent the installed OMCI service set; retaining CPU forwarding |
+| `L2-001` | WARN | L2 offload cannot represent the installed OMCI service set: %s, VLAN %u; retaining CPU forwarding |
 | `L2-002` | WARN | CPU fallback storm control readback failed |
 | `L2-003` | WARN | UNI L2 settings replay failed |
 | `L2-004` | WARN | swcore VLAN 4k-table engine still BUSY after %u tries (rc=%d): default VLAN %u may not be installed, LAN egress may stay filtered |

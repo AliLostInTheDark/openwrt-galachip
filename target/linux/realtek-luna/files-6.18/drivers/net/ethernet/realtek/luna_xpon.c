@@ -1139,7 +1139,8 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 	u8 priorities[LUNA_L2_SERVICES] = { 0 }, specific[LUNA_L2_SERVICES] = { 0 };
 	int best[LUNA_L2_SERVICES];
 	int port, rc = 0;
-	u16 uni_vid;
+	const char *why = "";
+	u16 uni_vid, why_vid = 0;
 	u8 mode;
 
 	mutex_lock(&luna_xpon.lock);
@@ -1154,6 +1155,7 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 		if (!s->used || s->multicast ||
 		    s->direction != OMCI_GEM_PORT_DIRECTION_BIDIRECTIONAL)
 			continue;
+		why_vid = s->vlan;
 		/* The bridge owns the LAN side, but only the map can rewrite a VID. */
 		mode = luna_xpon_lan_mode(s, &uni_vid);
 		if (vlan_filtering && mode != OMCI_UNI_VLAN_STACKED &&
@@ -1163,12 +1165,14 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 		    (mode != OMCI_UNI_VLAN_SAME && mode != OMCI_UNI_VLAN_UNTAGGED &&
 		     mode != OMCI_UNI_VLAN_TRANSLATE &&
 		     !(mode == OMCI_UNI_VLAN_STACKED && READ_ONCE(hw_qinq)))) {
+			why = "no usable VLAN, or a LAN mode the switch can't do";
 			rc = -EOPNOTSUPP;
 			goto out;
 		}
 		port = luna_xpon_uni_port(s->uni_entity);
 		/* A VEIP binds both physical LANs; emulated UNI identities stay intact. */
 		if ((port < 0 && s->uni_entity != 0x601) || port > 1) {
+			why = "UNI is neither a jack nor the VEIP";
 			rc = -EOPNOTSUPP;
 			goto out;
 		}
@@ -1182,6 +1186,7 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 			.stacked = mode == OMCI_UNI_VLAN_STACKED,
 		};
 		if (!d.lan_vid || d.lan_vid >= VLAN_VID_MASK) {
+			why = "no usable LAN VID";
 			rc = -EOPNOTSUPP;
 			goto out;
 		}
@@ -1194,6 +1199,7 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 				    services[j].translated != d.translated ||
 				    services[j].stacked != d.stacked ||
 				    services[j].untagged != d.untagged) {
+					why = "one VLAN's GEMs disagree on jacks or LAN mode";
 					rc = -EOPNOTSUPP;
 					goto out;
 				}
@@ -1201,6 +1207,7 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 			}
 			if (services[j].untagged && d.untagged &&
 			    (services[j].lan_mask & d.lan_mask)) {
+				why = "two untagged services on one jack";
 				rc = -EOPNOTSUPP;
 				goto out;
 			}
@@ -1248,6 +1255,8 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 		for (k = 0; k < n && services[k].vid != s->lan_vid; k++)
 			;
 		if (k < n) {
+			why = "LAN VID is another service's";
+			why_vid = s->vid;
 			rc = -EOPNOTSUPP;
 			goto out;
 		}
@@ -1262,13 +1271,15 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 		};
 	}
 	if (n && !offloaded) {
+		why = "nothing to offload";
 		rc = -EOPNOTSUPP;
 		goto out;
 	}
 	rc = n;
 out:
 	if (rc == -EOPNOTSUPP)
-		pr_warn_ratelimited("luna-xpon: [L2-001] L2 offload cannot represent the installed OMCI service set; retaining CPU forwarding\n");
+		pr_warn_ratelimited("luna-xpon: [L2-001] L2 offload cannot represent the installed OMCI service set: %s, VLAN %u; retaining CPU forwarding\n",
+				    why, why_vid);
 	spin_unlock_bh(&luna_xpon.svc_lock);
 	mutex_unlock(&luna_xpon.lock);
 	return rc;

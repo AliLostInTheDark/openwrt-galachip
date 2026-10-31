@@ -574,6 +574,21 @@ static int v2802_l2_tagged_rules(const struct luna_l2_service *s, unsigned int p
 	return rc;
 }
 
+static void v2802_l2_log_split(struct rtl9602c_eth *ep, const struct luna_l2_service *s)
+{
+	char line[64];
+	unsigned int k;
+	int len = 0;
+
+	if (!s->pcp_mask)
+		return;
+	for (k = 0; k < 8; k++)
+		if (s->pcp_mask & BIT(k))
+			len += scnprintf(line + len, sizeof(line) - len, " p%u:SID%u", k, s->pcp_flow[k]);
+	netdev_info(ep->ndev, "V2802RH L2 offload: VLAN %u split,%s, unmarked SID%u\n",
+		    s->vid, line, s->flow);
+}
+
 static int v2802_l2_install(const struct luna_l2_service *service, int count,
 			     unsigned int generation)
 {
@@ -945,8 +960,10 @@ static void v2802_l2_work(struct work_struct *work)
 	if (rc && !v2802_l2.saved)
 		v2802_l2_unoffload(ep);
 	if (!rc) {
-		for (i = 0; i < count; i++)
+		for (i = 0; i < count; i++) {
 			cpu_only += services[i].cpu_only;
+			v2802_l2_log_split(ep, &services[i]);
+		}
 		netdev_info(ep->ndev, "V2802RH L2 offload: %d VLAN bindings (%u CPU-only), after %s\n",
 			    count, cpu_only, v2802_l2.changed_by);
 	}
@@ -1561,15 +1578,54 @@ static ssize_t l2_offload_bindings_show(struct device *dev,
 		u32 vlan = 0;
 		int rc = v2802_l2_table(1, s->vid, &vlan, 1, false);
 
-		len += sysfs_emit_at(buf, len, "vid=%u sid=%u lan_mask=%#x untagged=%u untag_mask=%#x pvid_mask=%#x local=%u vlan=%#x read_error=%d cpu_only=%u lan_vid=%u translated=%u stacked=%u pcp_mask=%#x\n",
+		len += sysfs_emit_at(buf, len, "vid=%u sid=%u lan_mask=%#x untagged=%u untag_mask=%#x pvid_mask=%#x local=%u vlan=%#x read_error=%d cpu_only=%u lan_vid=%u translated=%u stacked=%u pcp_mask=%#x pcp_sid=%*phC\n",
 				    s->vid, s->flow, s->lan_mask, s->untagged, s->untag_mask,
 				    s->pvid_mask, s->local, vlan, rc, s->cpu_only, s->lan_vid,
-				    s->translated, s->stacked, s->pcp_mask);
+				    s->translated, s->stacked, s->pcp_mask,
+				    (int)sizeof(s->pcp_flow), s->pcp_flow);
 	}
 	rtnl_unlock();
 	return len;
 }
 static DEVICE_ATTR_RO(l2_offload_bindings);
+
+/* The classifier rules in force, decoded; a field not compared reads "any". */
+static ssize_t l2_offload_rules_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	unsigned int i;
+	ssize_t len = 0;
+
+	rtnl_lock();
+	for_each_set_bit(i, v2802_l2.rules, V2802_L2_RULES) {
+		u32 mask[2], rule[2], action[3], care;
+		unsigned int idx = V2802_L2_FIRST + i;
+		int rc;
+
+		if (len >= PAGE_SIZE - 128)
+			break;
+		rc = v2802_l2_table(4, idx, mask, 2, false) ?:
+		     v2802_l2_table(4, 256 + idx, rule, 2, false) ?:
+		     v2802_l2_table(5, idx, action, 3, false);
+		if (rc) {
+			len += sysfs_emit_at(buf, len, "rule %u read_error=%d\n", idx, rc);
+			continue;
+		}
+		care = mask[0] | rule[0];
+		len += sysfs_emit_at(buf, len, "rule %u %s valid=%u uni=%d tag=%d vid=%d pcp=%d sid=%d action=%08x,%08x enable=%#x\n",
+				     idx, rule[0] & BIT(31) ? "down" : "up", !!(rule[1] & BIT(16)),
+				     care & 7 ? (int)(rule[0] & 7) : -1,
+				     care & BIT(3) ? !!(rule[0] & BIT(3)) : -1,
+				     care & (VLAN_VID_MASK << 11) ? (int)((rule[0] >> 11) & VLAN_VID_MASK) : -1,
+				     care & (7 << 8) ? (int)((rule[0] >> 8) & 7) : -1,
+				     !(rule[0] & BIT(31)) && action[0] & BIT(23) ? (int)((action[0] >> 24) & 0x7f) : -1,
+				     action[0], action[1],
+				     ioread32(v2802_l2.ep->sw + L34_CF_ACTION_CTRL + 4 * idx));
+	}
+	rtnl_unlock();
+	return len;
+}
+static DEVICE_ATTR_RO(l2_offload_rules);
 
 static ssize_t l2_offload_counters_show(struct device *dev,
 				      struct device_attribute *attr, char *buf)
@@ -1593,6 +1649,7 @@ static struct attribute *v2802_l2_attrs[] = {
 	&dev_attr_l2_vlan_reserved.attr,
 	&dev_attr_l2_offload_bindings.attr,
 	&dev_attr_l2_offload_counters.attr,
+	&dev_attr_l2_offload_rules.attr,
 	&dev_attr_l2_ds_rate_debug.attr,
 	&dev_attr_l2_sw_debug.attr,
 	NULL,
