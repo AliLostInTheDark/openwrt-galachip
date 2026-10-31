@@ -40,7 +40,7 @@ PON flow-control watermarks `0x2311c`/`0x23120` use stock's values.
 
 | Item | What is known | What is missing |
 |---|---|---|
-| PCP to different GEMs | Rule fields (lsb, width): UNI 0,3; C-tag 3,1; VID 11,12; (5,3) and (8,3) unnamed | Which field is the priority; a planner that allows two flows per VID; an OLT or fixture to test |
+| PCP to different GEMs | One upstream rule per p-bit on field (8,3). Measured 2026-11-01: frames sent with p-bit 5 passed a rule requiring 5 and stopped at one requiring 0. This can't separate the tag's p-bit from an internal priority that follows it | A split-GEM OLT such as JioFiber's to test |
 | VLAN translation and QinQ in hardware | Classifier rules in both directions, see L2-OFFLOAD.md. Translation measured at 302/296 Mbit/s with the CPU idle; its action values hold. QinQ's are inferred from `cfg2raw` tables | QinQ: an OLT that carries a stacked service; off unless `hw_qinq` is set |
 | Multicast GEM, IGMP/MLD snooping | `l2_ipMcastAddr_*`, `l2_ipmcMode_*`. The Airtel OLT creates classes 309 and 310 with every value zero and no multicast GEM | Not started; needs an IPTV service to test |
 | eFuse memory patches | Read and logged at bring-up | Written only if a chip turns out to carry any: the addresses are unchecked fuse data |

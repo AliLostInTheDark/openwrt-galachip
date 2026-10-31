@@ -36,6 +36,7 @@ static struct {
 	struct net_device *offloaded[2 + LAN_PORTS];
 	unsigned int n_offloaded;
 	DECLARE_BITMAP(rules, V2802_L2_RULES);
+	unsigned int next_rule;
 	DECLARE_BITMAP(bridge_vids, VLAN_N_VID);
 	DECLARE_BITMAP(netdev_vids, VLAN_N_VID);
 	DECLARE_BITMAP(dirty_vids, VLAN_N_VID);
@@ -43,6 +44,7 @@ static struct {
 	DECLARE_BITMAP(wan_vids, VLAN_N_VID);
 	char changed_by[32];	/* the caller behind the latest rebuild */
 	struct luna_l2_service plan[V2802_L2_VLANS];	/* under RTNL */
+	struct luna_l2_service next_plan[V2802_L2_VLANS];	/* under RTNL */
 } v2802_l2;
 
 /* CPU-forwarded upstream frames have the LAN VID, but the OLT's MAC was
@@ -447,13 +449,18 @@ void __rtl9601d_l2_changed(const char *why)
 EXPORT_SYMBOL(__rtl9601d_l2_changed);
 
 /* Pattern 0 TCAM stores positive and negative care bits separately.
- * Rule bit 48 is validity; direction 31, C-tag 3, VID 11..22, UNI 0..2.
+ * Rule bit 48 is validity; direction 31, C-tag 3, VID 11..22, tag p-bits 8..10,
+ * UNI 0..2.
  */
-static int v2802_l2_rule_write(unsigned int idx, u32 data, u32 care, u32 *action, u32 enable)
+static int v2802_l2_rule_write(u32 data, u32 care, u32 *action, u32 enable)
 {
 	u32 rule[2] = { data & care, BIT(16) }, mask[2] = { ~data & care, 0 };
+	unsigned int idx = V2802_L2_FIRST + v2802_l2.next_rule;
 	int rc;
 
+	if (v2802_l2.next_rule == V2802_L2_RULES)
+		return -ENOSPC;
+	v2802_l2.next_rule++;
 	rc = v2802_l2_table(4, idx, mask, 2, true);
 	if (!rc)
 		rc = v2802_l2_table(5, idx, action, 3, true);
@@ -477,35 +484,39 @@ static int v2802_l2_rule_write(unsigned int idx, u32 data, u32 care, u32 *action
 
 /* Upstream on the LAN VID, downstream on the service's. The switch's VLAN rules
  * can't rewrite a VID, so the tag operation comes from the classifier. */
-static int v2802_l2_rewrite_up(unsigned int idx, const struct luna_l2_service *s,
-			       unsigned int port)
+static int v2802_l2_rewrite_up(const struct luna_l2_service *s, unsigned int port,
+			       unsigned int flow, int pri)
 {
-	u32 action[3] = { ((u32)s->flow << 24) | BIT(23), 0, 0 };
+	u32 action[3] = { (flow << 24) | BIT(23), 0, 0 };
+	u32 care = BIT(31) | (VLAN_VID_MASK << 11) | BIT(3) | 7;
+	u32 data = ((u32)s->lan_vid << 11) | BIT(3) | port;
 
 	if (s->stacked)
 		action[0] |= V2802_CF_STAG_ADD(s->vid);
 	else
 		action[1] = V2802_CF_CTAG_REWRITE(s->vid);
-	return v2802_l2_rule_write(idx, ((u32)s->lan_vid << 11) | BIT(3) | port,
-				   BIT(31) | (VLAN_VID_MASK << 11) | BIT(3) | 7,
-				   action, V2802_CF_ENABLE_ALL);
+	if (pri >= 0) {
+		care |= 7 << 8;
+		data |= (u32)pri << 8;
+	}
+	return v2802_l2_rule_write(data, care, action, V2802_CF_ENABLE_ALL);
 }
 
-static int v2802_l2_rewrite_down(unsigned int idx, const struct luna_l2_service *s)
+static int v2802_l2_rewrite_down(const struct luna_l2_service *s)
 {
 	u32 action[3] = { 0, s->stacked ? V2802_CF_CTAG_DELETE :
 			     V2802_CF_CTAG_REWRITE(s->lan_vid), 0 };
 
-	return v2802_l2_rule_write(idx, BIT(31) | ((u32)s->vid << 11) | BIT(3),
+	return v2802_l2_rule_write(BIT(31) | ((u32)s->vid << 11) | BIT(3),
 				   BIT(31) | (VLAN_VID_MASK << 11) | BIT(3),
 				   action, V2802_CF_ENABLE_ALL);
 }
 
-static int v2802_l2_rule(unsigned int idx, const struct luna_l2_service *s,
-			  unsigned int port, bool untagged)
+static int v2802_l2_rule(const struct luna_l2_service *s, unsigned int port,
+			  bool untagged, unsigned int flow, int pri)
 {
 	u32 care = BIT(31) | BIT(3) | 7, data = port;
-	u32 action[3] = { ((u32)s->flow << 24) | BIT(23), 0, 0 };
+	u32 action[3] = { (flow << 24) | BIT(23), 0, 0 };
 	u32 enable = L34_CF_SID_ENABLE;
 	int pcp = READ_ONCE(v2802_l2.pcp[port]);
 
@@ -519,8 +530,48 @@ static int v2802_l2_rule(unsigned int idx, const struct luna_l2_service *s,
 		care |= VLAN_VID_MASK << 11;
 		data |= ((u32)s->vid << 11) | BIT(3);
 	}
+	if (pri >= 0) {
+		care |= 7 << 8;
+		data |= (u32)pri << 8;
+	}
 	/* Switch VLAN rules own tag insertion; CF may override upstream PCP. */
-	return v2802_l2_rule_write(idx, data, care, action, enable);
+	return v2802_l2_rule_write(data, care, action, enable);
+}
+
+/* Clients can mark an untagged service's frames with a VID 0 tag, as Windows
+ * does with its QoS scheduler on. They match neither of its other rules. */
+static int v2802_l2_prio_tag_rule(const struct luna_l2_service *s, unsigned int port)
+{
+	u32 action[3] = { ((u32)s->flow << 24) | BIT(23), 0, 0 };
+
+	return v2802_l2_rule_write(BIT(3) | port,
+				   BIT(31) | (VLAN_VID_MASK << 11) | BIT(3) | 7,
+				   action, L34_CF_SID_ENABLE);
+}
+
+/* One rule for a tagged frame's GEM, or one per p-bit when the service splits.
+ * A p-bit without a GEM has no rule, so its frames don't reach the PON. A port's
+ * forced priority picks a single GEM whatever the frame carries. */
+static int v2802_l2_tagged_rules(const struct luna_l2_service *s, unsigned int port)
+{
+	int pcp = READ_ONCE(v2802_l2.pcp[port]), rc = 0;
+	unsigned int k;
+
+	if (s->pcp_mask && pcp >= 0 && !(s->pcp_mask & BIT(pcp)))
+		return 0;
+	if (!s->pcp_mask || pcp >= 0) {
+		unsigned int flow = s->pcp_mask ? s->pcp_flow[pcp] : s->flow;
+
+		return v2802_l2_rewritten(s) ? v2802_l2_rewrite_up(s, port, flow, -1) :
+		       v2802_l2_rule(s, port, false, flow, -1);
+	}
+	for (k = 0; !rc && k < 8; k++) {
+		if (!(s->pcp_mask & BIT(k)))
+			continue;
+		rc = v2802_l2_rewritten(s) ? v2802_l2_rewrite_up(s, port, s->pcp_flow[k], k) :
+		     v2802_l2_rule(s, port, false, s->pcp_flow[k], k);
+	}
+	return rc;
 }
 
 static int v2802_l2_install(const struct luna_l2_service *service, int count,
@@ -619,6 +670,7 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 		if (rc)
 			goto rollback;
 	}
+	v2802_l2.next_rule = 0;
 	/* PON classifier selected; unmatched upstream is permitted without PON. */
 	iowrite32((cfg & ~3u) | BIT(3) | 1, ep->sw + L34_CF_CFG);
 	for (i = 0; i < count; i++) {
@@ -642,25 +694,19 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 				pvid = sw_packed_ins(pvid, p, SW_VLAN_PB_VID_BITS, s->vid);
 			if (s->local || s->cpu_only)
 				continue;
-			if (v2802_l2_rewritten(s)) {
-				rc = v2802_l2_rewrite_up(V2802_L2_FIRST + 4 * i + 2 * p, s, p);
+			if (s->pvid_mask & BIT(p)) {
+				rc = v2802_l2_rule(s, p, true, s->flow, -1);
+				if (!rc)
+					rc = v2802_l2_prio_tag_rule(s, p);
 				if (rc)
 					goto rollback;
-				continue;
 			}
-			rc = v2802_l2_rule(V2802_L2_FIRST + 4 * i + 2 * p, s, p,
-					   s->pvid_mask & BIT(p));
+			rc = v2802_l2_tagged_rules(s, p);
 			if (rc)
 				goto rollback;
-			if (s->pvid_mask & BIT(p)) {
-				rc = v2802_l2_rule(V2802_L2_FIRST + 4 * i + 2 * p + 1,
-						     s, p, false);
-				if (rc)
-					goto rollback;
-			}
 		}
 		if (v2802_l2_rewritten(s) && !s->local) {
-			rc = v2802_l2_rewrite_down(V2802_L2_FIRST + 4 * i + 1, s);
+			rc = v2802_l2_rewrite_down(s);
 			if (rc)
 				goto rollback;
 		}
@@ -852,7 +898,7 @@ static void v2802_ds_replay(void);
 
 static void v2802_l2_work(struct work_struct *work)
 {
-	struct luna_l2_service services[V2802_L2_VLANS];
+	struct luna_l2_service *services = v2802_l2.next_plan;
 	struct rtl9602c_eth *ep = v2802_l2.ep;
 	unsigned long flags;
 	unsigned int generation;
@@ -972,7 +1018,8 @@ static bool v2802_l2_plan_unchanged(struct rtl9602c_eth *ep)
 		    a->lan_mask != b->lan_mask || a->untag_mask != b->untag_mask ||
 		    a->pvid_mask != b->pvid_mask || a->local != b->local ||
 		    a->untagged != b->untagged || a->cpu_only != b->cpu_only ||
-		    a->translated != b->translated || a->stacked != b->stacked)
+		    a->translated != b->translated || a->stacked != b->stacked ||
+		    a->pcp_mask != b->pcp_mask || memcmp(a->pcp_flow, b->pcp_flow, sizeof(a->pcp_flow)))
 			return false;
 	}
 	return true;
@@ -1514,10 +1561,10 @@ static ssize_t l2_offload_bindings_show(struct device *dev,
 		u32 vlan = 0;
 		int rc = v2802_l2_table(1, s->vid, &vlan, 1, false);
 
-		len += sysfs_emit_at(buf, len, "vid=%u sid=%u lan_mask=%#x untagged=%u untag_mask=%#x pvid_mask=%#x local=%u vlan=%#x read_error=%d cpu_only=%u lan_vid=%u translated=%u stacked=%u\n",
+		len += sysfs_emit_at(buf, len, "vid=%u sid=%u lan_mask=%#x untagged=%u untag_mask=%#x pvid_mask=%#x local=%u vlan=%#x read_error=%d cpu_only=%u lan_vid=%u translated=%u stacked=%u pcp_mask=%#x\n",
 				    s->vid, s->flow, s->lan_mask, s->untagged, s->untag_mask,
 				    s->pvid_mask, s->local, vlan, rc, s->cpu_only, s->lan_vid,
-				    s->translated, s->stacked);
+				    s->translated, s->stacked, s->pcp_mask);
 	}
 	rtnl_unlock();
 	return len;

@@ -31,9 +31,13 @@ For each supported bidirectional service:
   remain available to software forwarding. Counters expose both paths and
   the last observed reason for board validation.
 
-Eight p-bit mappings to the same GEM collapse into one binding. Split-GEM
-priority policies, partial p-bit coverage, multicast
-GEM services and conflicting bindings retain the CPU path. There can be only
+Eight p-bit mappings to the same GEM collapse into one binding. A VLAN split
+across GEMs, as on JioFiber, or mapped for only some p-bits, gets one upstream rule
+per p-bit; a p-bit with no GEM has no rule, so its frames stop at the switch. An
+untagged or VID 0 frame takes the VLAN's best carrier: the default service, then
+one for any priority, then the lowest p-bit, as the GC1601 driver does on JioFiber
+(p-bit 0 internet, 4 VoIP, 5 TR-069, 6 IPTV, 7 control). Multicast and downstream-only
+GEMs are left out of the plan. Conflicting bindings retain the CPU path. There can be only
 one untagged service on each physical LAN port. The configured ONU identity
 and advertised UNI count are preserved.
 

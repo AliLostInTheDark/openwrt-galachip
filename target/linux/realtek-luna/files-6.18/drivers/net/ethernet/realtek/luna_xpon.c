@@ -1122,6 +1122,7 @@ static int luna_xpon_delete_service(struct omci_device *odev, u32 cookie)
 
 static u8 luna_xpon_lan_mode(const struct luna_xpon_service *s, u16 *uni_vid);
 static bool luna_xpon_mapped(u16 wan);
+static int luna_xpon_rank(const struct luna_xpon_service *s);
 
 /* The offload worker holds RTNL; backend transactions serialize this copy. */
 /* The VLAN a service's frames carry on the LAN side. */
@@ -1134,8 +1135,9 @@ static u16 luna_xpon_lan_vid(const struct luna_xpon_service *s, u8 mode,
 
 int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 {
-	unsigned int i, j, n = 0, offloaded = 0;
-	u8 priorities[LUNA_L2_SERVICES] = { 0 };
+	unsigned int i, j, k, n = 0, offloaded = 0;
+	u8 priorities[LUNA_L2_SERVICES] = { 0 }, specific[LUNA_L2_SERVICES] = { 0 };
+	int best[LUNA_L2_SERVICES];
 	int port, rc = 0;
 	u16 uni_vid;
 	u8 mode;
@@ -1148,7 +1150,9 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 		const struct luna_xpon_service *s = &luna_xpon.svc[i];
 		struct luna_l2_service d;
 
-		if (!s->used)
+		/* Downstream-only and multicast GEMs select no upstream rule. */
+		if (!s->used || s->multicast ||
+		    s->direction != OMCI_GEM_PORT_DIRECTION_BIDIRECTIONAL)
 			continue;
 		/* The bridge owns the LAN side, but only the map can rewrite a VID. */
 		mode = luna_xpon_lan_mode(s, &uni_vid);
@@ -1156,7 +1160,6 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 		    !luna_xpon_mapped(s->vlan))
 			mode = OMCI_UNI_VLAN_SAME;
 		if (!s->vlan_valid || !s->vlan || s->vlan >= 4095 ||
-		    s->multicast || s->direction != OMCI_GEM_PORT_DIRECTION_BIDIRECTIONAL ||
 		    (mode != OMCI_UNI_VLAN_SAME && mode != OMCI_UNI_VLAN_UNTAGGED &&
 		     mode != OMCI_UNI_VLAN_TRANSLATE &&
 		     !(mode == OMCI_UNI_VLAN_STACKED && READ_ONCE(hw_qinq)))) {
@@ -1186,8 +1189,7 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 		d.pvid_mask = d.untag_mask;
 		for (j = 0; j < n; j++) {
 			if (services[j].vid == d.vid) {
-				if (services[j].flow != d.flow ||
-				    services[j].lan_mask != d.lan_mask ||
+				if (services[j].lan_mask != d.lan_mask ||
 				    services[j].lan_vid != d.lan_vid ||
 				    services[j].translated != d.translated ||
 				    services[j].stacked != d.stacked ||
@@ -1208,16 +1210,31 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 				rc = -ENOSPC;
 				goto out;
 			}
+			best[n] = INT_MAX;
 			services[n++] = d;
 		}
-		priorities[j] |= s->pcp_valid ? BIT(s->pcp) : 0xff;
-	}
-	/* A single-GEM mapper can collapse all eight p-bits into one rule. */
-	for (j = 0; j < n; j++)
-		if (priorities[j] != 0xff) {
-			rc = -EOPNOTSUPP;
-			goto out;
+		/* Unmarked frames take the VLAN's best carrier. */
+		if (luna_xpon_rank(s) < best[j]) {
+			best[j] = luna_xpon_rank(s);
+			services[j].flow = s->flow;
 		}
+		/* A p-bit's own GEM wins over one for the whole VLAN, in either order. */
+		for (k = 0; k < 8; k++)
+			if (s->pcp_valid ? s->pcp == k : !(specific[j] & BIT(k)))
+				services[j].pcp_flow[k] = s->flow;
+		priorities[j] |= s->pcp_valid ? BIT(s->pcp) : 0xff;
+		specific[j] |= s->pcp_valid ? BIT(s->pcp) : 0;
+	}
+	/* A single GEM for all eight p-bits collapses into one rule. */
+	for (j = 0; j < n; j++) {
+		struct luna_l2_service *s = &services[j];
+		bool split = priorities[j] != 0xff;
+
+		for (k = 0; k < 8; k++)
+			if ((priorities[j] & BIT(k)) && s->pcp_flow[k] != s->flow)
+				split = true;
+		s->pcp_mask = split ? priorities[j] : 0;
+	}
 	/* Admit a rewritten service's LAN VID as a VLAN of its own. Never alias
 	 * another service's VID: its rule would select that service's GEM. */
 	i = n;

@@ -36,6 +36,8 @@ struct luna_l2_service {
 	bool cpu_only;
 	bool translated;	/* LAN VID rewritten to the service's, and back */
 	bool stacked;		/* service's VID added over the LAN tag, and removed */
+	u8 pcp_mask;		/* p-bits with a GEM when split; 0: every p-bit takes flow */
+	u8 pcp_flow[8];
 };
 void __rtl9601d_l2_changed(const char *why);
 /* Downstream limits, one share meter and one ACL rule on the PON port each. */
