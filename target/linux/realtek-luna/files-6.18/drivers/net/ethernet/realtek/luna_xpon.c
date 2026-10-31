@@ -269,15 +269,15 @@ static int luna_xpon_backend_identity(struct omci_device *odev,
 static int luna_xpon_backend_reset(struct omci_device *odev)
 {
 	unsigned int i;
-	int rc;
+	int rc = 0, err;
 
-	/* A MIB reset restores unlimited UNI rates as well as PON services. */
+	/* A MIB reset restores unlimited UNI rates as well as PON services.
+	 * A failed rate must not leave the old services installed. */
 	if (luna_xpon.uni_rate) {
 		for (i = 0; i < luna_xpon.unis; i++) {
-			rc = luna_xpon.uni_rate(luna_xpon.cookie,
-					       luna_xpon.uni_port[i], 0, 0);
-			if (rc)
-				return rc;
+			err = luna_xpon.uni_rate(luna_xpon.cookie,
+						luna_xpon.uni_port[i], 0, 0);
+			rc = rc ?: err;
 		}
 	}
 	for (i = 0; i < LUNA_XPON_GEMS; i++)
@@ -289,7 +289,7 @@ static int luna_xpon_backend_reset(struct omci_device *odev)
 	luna_xpon_forget();
 	memset(luna_xpon.tcont_qos, 0, sizeof(luna_xpon.tcont_qos));
 	memset(luna_xpon.gem_rate, 0, sizeof(luna_xpon.gem_rate));
-	return 0;
+	return rc;
 }
 
 static int luna_xpon_start(struct omci_device *odev)
@@ -912,7 +912,8 @@ static int luna_xpon_set_uni(struct omci_device *odev, u16 entity, bool enable)
 	return luna_xpon.uni_admin_set(luna_xpon.cookie, port, !enable);
 }
 
-/* Apply rates only after rejecting attributes this switch cannot honour. */
+/* The switch has no per-port control for the other attributes. Refusing them
+ * would fail the OLT's write and lose the rate, so they are only reported. */
 static int luna_xpon_set_uni_attrs(struct omci_device *odev, u16 entity,
 				   const struct omci_uni_attrs *a)
 {
@@ -920,7 +921,9 @@ static int luna_xpon_set_uni_attrs(struct omci_device *odev, u16 entity,
 
 	if (a->pause_quanta || a->ageing_s || a->learn_limit ||
 	    a->auto_detection || a->max_frame_size)
-		return -EOPNOTSUPP;
+		pr_info("luna-xpon: UNI %#x: not applied: pause %u, ageing %u s, learn limit %u, auto-detection %u, max frame %u\n",
+			entity, a->pause_quanta, a->ageing_s, a->learn_limit,
+			a->auto_detection, a->max_frame_size);
 	if (port < 0 || !luna_xpon.uni_rate)
 		return a->down_kbps || a->up_kbps ? -EOPNOTSUPP : 0;
 	return luna_xpon.uni_rate(luna_xpon.cookie, port, a->down_kbps,

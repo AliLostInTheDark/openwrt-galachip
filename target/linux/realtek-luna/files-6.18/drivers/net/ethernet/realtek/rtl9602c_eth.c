@@ -892,12 +892,11 @@ static int rtl9602c_uni_rate_set(void *cookie, unsigned int port,
 	spin_lock_irqsave(&ep->sw_table_lock, flags);
 	/* omcid binds before the NIC opens. Defaults must not touch hardware
 	 * or prevent its initial backend reset from completing. */
-	if (!ep->uni_rate[port].valid && !down_kbps && !up_kbps) {
-		rc = 0;
-	} else if (READ_ONCE(ep->in_recovery) || !READ_ONCE(ep->hw_up)) {
-		rc = -EAGAIN;
-	} else {
-		rc = rtl9602c_uni_rate_write(ep, port, down, up);
+	rc = 0;
+	if (ep->uni_rate[port].valid || down_kbps || up_kbps) {
+		/* While the switch is unavailable, the replay applies the request. */
+		if (!READ_ONCE(ep->in_recovery) && READ_ONCE(ep->hw_up))
+			rc = rtl9602c_uni_rate_write(ep, port, down, up);
 		if (!rc) {
 			ep->uni_rate[port].down = down;
 			ep->uni_rate[port].up = up;
@@ -1326,7 +1325,8 @@ static netdev_tx_t rtl9602c_eth_wan_xmit(struct sk_buff *skb, struct net_device 
 			return NETDEV_TX_OK;
 		}
 		flow = luna_xpon_tx_flow(&skb, v2802_l2_vlan_filtering(ep));
-		if (flow < 0) {
+		/* An untagged frame only now has the tag the priority belongs in. */
+		if (flow < 0 || (skb && v2802_l2_priority(ep, skb))) {
 			if (skb)
 				dev_kfree_skb_any(skb);
 			ndev->stats.tx_dropped++;
@@ -2209,8 +2209,10 @@ static void rtl9602c_eth_recover_work(struct work_struct *work)
 
 	if (!use_rst && ep->irq > 0)
 		enable_irq(ep->irq);
-	rtl9602c_uni_rate_replay(ep);
+	spin_lock_irqsave(&ep->sw_table_lock, flags);
 	ep->in_recovery = false;
+	spin_unlock_irqrestore(&ep->sw_table_lock, flags);
+	rtl9602c_uni_rate_replay(ep);
 	napi_enable(&ep->napi);
 	mod_timer(&ep->poll_timer, jiffies + 1);
 	netif_wake_queue(ndev);
@@ -2467,6 +2469,7 @@ hw_ready:
 		  jiffies + ((ep->irq > 0) ? REKICK_INTERVAL : POLL_INTERVAL));
 
 	ep->hw_up = true;
+	rtl9602c_uni_rate_replay(ep);
 	luna_gpon_nic_reset_end();
 	return 0;
 
