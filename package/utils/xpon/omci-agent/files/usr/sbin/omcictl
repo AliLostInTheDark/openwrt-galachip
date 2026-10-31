@@ -193,22 +193,26 @@ function print_classes(classes) {
 function print_mib(objects) {
 	printf('%-6s %-8s %-48s %s\n', 'class', 'entity', 'name', 'origin');
 	for (let item in (objects || []))
-		printf('%-6d %-8d %-48s %s\n', item.class_id, item.entity_id,
+		printf('%-6d 0x%04x   %-48s %s\n', item.class_id, item.entity_id,
 			item.name || '-', item.origin_name || '-');
 }
 
 /* One block per object, decoded fields first; classes without a decoder show hex. */
 function print_objects(objects) {
 	for (let item in (objects || [])) {
-		printf('%s (class %d) entity %d, %s\n', item.name || 'Unknown ME',
+		printf('%s (class %d) entity 0x%04x, %s\n', item.name || 'Unknown ME',
 			item.class_id, item.entity_id, item.origin_name || '-');
 		if (!item.fields) {
 			printf('  data: %s\n\n', item.data || '');
 			continue;
 		}
 		for (let name, value in item.fields) {
+			if (name == 'notes')
+				continue;
 			if (type(value) != 'array') {
-				printf('  %-24s %s\n', name, value);
+				let explained = item.fields.notes?.[name];
+
+				printf('  %-24s %s%s\n', name, value, explained ? `  (${explained})` : '');
 				continue;
 			}
 			printf('  %s:\n', name);

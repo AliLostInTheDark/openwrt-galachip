@@ -50,6 +50,7 @@
 .omci-mib-class-info, .omci-mib-origin { font-size: 12px; opacity: .72; }
 .omci-mib-object-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 8px; }
 .omci-mib-wide { grid-column: 1 / -1; }
+.omci-mib-note { font-size: 12px; opacity: .72; }
 .omci-mib-object h5 { margin: 14px 0 6px; }
 .omci-mib-rules { min-width: 820px; }
 .omci-mib-raw { margin-top: 10px; }

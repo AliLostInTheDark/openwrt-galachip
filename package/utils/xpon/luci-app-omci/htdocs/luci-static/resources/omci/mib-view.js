@@ -34,7 +34,7 @@ function value(v) {
 }
 
 function entityText(id) {
-	return String(id);
+	return '0x%04x (%d)'.format(id, id);
 }
 
 function originText(o) {
@@ -66,14 +66,14 @@ function rows(fields) {
 	var out = [];
 
 	Object.keys(fields || {}).forEach(function(key) {
-		if (key == 'rules')
+		if (key == 'rules' || key == 'notes')
 			return;
 		if (Array.isArray(fields[key]))
 			fields[key].forEach(function(line, i) {
 				out.push([ _('%s %d').format(label(key).replace(/s$/, ''), i + 1), line ]);
 			});
 		else
-			out.push([ label(key), value(fields[key]) ]);
+			out.push([ label(key), value(fields[key]), (fields.notes || {})[key] ]);
 	});
 	return out;
 }
@@ -82,7 +82,10 @@ function fieldTable(fields) {
 	return E('table', { 'class': 'table' }, rows(fields).map(function(row) {
 		return E('tr', { 'class': 'tr' }, [
 			E('td', { 'class': 'td left', 'width': '50%' }, [ row[0] ]),
-			E('td', { 'class': 'td left' }, [ row[1] ])
+			E('td', { 'class': 'td left' }, [
+				row[1],
+				row[2] ? E('div', { 'class': 'omci-mib-note' }, [ row[2] ]) : null
+			])
 		]);
 	}));
 }

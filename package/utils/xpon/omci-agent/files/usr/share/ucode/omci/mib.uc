@@ -3,9 +3,10 @@
 /*
  * Readable fields for MIB objects. The agent returns each object's attribute
  * data as hex in G.988 attribute order, so a field is a name, a byte offset,
- * a length and a format. Values read as text or decimal; object data that is
- * not text says so, and the raw bytes stay in item.data. Classes without a
- * table keep only those bytes.
+ * a length and a format. Text reads as ASCII and counts as decimal. Pointers,
+ * TPIDs and version codes stay in hex as G.988 writes them, each with a plain
+ * explanation in fields.notes. Object data that is not text says so, and the
+ * raw bytes stay in item.data. Classes without a table keep only those bytes.
  */
 
 const admin_state = [ 'unlocked', 'locked' ];
@@ -32,7 +33,7 @@ const interwork_options = {
 
 const directions = { '1': 'UNI to ANI', '2': 'ANI to UNI', '3': 'bidirectional' };
 const policies = { '0': 'null', '1': 'strict priority', '2': 'WRR' };
-const tpids = { '33024': '802.1Q (TPID 0x8100)', '34984': '802.1ad (TPID 0x88a8)' };
+const tpids = { '33024': '802.1Q', '34984': '802.1ad' };
 const omcc_versions = {
 	'128': 'G.984.4 (06/04)', '129': 'G.984.4 Amd.1 (06/05)', '130': 'G.984.4 Amd.2 (03/06)',
 	'131': 'G.984.4 Amd.3 (12/06)', '132': 'G.984.4 (02/08)', '133': 'G.984.4 Amd.1 (06/09)',
@@ -45,7 +46,7 @@ const omcc_versions = {
 	'179': 'G.988 (2012), baseline and extended',
 	'180': 'G.988 Amd.1 (2014), baseline and extended'
 };
-const forward_operations = { '16': 'forward by VLAN list (0x10)' };
+const forward_operations = { '16': 'forward by VLAN list' };
 const port_types = { '47': '10/100/1000BASE-T' };
 const igmp_versions = { '1': 'IGMPv1', '2': 'IGMPv2', '3': 'IGMPv3', '16': 'MLDv1', '17': 'MLDv2' };
 
@@ -124,7 +125,7 @@ const layouts = {
 		[ 'mac_learning_depth', 23, 1 ]
 	],
 	'84': [
-		[ 'forward_operation', 24, 1, 'enum', forward_operations ],
+		[ 'forward_operation', 24, 1, 'code', forward_operations ],
 		[ 'entries', 25, 1 ]
 	],
 	'130': [
@@ -142,8 +143,8 @@ const layouts = {
 	],
 	'171': [
 		[ 'association_type', 0, 1, 'enum', association_types ],
-		[ 'max_table_size', 1, 2 ], [ 'input_tpid', 3, 2, 'enum', tpids ],
-		[ 'output_tpid', 5, 2, 'enum', tpids ], [ 'downstream_mode', 7, 1 ],
+		[ 'max_table_size', 1, 2 ], [ 'input_tpid', 3, 2, 'code', tpids ],
+		[ 'output_tpid', 5, 2, 'code', tpids ], [ 'downstream_mode', 7, 1 ],
 		[ 'associated_me', 24, 2, 'ptr' ]
 	],
 	'256': [
@@ -154,13 +155,13 @@ const layouts = {
 		[ 'oper_state', 30, 1, 'enum', oper_state ]
 	],
 	'257': [
-		[ 'equipment_id', 0, 20, 'str' ], [ 'omcc_version', 20, 1, 'enum', omcc_versions ],
+		[ 'equipment_id', 0, 20, 'str' ], [ 'omcc_version', 20, 1, 'code', omcc_versions ],
 		[ 'vendor_product_code', 21, 2 ], [ 'security_capability', 23, 1 ],
 		[ 'security_mode', 24, 1 ], [ 'priority_queues', 25, 2 ],
 		[ 'traffic_schedulers', 27, 1 ], [ 'gem_ports', 29, 2 ]
 	],
 	'262': [
-		[ 'alloc_id', 0, 2, 'ptr' ],
+		[ 'alloc_id', 0, 2, 'alloc' ],
 		[ 'policy', 3, 1, 'enum', policies ]
 	],
 	'263': [
@@ -315,20 +316,17 @@ function field(data, spec) {
 	switch (format) {
 	case 'str':
 		return text(data, offset, len);
-	case 'ptr': {
+	case 'alloc': {
 		let n = number(data, offset, len);
 		return n == 0xffff ? 'none' : n;
 	}
 	case 'raw':
 		return text(data, offset, len);
+	case 'ptr':
+	case 'code':
 	case 'port':
-		return sprintf('port %d, priority %d', number(data, offset, 2), number(data, offset + 2, 2));
-	case 'tci': {
-		let tci = number(data, offset, len);
-		return sprintf('VLAN %d, priority %d', tci & 0xfff, tci >> 13);
-	}
-	case 'hex':
-		return sprintf('0x%02x', number(data, offset, len));
+	case 'tci':
+		return sprintf(`0x%0${len * 2}x`, number(data, offset, len));
 	case 'vendor_serial':
 		return text(data, offset, 4) + ' ' + text(data, offset + 4, 4) +
 			uc(substr(data, (offset + 8) * 2, 8));
@@ -343,13 +341,71 @@ function field(data, spec) {
 		return text(data, offset, 4) + uc(substr(data, (offset + 4) * 2, 8));
 	case 'enum': {
 		let n = number(data, offset, len);
-		if (names === tpids || names === omcc_versions || names === forward_operations)
-			return names[n] ?? sprintf('0x%x', n);
 		return names[n] != null ? `${n} (${names[n]})` : n;
 	}
 	default:
 		return number(data, offset, len);
 	}
+}
+
+const td = 'traffic descriptor';
+
+/* What each pointer names: [ object, whether zero means no object ]. */
+const pointers = {
+	'5': { protection_profile: [ 'protection profile', true ] },
+	'47': {
+		bridge: [ 'MAC bridge service profile' ],
+		tp: [ (data) => tp_types[byte(data, 3)] ],
+		outbound_td: [ td, true ], inbound_td: [ td, true ]
+	},
+	'130': { tp: [ 'termination point', true ] },
+	'171': { associated_me: [ (data) => association_types[byte(data, 0)] ] },
+	'264': { non_omci_management: [ 'management object', true ] },
+	'266': {
+		gem_port: [ 'GEM port network CTP' ],
+		service_profile: [ (data) => interwork_options[byte(data, 2)] ],
+		interworking_tp: [ 'interworking TP', true ],
+		gal_profile: [ 'GAL Ethernet profile' ]
+	},
+	'268': {
+		tcont: [ 'T-CONT' ], upstream_tm: [ 'priority queue', true ],
+		upstream_td: [ td, true ], downstream_queue: [ 'priority queue', true ],
+		downstream_td: [ td, true ]
+	},
+	'277': { scheduler: [ 'traffic scheduler', true ] },
+	'278': { tcont: [ 'T-CONT' ], parent: [ 'traffic scheduler', true ] },
+	'281': {
+		gem_port: [ 'GEM port network CTP' ],
+		service_profile: [ 'service profile' ], gal_profile: [ 'GAL Ethernet profile' ]
+	},
+	'310': { multicast_operations_profile: [ 'multicast operations profile' ] },
+	'329': { tcp_udp: [ 'TCP/UDP config', true ] }
+};
+
+for (let i = 0; i < 8; i++)
+	pointers['130'][`pbit${i}_iwtp`] = [ 'GEM interworking TP', true ];
+
+/* The plain explanation of a value kept in hex, or null. */
+function note(class_id, spec, data) {
+	let offset = spec[1], len = spec[2], format = spec[3], n = number(data, offset, len);
+
+	switch (format) {
+	case 'code':
+		return spec[4][n];
+	case 'port':
+		return sprintf('port %d, priority %d', number(data, offset, 2), number(data, offset + 2, 2));
+	case 'tci':
+		return sprintf('VLAN %d, priority %d', n & 0xfff, n >> 13);
+	case 'ptr': {
+		let target = pointers[class_id]?.[spec[0]];
+
+		if (n == 0xffff || (!n && target?.[1]))
+			return 'none';
+		let name = type(target?.[0]) == 'function' ? target[0](data) : target?.[0];
+		return name ? `${name} ${n}` : `${n}`;
+	}
+	}
+	return null;
 }
 
 /* Priority 8 in a filter is "don't care", 14 is "default rule", 15 "no tag". */
@@ -414,12 +470,19 @@ function dscp_text(map) {
 export function decode(item) {
 	let layout = layouts[item.class_id];
 	let data = item.data;
-	let fields = {};
+	let fields = {}, notes = {};
 
 	if (!layout || type(data) != 'string')
 		return null;
-	for (let spec in layout)
+	for (let spec in layout) {
+		let explained = note(item.class_id, spec, data);
+
 		fields[spec[0]] = field(data, spec);
+		if (explained)
+			notes[spec[0]] = explained;
+	}
+	if (length(notes))
+		fields.notes = notes;
 
 	if (item.class_id == 84) {
 		fields.filters = [];

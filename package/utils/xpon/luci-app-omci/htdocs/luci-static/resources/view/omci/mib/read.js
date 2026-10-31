@@ -7,7 +7,7 @@
 'require xpon.widgets as widgets';
 
 function searchText(o) {
-	return [ o.name, o.class_id, o.entity_id, '0x%04x'.format(o.entity_id), JSON.stringify(o.fields || {}) ]
+	return [ o.name, o.class_id, mibView.entityText(o.entity_id), JSON.stringify(o.fields || {}) ]
 		.join(' ').toLowerCase();
 }
 
