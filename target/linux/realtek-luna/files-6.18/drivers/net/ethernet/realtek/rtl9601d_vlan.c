@@ -145,13 +145,17 @@ static int v2802_l2_vlan_fallback(struct rtl9602c_eth *ep)
 	if (!filtering && bitmap_empty(v2802_l2.bridge_vids, VLAN_N_VID))
 		return 0;
 	for (vid = 1; vid < VLAN_VID_MASK; vid++) {
-		u32 members = 0;
+		u32 members = 0, untag = 0;
 		bool self = filtering && v2802_l2_vlan_info(br, vid, &info);
 
 		if (filtering) {
 			for (p = 0; p < LAN_PORTS; p++)
-				if (v2802_l2_vlan_info(ep->lan_ndev[p], vid, &info))
+				if (v2802_l2_vlan_info(ep->lan_ndev[p], vid, &info)) {
 					members |= BIT(p);
+					/* The switch tags a frame the bridge sent plain otherwise. */
+					if (info.flags & BRIDGE_VLAN_INFO_UNTAGGED)
+						untag |= BIT(p);
+				}
 			if (v2802_l2_vlan_info(ep->wan_ndev, vid, &info))
 				members |= BIT(2);
 		}
@@ -162,7 +166,7 @@ static int v2802_l2_vlan_fallback(struct rtl9602c_eth *ep)
 		}
 		if (!members && !self && !test_bit(vid, v2802_l2.bridge_vids))
 			continue;
-		vlan = members || self ? BIT(11) | SW_VLAN_IVL | members | BIT(3) :
+		vlan = members || self ? BIT(11) | SW_VLAN_IVL | (untag << 4) | members | BIT(3) :
 			v2802_l2_cpu_vlan(test_bit(vid, v2802_l2.want_vids));
 		if (!filtering && vid == SW_DEFAULT_VID)
 			vlan = BIT(11) | 0xff;
