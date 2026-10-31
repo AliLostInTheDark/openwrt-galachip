@@ -101,10 +101,11 @@ offload is on by default.
 
 dmesg now separates `luna-gpon: OLT: ...` (PLOAM received, FEC seen in the
 OLT's frames) from `luna-gpon: ONU: ...` (state changes, keys sent, T-CONT and
-GEM binds, watchdogs). The console is synchronous, so these are queued and
-printed only outside O2-O4 and 15 s after O5; each line carries its event's own
-time. The full protocol log stays in `/proc/gpon_log`.
+GEM binds, watchdogs). Protocol events run in the FSM timer, so these are queued
+and printed only outside O2-O4 and 15 s after O5; each line carries its event's
+own time. The full protocol log stays in `/proc/gpon_log`.
 
-To check the FEC timing, read `dmesg | grep FEC`. It gives seconds after O5, so
-boots with different O5 times separate an OLT decision from anything tied to
-the 300 s jiffies wrap. Not yet run on the board.
+FEC showed off for five minutes after boot, whatever the O5 time (first seen on
+at 300.1 s with O5 at 41 s, 300.0 s with O5 at 27 s). The driver's once-a-second
+PM tick compared jiffies with a zero start value, so it did not run until jiffies
+wrapped at 300 s. FEC status and codeword counts now start at O5.

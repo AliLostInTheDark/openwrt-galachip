@@ -5881,9 +5881,9 @@ static void luna_op_omci_report_oper_up(void *sh)
 
 /*
  * What the OLT sent and what the ONU did about it, as "OLT:" and "ONU:" lines
- * in dmesg. The console is synchronous (see the log ring above), so events are
- * queued and printed in small batches, never in O2-O4 and not until O5 has
- * settled past OMCI provisioning. The time in each line is the event's own.
+ * in dmesg. Protocol events run in the FSM timer (see the log ring above), so
+ * they are queued and printed in small batches, never in O2-O4 and not until
+ * O5 has settled past OMCI provisioning. The time in each line is the event's.
  */
 #define LUNA_DIAG_EVENTS	64	/* a power of two: the indices wrap */
 #define LUNA_DIAG_BATCH		4
@@ -7006,7 +7006,8 @@ static int luna_health_show(struct seq_file *s, void *v)
 
 static void gpon_optical_work_fn(struct work_struct *w)
 {
-	static unsigned long optical_next, pm_next;
+	/* Jiffies start 300 s before their wrap: a zero here would hold both off. */
+	static unsigned long optical_next = INITIAL_JIFFIES, pm_next = INITIAL_JIFFIES;
 
 	if (luna_driver_ready && !luna_stopping &&
 	    time_after_eq(jiffies, pm_next)) {
