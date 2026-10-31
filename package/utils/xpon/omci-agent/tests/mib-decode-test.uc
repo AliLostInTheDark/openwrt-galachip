@@ -67,11 +67,11 @@ check('256 version', f.version, 'V1.0');
 check('256 serial', f.serial, 'ZYOT12345678');
 
 f = decode({ class_id: 65305, data: '01aabbccddeeff' });
-check('vendor ME', f.attr_2, 'not text (6 bytes)');
+check('vendor ME', f.attr_2, '0xaabbccddeeff (170.187.204.221.238.255)');
 
 f = decode({ class_id: 131, data: data([ '414c434c', '060204000002' ]) });
 check('131 vendor', f.vendor_id, 'ALCL');
-check('131 binary string', f.equipment_id, 'not text (6 bytes)');
+check('131 binary string', f.equipment_id, '0x060204000002 (6.2.4.0.0.2)');
 check('131 empty', f.version, '');
 check('131 zero raw', f.time_of_day, '');
 

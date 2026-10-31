@@ -3,10 +3,10 @@
 /*
  * Readable fields for MIB objects. The agent returns each object's attribute
  * data as hex in G.988 attribute order, so a field is a name, a byte offset,
- * a length and a format. Text reads as ASCII and counts as decimal. Pointers,
- * TPIDs and version codes stay in hex as G.988 writes them, each with a plain
- * explanation in fields.notes. Object data that is not text says so, and the
- * raw bytes stay in item.data. Classes without a table keep only those bytes.
+ * a length and a format. Counts read as decimal and text as ASCII; a string that
+ * is not text shows its hex with each byte's number in brackets. Pointers, TPIDs
+ * and version codes stay in hex as G.988 writes them, each with a plain
+ * explanation in fields.notes. Classes without a table keep only their bytes.
  */
 
 const admin_state = [ 'unlocked', 'locked' ];
@@ -294,20 +294,21 @@ function number(data, offset, len) {
 	return n;
 }
 
-/* ASCII up to the NUL padding. Bytes that are not text stay in item.data. */
+/* ASCII up to the NUL padding, or the hex and each byte's number if not text. */
 function text(data, offset, len) {
-	let out = '', end = len;
+	let out = '', numbers = [], printable = true, end = len;
 
 	while (end > 0 && !byte(data, offset + end - 1))
 		end--;
 	for (let i = 0; i < end; i++) {
 		let c = byte(data, offset + i);
 
-		if (c < 0x20 || c >= 0x7f)
-			return `not text (${end} byte${end == 1 ? '' : 's'})`;
+		printable = printable && c >= 0x20 && c < 0x7f;
 		out += chr(c);
+		push(numbers, c);
 	}
-	return trim(out);
+	return printable ? trim(out) :
+		`0x${substr(data, offset * 2, end * 2)} (${join('.', numbers)})`;
 }
 
 function field(data, spec) {
