@@ -357,8 +357,8 @@ static int luna_xpon_get_ani_topology(struct omci_device *odev,
 		.allocated_queue_size = 3276,
 		.tcont_count = LUNA_XPON_TCONTS,
 		/* Stock's eight queues per T-CONT, WRR: Nokia provisions the
-		 * internet GEM on queue 7 and resets an ONU that lacks it. They
-		 * all drain through the T-CONT's one hardware queue. */
+		 * internet GEM on queue 7 and resets an ONU that lacks it.
+		 * luna_xpon_qos_tcont() gives each priority in use its own queue. */
 		.queues_per_tcont = 8,
 		.queue_config_option = 1,
 		.scheduler_policy = 2,

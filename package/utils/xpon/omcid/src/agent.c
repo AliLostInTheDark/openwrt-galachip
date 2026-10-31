@@ -2840,6 +2840,19 @@ static int omci_agent_mib_reset_locked(struct omci_device *odev, bool all,
 	return ret ?: reset_ret;
 }
 
+/*
+ * QoS the hardware cannot do must not fail the OLT's write: that would cost
+ * the service to lose only the shaping. Say so once, in the daemon's log.
+ */
+#define OMCI_QOS_NOTE_ONCE(fmt, ...) do {				\
+	static bool said;						\
+									\
+	if (!said) {							\
+		said = true;						\
+		fprintf(stderr, "omcid: " fmt "\n", ##__VA_ARGS__);	\
+	}								\
+} while (0)
+
 static int omci_agent_gem_rate_locked(struct omci_device *odev,
 				      const struct omci_mib_object *gem, bool remove)
 {
@@ -2857,12 +2870,13 @@ static int omci_agent_gem_rate_locked(struct omci_device *odev,
 		if (!ptr)
 			continue;
 		td = omci_mib_lookup(agent, OMCI_CLASS_TRAFFIC_DESCRIPTOR, ptr);
+		/* Creating it later reconciles this GEM again. */
 		if (!td || !omci_mib_object_active(agent, td))
-			return -ENOENT;
+			continue;
 		/* The decoded vendor path is a peak limiter, not a colour meter. */
 		if (get_unaligned_be32(td->data) || get_unaligned_be32(td->data + 8) ||
 		    td->data[16] || td->data[17] || td->data[18] || td->data[19])
-			return -EOPNOTSUPP;
+			OMCI_QOS_NOTE_ONCE("traffic descriptor %#x: only its peak rate is applied", ptr);
 		rate[i] = get_unaligned_be32(td->data + 4);
 		burst[i] = get_unaligned_be32(td->data + 12);
 	}
@@ -3798,30 +3812,37 @@ static int omci_agent_tcont_qos_locked(struct omci_device *odev,
 		seen |= BIT(priority);
 		ptr = get_unaligned_be16(pq->data + 13);
 		if (root_set && root != ptr)
-			return -EOPNOTSUPP;
+			goto unsupported;
 		root = ptr;
 		root_set = true;
 		ts = ptr ? omci_mib_lookup(agent, OMCI_CLASS_TRAFFIC_SCHEDULER, ptr) : NULL;
+		/* Creating it later reconciles this T-CONT again. */
 		if (ptr && (!ts || !omci_mib_object_active(agent, ts)))
-			return -ENOENT;
+			goto unsupported;
 		/* The hardware has one scheduling stage per Alloc-ID. */
 		if (ts && (get_unaligned_be16(ts->data) != tcont->entity_id ||
 			   get_unaligned_be16(ts->data + 2)))
-			return -EOPNOTSUPP;
+			goto unsupported;
 		policy = ts ? ts->data[4] : tcont->data[3];
 		if (policy != 1 && policy != 2)
-			return -EOPNOTSUPP;
+			goto unsupported;
 		if (!qos.policy)
 			qos.policy = policy;
 		if (qos.policy != policy)
-			return -EOPNOTSUPP;
+			goto unsupported;
 		qos.weight[priority] = pq->data[15];
 		weight |= pq->data[15];
 	}
 	if (!seen || (qos.policy != 1 && qos.policy != 2))
-		return -EOPNOTSUPP;
+		goto unsupported;
 	if (qos.policy == 2 && !weight)
 		return -EINVAL;
+	goto apply;
+
+unsupported:
+	OMCI_QOS_NOTE_ONCE("T-CONT %#x: this scheduler layout is not supported, using one queue",
+			   tcont->entity_id);
+	memset(&qos, 0, sizeof(qos));
 apply:
 	if (tcont->pending_delete)
 		qos.enabled = false;
