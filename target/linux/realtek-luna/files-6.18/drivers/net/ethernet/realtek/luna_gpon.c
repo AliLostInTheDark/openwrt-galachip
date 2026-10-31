@@ -58,7 +58,8 @@
 /* The GPON/protocol log: a ring read at /proc/gpon_log, never printk (operator,
  * 2026-10-07: dmesg is for the device itself). Protocol events run in the FSM
  * timer, where a console line cost the production OLT's Password deadline.
- * Lines keep the dmesg spelling, so a reader only changes its source. */
+ * Lines keep the dmesg spelling, so a reader only changes its source.
+ * luna_diag() below is the exception: its dmesg lines wait for a quiet line. */
 #define LUNA_LOG_BYTES	(32 * 1024)
 static char luna_log_buf[LUNA_LOG_BYTES];
 static unsigned int luna_log_head;
@@ -5879,6 +5880,88 @@ static void luna_op_omci_report_oper_up(void *sh)
 }
 
 /*
+ * What the OLT sent and what the ONU did about it, as "OLT:" and "ONU:" lines
+ * in dmesg. The console is synchronous (see the log ring above), so events are
+ * queued and printed in small batches, never in O2-O4 and not until O5 has
+ * settled past OMCI provisioning. The time in each line is the event's own.
+ */
+#define LUNA_DIAG_EVENTS	64	/* a power of two: the indices wrap */
+#define LUNA_DIAG_BATCH		4
+#define LUNA_DIAG_O5_SETTLE	(15 * HZ)
+
+struct luna_diag_event {
+	u64 ns;
+	const char *fmt;
+	u32 a, b;
+};
+
+static struct luna_diag_event luna_diag_events[LUNA_DIAG_EVENTS];
+static unsigned int luna_diag_head, luna_diag_tail, luna_diag_lost;
+static unsigned long luna_diag_o5_at;
+static DEFINE_SPINLOCK(luna_diag_lock);
+
+static void luna_diag_work_fn(struct work_struct *work);
+static DECLARE_DELAYED_WORK(luna_diag_work, luna_diag_work_fn);
+
+static void luna_diag_print(const struct luna_diag_event *e)
+{
+	u64 s = e->ns;
+	u32 ms = do_div(s, NSEC_PER_SEC) / NSEC_PER_MSEC;
+	char line[96];
+
+	scnprintf(line, sizeof(line), e->fmt, e->a, e->b);
+	pr_info("luna-gpon: %s (at %llu.%03u s)\n", line, s, ms);
+}
+
+static void luna_diag_work_fn(struct work_struct *work)
+{
+	struct luna_diag_event e;
+	unsigned int n, lost = 0;
+	unsigned long flags;
+	u8 st = READ_ONCE(gpon_fsm_state);
+	bool more = false;
+
+	if ((st >= 2 && st <= 4) ||
+	    (st == 5 && time_before(jiffies, READ_ONCE(luna_diag_o5_at) +
+					     LUNA_DIAG_O5_SETTLE))) {
+		schedule_delayed_work(&luna_diag_work, HZ);
+		return;
+	}
+	for (n = 0; n < LUNA_DIAG_BATCH; n++) {
+		spin_lock_irqsave(&luna_diag_lock, flags);
+		more = luna_diag_head != luna_diag_tail;
+		if (more)
+			e = luna_diag_events[luna_diag_tail++ % LUNA_DIAG_EVENTS];
+		else
+			swap(lost, luna_diag_lost);
+		spin_unlock_irqrestore(&luna_diag_lock, flags);
+		if (!more)
+			break;
+		luna_diag_print(&e);
+	}
+	if (lost)
+		pr_info("luna-gpon: %u later PON events not logged, queue full\n", lost);
+	if (more)
+		schedule_delayed_work(&luna_diag_work, HZ / 2);
+}
+
+/* @fmt takes two u32s and must be a string literal: it is printed later. */
+static void luna_diag(const char *fmt, u32 a, u32 b)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&luna_diag_lock, flags);
+	if (luna_diag_head - luna_diag_tail == LUNA_DIAG_EVENTS)
+		luna_diag_lost++;
+	else
+		luna_diag_events[luna_diag_head++ % LUNA_DIAG_EVENTS] = (struct luna_diag_event) {
+			.ns = local_clock(), .fmt = fmt, .a = a, .b = b,
+		};
+	spin_unlock_irqrestore(&luna_diag_lock, flags);
+	schedule_delayed_work(&luna_diag_work, 5 * HZ);
+}
+
+/*
  * The downstream BIP and FEC counters clear on read. REI and the OMCI
  * telemetry both want them, so every read is folded into totals since boot
  * and each consumer takes what it needs from those.
@@ -5903,10 +5986,13 @@ static void luna_pm_fold_locked(void)
 static void luna_pm_tick(void)
 {
 	unsigned long flags;
-	u32 sf;
+	u32 sf, o5_s;
 	bool o5 = READ_ONCE(gpon_fsm_state) == 5;
+	bool ds_was, us_was;
 
 	spin_lock_irqsave(&luna_pm_lock, flags);
+	ds_was = luna_pm.ds_fec;
+	us_was = luna_pm.us_fec;
 	luna_pm.ds_fec = o5 && (gpon_rd(GPON_GTC_DS_INTR_STS) & GPON_DS_INTR_STS_FEC);
 	luna_pm.us_fec = o5 && (gpon_rd(GPON_GTC_US_INTR_STS) & GPON_US_INTR_STS_FEC);
 	if (!o5) {
@@ -5927,6 +6013,16 @@ static void luna_pm_tick(void)
 	}
 out:
 	spin_unlock_irqrestore(&luna_pm_lock, flags);
+	/* Both bits come from the OLT's frames; nothing here writes FEC on. */
+	if (!o5)
+		return;
+	o5_s = (jiffies - READ_ONCE(luna_diag_o5_at)) / HZ;
+	if (luna_pm.ds_fec != ds_was)
+		luna_diag(luna_pm.ds_fec ? "OLT: downstream FEC on, %u s after O5" :
+			  "OLT: downstream FEC off, %u s after O5", o5_s, 0);
+	if (luna_pm.us_fec != us_was)
+		luna_diag(luna_pm.us_fec ? "OLT: upstream FEC on, %u s after O5" :
+			  "OLT: upstream FEC off, %u s after O5", o5_s, 0);
 }
 
 void luna_xpon_hw_pm(struct luna_xpon_pm *pm)
@@ -5992,6 +6088,8 @@ static void luna_op_port_encrypt(void *sh, u16 port, bool encrypted)
 	}
 	luna_log("GEM %u: AES %s (%u flow%s)\n", port, encrypted ? "on" : "off",
 		 n, n == 1 ? "" : "s");
+	luna_diag(encrypted ? "OLT: Encrypted_Port-ID GEM %u on" :
+		  "OLT: Encrypted_Port-ID GEM %u off", port, 0);
 }
 
 static int luna_op_install_omcc(void *sh, u16 gem)
@@ -6271,12 +6369,84 @@ static void luna_ploam_diag(enum gpon_ploam_diag_point p)
 	luna_bwcap_raw_n = 0;
 }
 
+static void luna_diag_ploam(enum gpon_ploam_ev ev, u32 a, u32 b)
+{
+	switch (ev) {
+	case GPON_PLOAM_EV_ONU_ID:
+		luna_diag("OLT: Assign_ONU-ID %u", a, 0);
+		break;
+	case GPON_PLOAM_EV_RANGING_TIME:
+		luna_diag("OLT: Ranging_Time EqD %u", a, 0);
+		break;
+	case GPON_PLOAM_EV_DEACT:
+		luna_diag("OLT: Deactivate_ONU-ID, was ONU %u", a, 0);
+		break;
+	case GPON_PLOAM_EV_DISABLE_SN:
+		luna_diag(b ? "OLT: Disable_Serial_Number enable, code %#x" :
+			  "OLT: Disable_Serial_Number disable, code %#x", a, 0);
+		break;
+	case GPON_PLOAM_EV_SN_REPROVISIONED:
+		luna_diag("OLT: serial number given a new ONU-ID, restarting at O1", 0, 0);
+		break;
+	case GPON_PLOAM_EV_ASSIGN_ALLOC:
+		luna_diag("OLT: Assign_Alloc-ID %u, type %u", a, b);
+		break;
+	case GPON_PLOAM_EV_REQ_PW:
+		luna_diag("OLT: Request_Password", 0, 0);
+		break;
+	case GPON_PLOAM_EV_REQ_KEY:
+		luna_diag("OLT: Request_Key", 0, 0);
+		break;
+	case GPON_PLOAM_EV_KEY_SWITCH_ARM:
+		luna_diag("OLT: Key_Switching_Time, superframe %u", a, 0);
+		break;
+	case GPON_PLOAM_EV_UNHANDLED:
+		luna_diag("OLT: unhandled PLOAM type %#x for ONU %u", a, b);
+		break;
+	case GPON_PLOAM_EV_STATE:
+		if (b == 5)
+			WRITE_ONCE(luna_diag_o5_at, jiffies);
+		luna_diag("ONU: state O%u -> O%u", a, b);
+		break;
+	case GPON_PLOAM_EV_KEY_SENT:
+		luna_diag("ONU: sent encryption key, index %u", a, 0);
+		break;
+	case GPON_PLOAM_EV_DEACT_KEEP_LOCK:
+		luna_diag("ONU: kept downstream lock through deactivation, %u ticks at O5", a, 0);
+		break;
+	case GPON_PLOAM_EV_KEEP_LOCK_GIVEUP:
+		luna_diag("ONU: stopped keeping lock after %u ticks, state %u", a, b);
+		break;
+	case GPON_PLOAM_EV_RERANGE_DONE:
+		luna_diag("ONU: re-range %u done, outage %u ms", a, b);
+		break;
+	case GPON_PLOAM_EV_LOS_RERANGE:
+		luna_diag("ONU: re-ranging after %u LOS ticks", a, 0);
+		break;
+	case GPON_PLOAM_EV_O3_UNHEARD:
+		luna_diag("ONU: no OLT answer in O3, %u ticks, %u serial number offers", a, b);
+		break;
+	case GPON_PLOAM_EV_O4_TIMEOUT:
+		luna_diag("ONU: no Ranging_Time after %u ticks in O4", a, 0);
+		break;
+	case GPON_PLOAM_EV_O5_WATCHDOG:
+		luna_diag("ONU: O5 watchdog, %u ticks with no WAN RX", a, 0);
+		break;
+	case GPON_PLOAM_EV_O5_UNGRANTED:
+		luna_diag("ONU: no upstream grant at O5, %u ticks, streak %u", a, b);
+		break;
+	default:
+		break;
+	}
+}
+
 static void luna_op_trace(void *sh, enum gpon_ploam_ev ev, u32 a, u32 b)
 {
 	const char *nm = NULL;
 	enum gpon_ploam_diag_point p = gpon_ploam_diag_point_of(ev);
 
 	(void)sh;
+	luna_diag_ploam(ev, a, b);
 	if (p != GPON_PDIAG_NONE)	/* the core FSM path: the WHEN is the core's event */
 		luna_ploam_diag(p);
 	if (!core_trace)
@@ -7080,6 +7250,7 @@ int luna_xpon_hw_tcont_install(unsigned int slot, u16 alloc)
 	if (rc < 0)
 		return rc;
 	luna_log("xpon: T-CONT %u <- Alloc-ID %u, queue %u\n", tcont, alloc, qid);
+	luna_diag("ONU: T-CONT %u bound to Alloc-ID %u", tcont, alloc);
 	return 0;
 }
 
@@ -7168,6 +7339,7 @@ out:
 		return rc;
 	}
 	luna_log("xpon: GEM %u on flow %u, queue %d\n", gem, flow, qid);
+	luna_diag("ONU: GEM %u bound to flow %u", gem, flow);
 	return 0;
 }
 
@@ -7834,6 +8006,7 @@ static void __exit rtl9602c_gpon_exit(void)
 	/* OUTSIDE bosa_lock, and after the producers: the worker holds that
 	 * mutex for its whole apply, so cancelling under it would deadlock. */
 	cancel_delayed_work_sync(&luna_uni_apply_work);
+	cancel_delayed_work_sync(&luna_diag_work);
 	proc_remove(luna_health_proc);
 	luna_health_proc = NULL;
 	remove_proc_entry("gpon", NULL);
