@@ -81,7 +81,7 @@ static int l34_prog_wr(void *ctx, u8 tbl, u16 idx, const u32 *w, unsigned int n)
 	memcpy(buf, w, n * sizeof(*w));
 	ret = l34_tbl_write(l, (enum l34_tbl)tbl, idx, buf, n);
 	if (ret)
-		pr_err("rtl9602c-l34: table %u entry %u write failed (%d)\n",
+		pr_err("[NAT-005] rtl9602c-l34: table %u entry %u write failed (%d)\n",
 		       tbl, idx, ret);
 	return ret;
 }
@@ -487,7 +487,7 @@ static int l34_neigh_clear(struct rtl9602c_l34 *l, unsigned int slot)
 			if (ret < 0)
 				return ret;
 		} else {
-			pr_warn_ratelimited("rtl9602c-l34: neighbour L2 slot %u changed before unpin\n",
+			pr_warn_ratelimited("[NAT-006] rtl9602c-l34: neighbour L2 slot %u changed before unpin\n",
 					    n->l2idx);
 		}
 	}
@@ -683,7 +683,7 @@ int rtl9602c_l34_wan_setup(struct rtl9602c_l34 *l, u8 idx, u32 wan_ip,
 	if (wan_port == GMAC_PON_PORT) {
 		ret = l34_cf_wan_setup(l, idx);
 		if (ret) {
-			pr_err("rtl9602c-l34: WAN classifier setup failed (%d)\n", ret);
+			pr_err("[NAT-007] rtl9602c-l34: WAN classifier setup failed (%d)\n", ret);
 			goto out;
 		}
 	}
@@ -893,7 +893,7 @@ int rtl9602c_l34_wan_release(struct rtl9602c_l34 *l, bool core_empty)
 		unsigned int nu, no, ni;
 
 		l34_owner_counts(l, &nu, &no, &ni);
-		pr_warn("rtl9602c-l34: WAN rows kept: owners neigh=%u out_reserved=%u in_reserved=%u\n",
+		pr_warn("[NAT-008] rtl9602c-l34: WAN rows kept: owners neigh=%u out_reserved=%u in_reserved=%u\n",
 			nu, no, ni);
 		ret = -EBUSY;
 		goto out;

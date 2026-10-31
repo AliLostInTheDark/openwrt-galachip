@@ -83,6 +83,7 @@
 #define SW_INTR_IMR		0x1d00c	/* SWCORE: switch interrupt enable, every Luna die */
 #define SW_INTR_IMS		0x1d010	/* SWCORE: its latched status, write 1 to clear */
 #define   SW_INTR_GPON		BIT(10)
+#define   SW_INTR_DYING_GASP	BIT(13)	/* stock's dying_gasp_isr, interrupt type 13 */
 #define   GPON_INTR_GTC_DS	BIT(1)		/* GPON_INTR_MASK: GTC downstream events */
 #define GPON_GTC_DS_INTR_DLT	0x1000
 #define GPON_GTC_DS_INTR_MASK	0x1004

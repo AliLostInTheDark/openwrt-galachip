@@ -41,6 +41,8 @@ static struct {
 	DECLARE_BITMAP(dirty_vids, VLAN_N_VID);
 	DECLARE_BITMAP(want_vids, VLAN_N_VID);
 	DECLARE_BITMAP(wan_vids, VLAN_N_VID);
+	char changed_by[32];	/* the caller behind the latest rebuild */
+	struct luna_l2_service plan[V2802_L2_VLANS];	/* under RTNL */
 } v2802_l2;
 
 /* CPU-forwarded upstream frames have the LAN VID, but the OLT's MAC was
@@ -88,7 +90,7 @@ static int v2802_l2_table(u8 type, u16 addr, u32 *words, unsigned int n,
 {
 	struct rtl9602c_eth *ep = v2802_l2.ep;
 	unsigned long flags;
-	u32 check[3];
+	u32 check[5];
 	int rc;
 
 	spin_lock_irqsave(&ep->sw_table_lock, flags);
@@ -416,7 +418,7 @@ static int v2802_l2_clear(void)
 	return rc;
 }
 
-void rtl9601d_l2_changed(void)
+void __rtl9601d_l2_changed(const char *why)
 {
 	unsigned long flags;
 	int rc = 0;
@@ -424,6 +426,7 @@ void rtl9601d_l2_changed(void)
 	spin_lock_irqsave(&v2802_l2_lock, flags);
 	if (v2802_l2.ep && !v2802_l2.stopping) {
 		v2802_l2.generation++;
+		strscpy(v2802_l2.changed_by, why);
 		if (v2802_l2.saved || (v2802_l2.ep->hw_up &&
 		    (luna_xpon_lan_tagged() || v2802_l2_vlan_filtering(v2802_l2.ep))))
 			rc = v2802_l2_gate_locked();
@@ -433,7 +436,7 @@ void rtl9601d_l2_changed(void)
 	}
 	spin_unlock_irqrestore(&v2802_l2_lock, flags);
 }
-EXPORT_SYMBOL(rtl9601d_l2_changed);
+EXPORT_SYMBOL(__rtl9601d_l2_changed);
 
 /* Pattern 0 TCAM stores positive and negative care bits separately.
  * Rule bit 48 is validity; direction 31, C-tag 3, VID 11..22, UNI 0..2.
@@ -528,7 +531,7 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 		if (v2802_l2_steer_vid(service[i].vid)) {
 			if (!READ_ONCE(ep->lan_steer_blocked))
 				netdev_warn(ep->ndev,
-					    "service VLAN %u is a jack's steering VLAN: lanN frames go plain while it is provisioned\n",
+					    "[L2-008] service VLAN %u is a jack's steering VLAN: lanN frames go plain while it is provisioned\n",
 					    service[i].vid);
 			WRITE_ONCE(ep->lan_steer_blocked, true);
 		}
@@ -626,7 +629,7 @@ static int v2802_l2_install(const struct luna_l2_service *service, int count,
 	goto out;
 rollback:
 	if (!READ_ONCE(ep->in_recovery) && v2802_l2_clear())
-		netdev_err(ep->ndev, "L2 offload rollback incomplete\n");
+		netdev_err(ep->ndev, "[L2-009] L2 offload rollback incomplete\n");
 out:
 	return rc;
 }
@@ -785,6 +788,8 @@ static int v2802_l2_netdev_vid(struct rtl9602c_eth *ep, u16 vid, bool add)
 	return rc;
 }
 
+static void v2802_ds_replay(void);
+
 static void v2802_l2_work(struct work_struct *work)
 {
 	struct luna_l2_service services[V2802_L2_VLANS];
@@ -836,17 +841,18 @@ static void v2802_l2_work(struct work_struct *work)
 	if (!rc) {
 		for (i = 0; i < count; i++)
 			cpu_only += services[i].cpu_only;
-		netdev_info(ep->ndev, "V2802RH L2 offload: %d VLAN bindings (%u CPU-only)\n",
-			    count, cpu_only);
+		netdev_info(ep->ndev, "V2802RH L2 offload: %d VLAN bindings (%u CPU-only), after %s\n",
+			    count, cpu_only, v2802_l2.changed_by);
 	}
 out:
 	storm_rc = v2802_l2_storm(ep, v2802_l2.active && !cpu_only);
 	if (storm_rc) {
-		dev_err_ratelimited(ep->dev, "L2 fallback storm control readback failed: %d\n", storm_rc);
+		dev_err_ratelimited(ep->dev, "[L2-010] L2 fallback storm control readback failed: %d\n", storm_rc);
 		rc = storm_rc;
 		retry = true;
 	}
 	WRITE_ONCE(v2802_l2.error, rc);
+	v2802_ds_replay();
 	spin_lock_irqsave(&v2802_l2_lock, flags);
 	if (rc && (v2802_l2.saved || retry) && !v2802_l2.stopping) {
 		v2802_l2.retries++;
@@ -885,11 +891,374 @@ static int v2802_l2_netdev_event(struct notifier_block *nb, unsigned long event,
 	return NOTIFY_DONE;
 }
 
+/* Whether the running offload is already what a rebuild would install. */
+static bool v2802_l2_plan_unchanged(struct rtl9602c_eth *ep)
+{
+	int count, i;
+
+	ASSERT_RTNL();
+	if (!READ_ONCE(v2802_l2.active) || !READ_ONCE(v2802_l2.requested) ||
+	    !v2802_l2_bridge_ready(ep))
+		return false;
+	count = luna_xpon_l2_services(v2802_l2.plan, v2802_l2_vlan_filtering(ep));
+	if (count >= 0)
+		count = v2802_l2_vlan_plan(ep, v2802_l2.plan, count);
+	if (count <= 0 || count != v2802_l2.count)
+		return false;
+	for (i = 0; i < count; i++) {
+		const struct luna_l2_service *a = &v2802_l2.plan[i], *b = &v2802_l2.service[i];
+
+		if (a->vid != b->vid || a->flow != b->flow || a->lan_vid != b->lan_vid ||
+		    a->lan_mask != b->lan_mask || a->untag_mask != b->untag_mask ||
+		    a->pvid_mask != b->pvid_mask || a->local != b->local ||
+		    a->untagged != b->untagged || a->cpu_only != b->cpu_only)
+			return false;
+	}
+	return true;
+}
+
+#define V2802_ACL_EN		0x15040
+#define V2802_ACL_PERMIT	0x15044	/* unmatched frames pass, per port */
+#define V2802_ACL_TEMPLATE	0x15008
+#define V2802_ACL_ACT_CTRL	0x15048	/* per rule */
+#define   V2802_ACL_ACT_LOG	BIT(3)
+#define V2802_ACL_MATCH_TYPE	2	/* masks from 0, rules from V2802_ACL_RULE_BASE */
+#define V2802_ACL_ACTION_TYPE	3
+#define V2802_ACL_RULE_BASE	128
+#define V2802_METER		0x25004
+#define V2802_METER_RATE_MASK	0x7ffff	/* [50:32], 8 kbit/s */
+#define V2802_METER_LAST	7	/* stock's storm controls hold 8-15 */
+#define V2802_METER_BUCKET	0x3fff	/* [16:1], stock's: at 0xffff the meter never limits */
+#define V2802_METER_EXCEED	0x25084
+#define V2802_ACL_HIT		0x15000	/* last rule hit by each port */
+
+static DEFINE_MUTEX(v2802_ds_lock);
+static struct luna_ds_rate v2802_ds[LUNA_DS_RATES];
+static unsigned int v2802_ds_count, v2802_ds_programmed;
+/* What a rule matches: template, its field, the bits of the VID compared, and the
+ * log action, and the ports it applies to (0 for PON). Settable through
+ * l2_ds_rate_debug, as no OLT or fixture sets a rate. */
+static struct {
+	u32 tmpl, field, care, log, ports;
+} v2802_ds_rule = { 0, 6, VLAN_VID_MASK, 0, 0 };
+
+/* Which word of the 64-bit register holds the rate: it has one writable bit more.
+ * Probed once, on the meter written first, before anything depends on it. */
+static bool v2802_meter_rate_first(struct rtl9602c_eth *ep)
+{
+	void __iomem *m = ep->sw + V2802_METER + 8 * V2802_METER_LAST;
+	static int rate_first = -1;
+
+	if (rate_first < 0) {
+		iowrite32(~0u, m);
+		rate_first = ioread32(m) == V2802_METER_RATE_MASK;
+	}
+	return rate_first;
+}
+
+static void v2802_meter_write(struct rtl9602c_eth *ep, unsigned int idx, u32 bytes_per_s)
+{
+	void __iomem *m = ep->sw + V2802_METER + 8 * idx;
+	bool rate_first = v2802_meter_rate_first(ep);
+	u32 rate = clamp_t(u32, bytes_per_s / 1000, 1, V2802_METER_RATE_MASK);
+	u32 bucket = V2802_METER_BUCKET << 1;
+
+	iowrite32(rate_first ? rate : bucket, m);
+	iowrite32(rate_first ? bucket : rate, m + 4);
+}
+
+/* Template 0 as stock has it: DMAC, SMAC, the C-tag in field 6, which is bits
+ * [127:112] of a rule, and the S-tag in field 7. Active ports [15:10], tag flags [9:3], valid 144. The mask is
+ * the rule's complement within what it cares about. Log mode [36:35], 0 polices, meter [34:30]. */
+static int v2802_ds_rule_write(struct rtl9602c_eth *ep, unsigned int idx,
+			       const struct luna_ds_rate *r)
+{
+	u32 ports = v2802_ds_rule.ports ?: BIT(ep->swm->pon_port);
+	u32 rule[5] = { 0 }, mask[5] = { 0 }, action[3] = { 0 };
+	unsigned int meter = V2802_METER_LAST - idx;
+	unsigned long flags;
+	unsigned int bit = 16 + 16 * v2802_ds_rule.field;
+	int rc;
+
+	if (r) {
+		v2802_meter_write(ep, meter, r->bytes_per_s);
+		rule[0] = (ports << 10) | v2802_ds_rule.tmpl;
+		mask[0] = ((~ports & 0x3f) << 10) | (~v2802_ds_rule.tmpl & 7);
+		rule[bit / 32] |= (r->vid & v2802_ds_rule.care) << (bit % 32);
+		mask[bit / 32] |= (~r->vid & v2802_ds_rule.care) << (bit % 32);
+		rule[4] |= BIT(16);
+		action[0] = meter << 30;
+		action[1] = (meter >> 2) | (v2802_ds_rule.log << 3);
+	}
+	iowrite32(0, ep->sw + V2802_ACL_ACT_CTRL + 4 * idx);
+	/* The old rule goes first: a new mask must not widen what it matches. */
+	rc = v2802_l2_table(V2802_ACL_MATCH_TYPE, V2802_ACL_RULE_BASE + idx,
+			    (u32 [5]){ 0 }, 5, true);
+	if (rc || !r)
+		return rc;
+	rc = v2802_l2_table(V2802_ACL_ACTION_TYPE, idx, action, 3, true);
+	if (rc)
+		return rc;
+	iowrite32(V2802_ACL_ACT_LOG, ep->sw + V2802_ACL_ACT_CTRL + 4 * idx);
+	rc = v2802_l2_table(V2802_ACL_MATCH_TYPE, V2802_ACL_RULE_BASE + idx, rule, 5, true);
+	if (rc)
+		return rc;
+	/* Rule then mask, as stock. A mask reads back with the rule's valid bit,
+	 * so it can't go through the checked write. */
+	spin_lock_irqsave(&ep->sw_table_lock, flags);
+	rc = v2802_l2_xact(V2802_ACL_MATCH_TYPE, idx, mask, 5, true);
+	spin_unlock_irqrestore(&ep->sw_table_lock, flags);
+	return rc;
+}
+
+/* Nothing touches the ACL block until a rate is set, and it is off again without one. */
+static void v2802_ds_apply(void)
+{
+	struct rtl9602c_eth *ep = v2802_l2.ep;
+	u32 port = (v2802_ds_rule.ports ?: BIT(ep->swm->pon_port)) & 0xf;
+	unsigned int i;
+	int rc = 0;
+
+	lockdep_assert_held(&v2802_ds_lock);
+	if (!ep->hw_up || READ_ONCE(ep->in_recovery) || (!v2802_ds_count && !v2802_ds_programmed))
+		return;
+	if (v2802_ds_count) {
+		iowrite32(0x0080c101, ep->sw + V2802_ACL_TEMPLATE);
+		iowrite32(0x01024305, ep->sw + V2802_ACL_TEMPLATE + 4);
+		iowrite32(0x02240992, ep->sw + V2802_ACL_TEMPLATE + 8);
+		iowrite32(0x014d43b1, ep->sw + V2802_ACL_TEMPLATE + 12);
+		iowrite32(ioread32(ep->sw + V2802_ACL_PERMIT) | port, ep->sw + V2802_ACL_PERMIT);
+	}
+	for (i = 0; !rc && i < LUNA_DS_RATES; i++) {
+		if (i < v2802_ds_count)
+			rc = v2802_ds_rule_write(ep, i, &v2802_ds[i]);
+		else if (i < v2802_ds_programmed)
+			rc = v2802_ds_rule_write(ep, i, NULL);
+	}
+	iowrite32(v2802_ds_count ? port : 0, ep->sw + V2802_ACL_EN);
+	if (rc)
+		netdev_err(ep->ndev, "[QOS-016] downstream rate rules failed: %d\n", rc);
+	v2802_ds_programmed = v2802_ds_count;
+}
+
+static ssize_t l2_ds_rate_debug_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	struct rtl9602c_eth *ep = v2802_l2.ep;
+	void __iomem *m = ep->sw + V2802_METER + 8 * V2802_METER_LAST;
+	u32 rule[5] = { 0 }, mask[5] = { 0 }, action[3] = { 0 };
+	int rc;
+
+	rc = v2802_l2_table(V2802_ACL_MATCH_TYPE, V2802_ACL_RULE_BASE, rule, 5, false) ?:
+	     v2802_l2_table(V2802_ACL_MATCH_TYPE, 0, mask, 5, false) ?:
+	     v2802_l2_table(V2802_ACL_ACTION_TYPE, 0, action, 3, false);
+	return sysfs_emit(buf,
+			  "rule: tmpl=%u field=%u care=%#x log=%u ports=%#x count=%u programmed=%u\n"
+			  "en=%#x permit=%#x hit=%08x %08x exceed=%08x act_ctrl=%#x\n"
+			  "tmpl0=%08x %08x tmpl1=%08x %08x\n"
+			  "meter%u=%08x %08x rc=%d\n"
+			  "acl_rule=%08x %08x %08x %08x %08x\n"
+			  "acl_mask=%08x %08x %08x %08x %08x\n"
+			  "acl_action=%08x %08x %08x\n",
+			  v2802_ds_rule.tmpl, v2802_ds_rule.field, v2802_ds_rule.care,
+			  v2802_ds_rule.log, v2802_ds_rule.ports, v2802_ds_count, v2802_ds_programmed,
+			  ioread32(ep->sw + V2802_ACL_EN), ioread32(ep->sw + V2802_ACL_PERMIT),
+			  ioread32(ep->sw + V2802_ACL_HIT), ioread32(ep->sw + V2802_ACL_HIT + 4),
+			  ioread32(ep->sw + V2802_METER_EXCEED),
+			  ioread32(ep->sw + V2802_ACL_ACT_CTRL),
+			  ioread32(ep->sw + V2802_ACL_TEMPLATE), ioread32(ep->sw + V2802_ACL_TEMPLATE + 4),
+			  ioread32(ep->sw + V2802_ACL_TEMPLATE + 8), ioread32(ep->sw + V2802_ACL_TEMPLATE + 12),
+			  V2802_METER_LAST, ioread32(m), ioread32(m + 4), rc,
+			  rule[0], rule[1], rule[2], rule[3], rule[4],
+			  mask[0], mask[1], mask[2], mask[3], mask[4],
+			  action[0], action[1], action[2]);
+}
+
+static ssize_t l2_ds_rate_debug_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	u32 tmpl, field, care, log, ports = 0;
+
+	if (sscanf(buf, "%u %u %i %u %i", &tmpl, &field, &care, &log, &ports) < 4 ||
+	    tmpl > 6 || field > 7 || care > 0xffff || log > 3 || ports > 0x3f)
+		return -EINVAL;
+	mutex_lock(&v2802_ds_lock);
+	v2802_ds_rule.tmpl = tmpl;
+	v2802_ds_rule.field = field;
+	v2802_ds_rule.care = care;
+	v2802_ds_rule.log = log;
+	v2802_ds_rule.ports = ports;
+	v2802_ds_apply();
+	mutex_unlock(&v2802_ds_lock);
+	return count;
+}
+static DEVICE_ATTR_RW(l2_ds_rate_debug);
+
+/* Live register and table access for bring-up, printed to the kernel log:
+ *   r <off> [words]             read switch registers
+ *   w <off> <value>             write an ACL or meter register
+ *   t <type> <addr> [words]     read a table entry
+ *   T <type> <addr> <word>...   write an ACL table entry (types 2, 3), unchecked
+ *   s <ms>                      sample ACL hits and meter exceed under traffic
+ * Only ranges known to answer: a stray switch access can hang the bus. */
+static const u32 v2802_dbg_rd[][2] = {
+	{ 0x11000, 0x111fc }, { 0x13000, 0x1300c }, { 0x15000, 0x153fc },
+	{ 0x16000, 0x1601c }, { 0x17000, 0x1700c }, { 0x1c000, 0x1c2fc },
+	{ 0x23000, 0x2311c }, { 0x25000, 0x25090 }, { 0x2a000, 0x2a024 },
+	{ 0x2d800, 0x2d8bc },
+};
+static const u32 v2802_dbg_wr[][2] = {
+	{ 0x15000, 0x153fc }, { 0x25000, 0x25090 },
+};
+
+static bool v2802_dbg_allowed(const u32 (*range)[2], unsigned int n, u32 off)
+{
+	unsigned int i;
+
+	if (off & 3)
+		return false;
+	for (i = 0; i < n; i++)
+		if (off >= range[i][0] && off <= range[i][1])
+			return true;
+	return false;
+}
+
+/* 0x15000 holds, per action type, the rule that won it for the last frame. */
+static void v2802_dbg_sample(struct rtl9602c_eth *ep, unsigned int ms)
+{
+	static const char * const slot[] = {
+		"cvlan", "svlan", "pri", "log", "forward", "intr", "route"
+	};
+	unsigned long end = jiffies + msecs_to_jiffies(ms);
+	unsigned int count[ARRAY_SIZE(slot)] = { 0 }, samples = 0, i;
+	u8 last[ARRAY_SIZE(slot)];
+	u32 exceed = 0;
+
+	memset(last, 0xff, sizeof(last));
+	while (time_before(jiffies, end)) {
+		u32 w[2] = { ioread32(ep->sw + V2802_ACL_HIT),
+			     ioread32(ep->sw + V2802_ACL_HIT + 4) };
+
+		for (i = 0; i < ARRAY_SIZE(slot); i++) {
+			u8 rule = w[i / 4] >> (8 * (i % 4));
+
+			if (rule != 0xff) {
+				count[i]++;
+				last[i] = rule;
+			}
+		}
+		exceed |= ioread32(ep->sw + V2802_METER_EXCEED);
+		samples++;
+		usleep_range(200, 500);
+	}
+	pr_info("l2dbg: %u samples in %u ms, meter exceed %04x\n", samples, ms, exceed);
+	for (i = 0; i < ARRAY_SIZE(slot); i++)
+		pr_info("l2dbg: %-7s hit %u/%u, last rule %u\n", slot[i], count[i], samples, last[i]);
+}
+
+static ssize_t l2_sw_debug_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct rtl9602c_eth *ep = v2802_l2.ep;
+	u32 a[7], w[5] = { 0 };
+	unsigned long flags;
+	unsigned int i;
+	char op;
+	int n, rc = 0;
+
+	n = sscanf(buf, "%c %i %i %i %i %i %i %i", &op, &a[0], &a[1], &a[2],
+		   &a[3], &a[4], &a[5], &a[6]) - 1;
+	if (n < 1)
+		return -EINVAL;
+
+	switch (op) {
+	case 'r':
+		for (i = 0; i < (n > 1 ? min(a[1], 64u) : 1); i++) {
+			u32 off = a[0] + 4 * i;
+
+			if (!v2802_dbg_allowed(v2802_dbg_rd, ARRAY_SIZE(v2802_dbg_rd), off))
+				return -EPERM;
+			pr_info("l2dbg: reg %05x = %08x\n", off, ioread32(ep->sw + off));
+		}
+		break;
+	case 'w':
+		if (n != 2)
+			return -EINVAL;
+		if (!v2802_dbg_allowed(v2802_dbg_wr, ARRAY_SIZE(v2802_dbg_wr), a[0]))
+			return -EPERM;
+		iowrite32(a[1], ep->sw + a[0]);
+		pr_info("l2dbg: reg %05x = %08x after write %08x\n", a[0],
+			ioread32(ep->sw + a[0]), a[1]);
+		break;
+	case 't':
+		if (n < 2 || a[0] < 1 || a[0] > 5 || a[1] > 0x1ff)
+			return -EINVAL;
+		n = n > 2 ? clamp(a[2], 1u, 5u) : 5;
+		spin_lock_irqsave(&ep->sw_table_lock, flags);
+		rc = v2802_l2_xact(a[0], a[1], w, n, false);
+		spin_unlock_irqrestore(&ep->sw_table_lock, flags);
+		pr_info("l2dbg: table %u[%u] = %08x %08x %08x %08x %08x rc=%d\n", a[0], a[1],
+			w[0], w[1], w[2], w[3], w[4], rc);
+		break;
+	case 'T':
+		if (n < 3 || (a[0] != V2802_ACL_MATCH_TYPE && a[0] != V2802_ACL_ACTION_TYPE) ||
+		    a[1] > 0x1ff)
+			return -EINVAL;
+		spin_lock_irqsave(&ep->sw_table_lock, flags);
+		rc = v2802_l2_xact(a[0], a[1], &a[2], n - 2, true);
+		spin_unlock_irqrestore(&ep->sw_table_lock, flags);
+		pr_info("l2dbg: wrote table %u[%u] rc=%d\n", a[0], a[1], rc);
+		break;
+	case 's':
+		v2802_dbg_sample(ep, clamp(a[0], 1u, 30000u));
+		break;
+	default:
+		return -EINVAL;
+	}
+	return rc ?: count;
+}
+static DEVICE_ATTR_WO(l2_sw_debug);
+
+/* A chip reset loses the ACL block. */
+static void v2802_ds_replay(void)
+{
+	mutex_lock(&v2802_ds_lock);
+	if (v2802_ds_count)
+		v2802_ds_apply();
+	mutex_unlock(&v2802_ds_lock);
+}
+
+void rtl9601d_ds_rates_set(const struct luna_ds_rate *rates, unsigned int count)
+{
+	if (!v2802_l2.ep)
+		return;
+	mutex_lock(&v2802_ds_lock);
+	count = min_t(unsigned int, count, LUNA_DS_RATES);
+	if (count != v2802_ds_count || memcmp(rates, v2802_ds, count * sizeof(*rates))) {
+		unsigned int i;
+
+		memcpy(v2802_ds, rates, count * sizeof(*rates));
+		v2802_ds_count = count;
+		v2802_ds_apply();
+		for (i = 0; i < count; i++)
+			pr_info("luna-xpon: downstream limit: VLAN %u at %u byte/s\n",
+				rates[i].vid, rates[i].bytes_per_s);
+		if (!count)
+			pr_info("luna-xpon: downstream limits removed\n");
+	}
+	mutex_unlock(&v2802_ds_lock);
+}
+EXPORT_SYMBOL(rtl9601d_ds_rates_set);
+
 static int v2802_l2_switchdev_event(struct notifier_block *nb, unsigned long event, void *ptr)
 {
 	struct switchdev_notifier_info *info = ptr;
 	struct rtl9602c_eth *ep = v2802_l2.ep;
 	struct net_device *br;
+	char why[32];
+	int attr = -1;
 
 	if (event == SWITCHDEV_FDB_ADD_TO_DEVICE || event == SWITCHDEV_FDB_DEL_TO_DEVICE) {
 		struct switchdev_notifier_fdb_info *fdb = ptr;
@@ -909,25 +1278,25 @@ static int v2802_l2_switchdev_event(struct notifier_block *nb, unsigned long eve
 	} else if (event != SWITCHDEV_PORT_ATTR_SET) {
 		return NOTIFY_DONE;
 	}
-	if (event == SWITCHDEV_PORT_ATTR_SET && info->dev != ep->ndev &&
-	    v2802_l2_lan_member(ep, info->dev)) {
+	/* A jack's cable moves its bridge port between DISABLED and FORWARDING, and
+	 * the offload is fine with either. Withdrawing and reinstalling the services
+	 * on every plug would flush the LAN for nothing. VLAN objects are notified
+	 * before the bridge applies them, so only attributes can be judged here. */
+	if (event == SWITCHDEV_PORT_ATTR_SET) {
 		const struct switchdev_notifier_port_attr_info *ai = ptr;
 
-		/* A jack's cable: its bridge port is DISABLED without carrier
-		 * and FORWARDING with it, and the offload is fine with either
-		 * (v2802_l2_port_ready). Withdrawing and reinstalling the
-		 * services on every plug would flush the LAN for nothing. */
-		if (ai->attr->id == SWITCHDEV_ATTR_ID_PORT_STP_STATE &&
-		    READ_ONCE(v2802_l2.active) &&
-		    v2802_l2_port_ready(info->dev, true))
+		attr = ai->attr->id;
+		if (attr != SWITCHDEV_ATTR_ID_BRIDGE_VLAN_FILTERING && v2802_l2_plan_unchanged(ep))
 			return NOTIFY_DONE;
 	}
 	rcu_read_lock();
 	br = ep->wan_ndev ? netdev_master_upper_dev_get_rcu(ep->wan_ndev) : NULL;
 	rcu_read_unlock();
 	if (v2802_l2_lan_member(ep, info->dev) || info->dev == ep->wan_ndev ||
-	    info->dev == br)
-		rtl9601d_l2_changed();
+	    info->dev == br) {
+		snprintf(why, sizeof(why), "switchdev event %lu attr %d", event, attr);
+		__rtl9601d_l2_changed(why);
+	}
 	return NOTIFY_DONE;
 }
 
@@ -1116,6 +1485,8 @@ static struct attribute *v2802_l2_attrs[] = {
 	&dev_attr_l2_vlan_reserved.attr,
 	&dev_attr_l2_offload_bindings.attr,
 	&dev_attr_l2_offload_counters.attr,
+	&dev_attr_l2_ds_rate_debug.attr,
+	&dev_attr_l2_sw_debug.attr,
 	NULL,
 };
 static const struct attribute_group v2802_l2_group = {
@@ -1141,7 +1512,7 @@ static void v2802_l2_fini(void *data)
 	rtnl_lock();
 	v2802_l2_want_vids();
 	if (v2802_l2_clear())
-		netdev_err(ep->ndev, "L2 offload teardown incomplete; data isolation retained\n");
+		netdev_err(ep->ndev, "[L2-011] L2 offload teardown incomplete; data isolation retained\n");
 	v2802_l2_unoffload(ep);
 	spin_lock_irqsave(&v2802_l2_lock, flags);
 	v2802_l2.ep = NULL;

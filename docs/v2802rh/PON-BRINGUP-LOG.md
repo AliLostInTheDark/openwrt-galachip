@@ -126,3 +126,21 @@ netdev, and with failsafe disabled nothing opens one before netifd. So a link at
 O5 before S20 also had no OMCI path. `gpon_provision` now opens eth0 at S09. An
 earlier deactivation on that boot, 5 ms after Assign_Alloc-ID at 31.09 s with no
 late-tick line, may be the missing OMCI path, but that is not proven.
+
+The first boot of 6e850ea793 was deactivated four times, 1.6-2.6 s after each O5,
+and the fifth registration held. A data T-CONT binds only once the OLT has both
+sent Assign_Alloc-ID and set the T-CONT over OMCI, and omcid counted no OMCI on
+the first three attempts. Deactivate came about 30 ms after Assign_Alloc-ID on
+attempts 1 and 3, and with no Assign_Alloc-ID on attempt 2. Whether the OLT sent
+no OMCI or the ONU lost it is not known, so dmesg now reports `ONU: deactivated N
+ms after O5, N OMCI frames reached the CPU`.
+
+The next boot reported one OMCI frame at the CPU and none counted by omcid, with
+Deactivate 19 ms after Assign_Alloc-ID. Across three boots, every attempt whose
+T-CONT bound within about 12 ms of Assign_Alloc-ID held, and every attempt where it
+did not bind was deactivated within 19-32 ms. The working theory, not confirmed by
+the OLT, is that the OLT saw its grants go unanswered while omcid was restoring its
+MIB. The PLOAM handler now binds an assigned Alloc-ID at once (`ONU: T-CONT N
+answering Alloc-ID N ahead of OMCI`), omcid's install takes the slot over or moves
+the Alloc-ID, and removing a T-CONT whose Alloc-ID is still assigned binds it again.
+The `early_tcont` module parameter turns this off.

@@ -42,10 +42,26 @@ PON flow-control watermarks `0x2311c`/`0x23120` use stock's values.
 |---|---|---|
 | PCP to different GEMs | Rule fields (lsb, width): UNI 0,3; C-tag 3,1; VID 11,12; (5,3) and (8,3) unnamed | Which field is the priority; a planner that allows two flows per VID; an OLT or fixture to test |
 | VLAN translation and QinQ in hardware | `svlan_*` functions, `0x14000`–`0x1400c` | Tracing them; runs correctly on the CPU today |
-| Downstream GEM rates | Share meters at `0x25004`: rate [50:32], bucket [16:1] | How a GEM binds to a meter |
-| Multicast GEM, IGMP/MLD snooping | `l2_ipMcastAddr_*`, `l2_ipmcMode_*` | Not started; needs an IPTV service to test |
-| UNI pause time | ME 11 value reaches the driver and is logged | No control for the MAC's pause quanta |
+| Multicast GEM, IGMP/MLD snooping | `l2_ipMcastAddr_*`, `l2_ipmcMode_*`. The Airtel OLT creates classes 309 and 310 with every value zero and no multicast GEM | Not started; needs an IPTV service to test |
 | eFuse memory patches | Read and logged at bring-up | Written only if a chip turns out to carry any: the addresses are unchecked fuse data |
+
+## Dying gasp and pause time
+
+- Dying gasp: interrupt type 13 is bit 13 of `0x1d00c`/`0x1d010`, on the GPON interrupt's line (stock `dying_gasp_isr`). The driver logs it, masks it, counts it in `/proc/gpon`, and restarts after 100 ms only with `dying_gasp_reset`, where stock always resets the chip. Seen firing on a forced power-off (`[PON-011]`, 2026-11-01). Whether the OLT received the gasp needs an OLT-side check.
+- Pause time: ME 11's value sends one 802.3x PAUSE frame on a change. No hardware register is involved.
+
+## Downstream GEM rates
+
+The chip has no per-GEM meter and no per-VLAN policing (`rtk_vlan_policing*` has no RTL9602C implementation), so a limit is a share meter (7 down to 4; stock's storm controls hold 8-15) and an ACL rule on the PON port matching the GEM's service VLAN. At most 4. Template 0 is stock's; ACL matching stays off until a rate exists. Taken from the kernel's `_raw_rtl9602c_acl_rule_set`, `acl_igrRuleAction_set` and `acl_template_set`, seen limiting a real download to 9.66 Mbit/s of a requested 10, with upload untouched, and 302 Mbit/s again once removed (2026-11-01). Raw template code 9 is the C-tag, field 6 of template 0, and 8 is the S-tag. The bucket must stay at stock's `0x3fff`: at `0xffff` the rule hit but the meter never reported exceeded and nothing was limited. The policing action is enum `ACL_IGR_LOG_ACT` (3), so control bit 3, log mode (35,2) = 0 and meter (30,5).
+
+`/sys/class/net/pon0/device/l2_sw_debug` reads and writes these registers and tables live, and `s <ms>` samples which rule wins each action under traffic; the commands are listed above `l2_sw_debug_store`.
+
+## Decoded for the remaining work
+
+- Share meters `0x25004`, 16 entries: rate [50:32] in 8 kbit/s units, bucket [16:1], IFG [0].
+- CF action tables, (lsb, width). Upstream: CS_ACT 0,3; SVID 3,12; SPRI 15,3; CSPRI_ACT 18,3; CSVID_ACT 21,2; SID_ACT 23,1; SID 24,7; CACT 33,2; CVID 35,12; CPRI 47,3; CVID_ACT 50,3; CPRI_ACT 53,3. These names are inferred from field order and the known CPRI and SID fields.
+- CF per-rule enables `0x16038`, bits 0-5.
+- ACL actions `0x15048`, 96 entries, bits 0-7; ACL action table fields (66,1) (62,4) (61,1) (59,2) (53,6) (52,1) (49,3) (43,6) (41,2) (37,4) (35,2) (30,5) (27,3) (15,12) (12,3) (0,12). Control bits are the `rtk_acl_igr_act_type_e` values: CVLAN 0, SVLAN 1, PRI 2, LOG 3, FORWARD 4, INTR 5, ROUTE 6, and bit 7 inverts the match. `0x15000` holds, per action type, the rule that won it for the last frame looked up.
 
 ## LAN PHYs
 

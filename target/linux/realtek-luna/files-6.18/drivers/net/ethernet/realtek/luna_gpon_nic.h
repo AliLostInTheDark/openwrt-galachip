@@ -35,7 +35,15 @@ struct luna_l2_service {
 	bool untagged;
 	bool cpu_only;
 };
-void rtl9601d_l2_changed(void);
+void __rtl9601d_l2_changed(const char *why);
+/* Downstream limits, one share meter and one ACL rule on the PON port each. */
+#define LUNA_DS_RATES 4
+struct luna_ds_rate {
+	u16 vid;
+	u32 bytes_per_s;
+};
+void rtl9601d_ds_rates_set(const struct luna_ds_rate *rates, unsigned int count);
+#define rtl9601d_l2_changed() __rtl9601d_l2_changed(__func__)
 
 /* omcid in place of the in-kernel responder (luna_xpon.c). */
 struct device;
@@ -59,6 +67,7 @@ int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 		     int (*uni_rate)(void *, unsigned int, u32, u32),
 		     int (*uni_l2)(void *, unsigned int, u32, u32, u32),
 		     int (*uni_autodetect)(void *, unsigned int, u8),
+		     int (*uni_pause)(void *, unsigned int, u16),
 		     struct led_classdev *pon_led, struct led_classdev *los_led);
 void luna_xpon_detach(void *cookie);
 void luna_xpon_omci_rx(const u8 *msg, unsigned int len);
@@ -83,6 +92,7 @@ static inline int luna_xpon_attach(struct device *dev, struct net_device *wan,
 				   int (*uni_rate)(void *, unsigned int, u32, u32),
 				   int (*uni_l2)(void *, unsigned int, u32, u32, u32),
 				   int (*uni_autodetect)(void *, unsigned int, u8),
+				   int (*uni_pause)(void *, unsigned int, u16),
 				   struct led_classdev *pon_led,
 				   struct led_classdev *los_led)
 {

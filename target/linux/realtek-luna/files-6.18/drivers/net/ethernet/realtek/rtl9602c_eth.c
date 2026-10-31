@@ -474,6 +474,7 @@ struct rtl9602c_eth {
 	u8		lan_own_drop;	/* ports whose next link loss the driver caused itself */
 	u32		port0_pause_off;	/* pause bits taken out of port 0's forced ability */
 	u8		uni_autodetect[LAN_PORTS];	/* the OLT's last ME 11 auto-detection value */
+	u16		uni_pause[LAN_PORTS];	/* its last ME 11 pause time */
 	u32		gphy_sts[LAN_PORTS];	/* last logged GPHY link/speed/duplex, per port */
 
 	/* The external PHY's MDIO bus, bit-banged on two GPIOs as stock does it
@@ -847,7 +848,7 @@ static void rtl9602c_sw_stock_config(struct rtl9602c_eth *ep)
 	 * service VLAN (all of them while the CPU forwards) are unknown unicast. */
 	iowrite32(0x7 & ~BIT(ep->swm->pon_port), sw + SW_STORM_CTRL_UC_CTRL);
 	if (of_machine_is_compatible("vsol,v2802rh") && v2802_l2_storm(ep, false))
-		dev_warn(ep->dev, "CPU fallback storm control readback failed\n");
+		dev_warn(ep->dev, "[L2-002] CPU fallback storm control readback failed\n");
 	iowrite32(0x7, sw + SW_STORM_CTRL_BC_CTRL);
 	iowrite32(0x7, sw + SW_STORM_CTRL_DHCP_CTRL);
 
@@ -1018,10 +1019,10 @@ static void rtl9602c_uni_rate_replay(struct rtl9602c_eth *ep)
 		if (ep->uni_rate[p].valid &&
 		    rtl9602c_uni_rate_write(ep, p, ep->uni_rate[p].down,
 				    ep->uni_rate[p].up))
-			dev_warn(ep->dev, "UNI port %u rate replay failed\n", p);
+			dev_warn(ep->dev, "[LAN-006] UNI port %u rate replay failed\n", p);
 	}
 	if (ep->uni_l2_used && rtl9602c_uni_l2_write(ep))
-		dev_warn(ep->dev, "UNI L2 settings replay failed\n");
+		dev_warn(ep->dev, "[L2-003] UNI L2 settings replay failed\n");
 	spin_unlock_irqrestore(&ep->sw_table_lock, flags);
 }
 
@@ -1069,12 +1070,12 @@ static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 		rc = rtl9602c_vlan_write(ep, SW_DEFAULT_VID, 0xf, 0xf, lan_ext, false);
 		if (rc < 0)
 			netdev_warn(ep->ndev,
-				    "swcore VLAN 4k-table engine still BUSY after %u tries (rc=%d): default VLAN %u may not be installed, LAN egress may stay filtered\n",
+				    "[L2-004] swcore VLAN 4k-table engine still BUSY after %u tries (rc=%d): default VLAN %u may not be installed, LAN egress may stay filtered\n",
 				    SW_TBL_TRIES, rc, SW_DEFAULT_VID);
 		/* As stock's 4025: the PON floods to the CPU only */
 		if (pon_vid && rtl9602c_vlan_write(ep, pon_vid, pon, pon, 0x1, true) < 0)
 			netdev_warn(ep->ndev,
-				    "swcore VLAN table BUSY writing the PON VLAN %u: WAN broadcasts may reach the LAN ports\n",
+				    "[L2-005] swcore VLAN table BUSY writing the PON VLAN %u: WAN broadcasts may reach the LAN ports\n",
 				    pon_vid);
 		iowrite32(0, ep->sw + SW_VLAN_PORT_ACCEPT_FRAME_TYPE);	/* accept all frame types */
 		/* PVID is a 12-bit element array packed TWO PER WORD, so */
@@ -1104,7 +1105,7 @@ static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 						BIT(p) | BIT(ep->swm->cpu_port),
 						BIT(p), lan_ext, false) < 0)
 				netdev_warn(ep->ndev,
-					    "swcore VLAN table BUSY writing steering VLAN %u for %s: in VLAN mode its frames would reach no jack\n",
+					    "[L2-006] swcore VLAN table BUSY writing steering VLAN %u for %s: in VLAN mode its frames would reach no jack\n",
 					    SW_LAN_STEER_VID(p), ep->lan_ndev[p]->name);
 		}
 		iowrite32(0xf, ep->sw + SW_VLAN_INGRESS);	/* ingress filter, ports 0-3 */
@@ -2239,7 +2240,7 @@ static void rtl9602c_eth_recover_work(struct work_struct *work)
 	rtl9601d_l2_changed();
 	luna_gpon_nic_reset_begin();
 	netdev_warn(ndev,
-		    "TX-DMA parked (head=%u dirty=%u otx=%u/%u cdo0=%u txok=%u IO_CMD=%08x ISR1=%08x): IP-block power-cycle recovery #%u\n",
+		    "[SYS-020] TX-DMA parked (head=%u dirty=%u otx=%u/%u cdo0=%u txok=%u IO_CMD=%08x ISR1=%08x): IP-block power-cycle recovery #%u\n",
 		    ep->tx_head, ep->tx_dirty, ep->otx_head, ep->otx_dirty,
 		    ioread16(ep->base + R_TxCDO(0)), ep_rd(ep, R_TXOKCNT) >> 16,
 		    ep_rd(ep, R_IO_CMD), ep_rd(ep, R_ISR1),
@@ -2439,12 +2440,12 @@ static int rtl9602c_gphy_fuse_patch__locked(struct rtl9602c_eth *ep, unsigned in
 			break;
 		if ((w[0] & w[1] & w[2] & w[3]) == 0xffff)
 			continue;
-		dev_warn(ep->dev, "eFuse asks for %04x%04x = %04x%04x; not applied\n",
+		dev_warn(ep->dev, "[SYS-021] eFuse asks for %04x%04x = %04x%04x; not applied\n",
 			 w[0], w[1], w[2], w[3]);
 		skipped++;
 	}
 	if (skipped)
-		dev_warn(ep->dev, "%u eFuse memory patches not applied\n", skipped);
+		dev_warn(ep->dev, "[SYS-022] %u eFuse memory patches not applied\n", skipped);
 	return 0;
 }
 
@@ -2477,7 +2478,7 @@ static void rtl9602c_gphy_tune(struct rtl9602c_eth *ep)
 	}
 	mutex_unlock(&rtl9602c_gphy_lock);
 	if (rc) {
-		dev_warn(ep->dev, "LAN1 PHY tuning failed: %d\n", rc);
+		dev_warn(ep->dev, "[PHY-001] LAN1 PHY tuning failed: %d\n", rc);
 		return;
 	}
 	msleep(10);
@@ -2500,7 +2501,7 @@ static int rtl9602c_uboot_swcore_bringup(struct rtl9602c_eth *ep)
 		udelay(1);
 	if (to == SW_RDY_FOR_PATCH_TRIES)
 		netdev_warn(ep->ndev,
-			    "SoC never raised RDY_FOR_PATCH after %d us: the GMAC<->switch resync below runs against a block that did not announce itself\n",
+			    "[PHY-002] SoC never raised RDY_FOR_PATCH after %d us: the GMAC<->switch resync below runs against a block that did not announce itself\n",
 			    SW_RDY_FOR_PATCH_TRIES);
 	/* GPHY analog patch (0x6485 variant only) through the */
 	iowrite32(0xa0000000, ep->sw + SW_CHIP_INFO);
@@ -2523,7 +2524,7 @@ static int rtl9602c_uboot_swcore_bringup(struct rtl9602c_eth *ep)
 	iowrite32(0x0, ep->sw + SW_CHIP_INFO);
 	if (rc) {
 		netdev_err(ep->ndev,
-			   "GPHY analog patch did not complete (%d): the 0x6485 variant fixup is NOT applied, so the patch-done bit is NOT asserted and this bring-up FAILS\n",
+			   "[PHY-003] GPHY analog patch did not complete (%d): the 0x6485 variant fixup is NOT applied, so the patch-done bit is NOT asserted and this bring-up FAILS\n",
 			   rc);
 		return rc;
 	}
@@ -2552,14 +2553,14 @@ static int rtl9602c_uboot_swcore_bringup(struct rtl9602c_eth *ep)
 				rc = rtl9602c_gphy_read__locked(ep, phy, 0, &back);
 			if (rc) {
 				netdev_err(ep->ndev,
-					   "gphy: phy %u BMCR %04x did not land (%d); its power state is UNKNOWN, not assumed\n",
+					   "gphy: [PHY-004] phy %u BMCR %04x did not land (%d); its power state is UNKNOWN, not assumed\n",
 					   phy, v, rc);
 				break;
 			}
 			/* A DESIRED MASK IS NOT PROOF THE PHY STAYED DOWN. */
 			if (want_down && !(back & BMCR_PDOWN)) {
 				netdev_err(ep->ndev,
-					   "gphy: phy %u is administratively LOCKED and reads BMCR %04x -- the power-down did not hold across the reset; refusing to bring the interface up over it\n",
+					   "gphy: [PHY-005] phy %u is administratively LOCKED and reads BMCR %04x -- the power-down did not hold across the reset; refusing to bring the interface up over it\n",
 					   phy, back);
 				rc = -EIO;
 				break;
@@ -2567,7 +2568,7 @@ static int rtl9602c_uboot_swcore_bringup(struct rtl9602c_eth *ep)
 			/* ⚠ AND THE UNLOCKED CASE IS A FAILURE TOO. */
 			if (!want_down && (back & BMCR_PDOWN)) {
 				netdev_err(ep->ndev,
-					   "gphy: phy %u is not locked and reads BMCR %04x -- it is powered DOWN, so that socket would link and carry nothing\n",
+					   "gphy: [PHY-006] phy %u is not locked and reads BMCR %04x -- it is powered DOWN, so that socket would link and carry nothing\n",
 					   phy, back);
 				rc = -EIO;
 				break;
@@ -2722,7 +2723,7 @@ hw_ready:
 		ret = request_irq(ep->irq, rtl9602c_eth_isr, IRQF_SHARED,
 				  ndev->name, ep);
 		if (ret) {
-			netdev_warn(ndev, "request_irq(%d) failed (%d); pure-poll fallback\n",
+			netdev_warn(ndev, "[SYS-023] request_irq(%d) failed (%d); pure-poll fallback\n",
 				    ep->irq, ret);
 			ep->irq = -1;
 		}
@@ -2751,7 +2752,7 @@ fail:
 	luna_gpon_nic_reset_end();
 	rtl9602c_eth_free_rings(ep);
 	netdev_err(ndev,
-		   "switch bring-up failed (%d): eth0 stays DOWN rather than up on a half-programmed fabric\n",
+		   "[SYS-024] switch bring-up failed (%d): eth0 stays DOWN rather than up on a half-programmed fabric\n",
 		   ret);
 	return ret;
 }
@@ -3024,7 +3025,7 @@ static int rtl9602c_lan_stop(struct net_device *ndev)
 	 * hold its link down while the netdev is, as the bridge expects. */
 	ret = rtl9602c_lan_gate(lan->ep, lan->port, true);
 	if (ret)
-		netdev_warn(ndev, "the jack's link could not be held down (%d): it keeps forwarding while this netdev is down\n",
+		netdev_warn(ndev, "[LAN-007] the jack's link could not be held down (%d): it keeps forwarding while this netdev is down\n",
 			    ret);
 	netif_carrier_off(ndev);
 	return 0;
@@ -3365,6 +3366,40 @@ static int rtl9602c_lan_set_eee(struct net_device *ndev, struct ethtool_keee *ee
 	return rc;
 }
 
+/* G.988's pause time asks the subscriber's equipment to stop for that many quanta:
+ * one 802.3x PAUSE frame on a change, zero being the frame that resumes it. omcid
+ * replays the attribute on every provisioning change, which must not pause again. */
+static int rtl9602c_uni_pause_set(void *cookie, unsigned int port, u16 quanta)
+{
+	static const u8 pause_addr[ETH_ALEN] __aligned(2) = { 0x01, 0x80, 0xc2, 0x00, 0x00, 0x01 };
+	struct rtl9602c_eth *ep = cookie;
+	struct net_device *ndev;
+	struct sk_buff *skb;
+	u8 *p;
+
+	if (port >= LAN_PORTS || !ep->lan_ndev[port])
+		return quanta ? -EINVAL : 0;
+	if (quanta == ep->uni_pause[port])
+		return 0;
+	ep->uni_pause[port] = quanta;
+	ndev = ep->lan_ndev[port];
+	if (!netif_carrier_ok(ndev))
+		return 0;
+	skb = netdev_alloc_skb(ndev, ETH_ZLEN);
+	if (!skb)
+		return -ENOMEM;
+	p = skb_put_zero(skb, ETH_ZLEN);
+	ether_addr_copy(p, pause_addr);
+	ether_addr_copy(p + ETH_ALEN, ndev->dev_addr);
+	put_unaligned_be16(ETH_P_PAUSE, p + 12);
+	put_unaligned_be16(1, p + 14);	/* PAUSE opcode */
+	put_unaligned_be16(quanta, p + 16);
+	skb->protocol = htons(ETH_P_PAUSE);
+	dev_queue_xmit(skb);
+	dev_info(ep->dev, "%s: sent PAUSE, %u quanta\n", ndev->name, quanta);
+	return 0;
+}
+
 /* G.988 PPTP Ethernet UNI auto-detection, as what the port advertises. */
 static const struct {
 	u8 mode;
@@ -3477,7 +3512,7 @@ static int rtl9602c_lan_register(struct rtl9602c_eth *ep)
 		if (of_property_read_u32(pn, "reg", &port) || port >= LAN_PORTS ||
 		    port >= ep->swm->n_copper || ep->lan_ndev[port] ||
 		    of_property_read_string(pn, "label", &label) || !*label) {
-			dev_err(dev, "ethernet-ports/%pOFn: needs reg (one of this board's %u copper ports, once) and a label\n",
+			dev_err(dev, "[LAN-008] ethernet-ports/%pOFn: needs reg (one of this board's %u copper ports, once) and a label\n",
 				pn, min_t(unsigned int, LAN_PORTS, ep->swm->n_copper));
 			ret = -EINVAL;
 			break;
@@ -3500,7 +3535,7 @@ static int rtl9602c_lan_register(struct rtl9602c_eth *ep)
 		netif_carrier_off(ndev);
 		ret = devm_register_netdev(dev, ndev);
 		if (ret) {
-			dev_err(dev, "%s (switch port %u) not registered: %d\n",
+			dev_err(dev, "[LAN-009] %s (switch port %u) not registered: %d\n",
 				label, port, ret);
 			break;
 		}
@@ -3806,7 +3841,7 @@ static bool rtl9602c_uni_port_ok(struct rtl9602c_eth *ep, unsigned int port)
 {
 	if (ep && port < ep->swm->n_copper)
 		return true;
-	pr_err("rtl9602c-eth: UNI port %u is not one of this board's %u copper ports -- REFUSED, nothing is written\n",
+	pr_err("rtl9602c-eth: [LAN-010] UNI port %u is not one of this board's %u copper ports -- REFUSED, nothing is written\n",
 	       port, ep ? ep->swm->n_copper : 0);
 	return false;
 }
@@ -3840,7 +3875,7 @@ static int rtl9602c_uni_gate_apply(struct rtl9602c_eth *ep, unsigned int port,
 		mutex_unlock(&rtl9602c_gphy_lock);
 		if (!(force & ABLTY_LINK) != locked) {
 			dev_err(ep->dev,
-				"UNI port %u: the SerDes link gate did not take -- FORCE_P_ABLTY %08x\n",
+				"[PHY-007] UNI port %u: the SerDes link gate did not take -- FORCE_P_ABLTY %08x\n",
 				port, force);
 			return -EIO;
 		}
@@ -3864,7 +3899,7 @@ static int rtl9602c_uni_gate_apply(struct rtl9602c_eth *ep, unsigned int port,
 	if (!(mode & ABLTY_LINK) != !locked || (locked && (force & ABLTY_LINK))) {
 		mutex_unlock(&rtl9602c_gphy_lock);
 		dev_err(ep->dev,
-			"UNI port %u: the MAC gate did not take -- FORCE_P_ABLTY %08x, ABLTY_FORCE_MODE %08x, so the administrative state is NOT applied\n",
+			"[LAN-011] UNI port %u: the MAC gate did not take -- FORCE_P_ABLTY %08x, ABLTY_FORCE_MODE %08x, so the administrative state is NOT applied\n",
 			port, force, mode);
 		return -EIO;
 	}
@@ -3877,7 +3912,7 @@ static int rtl9602c_uni_gate_apply(struct rtl9602c_eth *ep, unsigned int port,
 		/* ⚠ THIS IS A FAILURE, NOT A PARTIAL SUCCESS. */
 		mutex_unlock(&rtl9602c_gphy_lock);
 		dev_err(ep->dev,
-			"UNI port %u: the MAC gate took but this die guards port 0's PHY power on %#05x, which reads %08x -- the administrative state is NOT fully applied and stays owed\n",
+			"[PHY-008] UNI port %u: the MAC gate took but this die guards port 0's PHY power on %#05x, which reads %08x -- the administrative state is NOT fully applied and stays owed\n",
 			port, SW_PHY_PWRDN_GUARD, guard);
 		return -EBUSY;
 	}
@@ -3886,7 +3921,7 @@ static int rtl9602c_uni_gate_apply(struct rtl9602c_eth *ep, unsigned int port,
 	if (rc) {
 		mutex_unlock(&rtl9602c_gphy_lock);
 		dev_err(ep->dev,
-			"UNI port %u: its BMCR could not be read (%d); nothing is written back and the state is owed\n",
+			"[PHY-009] UNI port %u: its BMCR could not be read (%d); nothing is written back and the state is owed\n",
 			port, rc);
 		return rc;
 	}
@@ -3900,7 +3935,7 @@ static int rtl9602c_uni_gate_apply(struct rtl9602c_eth *ep, unsigned int port,
 		rc = rtl9602c_gphy_read__locked(ep, port, 0, &mid);
 		if (!rc && !(mid & BMCR_PDOWN)) {
 			dev_err(ep->dev,
-				"UNI port %u: the power-down half of the unlock pulse did not land (BMCR %04x) -- the far end would never re-negotiate\n",
+				"[PHY-010] UNI port %u: the power-down half of the unlock pulse did not land (BMCR %04x) -- the far end would never re-negotiate\n",
 				port, mid);
 			rc = -EIO;
 		}
@@ -3915,7 +3950,7 @@ static int rtl9602c_uni_gate_apply(struct rtl9602c_eth *ep, unsigned int port,
 	mutex_unlock(&rtl9602c_gphy_lock);
 	if (rc) {
 		dev_err(ep->dev,
-			"UNI port %u: the PHY did not reach %s (%d, BMCR %04x); the administrative state is owed\n",
+			"[PHY-011] UNI port %u: the PHY did not reach %s (%d, BMCR %04x); the administrative state is owed\n",
 			port, locked ? "power-down" : "power-up", rc, bmcr);
 		return rc;
 	}
@@ -4113,9 +4148,9 @@ static void rtl9602c_ext_phy_leds(struct rtl9602c_eth *ep)
 				   rtl8221b_stock_leds[i].val);
 	v = ext_mdio_read_c45(ep, MDIO_MMD_VEND2_RTL, 0xd044);
 	if (v < 0)
-		dev_warn_ratelimited(ep->dev, "RTL8221B LED setup read failed: %d\n", v);
+		dev_warn_ratelimited(ep->dev, "[PHY-012] RTL8221B LED setup read failed: %d\n", v);
 	else if (v != 0x00f8)
-		dev_warn(ep->dev, "RTL8221B LED setup read back %04x, not 00f8\n", v);
+		dev_warn(ep->dev, "[PHY-013] RTL8221B LED setup read back %04x, not 00f8\n", v);
 }
 
 /* Stock's reset: the line low for 30 ms, then 30 ms for the PHY to come up. */
@@ -4220,7 +4255,7 @@ static int rtl9602c_ext_phy_init(struct rtl9602c_eth *ep)
 		return PTR_ERR(ep->ext_phy_reset);
 	if (of_property_read_u32(dev->of_node, "realtek,ext-phy-addr", &addr) ||
 	    addr > 31) {
-		dev_err(dev, "realtek,ext-mdio-gpios without a valid realtek,ext-phy-addr\n");
+		dev_err(dev, "[OPT-015] realtek,ext-mdio-gpios without a valid realtek,ext-phy-addr\n");
 		return -EINVAL;
 	}
 	ep->ext_phy = addr;
@@ -4228,7 +4263,7 @@ static int rtl9602c_ext_phy_init(struct rtl9602c_eth *ep)
 	id1 = ext_mdio_read(ep, MII_PHYSID1);
 	id2 = ext_mdio_read(ep, MII_PHYSID2);
 	if (id1 < 0 || id2 < 0) {
-		dev_err(dev, "external PHY at MDIO address %u did not answer\n", addr);
+		dev_err(dev, "[PHY-014] external PHY at MDIO address %u did not answer\n", addr);
 		return 0;
 	}
 	dev_info(dev, "external PHY %04x:%04x at MDIO address %u\n", id1, id2, addr);
@@ -4238,7 +4273,7 @@ static int rtl9602c_ext_phy_init(struct rtl9602c_eth *ep)
 
 	/* The SoC side starts in SGMII (rtl9602c_uboot_swcore_bringup). */
 	if (rtl9602c_ext_phy_setup(ep, lan_sds ? RTL8221B_SDS_OPTION_SGMII : 0))
-		dev_warn(dev, "RTL8221B SerDes setup pending; link polling will retry\n");
+		dev_warn(dev, "[PHY-015] RTL8221B SerDes setup pending; link polling will retry\n");
 	return 0;
 }
 
@@ -4261,7 +4296,7 @@ static void rtl9602c_link_log(struct rtl9602c_eth *ep, unsigned int lan, bool up
 	static const char * const pause[] = { "off", "tx", "rx", "rx/tx" };
 
 	if (!up) {
-		dev_info(ep->dev, "lan%u: Link is Down\n", lan);
+		dev_info(ep->dev, "lan%u: [LAN-012] Link is Down\n", lan);
 		return;
 	}
 	dev_info(ep->dev, "lan%u: Link is Up - %s/%s - flow control %s\n", lan,
@@ -4336,7 +4371,7 @@ static void rtl9602c_gphy_link_poll(struct rtl9602c_eth *ep, unsigned int port)
 		if (!own) {
 			ep->lan_drops[port]++;
 			if (up)
-				dev_info(ep->dev, "lan%u: link dropped and recovered within a second (%u drops)\n",
+				dev_info(ep->dev, "lan%u: [LAN-013] link dropped and recovered within a second (%u drops)\n",
 					 port == 0 ? 2 : 1, ep->lan_drops[port]);
 		}
 	}
@@ -4372,7 +4407,7 @@ static void rtl9602c_port0_link_poll(struct rtl9602c_eth *ep)
 			ep->lan_drops[0]++;
 		} else if (latched >= 0 && !(latched & BMSR_LSTATUS)) {
 			ep->lan_drops[0]++;
-			dev_info(ep->dev, "lan2: link dropped and recovered within a second (%u drops)\n",
+			dev_info(ep->dev, "lan2: [LAN-014] link dropped and recovered within a second (%u drops)\n",
 				 ep->lan_drops[0]);
 		}
 	}
@@ -4398,7 +4433,7 @@ static void rtl9602c_port0_link_poll(struct rtl9602c_eth *ep)
 			rtl9602c_lan_link_set(ep, 0, false, SPEED_UNKNOWN, false);
 			rc = rtl9602c_ext_phy_setup(ep, option);
 			if (rc) {
-				dev_warn_ratelimited(ep->dev, "LAN2 PHY SerDes option %u failed: %d; retrying\n",
+				dev_warn_ratelimited(ep->dev, "[PHY-016] LAN2 PHY SerDes option %u failed: %d; retrying\n",
 						     option, rc);
 			} else {
 				rtl9602c_lan_sds_program(ep, hsgmii);
@@ -4524,7 +4559,7 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	ep->rx_n = RX_RING_SIZE;
 	if (!of_property_read_u32(dev->of_node, "realtek,rx-ring-entries", &ep->rx_n) &&
 	    (ep->rx_n < 64 || ep->rx_n > RX_RING_SIZE)) {
-		dev_err(dev, "realtek,rx-ring-entries %u is outside 64..%u\n", ep->rx_n,
+		dev_err(dev, "[SYS-025] realtek,rx-ring-entries %u is outside 64..%u\n", ep->rx_n,
 			RX_RING_SIZE);
 		return -EINVAL;
 	}
@@ -4583,7 +4618,7 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 
 	if (hw_nat) {
 		if (rtl9602c_l34_init(&ep->l34, ep->sw)) {
-			dev_warn(dev, "L34 hw-nat init failed; software forwarding\n");
+			dev_warn(dev, "[NAT-001] L34 hw-nat init failed; software forwarding\n");
 		} else {
 			dev_dbg(dev, "L34 hw-nat engine initialised\n");
 #ifdef CONFIG_GPON_FLOW_OFFLOAD
@@ -4591,15 +4626,15 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 			ep->fo = gpon_flow_offload_new(&rtl9602c_l34_flow_ops, ep);
 			ep->l34_addr_nb.notifier_call = rtl9602c_l34_inetaddr_event;
 			if (ep->fo && register_inetaddr_notifier(&ep->l34_addr_nb)) {
-				dev_warn(dev, "L34: no address notifier; a WAN that changes address keeps its stale tables\n");
+				dev_warn(dev, "L34: [NAT-002] no address notifier; a WAN that changes address keeps its stale tables\n");
 				ep->l34_addr_nb.notifier_call = NULL;
 			}
 			if (!ep->fo) {
-				dev_warn(dev, "L34: the common TC lifecycle could not be created; software forwarding\n");
+				dev_warn(dev, "L34: [NAT-003] the common TC lifecycle could not be created; software forwarding\n");
 			} else if (devm_add_action_or_reset(dev, rtl9602c_l34_fo_release,
 							   ep)) {
 				/* THE HANDLE IS OWNED BY THE DEVICE, not by a .remove */
-				dev_warn(dev, "L34: could not bind the TC lifecycle to the device; software forwarding\n");
+				dev_warn(dev, "L34: [NAT-004] could not bind the TC lifecycle to the device; software forwarding\n");
 				ep->fo = NULL;
 			}
 			/* the flowdump node renders the lifecycle's own diag line */
@@ -4671,7 +4706,7 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 			if (devm_register_netdev(dev, wan) == 0)
 				ep->wan_ndev = wan;
 			else
-				dev_warn(dev, "gpon0 (WAN) register failed; WAN datapath disabled\n");
+				dev_warn(dev, "[SYS-026] gpon0 (WAN) register failed; WAN datapath disabled\n");
 		}
 	}
 
@@ -4681,14 +4716,15 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 				       rtl9602c_uni_rate_set,
 				       rtl9602c_uni_l2_set,
 				       rtl9602c_uni_autodetect_set,
+				       rtl9602c_uni_pause_set,
 				       ep->pon_led, ep->los_led);
 		if (ret)
-			dev_err(dev, "omcid backend not registered: %d\n", ret);
+			dev_err(dev, "[OMC-016] omcid backend not registered: %d\n", ret);
 	}
 
 	ret = v2802_l2_init(ep);
 	if (ret)
-		dev_warn(dev, "V2802RH L2 offload unavailable: %d\n", ret);
+		dev_warn(dev, "[L2-007] V2802RH L2 offload unavailable: %d\n", ret);
 
 	/* The SerDes mirror needs the poll; so does any jack with a netdev. */
 	if ((ep->port0_serdes && ep->ext_phy_ok) || ep->lan_ndev[0] || ep->lan_ndev[1]) {

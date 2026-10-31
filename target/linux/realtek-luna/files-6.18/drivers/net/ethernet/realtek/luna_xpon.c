@@ -99,6 +99,7 @@ static struct {
 	int (*uni_rate)(void *, unsigned int, u32, u32);
 	int (*uni_l2)(void *, unsigned int, u32, u32, u32);
 	int (*uni_autodetect)(void *, unsigned int, u8);
+	int (*uni_pause)(void *, unsigned int, u16);
 	struct mutex lock;
 	struct luna_xpon_tcont tcont[LUNA_XPON_TCONTS];
 	struct luna_xpon_gem gem[LUNA_XPON_GEMS];
@@ -237,7 +238,7 @@ static void luna_xpon_forget(void)
 				luna_xpon.quarantine |= BIT(bit);
 	}
 	if (luna_xpon.quarantine)
-		pr_warn_ratelimited("luna-xpon: channel reinstall retains quarantined queues %#x until reboot\n",
+		pr_warn_ratelimited("luna-xpon: [QOS-010] channel reinstall retains quarantined queues %#x until reboot\n",
 				    luna_xpon.quarantine);
 	rtl9601d_l2_changed();
 	memset(luna_xpon.tcont, 0, sizeof(luna_xpon.tcont));
@@ -302,6 +303,7 @@ static int luna_xpon_backend_reset(struct omci_device *odev)
 	luna_xpon_forget();
 	memset(luna_xpon.tcont_qos, 0, sizeof(luna_xpon.tcont_qos));
 	memset(luna_xpon.gem_rate, 0, sizeof(luna_xpon.gem_rate));
+	rtl9601d_ds_rates_set(NULL, 0);
 	return rc;
 }
 
@@ -351,7 +353,7 @@ static int luna_xpon_xmit(struct omci_device *odev, struct sk_buff *skb,
 	if (!rc)
 		dev_kfree_skb_any(skb);
 	else
-		pr_warn_ratelimited("luna-xpon: OMCI TX failed: %d (len=%u GEM=%u)\n",
+		pr_warn_ratelimited("luna-xpon: [OMC-014] OMCI TX failed: %d (len=%u GEM=%u)\n",
 				    rc, skb->len, gem_port_id);
 	return rc;
 }
@@ -466,7 +468,7 @@ static int luna_xpon_queue_free(u8 qid)
 	if (!rc)
 		rc = luna_xpon_queue_program(qid, false, 1, LUNA_XPON_PIR_MAX);
 	if (rc)
-		pr_warn_ratelimited("luna-xpon: queue %u cleanup failed: %d; quarantining\n",
+		pr_warn_ratelimited("luna-xpon: [QOS-011] queue %u cleanup failed: %d; quarantining\n",
 				    qid, rc);
 	return rc;
 }
@@ -484,7 +486,7 @@ static void luna_xpon_qos_release(struct luna_xpon_tcont *t)
 			luna_xpon.quarantine |= BIT(bit);
 	}
 	if (luna_xpon.quarantine & t->pool)
-		pr_warn_ratelimited("luna-xpon: T-CONT %#x queue cleanup incomplete; quarantined=%#x\n",
+		pr_warn_ratelimited("luna-xpon: [QOS-012] T-CONT %#x queue cleanup incomplete; quarantined=%#x\n",
 				    t->entity, luna_xpon.quarantine);
 	t->pool = 0;
 }
@@ -658,7 +660,7 @@ rollback:
 				luna_xpon.queue[bit].valid = false;
 		t->qos_fault = true;
 		luna_xpon.quarantine |= t->pool;
-		pr_err_ratelimited("luna-xpon: T-CONT %#x QoS rollback failed: %d (update %d); queues %#x quarantined until reboot\n",
+		pr_err_ratelimited("luna-xpon: [QOS-013] T-CONT %#x QoS rollback failed: %d (update %d); queues %#x quarantined until reboot\n",
 				   t->entity, rollback, rc, t->pool);
 	} else {
 		t->pool = old_pool;
@@ -680,7 +682,7 @@ static void luna_xpon_qos_sync(void)
 		rc = luna_xpon_qos_tcont(t);
 		t->qos_error = rc;
 		if (rc)
-			pr_warn_ratelimited("luna-xpon: T-CONT %#x QoS not applied: %d\n",
+			pr_warn_ratelimited("luna-xpon: [QOS-014] T-CONT %#x QoS not applied: %d\n",
 					    t->entity, rc);
 	}
 }
@@ -877,15 +879,43 @@ static int luna_xpon_set_tcont_qos(struct omci_device *odev, u16 entity,
 	return 0;
 }
 
-/* Upstream peak rates shape the GEM's queue; downstream policing and burst
- * sizes have no hardware path here and run unlimited. */
+/* The switch polices by VLAN, not by GEM, so a downstream limit needs a service
+ * that names both, and waits for one. */
+static void luna_xpon_ds_rate_sync(void)
+{
+	struct luna_ds_rate rates[LUNA_DS_RATES];
+	unsigned int i, j, k, n = 0;
+
+	memset(rates, 0, sizeof(rates));
+	spin_lock_bh(&luna_xpon.svc_lock);
+	for (i = 0; i < LUNA_XPON_GEMS; i++) {
+		if (!luna_xpon.gem_rate[i].down)
+			continue;
+		for (j = 0; j < LUNA_XPON_SERVICES; j++) {
+			const struct luna_xpon_service *s = &luna_xpon.svc[j];
+
+			if (!s->used || s->gem != luna_xpon.gem_rate[i].gem || !s->vlan_valid ||
+			    !(s->direction & OMCI_GEM_PORT_DIRECTION_ANI_TO_UNI))
+				continue;
+			for (k = 0; k < n && rates[k].vid != s->vlan; k++)
+				;
+			if (k == n && n < LUNA_DS_RATES) {
+				rates[n].vid = s->vlan;
+				rates[n++].bytes_per_s = luna_xpon.gem_rate[i].down;
+			}
+		}
+	}
+	spin_unlock_bh(&luna_xpon.svc_lock);
+	rtl9601d_ds_rates_set(rates, n);
+}
+
+/* Upstream peak rates shape the GEM's queue; downstream ones police its VLAN.
+ * Burst sizes have no hardware path here. */
 static int luna_xpon_set_gem_rate(struct omci_device *odev, u16 gem,
 				  bool upstream, u32 rate, u32 burst)
 {
 	unsigned int i, slot = LUNA_XPON_GEMS;
 
-	if (!upstream && rate)
-		pr_info_once("luna-xpon: downstream GEM rate limits are not applied\n");
 	if (upstream && burst)
 		pr_info_once("luna-xpon: GEM burst sizes are not applied\n");
 	for (i = 0; i < LUNA_XPON_GEMS; i++) {
@@ -900,12 +930,13 @@ static int luna_xpon_set_gem_rate(struct omci_device *odev, u16 gem,
 			slot = i;
 	}
 	if (slot == LUNA_XPON_GEMS) {
-		pr_warn_once("luna-xpon: too many rate-limited GEMs, GEM %u unlimited\n", gem);
+		pr_warn_once("luna-xpon: [QOS-015] too many rate-limited GEMs, GEM %u unlimited\n", gem);
 		return 0;
 	}
 	luna_xpon.gem_rate[slot].gem = gem;
 	if (!upstream) {
 		luna_xpon.gem_rate[slot].down = rate;
+		luna_xpon_ds_rate_sync();
 		return 0;
 	}
 	luna_xpon.gem_rate[slot].rate = rate;
@@ -934,9 +965,8 @@ static int luna_xpon_set_uni(struct omci_device *odev, u16 entity, bool enable)
 	return luna_xpon.uni_admin_set(luna_xpon.cookie, port, !enable);
 }
 
-/* The driver has no control for pause time. Refusing it, or an auto-detection
- * mode the port cannot do, would fail the OLT's write and lose the rate, so
- * they are only reported. */
+/* Refusing an auto-detection mode the port cannot do, or a PAUSE frame it could
+ * not send, would fail the OLT's write and lose the rate, so they are reported. */
 static int luna_xpon_set_uni_attrs(struct omci_device *odev, u16 entity,
 				   const struct omci_uni_attrs *a)
 {
@@ -945,17 +975,19 @@ static int luna_xpon_set_uni_attrs(struct omci_device *odev, u16 entity,
 
 	if (l2 && luna_xpon.uni_l2(luna_xpon.cookie, port, a->ageing_s,
 				   a->learn_limit, a->max_frame_size))
-		pr_warn_ratelimited("luna-xpon: UNI %#x: ageing, learn limit or max frame not applied\n",
+		pr_warn_ratelimited("luna-xpon: [LAN-003] UNI %#x: ageing, learn limit or max frame not applied\n",
 				    entity);
 	if (port >= 0 && luna_xpon.uni_autodetect &&
 	    luna_xpon.uni_autodetect(luna_xpon.cookie, port, a->auto_detection))
-		pr_warn_ratelimited("luna-xpon: UNI %#x: auto-detection %#x not applied\n",
+		pr_warn_ratelimited("luna-xpon: [LAN-004] UNI %#x: auto-detection %#x not applied\n",
 				    entity, a->auto_detection);
-	if (a->pause_quanta ||
-	    (!l2 && (a->ageing_s || a->learn_limit || a->max_frame_size)))
-		pr_info("luna-xpon: UNI %#x: not applied: pause %u, ageing %u s, learn limit %u, max frame %u\n",
-			entity, a->pause_quanta, a->ageing_s, a->learn_limit,
-			a->max_frame_size);
+	if (port >= 0 && luna_xpon.uni_pause &&
+	    luna_xpon.uni_pause(luna_xpon.cookie, port, a->pause_quanta))
+		pr_warn_ratelimited("luna-xpon: [LAN-005] UNI %#x: pause time %u not sent\n",
+				    entity, a->pause_quanta);
+	if (!l2 && (a->ageing_s || a->learn_limit || a->max_frame_size))
+		pr_info("luna-xpon: UNI %#x: not applied: ageing %u s, learn limit %u, max frame %u\n",
+			entity, a->ageing_s, a->learn_limit, a->max_frame_size);
 	if (port < 0 || !luna_xpon.uni_rate)
 		return a->down_kbps || a->up_kbps ? -EOPNOTSUPP : 0;
 	return luna_xpon.uni_rate(luna_xpon.cookie, port, a->down_kbps,
@@ -1060,6 +1092,7 @@ record:
 		return 0;
 	luna_xpon_update_data();
 	luna_xpon_qos_sync();
+	luna_xpon_ds_rate_sync();
 	pr_info("luna-xpon: service %u: GEM %u flow %d VLAN %u%s\n", s->cookie,
 		s->gem_port_id, flow, s->vlan_valid ? s->vlan_id : 0,
 		s->multicast ? " multicast" : "");
@@ -1079,6 +1112,7 @@ static int luna_xpon_delete_service(struct omci_device *odev, u32 cookie)
 	spin_unlock_bh(&luna_xpon.svc_lock);
 	luna_xpon_update_data();
 	luna_xpon_qos_sync();
+	luna_xpon_ds_rate_sync();
 	return 0;
 }
 
@@ -1201,7 +1235,7 @@ int luna_xpon_l2_services(struct luna_l2_service *services, bool vlan_filtering)
 	rc = n;
 out:
 	if (rc == -EOPNOTSUPP)
-		pr_warn_ratelimited("luna-xpon: L2 offload cannot represent the installed OMCI service set; retaining CPU forwarding\n");
+		pr_warn_ratelimited("luna-xpon: [L2-001] L2 offload cannot represent the installed OMCI service set; retaining CPU forwarding\n");
 	spin_unlock_bh(&luna_xpon.svc_lock);
 	mutex_unlock(&luna_xpon.lock);
 	return rc;
@@ -1303,7 +1337,7 @@ static void luna_xpon_set_operational(struct omci_device *odev, bool operational
 		} else if (operational)
 			pr_info("luna-xpon: OMCI agent operational\n");
 		else
-			pr_info("luna-xpon: OMCI agent not operational\n");
+			pr_info("luna-xpon: [OMC-015] OMCI agent not operational\n");
 	}
 	WRITE_ONCE(luna_xpon.operational, operational);
 	rtl9601d_l2_changed();
@@ -1394,7 +1428,7 @@ void luna_xpon_report_los(bool los)
 	spin_unlock_irqrestore(&luna_xpon.ev_lock, flags);
 	if (changed) {
 		if (los)
-			pr_info("luna-xpon: downstream optical signal lost; waiting for signal\n");
+			pr_info("luna-xpon: [OPT-013] downstream optical signal lost; waiting for signal\n");
 		else if (lost_ms)
 			pr_info("luna-xpon: downstream optical signal restored after %lu ms; waiting for registration\n", lost_ms);
 		else
@@ -1538,7 +1572,7 @@ static void luna_xpon_log_optics(void)
 	int rc = luna_xpon_hw_optics(&o);
 
 	if (rc) {
-		pr_warn_ratelimited("luna-xpon: optical diagnostics unavailable (%d)\n", rc);
+		pr_warn_ratelimited("luna-xpon: [OPT-014] optical diagnostics unavailable (%d)\n", rc);
 		return;
 	}
 	luna_xpon_format_power(rx, sizeof(rx), o.rx_nw, rx_los ? "LOS" : "not yet measurable");
@@ -2030,7 +2064,7 @@ static ssize_t qos_status_show(struct device *dev,
 	u8 base = luna_xpon_hw_bank_qid();
 
 	mutex_lock(&luna_xpon.lock);
-	len = sysfs_emit(buf, "quarantined=%#x downstream_gem_rate=unsupported burst=unsupported\n",
+	len = sysfs_emit(buf, "quarantined=%#x downstream_gem_rate=vlan_policed burst=unsupported\n",
 			luna_xpon.quarantine);
 	for (i = 0; i < LUNA_XPON_TCONTS; i++) {
 		const struct luna_xpon_tcont *t = &luna_xpon.tcont[i];
@@ -2059,7 +2093,7 @@ static ssize_t qos_status_show(struct device *dev,
 		}
 		if (burst || down)
 			len += sysfs_emit_at(buf, len,
-				"gem=%u unapplied_burst=%u unapplied_downstream_Bps=%u\n",
+				"gem=%u unapplied_burst=%u downstream_Bps=%u\n",
 				g->gem, burst, down);
 		if (!(g->dir & OMCI_GEM_PORT_DIRECTION_UNI_TO_ANI))
 			continue;
@@ -2124,6 +2158,7 @@ int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 		     int (*uni_rate)(void *, unsigned int, u32, u32),
 		     int (*uni_l2)(void *, unsigned int, u32, u32, u32),
 		     int (*uni_autodetect)(void *, unsigned int, u8),
+		     int (*uni_pause)(void *, unsigned int, u16),
 		     struct led_classdev *pon_led, struct led_classdev *los_led)
 {
 	struct xpon_device_desc desc = {
@@ -2153,6 +2188,7 @@ int luna_xpon_attach(struct device *dev, struct net_device *wan, void *cookie,
 	luna_xpon.uni_rate = uni_rate;
 	luna_xpon.uni_l2 = uni_l2;
 	luna_xpon.uni_autodetect = uni_autodetect;
+	luna_xpon.uni_pause = uni_pause;
 	luna_xpon_load_unis();
 	netif_carrier_off(wan);
 
