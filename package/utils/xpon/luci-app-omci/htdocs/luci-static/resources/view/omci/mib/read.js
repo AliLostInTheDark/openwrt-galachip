@@ -7,7 +7,7 @@
 'require xpon.widgets as widgets';
 
 function searchText(o) {
-	return [ o.name, o.class_id, mibView.entityText(o.entity_id), JSON.stringify(o.fields || {}) ]
+	return [ o.name, o.class_id, o.entity_id, '0x%04x'.format(o.entity_id), JSON.stringify(o.fields || {}) ]
 		.join(' ').toLowerCase();
 }
 
@@ -101,7 +101,7 @@ return view.extend({
 
 		return layout.apply(E([], [
 			E('h2', {}, _('MIB read')),
-			E('p', {}, _('Every managed entity in the live MIB, decoded. Open a class to see its objects. Numbers are decimal; IDs that point at another object are 0x hexadecimal.')),
+			E('p', {}, _('Every managed entity in the live MIB, decoded. Open a class to see its objects.')),
 			E('div', { 'class': 'cbi-section omci-mib-filter' }, [
 				E('label', { 'for': 'omci-mib-class-filter' }, _('Class')), classFilter,
 				E('label', { 'for': 'omci-mib-search' }, _('Search')), search,

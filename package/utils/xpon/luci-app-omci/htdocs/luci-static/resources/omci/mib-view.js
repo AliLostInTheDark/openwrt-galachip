@@ -34,7 +34,7 @@ function value(v) {
 }
 
 function entityText(id) {
-	return '0x%04x (%d)'.format(id, id);
+	return String(id);
 }
 
 function originText(o) {
@@ -60,6 +60,8 @@ function hexDump(data) {
 	return lines.length ? lines.join('\n') : _('All zero');
 }
 
+/* MIB text can come from the OLT: cells take it in an array, so E() adds it as
+ * a text node and not as HTML. */
 function rows(fields) {
 	var out = [];
 
@@ -79,8 +81,8 @@ function rows(fields) {
 function fieldTable(fields) {
 	return E('table', { 'class': 'table' }, rows(fields).map(function(row) {
 		return E('tr', { 'class': 'tr' }, [
-			E('td', { 'class': 'td left', 'width': '50%' }, row[0]),
-			E('td', { 'class': 'td left' }, row[1])
+			E('td', { 'class': 'td left', 'width': '50%' }, [ row[0] ]),
+			E('td', { 'class': 'td left' }, [ row[1] ])
 		]);
 	}));
 }
@@ -98,7 +100,7 @@ function rulesTable(rules) {
 
 		return E('tr', { 'class': 'tr' }, [ r.index, s.filter_outer, s.filter_inner, s.ethertype,
 			s.action, s.add_outer, s.add_inner ].map(function(cell) {
-			return E('td', { 'class': 'td' }, String(cell));
+			return E('td', { 'class': 'td' }, [ String(cell) ]);
 		}));
 	}))));
 }
@@ -116,7 +118,7 @@ function object(o) {
 		rules.length ? rulesTable(rules) : '',
 		E('details', { 'class': 'omci-mib-raw', 'open': o.fields ? null : true }, [
 			E('summary', {}, _('Raw data, attribute mask %s').format('0x%04x'.format(o.attr_mask || 0))),
-			E('pre', {}, hexDump(o.data))
+			E('pre', {}, [ hexDump(o.data) ])
 		])
 	]);
 }

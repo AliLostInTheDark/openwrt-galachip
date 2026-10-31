@@ -31,7 +31,8 @@ let f = decode({
 	} ] }
 });
 check('171 association', f.association_type, '10 (VEIP)');
-check('171 pointer', f.associated_me, '0x0301');
+check('171 pointer', f.associated_me, 769);
+check('171 tpid', f.input_tpid, '802.1Q (TPID 0x8100)');
 check('171 rule', f.rules[0], 'filter outer [VLAN 660, priority any] inner [VLAN any, priority any] ethertype any -> remove 1 tag, add outer [none] inner [VLAN 660, priority from outer, output TPID, DEI from outer]');
 check('171 dscp', f.dscp_to_priority, 'all DSCP to priority 0');
 
@@ -54,7 +55,7 @@ check('84 entries', length(f.filters), 1);
 
 f = decode({ class_id: 47, data: data([ '0001', '01', '0b', '0301', '00000000000000', '001122334455' ]) });
 check('47 tp type', f.tp_type, '11 (VEIP)');
-check('47 tp', f.tp, '0x0301');
+check('47 tp', f.tp, 769);
 check('47 mac', f.mac, '00:11:22:33:44:55');
 
 f = decode({ class_id: 256, data: data([ '5a594f54', '56312e30000000000000000000', '00', '5a594f5412345678' ]) });
@@ -63,25 +64,31 @@ check('256 version', f.version, 'V1.0');
 check('256 serial', f.serial, 'ZYOT12345678');
 
 f = decode({ class_id: 65305, data: '01aabbccddeeff' });
-check('vendor ME', f.attr_2, '0xaabbccddeeff');
+check('vendor ME', f.attr_2, 'not text (6 bytes)');
 
 f = decode({ class_id: 131, data: data([ '414c434c', '060204000002' ]) });
 check('131 vendor', f.vendor_id, 'ALCL');
-check('131 binary string', f.equipment_id, '0x060204000002');
+check('131 binary string', f.equipment_id, 'not text (6 bytes)');
 check('131 empty', f.version, '');
 check('131 zero raw', f.time_of_day, '');
 
 f = decode({ class_id: 65296, data: data([ '000000000000000000000000000000', '5a594f545a594f5420095605' ]) });
-check('vendor binary', f.attr_10, '0x5a594f545a594f5420095605');
-
-f = decode({ class_id: 65296, data: data([ '000000000000000000000000000000', '5a594f544142434431323334' ]) });
-check('vendor ASCII', f.attr_10, 'ZYOTABCD1234');
+check('vendor serial', f.attr_10, 'ZYOT ZYOT20095605');
 
 f = decode({ class_id: 262, data: data([ '0100' ]) });
-check('262 alloc', f.alloc_id, '256 (0x0100)');
+check('262 alloc', f.alloc_id, 256);
 
 f = decode({ class_id: 310, data: data([ '00', '0601' ]) });
-check('310 profile', f.multicast_operations_profile, '0x0601');
+check('310 profile', f.multicast_operations_profile, 1537);
+
+f = decode({ class_id: 257, data: data([ '0000000000000000000000000000000000000000', 'a0' ]) });
+check('257 omcc', f.omcc_version, 'G.988 (2010), baseline');
+
+f = decode({ class_id: 277, data: data([ '00', '0000', '0000', '00000000', '01010002' ]) });
+check('277 port', f.related_port, 'port 257, priority 2');
+
+f = decode({ class_id: 130, data: data([ 'ffff' ]) });
+check('130 null pointer', f.tp, 'none');
 check('unknown class', decode({ class_id: 9999, data: '00' }), null);
 
 if (fails)

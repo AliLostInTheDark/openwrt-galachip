@@ -3,8 +3,9 @@
 /*
  * Readable fields for MIB objects. The agent returns each object's attribute
  * data as hex in G.988 attribute order, so a field is a name, a byte offset,
- * a length and a format. Text shows as ASCII and anything else as 0x hex.
- * Classes without a table keep only their hex.
+ * a length and a format. Values read as text or decimal; object data that is
+ * not text says so, and the raw bytes stay in item.data. Classes without a
+ * table keep only those bytes.
  */
 
 const admin_state = [ 'unlocked', 'locked' ];
@@ -31,6 +32,20 @@ const interwork_options = {
 
 const directions = { '1': 'UNI to ANI', '2': 'ANI to UNI', '3': 'bidirectional' };
 const policies = { '0': 'null', '1': 'strict priority', '2': 'WRR' };
+const tpids = { '33024': '802.1Q (TPID 0x8100)', '34984': '802.1ad (TPID 0x88a8)' };
+const omcc_versions = {
+	'128': 'G.984.4 (06/04)', '129': 'G.984.4 Amd.1 (06/05)', '130': 'G.984.4 Amd.2 (03/06)',
+	'131': 'G.984.4 Amd.3 (12/06)', '132': 'G.984.4 (02/08)', '133': 'G.984.4 Amd.1 (06/09)',
+	'134': 'G.984.4 Amd.2 (2009), baseline', '150': 'G.984.4 Amd.2 (2009), baseline and extended',
+	'160': 'G.988 (2010), baseline', '161': 'G.988 Amd.1 (2011), baseline',
+	'162': 'G.988 Amd.2 (2012), baseline', '163': 'G.988 (2012), baseline',
+	'164': 'G.988 Amd.1 (2014), baseline', '176': 'G.988 (2010), baseline and extended',
+	'177': 'G.988 Amd.1 (2011), baseline and extended',
+	'178': 'G.988 Amd.2 (2012), baseline and extended',
+	'179': 'G.988 (2012), baseline and extended',
+	'180': 'G.988 Amd.1 (2014), baseline and extended'
+};
+const forward_operations = { '16': 'forward by VLAN list (0x10)' };
 const port_types = { '47': '10/100/1000BASE-T' };
 const igmp_versions = { '1': 'IGMPv1', '2': 'IGMPv2', '3': 'IGMPv3', '16': 'MLDv1', '17': 'MLDv2' };
 
@@ -109,7 +124,7 @@ const layouts = {
 		[ 'mac_learning_depth', 23, 1 ]
 	],
 	'84': [
-		[ 'forward_operation', 24, 1, 'hex' ],
+		[ 'forward_operation', 24, 1, 'enum', forward_operations ],
 		[ 'entries', 25, 1 ]
 	],
 	'130': [
@@ -127,8 +142,8 @@ const layouts = {
 	],
 	'171': [
 		[ 'association_type', 0, 1, 'enum', association_types ],
-		[ 'max_table_size', 1, 2 ], [ 'input_tpid', 3, 2, 'ptr' ],
-		[ 'output_tpid', 5, 2, 'ptr' ], [ 'downstream_mode', 7, 1 ],
+		[ 'max_table_size', 1, 2 ], [ 'input_tpid', 3, 2, 'enum', tpids ],
+		[ 'output_tpid', 5, 2, 'enum', tpids ], [ 'downstream_mode', 7, 1 ],
 		[ 'associated_me', 24, 2, 'ptr' ]
 	],
 	'256': [
@@ -139,22 +154,22 @@ const layouts = {
 		[ 'oper_state', 30, 1, 'enum', oper_state ]
 	],
 	'257': [
-		[ 'equipment_id', 0, 20, 'str' ], [ 'omcc_version', 20, 1, 'hex' ],
+		[ 'equipment_id', 0, 20, 'str' ], [ 'omcc_version', 20, 1, 'enum', omcc_versions ],
 		[ 'vendor_product_code', 21, 2 ], [ 'security_capability', 23, 1 ],
 		[ 'security_mode', 24, 1 ], [ 'priority_queues', 25, 2 ],
 		[ 'traffic_schedulers', 27, 1 ], [ 'gem_ports', 29, 2 ]
 	],
 	'262': [
-		[ 'alloc_id', 0, 2, 'id' ],
+		[ 'alloc_id', 0, 2, 'ptr' ],
 		[ 'policy', 3, 1, 'enum', policies ]
 	],
 	'263': [
 		[ 'sr_indication', 0, 1 ], [ 'tconts', 1, 2 ],
 		[ 'gem_block_length', 3, 2 ], [ 'sf_threshold', 7, 1 ],
-		[ 'sd_threshold', 8, 1 ], [ 'optical_signal_level', 11, 2, 'ptr' ],
+		[ 'sd_threshold', 8, 1 ], [ 'optical_signal_level', 11, 2 ],
 		[ 'lower_optical_threshold', 13, 1 ],
 		[ 'upper_optical_threshold', 14, 1 ],
-		[ 'response_time', 15, 2 ], [ 'transmit_level', 17, 2, 'ptr' ]
+		[ 'response_time', 15, 2 ], [ 'transmit_level', 17, 2 ]
 	],
 	'264': [
 		[ 'admin_state', 2, 1, 'enum', admin_state ],
@@ -162,14 +177,14 @@ const layouts = {
 		[ 'non_omci_management', 4, 2, 'ptr' ]
 	],
 	'266': [
-		[ 'gem_port', 0, 2, 'id' ],
+		[ 'gem_port', 0, 2 ],
 		[ 'interworking', 2, 1, 'enum', interwork_options ],
 		[ 'service_profile', 3, 2, 'ptr' ], [ 'interworking_tp', 5, 2, 'ptr' ],
 		[ 'oper_state', 8, 1, 'enum', oper_state ],
 		[ 'gal_profile', 9, 2, 'ptr' ]
 	],
 	'268': [
-		[ 'port_id', 0, 2, 'id' ], [ 'tcont', 2, 2, 'ptr' ],
+		[ 'port_id', 0, 2 ], [ 'tcont', 2, 2, 'ptr' ],
 		[ 'direction', 4, 1, 'enum', directions ],
 		[ 'upstream_tm', 5, 2, 'ptr' ], [ 'upstream_td', 7, 2, 'ptr' ],
 		[ 'downstream_queue', 10, 2, 'ptr' ], [ 'encryption', 12, 1 ],
@@ -178,7 +193,7 @@ const layouts = {
 	'272': [ [ 'max_gem_payload', 0, 2 ] ],
 	'277': [
 		[ 'queue_configuration', 0, 1 ], [ 'max_size', 1, 2 ],
-		[ 'allocated_size', 3, 2 ], [ 'related_port', 9, 4, 'ptr' ],
+		[ 'allocated_size', 3, 2 ], [ 'related_port', 9, 4, 'port' ],
 		[ 'scheduler', 13, 2, 'ptr' ], [ 'weight', 15, 1 ]
 	],
 	'278': [
@@ -215,7 +230,7 @@ const layouts = {
 	'309': [
 		[ 'igmp_version', 0, 1, 'enum', igmp_versions ],
 		[ 'igmp_function', 1, 1 ], [ 'immediate_leave', 2, 1 ],
-		[ 'upstream_igmp_tci', 3, 2, 'ptr' ],
+		[ 'upstream_igmp_tci', 3, 2, 'tci' ],
 		[ 'upstream_igmp_tag_control', 5, 1 ],
 		[ 'upstream_igmp_rate', 6, 4 ]
 	],
@@ -261,6 +276,7 @@ for (let id in [ 367, 370, 373, 65408, 65414, 65425 ])
 	layouts[id] = huawei_multicast;
 layouts['65295'] = numbered([ 1, 2, 1, 2, 1, 2, 1, 2, 1, 2 ]);
 layouts['65296'] = numbered([ 1, 1, 4, 1, 1, 1, 4, 1, 1, 12, 4, 25 ]);
+layouts['65296'][9][3] = 'vendor_serial';
 layouts['65297'] = numbered([ 1, 1, 2, 1, 1, 1, 1 ]);
 layouts['65305'] = numbered([ 1, 6 ]);
 layouts['65306'] = numbered([ 19 ]);
@@ -277,7 +293,7 @@ function number(data, offset, len) {
 	return n;
 }
 
-/* ASCII up to the NUL padding, or 0x hex when the bytes are not text. */
+/* ASCII up to the NUL padding. Bytes that are not text stay in item.data. */
 function text(data, offset, len) {
 	let out = '', end = len;
 
@@ -287,7 +303,7 @@ function text(data, offset, len) {
 		let c = byte(data, offset + i);
 
 		if (c < 0x20 || c >= 0x7f)
-			return '0x' + substr(data, offset * 2, end * 2);
+			return `not text (${end} byte${end == 1 ? '' : 's'})`;
 		out += chr(c);
 	}
 	return trim(out);
@@ -299,16 +315,23 @@ function field(data, spec) {
 	switch (format) {
 	case 'str':
 		return text(data, offset, len);
-	case 'ptr':
-		return sprintf(`0x%0${len * 2}x`, number(data, offset, len));
+	case 'ptr': {
+		let n = number(data, offset, len);
+		return n == 0xffff ? 'none' : n;
+	}
 	case 'raw':
 		return text(data, offset, len);
-	case 'id': {
-		let n = number(data, offset, len);
-		return sprintf(`%d (0x%0${len * 2}x)`, n, n);
+	case 'port':
+		return sprintf('port %d, priority %d', number(data, offset, 2), number(data, offset + 2, 2));
+	case 'tci': {
+		let tci = number(data, offset, len);
+		return sprintf('VLAN %d, priority %d', tci & 0xfff, tci >> 13);
 	}
 	case 'hex':
 		return sprintf('0x%02x', number(data, offset, len));
+	case 'vendor_serial':
+		return text(data, offset, 4) + ' ' + text(data, offset + 4, 4) +
+			uc(substr(data, (offset + 8) * 2, 8));
 	case 'mac': {
 		let bytes = [];
 
@@ -320,6 +343,8 @@ function field(data, spec) {
 		return text(data, offset, 4) + uc(substr(data, (offset + 4) * 2, 8));
 	case 'enum': {
 		let n = number(data, offset, len);
+		if (names === tpids || names === omcc_versions || names === forward_operations)
+			return names[n] ?? sprintf('0x%x', n);
 		return names[n] != null ? `${n} (${names[n]})` : n;
 	}
 	default:

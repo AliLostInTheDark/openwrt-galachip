@@ -117,8 +117,8 @@ function render(group, data, title, description) {
 			{ optional: false, sort: groupClasses.map(function(c) { return String(c.class_id); }) });
 		var classNode = item ? E('input', { 'class': 'cbi-input-text', 'readonly': true,
 			'value': String(item.class_id) }) : classWidget.render();
-		var entityNode = E('input', { 'class': 'cbi-input-text', 'value': item ? hex(item.entity_id, 4) : '',
-			'placeholder': '0x0000', 'readonly': item ? true : null });
+		var entityNode = E('input', { 'class': 'cbi-input-text', 'value': item ? String(item.entity_id) : '',
+			'placeholder': '0', 'readonly': item ? true : null });
 		var maskNode = E('input', { 'class': 'cbi-input-text', 'value': item ? hex(item.attr_mask, 4) : '0xffff' });
 		var dataNode = E('textarea', { 'class': 'cbi-input-text omci-mib-mono', 'rows': 5,
 			'style': 'width:100%;font-family:monospace', 'placeholder': _('Hex bytes, spaces optional (maximum 64 bytes)') }, item ? spacedHex(item.data) : '');
@@ -157,7 +157,7 @@ function render(group, data, title, description) {
 		var errorNode = E('div');
 
 		ui.showModal(_('Delete MIB object'), [
-			E('p', {}, _('Delete class %d, entity %s from the live MIB?').format(item.class_id, hex(item.entity_id, 4))),
+			E('p', {}, _('Delete class %d, entity %d from the live MIB?').format(item.class_id, item.entity_id)),
 			errorNode,
 			E('div', { 'class': 'omci-mib-actions' }, [
 				modalButton(_('Cancel'), 'reset', ui.hideModal),
@@ -205,10 +205,10 @@ function render(group, data, title, description) {
 			var c = byId[o.class_id] || {};
 			var cells = [
 				E('td', { 'class': 'td nowrap' }, String(o.class_id)),
-				E('td', { 'class': 'td nowrap' }, hex(o.entity_id, 4)),
-				E('td', { 'class': 'td' }, o.name || c.name || '-'),
-				E('td', { 'class': 'td' }, mibView.originText(o)),
-				E('td', { 'class': 'td', 'style': 'overflow-wrap:anywhere;max-width:32em' }, mibView.summary(o)),
+				E('td', { 'class': 'td nowrap' }, String(o.entity_id)),
+				E('td', { 'class': 'td' }, [ o.name || c.name || '-' ]),
+				E('td', { 'class': 'td' }, [ mibView.originText(o) ]),
+				E('td', { 'class': 'td', 'style': 'overflow-wrap:anywhere;max-width:32em' }, [ mibView.summary(o) ]),
 				E('td', { 'class': 'td nowrap' }, [
 					modalButton(_('Details'), 'action', function() {
 						return omci.mibGet(0, o.class_id, o.entity_id).then(showDetails).catch(notifyError);

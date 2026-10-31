@@ -191,18 +191,16 @@ function print_classes(classes) {
 }
 
 function print_mib(objects) {
-	printf('%-6s %-8s %-36s %-10s %-8s %s\n',
-		'class', 'entity', 'name', 'origin', 'mask', 'data');
+	printf('%-6s %-8s %-48s %s\n', 'class', 'entity', 'name', 'origin');
 	for (let item in (objects || []))
-		printf('%-6d 0x%04x   %-36s %-10s 0x%04x   %s\n',
-			item.class_id, item.entity_id, item.name || '-',
-			item.origin_name || '-', item.attr_mask || 0, item.data || '');
+		printf('%-6d %-8d %-48s %s\n', item.class_id, item.entity_id,
+			item.name || '-', item.origin_name || '-');
 }
 
 /* One block per object, decoded fields first; classes without a decoder show hex. */
 function print_objects(objects) {
 	for (let item in (objects || [])) {
-		printf('%s (class %d) entity 0x%04x, %s\n', item.name || 'Unknown ME',
+		printf('%s (class %d) entity %d, %s\n', item.name || 'Unknown ME',
 			item.class_id, item.entity_id, item.origin_name || '-');
 		if (!item.fields) {
 			printf('  data: %s\n\n', item.data || '');
