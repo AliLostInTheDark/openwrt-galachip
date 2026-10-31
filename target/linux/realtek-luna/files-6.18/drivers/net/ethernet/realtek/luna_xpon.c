@@ -135,7 +135,9 @@ static struct {
 	bool ev_los;
 	bool los_known;
 	unsigned long loss_started;
-	unsigned long signal_since;
+	unsigned long activation_since;
+	bool activation_timed;
+	u8 activation_state;
 	bool data_up;
 	bool operational;
 } luna_xpon = {
@@ -1263,9 +1265,13 @@ static int luna_xpon_get_telemetry(struct omci_device *odev,
 static void luna_xpon_set_operational(struct omci_device *odev, bool operational)
 {
 	if (operational != READ_ONCE(luna_xpon.operational)) {
-		if (operational)
-			pr_info("luna-xpon: OMCI agent operational; service provisioning applied %u ms after signal detection\n",
-				jiffies_to_msecs(jiffies - READ_ONCE(luna_xpon.signal_since)));
+		if (operational && READ_ONCE(luna_xpon.activation_timed) &&
+		    READ_ONCE(luna_xpon.activation_state) == GPON_O5) {
+			pr_info("luna-xpon: OMCI agent operational; service provisioning applied %u ms after activation began\n",
+				jiffies_to_msecs(jiffies - READ_ONCE(luna_xpon.activation_since)));
+			WRITE_ONCE(luna_xpon.activation_timed, false);
+		} else if (operational)
+			pr_info("luna-xpon: OMCI agent operational\n");
 		else
 			pr_info("luna-xpon: OMCI agent not operational\n");
 	}
@@ -1350,7 +1356,6 @@ void luna_xpon_report_los(bool los)
 		else {
 			if (luna_xpon.los_known)
 				lost_ms = jiffies_to_msecs(jiffies - luna_xpon.loss_started);
-			luna_xpon.signal_since = jiffies;
 		}
 	}
 	luna_xpon.los_known = true;
@@ -1370,9 +1375,22 @@ void luna_xpon_report_los(bool los)
 
 void luna_xpon_report_state(u8 state)
 {
-	if (state == GPON_O5)
-		pr_info("luna-xpon: registered with OLT (O5), %u ms after signal detection; restoring service provisioning\n",
-			jiffies_to_msecs(jiffies - READ_ONCE(luna_xpon.signal_since)));
+	u8 prev = READ_ONCE(luna_xpon.activation_state);
+
+	/* An attempt begins on leaving O1, where a transmitter hold also parks
+	 * the ONU, or on dropping out of O5. O1 itself ends the attempt. */
+	if (state <= 1) {
+		WRITE_ONCE(luna_xpon.activation_timed, false);
+	} else if (state != GPON_O5 && (prev <= 1 || prev == GPON_O5)) {
+		WRITE_ONCE(luna_xpon.activation_since, jiffies);
+		WRITE_ONCE(luna_xpon.activation_timed, true);
+	}
+	WRITE_ONCE(luna_xpon.activation_state, state);
+	if (state == GPON_O5 && READ_ONCE(luna_xpon.activation_timed))
+		pr_info("luna-xpon: registered with OLT (O5), %u ms after activation began; restoring service provisioning\n",
+			jiffies_to_msecs(jiffies - READ_ONCE(luna_xpon.activation_since)));
+	else if (state == GPON_O5)
+		pr_info("luna-xpon: registered with OLT (O5); restoring service provisioning\n");
 	if (state != GPON_O5)
 		rtl9601d_l2_changed();
 	luna_xpon_post(LUNA_XPON_EV_STATE, state, 0, 0);
