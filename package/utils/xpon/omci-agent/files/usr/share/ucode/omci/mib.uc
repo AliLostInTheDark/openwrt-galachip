@@ -3,7 +3,8 @@
 /*
  * Readable fields for MIB objects. The agent returns each object's attribute
  * data as hex in G.988 attribute order, so a field is a name, a byte offset,
- * a length and a format. Classes without a table keep only their hex.
+ * a length and a format. Text shows as ASCII and anything else as 0x hex.
+ * Classes without a table keep only their hex.
  */
 
 const admin_state = [ 'unlocked', 'locked' ];
@@ -30,19 +31,38 @@ const interwork_options = {
 
 const directions = { '1': 'UNI to ANI', '2': 'ANI to UNI', '3': 'bidirectional' };
 const policies = { '0': 'null', '1': 'strict priority', '2': 'WRR' };
+const port_types = { '47': '10/100/1000BASE-T' };
+const igmp_versions = { '1': 'IGMPv1', '2': 'IGMPv2', '3': 'IGMPv3', '16': 'MLDv1', '17': 'MLDv2' };
+
+/* G.988 9.3.13, Extended VLAN tagging operation rule fields */
+const ethertypes = {
+	'1': 'IPv4 (0x0800)', '2': 'PPPoE (0x8863/0x8864)', '3': 'ARP (0x0806)',
+	'4': 'IPv6 (0x86dd)'
+};
+const filter_tpids = {
+	'4': 'TPID 0x8100', '5': 'input TPID', '6': 'input TPID, DEI 0',
+	'7': 'input TPID, DEI 1'
+};
+const treat_tpids = {
+	'0': 'TPID and DEI from inner', '1': 'TPID and DEI from outer',
+	'2': 'output TPID, DEI from inner', '3': 'output TPID, DEI from outer',
+	'4': 'TPID 0x8100', '6': 'output TPID, DEI 0', '7': 'output TPID, DEI 1'
+};
 
 /* [ name, offset, length, format, names ] */
 const layouts = {
 	'2': [ [ 'mib_data_sync', 0, 1 ] ],
 	'5': [
-		[ 'actual_type', 0, 1 ], [ 'expected_type', 1, 1 ],
+		[ 'actual_type', 0, 1, 'enum', port_types ],
+		[ 'expected_type', 1, 1, 'enum', port_types ],
 		[ 'expected_port_count', 2, 1 ],
 		[ 'expected_equipment_id', 3, 20, 'str' ],
 		[ 'actual_equipment_id', 23, 20, 'str' ],
 		[ 'protection_profile', 43, 2, 'ptr' ]
 	],
 	'6': [
-		[ 'type', 0, 1 ], [ 'ports', 1, 1 ], [ 'serial', 2, 8, 'serial' ],
+		[ 'type', 0, 1, 'enum', port_types ], [ 'ports', 1, 1 ],
+		[ 'serial', 2, 8, 'serial' ],
 		[ 'version', 10, 14, 'str' ], [ 'vendor_id', 24, 4, 'str' ],
 		[ 'admin_state', 28, 1, 'enum', admin_state ],
 		[ 'oper_state', 29, 1, 'enum', oper_state ],
@@ -55,7 +75,8 @@ const layouts = {
 		[ 'active', 15, 1 ], [ 'valid', 16, 1 ]
 	],
 	'11': [
-		[ 'expected_type', 0, 1 ], [ 'sensed_type', 1, 1 ],
+		[ 'expected_type', 0, 1, 'enum', port_types ],
+		[ 'sensed_type', 1, 1, 'enum', port_types ],
 		[ 'auto_detect', 2, 1 ], [ 'loopback', 3, 1 ],
 		[ 'admin_state', 4, 1, 'enum', admin_state ],
 		[ 'oper_state', 5, 1, 'enum', oper_state ],
@@ -124,7 +145,7 @@ const layouts = {
 		[ 'traffic_schedulers', 27, 1 ], [ 'gem_ports', 29, 2 ]
 	],
 	'262': [
-		[ 'alloc_id', 0, 2, 'ptr' ],
+		[ 'alloc_id', 0, 2, 'id' ],
 		[ 'policy', 3, 1, 'enum', policies ]
 	],
 	'263': [
@@ -141,14 +162,14 @@ const layouts = {
 		[ 'non_omci_management', 4, 2, 'ptr' ]
 	],
 	'266': [
-		[ 'gem_port', 0, 2, 'ptr' ],
+		[ 'gem_port', 0, 2, 'id' ],
 		[ 'interworking', 2, 1, 'enum', interwork_options ],
 		[ 'service_profile', 3, 2, 'ptr' ], [ 'interworking_tp', 5, 2, 'ptr' ],
 		[ 'oper_state', 8, 1, 'enum', oper_state ],
 		[ 'gal_profile', 9, 2, 'ptr' ]
 	],
 	'268': [
-		[ 'port_id', 0, 2 ], [ 'tcont', 2, 2, 'ptr' ],
+		[ 'port_id', 0, 2, 'id' ], [ 'tcont', 2, 2, 'ptr' ],
 		[ 'direction', 4, 1, 'enum', directions ],
 		[ 'upstream_tm', 5, 2, 'ptr' ], [ 'upstream_td', 7, 2, 'ptr' ],
 		[ 'downstream_queue', 10, 2, 'ptr' ], [ 'encryption', 12, 1 ],
@@ -190,6 +211,18 @@ const layouts = {
 		[ 'format', 28, 1 ], [ 'lower_limit', 29, 4 ],
 		[ 'upper_limit', 33, 4 ], [ 'bit_field', 37, 4, 'ptr' ],
 		[ 'code_points_table_size', 41, 4 ], [ 'support', 45, 1 ]
+	],
+	'309': [
+		[ 'igmp_version', 0, 1, 'enum', igmp_versions ],
+		[ 'igmp_function', 1, 1 ], [ 'immediate_leave', 2, 1 ],
+		[ 'upstream_igmp_tci', 3, 2, 'ptr' ],
+		[ 'upstream_igmp_tag_control', 5, 1 ],
+		[ 'upstream_igmp_rate', 6, 4 ]
+	],
+	'310': [
+		[ 'me_type', 0, 1 ], [ 'multicast_operations_profile', 1, 2, 'ptr' ],
+		[ 'max_simultaneous_groups', 3, 2 ], [ 'max_multicast_bandwidth', 5, 4 ],
+		[ 'bandwidth_enforcement', 9, 1 ]
 	],
 	'312': [
 		[ 'interval_end_time', 0, 1 ], [ 'threshold_data', 1, 2, 'ptr' ],
@@ -244,15 +277,18 @@ function number(data, offset, len) {
 	return n;
 }
 
+/* ASCII up to the NUL padding, or 0x hex when the bytes are not text. */
 function text(data, offset, len) {
-	let out = '';
+	let out = '', end = len;
 
-	for (let i = 0; i < len; i++) {
+	while (end > 0 && !byte(data, offset + end - 1))
+		end--;
+	for (let i = 0; i < end; i++) {
 		let c = byte(data, offset + i);
 
-		if (!c)
-			break;
-		out += (c >= 0x20 && c < 0x7f) ? chr(c) : '.';
+		if (c < 0x20 || c >= 0x7f)
+			return '0x' + substr(data, offset * 2, end * 2);
+		out += chr(c);
 	}
 	return trim(out);
 }
@@ -266,7 +302,11 @@ function field(data, spec) {
 	case 'ptr':
 		return sprintf(`0x%0${len * 2}x`, number(data, offset, len));
 	case 'raw':
-		return substr(data, offset * 2, len * 2);
+		return text(data, offset, len);
+	case 'id': {
+		let n = number(data, offset, len);
+		return sprintf(`%d (0x%0${len * 2}x)`, n, n);
+	}
 	case 'hex':
 		return sprintf('0x%02x', number(data, offset, len));
 	case 'mac': {
@@ -288,27 +328,62 @@ function field(data, spec) {
 }
 
 /* Priority 8 in a filter is "don't care", 14 is "default rule", 15 "no tag". */
-function tag(pbit, vid, tpid, treatment) {
+function filter_tag(pbit, vid, tpid) {
 	if (pbit == 15)
-		return treatment ? 'no tag added' : 'no tag';
-	if (!treatment && pbit == 14)
-		return 'default';
+		return 'no tag';
+	if (pbit == 14)
+		return 'default rule';
 
-	let p = (pbit == 8) ? (treatment ? 'copy inner' : 'any') :
-		(pbit == 9) ? 'copy outer' : (pbit == 10) ? 'from DSCP' : pbit;
-	let v = (vid == 4096) ? (treatment ? 'copy inner' : 'any') :
-		(vid == 4097) ? 'copy outer' : vid;
-
-	return `vid ${v}, pbit ${p}, tpid ${tpid}`;
+	let out = sprintf('VLAN %s, priority %s', vid == 4096 ? 'any' : vid,
+			  pbit == 8 ? 'any' : pbit);
+	return filter_tpids[tpid] ? `${out}, ${filter_tpids[tpid]}` : out;
 }
 
-function rule_text(r) {
-	return sprintf('filter outer [%s] inner [%s] ethertype %d -> remove %d, outer [%s] inner [%s]',
-		tag(r.filter_outer_pbit, r.filter_outer_vid, r.filter_outer_tpid_dei),
-		tag(r.filter_inner_pbit, r.filter_inner_vid, r.filter_inner_tpid_dei),
-		r.filter_ethertype, r.tags_to_remove,
-		tag(r.treat_outer_pbit, r.treat_outer_vid, r.treat_outer_tpid_dei, true),
-		tag(r.treat_inner_pbit, r.treat_inner_vid, r.treat_inner_tpid_dei, true));
+function treat_tag(pbit, vid, tpid) {
+	if (pbit == 15)
+		return 'none';
+
+	let p = (pbit == 8) ? 'from inner' : (pbit == 9) ? 'from outer' :
+		(pbit == 10) ? 'from DSCP' : pbit;
+	let v = (vid == 4096) ? 'from inner' : (vid == 4097) ? 'from outer' : vid;
+	let out = `VLAN ${v}, priority ${p}`;
+
+	return treat_tpids[tpid] ? `${out}, ${treat_tpids[tpid]}` : out;
+}
+
+function rule_summary(r) {
+	let remove = r.tags_to_remove;
+
+	return {
+		filter_outer: filter_tag(r.filter_outer_pbit, r.filter_outer_vid, r.filter_outer_tpid_dei),
+		filter_inner: filter_tag(r.filter_inner_pbit, r.filter_inner_vid, r.filter_inner_tpid_dei),
+		ethertype: r.filter_ethertype ? (ethertypes[r.filter_ethertype] ?? `${r.filter_ethertype}`) : 'any',
+		action: remove == 3 ? 'drop frame' : remove ? `remove ${remove} tag${remove > 1 ? 's' : ''}` : 'keep tags',
+		add_outer: treat_tag(r.treat_outer_pbit, r.treat_outer_vid, r.treat_outer_tpid_dei),
+		add_inner: treat_tag(r.treat_inner_pbit, r.treat_inner_vid, r.treat_inner_tpid_dei)
+	};
+}
+
+function rule_text(s) {
+	return sprintf('filter outer [%s] inner [%s] ethertype %s -> %s, add outer [%s] inner [%s]',
+		s.filter_outer, s.filter_inner, s.ethertype, s.action, s.add_outer, s.add_inner);
+}
+
+/* 64 code points of 3 bits each, most significant first. */
+function dscp_text(map) {
+	if (type(map) != 'string' || match(map, /^0*$/))
+		return 'all DSCP to priority 0';
+
+	let out = [];
+
+	for (let dscp = 0; dscp < 64; dscp++) {
+		let bit = dscp * 3, n = 0;
+
+		for (let i = 0; i < 3; i++, bit++)
+			n = n * 2 + ((byte(map, bit >> 3) >> (7 - (bit & 7))) & 1);
+		push(out, n);
+	}
+	return join(' ', out);
 }
 
 export function decode(item) {
@@ -326,10 +401,22 @@ export function decode(item) {
 		for (let i = 0; i < fields.entries && i < 12; i++) {
 			let tci = number(data, i * 2, 2);
 
-			push(fields.filters, `vid ${tci & 0xfff}, pbit ${tci >> 13}, dei ${(tci >> 12) & 1}`);
+			push(fields.filters, `VLAN ${tci & 0xfff}, priority ${tci >> 13}, DEI ${(tci >> 12) & 1}`);
 		}
 	}
-	else if (item.class_id == 171 && item.extended_vlan)
-		fields.rules = map(item.extended_vlan.rules || [], rule_text);
+	else if (item.class_id == 171 && item.extended_vlan) {
+		let vlan = item.extended_vlan;
+
+		if (vlan.max_table_size != null)
+			fields.max_table_size = vlan.max_table_size;
+		fields.dscp_to_priority = dscp_text(vlan.dscp_to_pbit);
+		fields.rules = [];
+		for (let r in vlan.rules ?? []) {
+			if (r.delete)
+				continue;
+			r.summary = rule_summary(r);
+			push(fields.rules, rule_text(r.summary));
+		}
+	}
 	return fields;
 }

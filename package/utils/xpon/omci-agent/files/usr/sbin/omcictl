@@ -28,7 +28,7 @@ function usage(exitcode) {
 		'  class list\n' +
 		'  class show CLASS_ID\n' +
 		'  mib list\n' +
-		'  mib show CLASS_ID [ENTITY_ID]\n' +
+		'  mib show|get CLASS_ID [ENTITY_ID]\n' +
 		'  mib set CLASS_ID ENTITY_ID ATTR_MASK HEX_DATA\n' +
 		'  mib delete CLASS_ID ENTITY_ID\n' +
 		'  mib reset\n' +
@@ -335,14 +335,14 @@ case 'mib': {
 		result = rpc('mib_list', { device }, 'objects');
 		kind = 'mib';
 	}
-	else if (sub == 'show' && length(ARGV) == 2) {
+	else if ((sub == 'show' || sub == 'get') && length(ARGV) == 2) {
 		let class_id = uint(shift(ARGV), 0xffff);
 		let entity_id = uint(shift(ARGV), 0xffff);
 		if (class_id == null || entity_id == null) usage(2);
 		result = [ rpc('mib_get', { device, class_id, entity_id }, 'object') ];
 		kind = 'objects';
 	}
-	else if (sub == 'show' && length(ARGV) == 1) {
+	else if ((sub == 'show' || sub == 'get') && length(ARGV) == 1) {
 		let class_id = uint(shift(ARGV), 0xffff);
 		if (class_id == null) usage(2);
 		result = filter(rpc('mib_list', { device }, 'objects') || [],

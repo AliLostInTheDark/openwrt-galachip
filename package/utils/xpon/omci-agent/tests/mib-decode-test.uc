@@ -32,10 +32,24 @@ let f = decode({
 });
 check('171 association', f.association_type, '10 (VEIP)');
 check('171 pointer', f.associated_me, '0x0301');
-check('171 rule', f.rules[0], 'filter outer [vid 660, pbit any, tpid 0] inner [vid any, pbit any, tpid 0] ethertype 0 -> remove 1, outer [no tag added] inner [vid 660, pbit copy outer, tpid 3]');
+check('171 rule', f.rules[0], 'filter outer [VLAN 660, priority any] inner [VLAN any, priority any] ethertype any -> remove 1 tag, add outer [none] inner [VLAN 660, priority from outer, output TPID, DEI from outer]');
+check('171 dscp', f.dscp_to_priority, 'all DSCP to priority 0');
+
+f = decode({
+	class_id: 171,
+	data: data([ '0a' ]),
+	extended_vlan: { max_table_size: 32, rules: [
+		{ filter_outer_pbit: 15, filter_inner_pbit: 15, filter_ethertype: 1, tags_to_remove: 3,
+		  treat_outer_pbit: 15, treat_inner_pbit: 15 },
+		{ delete: 1 }
+	] }
+});
+check('171 table size', f.max_table_size, 32);
+check('171 drop', f.rules[0], 'filter outer [no tag] inner [no tag] ethertype IPv4 (0x0800) -> drop frame, add outer [none] inner [none]');
+check('171 deleted rule', length(f.rules), 1);
 
 f = decode({ class_id: 84, data: data([ '0294', '00000000000000000000000000000000000000000000', '10', '01' ]) });
-check('84 filter', f.filters[0], 'vid 660, pbit 0, dei 0');
+check('84 filter', f.filters[0], 'VLAN 660, priority 0, DEI 0');
 check('84 entries', length(f.filters), 1);
 
 f = decode({ class_id: 47, data: data([ '0001', '01', '0b', '0301', '00000000000000', '001122334455' ]) });
@@ -49,7 +63,25 @@ check('256 version', f.version, 'V1.0');
 check('256 serial', f.serial, 'ZYOT12345678');
 
 f = decode({ class_id: 65305, data: '01aabbccddeeff' });
-check('vendor ME', f.attr_2, 'aabbccddeeff');
+check('vendor ME', f.attr_2, '0xaabbccddeeff');
+
+f = decode({ class_id: 131, data: data([ '414c434c', '060204000002' ]) });
+check('131 vendor', f.vendor_id, 'ALCL');
+check('131 binary string', f.equipment_id, '0x060204000002');
+check('131 empty', f.version, '');
+check('131 zero raw', f.time_of_day, '');
+
+f = decode({ class_id: 65296, data: data([ '000000000000000000000000000000', '5a594f545a594f5420095605' ]) });
+check('vendor binary', f.attr_10, '0x5a594f545a594f5420095605');
+
+f = decode({ class_id: 65296, data: data([ '000000000000000000000000000000', '5a594f544142434431323334' ]) });
+check('vendor ASCII', f.attr_10, 'ZYOTABCD1234');
+
+f = decode({ class_id: 262, data: data([ '0100' ]) });
+check('262 alloc', f.alloc_id, '256 (0x0100)');
+
+f = decode({ class_id: 310, data: data([ '00', '0601' ]) });
+check('310 profile', f.multicast_operations_profile, '0x0601');
 check('unknown class', decode({ class_id: 9999, data: '00' }), null);
 
 if (fails)

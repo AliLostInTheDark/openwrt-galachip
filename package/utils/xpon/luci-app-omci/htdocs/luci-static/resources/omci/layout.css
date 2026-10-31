@@ -39,6 +39,24 @@
 	display: none;
 }
 
+.omci-mib-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.omci-mib-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.omci-mib-filter select { width: auto; min-width: 0; max-width: 100%; }
+.omci-mib-table { min-width: 760px; }
+.omci-mib-table th { white-space: nowrap; }
+.omci-mib-class { margin: 0 0 8px; padding: 0; }
+.omci-mib-class > summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding: 10px 12px; cursor: pointer; border: 1px solid var(--border, var(--border-color-medium, #ccc)); border-radius: 6px; }
+.omci-mib-class[open] > summary { margin-bottom: 12px; }
+.omci-mib-class-info, .omci-mib-origin { font-size: 12px; opacity: .72; }
+.omci-mib-object-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 8px; }
+.omci-mib-wide { grid-column: 1 / -1; }
+.omci-mib-object h5 { margin: 14px 0 6px; }
+.omci-mib-rules { min-width: 820px; }
+.omci-mib-raw { margin-top: 10px; }
+.omci-mib-raw > summary { font-size: 12px; opacity: .72; cursor: pointer; }
+.omci-page .omci-mib-raw pre, .omci-mib-raw pre { margin: 6px 0 0; font-size: 12px; white-space: pre; overflow-x: auto; }
+.omci-mib-details .omci-mib-object { border: 0; padding: 0; }
+
 :is(.omci-page, .omci-mib-editor) .control-group > input {
 	min-width: 0;
 }
