@@ -7,6 +7,7 @@
 #define ACK 6
 #define NAK 21
 #define CAN 24
+#define PURGE_MAX 2048
 static uint8_t block[1024];
 struct xmodem_status xmodem_status;
 
@@ -18,6 +19,15 @@ static uint16_t crc16(uint16_t crc, uint8_t data)
 	for (i = 0; i < 8; i++)
 		crc = crc & 0x8000 ? (crc << 1) ^ 0x1021 : crc << 1;
 	return crc;
+}
+
+/* Bounded so continuous line noise still consumes the finite retry budget. */
+static void purge(void)
+{
+	unsigned int n;
+
+	for (n = 0; n < PURGE_MAX && uart_get() >= 0; n++)
+		;
 }
 
 int xmodem_receive(void *destination, size_t capacity)
@@ -48,8 +58,7 @@ int xmodem_receive(void *destination, size_t capacity)
 				xmodem_status.timeouts++;
 			else
 				xmodem_status.header_errors++;
-			/* Before the first packet, request CRC mode without a NAK. */
-			if (!total) {
+			if (c < 0 && !total) {
 				errors++;
 				continue;
 			}
@@ -120,7 +129,11 @@ int xmodem_receive(void *destination, size_t capacity)
 		uart_put(ACK);
 		continue;
 retry:
-		uart_put(NAK);
+		/* One response per failure, once the sender has stopped. */
+		purge();
+		/* Before the first packet, the 'C' above is the only request. */
+		if (total)
+			uart_put(NAK);
 		errors++;
 	}
 cancel:

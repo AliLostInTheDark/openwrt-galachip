@@ -130,6 +130,34 @@ class Images(unittest.TestCase):
         self.assertEqual(self.c.uart_output_count(67), 3)
         self.assertEqual(self.c.uart_output_count(21), 0)
 
+    def test_initial_junk_is_drained_once(self):
+        data = b"a" * 128
+        result, out = self.receive([0x55] * 70 + [-1] + packet(1, data) + [4], 128)
+        self.assertEqual((result, out), (128, data))
+        self.assertEqual(self.c.uart_output_count(67), 2)
+        self.assertEqual(self.c.uart_output_count(21), 0)
+
+    def test_bad_first_packet_requests_crc_without_nak(self):
+        data = b"a" * 128
+        result, out = self.receive(packet(1, data, True) + [-1] +
+                                   packet(1, data) + [4], 128)
+        self.assertEqual((result, out), (128, data))
+        self.assertEqual(self.c.uart_output_count(67), 2)
+        self.assertEqual(self.c.uart_output_count(21), 0)
+
+    def test_lost_header_gets_one_nak(self):
+        first, second = b"a" * 128, b"b" * 128
+        stream = (packet(1, first) + packet(2, second)[1:] + [-1, -1] +
+                  packet(2, second) + [4])
+        result, out = self.receive(stream, 256)
+        self.assertEqual((result, out), (256, first + second))
+        self.assertEqual(self.c.uart_output_count(21), 1)
+
+    def test_continuous_noise_cancels(self):
+        result, _ = self.receive([0x55] * 200000, 128)
+        self.assertEqual(result, -1)
+        self.assertEqual(self.c.uart_output_count(24), 2)
+
     def test_uart_package_and_overflow(self):
         for n in (1, 128, images.PROPER_MAX):
             packed = images.uart_image(bytes(n))
@@ -143,14 +171,14 @@ class Images(unittest.TestCase):
 
     def test_crc_failure_never_copies(self):
         data = b"a" * 128
-        result, out = self.receive(packet(1, data, True) + [24], 128)
+        result, out = self.receive(packet(1, data, True) + [-1, 24], 128)
         self.assertEqual(result, -1)
         self.assertEqual(out, b"!" * 128)
-        self.assertEqual(self.c.uart_output_count(21), 1)
+        self.assertEqual(self.c.uart_output_count(21), 0)
 
     def test_crc_retry_and_duplicate(self):
         data = b"a" * 128
-        result, out = self.receive(packet(1, data, True) +
+        result, out = self.receive(packet(1, data, True) + [-1] +
                                    packet(1, data) + packet(1, data) + [4], 128)
         self.assertEqual((result, out), (128, data))
 
@@ -187,7 +215,7 @@ class Images(unittest.TestCase):
             self.assertEqual(result, -1)
         stream = packet(1, b"a" * 128)
         stream[2] = 0
-        result, out = self.receive(stream + [24], 128)
+        result, out = self.receive(stream + [-1, 24], 128)
         self.assertEqual(result, -1)
         self.assertEqual(out, b"!" * 128)
 
