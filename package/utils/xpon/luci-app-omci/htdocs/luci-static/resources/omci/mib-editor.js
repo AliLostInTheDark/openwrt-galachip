@@ -137,6 +137,9 @@ function render(group, data, title, description) {
 						modalError(errorNode, _('Class, entity and mask must be between 0 and 65535. Data must be at most 64 bytes of hexadecimal pairs.'));
 						return;
 					}
+					/* The box hides trailing zeros, but omcid reads the length. */
+					if (item)
+						bytes = bytes.padEnd((item.data || '').length, '0');
 					return complete(omci.mibSet(0, classId, entityId, mask, bytes), errorNode);
 				})
 			])
