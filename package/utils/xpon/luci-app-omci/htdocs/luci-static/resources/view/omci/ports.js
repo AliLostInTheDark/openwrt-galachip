@@ -140,6 +140,12 @@ function portSpec(ports, name) {
 	return (ports || []).find(function(p) { return p.split(':')[0] == name; });
 }
 
+function portMode(id, port) {
+	var spec = portSpec(uci.get('network', id, 'ports'), port);
+
+	return spec ? (spec.split(':')[1] || 'u*') : '-';
+}
+
 return view.extend({
 	load: function() {
 		return Promise.all([ uci.load('omci'), L.resolveDefault(uci.load('network'), null),
@@ -152,7 +158,7 @@ return view.extend({
 		var supported = !!(bridge && status.port_vlan && ports.length);
 		var reserved = status.reserved_vids || [];
 		var m = new form.Map('network', _('LAN VLANs'),
-			_('Choose one VLAN policy here. The service VLAN policy uses the global mode; the per-port table controls VLAN membership and tagging for each LAN port.'));
+			_('<em>Transparent</em>: the ONU passes the VLAN tag unchanged, so the router must tag this VLAN. <em>Tagged</em>: the ONU adds the VLAN towards the OLT and removes it towards the LAN, so the router uses no VLAN.'));
 		var s, o, root;
 
 		vlanMap = m;
@@ -175,17 +181,17 @@ return view.extend({
 		}
 
 		if (supported) {
-			s = m.section(form.NamedSection, bridge['.name'], 'device', _('VLAN policy'));
+			s = m.section(form.NamedSection, bridge['.name'], 'device', _('VLAN control'));
 			s.uciconfig = 'network';
 			s.addremove = false;
 			o = s.option(form.ListValue, 'vlan_filtering', _('Control mode'));
-			o.value('0', _('Service VLAN (simple)'));
-			o.value('1', _('Per-port VLAN table'));
+			o.value('0', _('One service VLAN (simple)'));
+			o.value('1', _('VLAN table (per port)'));
 			o.default = '0';
 			o.rmempty = false;
 			o.forcewrite = true;
 			o.cfgvalue = function() { return perPort ? '1' : '0'; };
-			o.description = _('Only the selected policy applies. Include your current LAN port and the ONU in the management VLAN before applying per-port control.');
+			o.description = _('Only the selected control applies. Before switching to the VLAN table, make sure your LAN port can still reach the ONU in the management VLAN.');
 			o.onchange = function(ev, section_id, value) {
 				perPort = value == '1';
 				root.querySelectorAll('[data-vlan-policy]').forEach(function(node) {
@@ -202,7 +208,8 @@ return view.extend({
 				o.rmempty = false;
 				o.retain = true;
 				o.depends('vlan_filtering', '1');
-				o.description = _('Optionally replace the 802.1p priority sent towards the OLT. Downstream priority is preserved.');
+				if (port == ports[ports.length - 1])
+					o.description = _('Optionally replace the 802.1p priority sent towards the OLT. Downstream priority is preserved.');
 			});
 		}
 
@@ -210,12 +217,12 @@ return view.extend({
 		s.uciconfig = 'omci';
 		s.addremove = false;
 		o = s.option(form.ListValue, 'mode', _('Mode'));
-		o.value('transparent', _('Transparent'));
-		o.value('tagged', _('Tagged'));
+		o.value('transparent', _('Transparent (router tags)'));
+		o.value('tagged', _('Tagged (router untagged)'));
 		o.value('olt', _('Control by OLT'));
 		o.default = 'transparent';
 		o.rmempty = false;
-		o.description = _('<em>Transparent</em> passes frames unchanged; the router tags the VLAN itself. <em>Tagged</em> adds the VLAN below towards the OLT and removes it towards the LAN, so the router sends untagged frames. <em>Control by OLT</em> does the same with the VLAN that the OLT assigns to untagged traffic. The service VLAN is inserted in hardware when switch offload is active.');
+		o.description = _('<em>Control by OLT</em> works like Tagged, using the VLAN that the OLT assigns to untagged traffic. To mix ports, choose Tagged or Control by OLT, then set the port below to Transparent.');
 
 		o = s.option(form.Value, 'vid', _('VLAN ID'));
 		o.datatype = 'range(1,4094)';
@@ -236,15 +243,16 @@ return view.extend({
 		o.depends('mode', 'tagged');
 
 		ports.forEach(function(port) {
-			o = s.option(form.ListValue, port + '_tagged', _('%s service VLAN').format(port.toUpperCase()));
-			o.value('0', _('Follow LAN VLAN mode'));
-			o.value('1', _('Keep service VLAN tagged'));
+			o = s.option(form.ListValue, port + '_tagged', _('%s mode').format(port.toUpperCase()));
+			o.value('0', _('Tagged (router untagged)'));
+			o.value('1', _('Transparent (router tags)'));
 			o.depends('mode', 'tagged');
 			o.depends('mode', 'olt');
 			o.retain = true;
 			o.default = '0';
 			o.rmempty = false;
-			o.description = _('Choose independently for each port. Keep tagged retains the VLAN that the LAN VLAN mode or OLT otherwise removes; the connected router must tag that VLAN. Other tagged services pass unchanged. This requires one native service VLAN.');
+			if (port == ports[ports.length - 1])
+				o.description = _('Set independently for each port. Other VLANs pass unchanged. Needs exactly one untagged service VLAN.');
 		});
 
 		if (supported) {
@@ -255,7 +263,7 @@ return view.extend({
 				o.rmempty = false;
 				o.placeholder = 'br-lan.1';
 				o.forcewrite = true;
-				o.description = _('Management VLAN with ONU (CPU) membership, for example br-lan.1. Optional untagged access below works independently of each port’s service VLAN.');
+				o.description = _('A VLAN from the table below with ONU (CPU) ticked, for example br-lan.1.');
 				o.cfgvalue = function() {
 					var device = uci.get('network', 'lan', 'device') == 'br-onu'
 						? (uci.get('network', 'omci_management', 'ports') || [])[0]
@@ -277,7 +285,7 @@ return view.extend({
 				o.optional = true;
 				o.rmempty = true;
 				ports.forEach(function(port) { o.value(port, port.toUpperCase()); });
-				o.description = _('Selected ports accept IPv4 traffic to the ONU’s management address without a VLAN tag, even when their native VLAN carries Internet or another service. Service VLANs remain isolated. Uses a Linux bridge and traffic classifiers; ordinary service traffic stays on its existing offload path.');
+				o.description = _('Selected ports reach this ONU’s IPv4 address without a VLAN tag, even when the port is Tagged (router untagged) on the Internet VLAN. Service traffic is not affected.');
 				o.validate = function(id, value) {
 					var existing = uci.get('network', 'omci_management');
 					var collision = uci.sections('network', 'device').some(function(dev) {
@@ -315,9 +323,9 @@ return view.extend({
 				o.remove = function(id) { return this.write(id, []); };
 			}
 
-			s = policySection(m.section(form.GridSection, 'bridge-vlan', _('VLAN membership')), true);
+			s = policySection(m.section(form.GridSection, 'bridge-vlan', _('VLAN table')), true);
 			s.uciconfig = 'network';
-			s.description = _('ONU (CPU) membership enables local access on that VLAN. Untagged management access above can also provide local access independently of the native service VLAN.');
+			s.description = _('For each VLAN, choose how each LAN port carries it. <em>Transparent</em>: the router must tag this VLAN. <em>Tagged</em>: the ONU adds and removes the VLAN, so the router sends plain frames; each port can do this on one VLAN only. To move it to another VLAN, turn on Untagged management access above for that port first, then set the old VLAN to Transparent or Not a member. <em>PON</em> carries the VLAN to the OLT. <em>ONU (CPU)</em> gives the ONU itself access to the VLAN.');
 			s.anonymous = true;
 			s.addremove = true;
 			s.sortable = true;
@@ -353,19 +361,23 @@ return view.extend({
 			ports.concat([ 'pon0' ]).forEach(function(port) {
 				var option = s.option(form.ListValue, '_port_' + port,
 					port == 'pon0' ? _('PON') : port.toUpperCase());
-				option.value('-', _('Not a member'));
-				option.value('t', _('Tagged'));
+				var modes = uci.sections('network', 'bridge-vlan').map(function(row) {
+					return portMode(row['.name'], port);
+				});
+
+				option.value('-', port == 'pon0' ? _('Not carried') : _('Not a member'));
+				option.value('t', port == 'pon0' ? _('Carried') : _('Transparent (router tags)'));
 				if (port != 'pon0') {
-					option.value('u', _('Untagged'));
-					option.value('t*', _('Tagged, native'));
-					option.value('u*', _('Untagged, native'));
+					option.value('u*', _('Tagged (router untagged)'));
+					/* Asymmetric modes: offered only to keep an existing configuration. */
+					if (modes.indexOf('t*') >= 0)
+						option.value('t*', _('Transparent; plain frames also join'));
+					if (modes.indexOf('u') >= 0)
+						option.value('u', _('Tag removed towards LAN only'));
 				}
 				option.rmempty = false;
 				option.editable = true;
-				option.cfgvalue = function(id) {
-					var spec = portSpec(uci.get('network', id, 'ports'), port);
-					return spec ? (spec.split(':')[1] || 'u*') : '-';
-				};
+				option.cfgvalue = function(id) { return portMode(id, port); };
 				option.write = function(id, value) {
 					var list = (uci.get('network', id, 'ports') || []).filter(function(p) {
 						return p.split(':')[0] != port;
@@ -381,7 +393,7 @@ return view.extend({
 						return row['.name'] != id && row.device == 'br-lan' &&
 							(this.formvalue(row['.name']) || '').indexOf('*') >= 0;
 					}, this);
-					return duplicate ? _('Each LAN port may have only one native VLAN.') : true;
+					return duplicate ? _('A LAN port can be Tagged (router untagged) on one VLAN only. Set the other VLAN to Transparent or Not a member.') : true;
 				};
 			});
 
@@ -390,7 +402,7 @@ return view.extend({
 		s = m.section(form.NamedSection, 'main', 'agent', _('VLAN scan'));
 		s.uciconfig = 'omci';
 		s.addremove = false;
-		s.description = _('Scan results can set the simple service VLAN policy. With per-port control, configure the discovered VLAN in the membership table.');
+		s.description = _('Results can set the service VLAN directly. With the VLAN table, add the VLAN you found to the table yourself.');
 		o = s.option(form.Value, 'scan_vids', _('Extra VLAN IDs to scan'));
 		o.placeholder = '100 200';
 		o.description = _('The scan always tries untagged frames and every VLAN found in the OLT\'s rules, with their priorities.');
@@ -398,10 +410,10 @@ return view.extend({
 		o = s.option(form.Flag, 'scan_all', _('Scan all VLAN IDs (1-4094)'));
 		o.description = _('Sends more than 8000 broadcast probes. Only services provisioned for this ONU can reply.');
 
-		o = s.option(form.Button, '_scan', _('VLAN scan'));
+		o = s.option(form.Button, '_scan', _('Scan'));
 		o.inputtitle = _('Start VLAN scan');
 		o.inputstyle = 'action';
-		o.description = _('Lists every VLAN provisioned by the OLT, including those that do not reply. The scan sends PPPoE PADI and DHCPv4 DISCOVER probes; a silent service may use IPv6, a static address or a fixed client binding. Save extra VLAN IDs before scanning. Switch offload and the LAN VLAN setting are paused during the scan, so untagged probes leave untagged.');
+		o.description = _('Sends PPPoE and DHCPv4 probes and lists every VLAN the OLT provisioned, including those that do not reply. A silent VLAN may still be in use, for example with IPv6 or a static address. Save extra VLAN IDs first. LAN traffic may be interrupted during the scan.');
 		o.onclick = function(ev, section_id) {
 			return runScan('vlan');
 		};
@@ -442,7 +454,7 @@ return view.extend({
 .omci-vlan-page .cbi-value-description { overflow-wrap: anywhere; }
 .omci-vlan-scroll { width: 100%; max-width: 100%; overflow-x: auto; padding-bottom: .75rem; }
 @media (max-width: 600px) {
- .omci-vlan-page .cbi-value { display: block; }
+ .omci-vlan-page .cbi-value:not(.hidden) { display: block; }
  .omci-vlan-page .cbi-value label.cbi-value-title { display: block; float: none; width: auto; text-align: left; padding: 0 0 .5rem; }
  .omci-vlan-page .cbi-value > .cbi-value-field { width: 100%; margin: 0; padding: 0; }
  .omci-vlan-page .cbi-value > .cbi-value-field select,
@@ -452,7 +464,7 @@ return view.extend({
 `));
 			node.querySelectorAll('.cbi-section-table').forEach(function(table) {
 				var scroll = E('div', { 'class': 'omci-vlan-scroll', 'tabindex': '0',
-					'role': 'region', 'aria-label': _('VLAN membership') });
+					'role': 'region', 'aria-label': _('VLAN table') });
 				table.parentNode.insertBefore(scroll, table);
 				scroll.appendChild(table);
 			});

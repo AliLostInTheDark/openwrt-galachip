@@ -73,6 +73,9 @@ function vlanText(vlan) {
 	if (!vlan || !vlan.mode)
 		return _('The omci-vlan service is not running.');
 
+	if (vlan.mode == 'bridge')
+		return _('Set per port in the VLAN table (%s)').format(vlan.port || '-');
+
 	var mode = { transparent: _('Transparent'), tagged: _('Tagged'), olt: _('Control by OLT') }[vlan.mode] || vlan.mode;
 	var detail;
 
