@@ -50,6 +50,12 @@ return baseclass.extend({
 
 	monitor: monitor,
 
+	icon: function(dev) {
+		if (!dev || dev.getName() != 'pon0')
+			return null;
+		return L.resource('v2802rh/pon_%s.svg').format(dev.getCarrier() ? 'up' : 'down');
+	},
+
 	capacity: function(dev) {
 		if (dev.getName() != 'eth0')
 			return null;
