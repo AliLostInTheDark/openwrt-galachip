@@ -1,113 +1,44 @@
-<!-- Adapted from LuCI icons/port_up.svg; native LuCI housing with an SC socket and continuous fibre assembly. -->
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="32" height="32" version="1.1" viewBox="0 0 48 48">
+<!-- Adapted from LuCI icons/port_up.svg: the native housing with a green SC/APC adapter and its plugged-in connector. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" version="1.1" viewBox="0 0 48 48">
  <defs>
-  <linearGradient id="linearGradient7887" x1="-7.975" x2="-11.01" y1="25.36" y2="-6.568" gradientTransform="matrix(2 0 0 1.933 43.5 .5333)" gradientUnits="userSpaceOnUse">
+  <linearGradient id="tile" x1="-7.975" x2="-11.01" y1="25.36" y2="-6.568" gradientTransform="matrix(2 0 0 1.933 43.5 .5333)" gradientUnits="userSpaceOnUse">
    <stop stop-color="#d3d7cf" offset="0" />
    <stop stop-color="#fff" offset="1" />
   </linearGradient>
-  <linearGradient id="linearGradient7889" x1="-7.852" x2="-5.51" y1="3.755" y2="18.94" gradientUnits="userSpaceOnUse">
+  <linearGradient id="edge" x1="-7.852" x2="-5.51" y1="3.755" y2="18.94" gradientUnits="userSpaceOnUse">
    <stop stop-color="#fff" offset="0" />
    <stop stop-color="#fff" stop-opacity="0" offset="1" />
   </linearGradient>
-  <filter id="filter5386" x="-.01972" y="-.02176" width="1.039" height="1.044" color-interpolation-filters="sRGB">
+  <filter id="soft" x="-.01972" y="-.02176" width="1.039" height="1.044" color-interpolation-filters="sRGB">
    <feGaussianBlur stdDeviation="0.26293105" />
   </filter>
-  <linearGradient id="linearGradient9" x1="25.05" x2="27.76" y1="16.17" y2="24.54" gradientTransform="matrix(1.088 0 0 1.086 294.4 40.06)" gradientUnits="userSpaceOnUse" xlink:href="#linearGradient3983" />
-  <linearGradient id="linearGradient3983">
-   <stop stop-color="#555753" offset="0" />
-   <stop stop-color="#888a85" offset="1" />
+  <linearGradient id="adapter" x1="26" x2="26" y1="9" y2="31" gradientUnits="userSpaceOnUse">
+   <stop stop-color="#2fd877" offset="0" />
+   <stop stop-color="#0d9a45" offset="1" />
   </linearGradient>
-  <linearGradient id="linearGradient11" x1="326.5" x2="326.5" y1="61.7" y2="60.69" gradientUnits="userSpaceOnUse">
-   <stop stop-color="#babdb6" offset="0" />
-   <stop stop-color="#fff" offset="1" />
+  <linearGradient id="groove" x1="22" x2="30" y1="17" y2="23.5" gradientUnits="userSpaceOnUse">
+   <stop stop-color="#0d8a40" offset="0" />
+   <stop stop-color="#9eeabc" offset="1" />
   </linearGradient>
-  <radialGradient id="radialGradient4612-0" cx="306.5" cy="86.38" r="21.91" gradientTransform="matrix(2.238 -.5404 .1485 .615 -392 204.4)" gradientUnits="userSpaceOnUse">
-   <stop offset="0" />
-   <stop stop-opacity="0" offset="1" />
-  </radialGradient>
-  <filter id="filter4618-7" x="-.07545" y="-.06204" width="1.151" height="1.143">
-   <feGaussianBlur stdDeviation="0.89652215" />
-  </filter>
-  <linearGradient id="linearGradient12" x1="322.3" x2="328.4" y1="62.62" y2="68.74" gradientTransform="matrix(.75 0 0 .8333 81.62 10.42)" gradientUnits="userSpaceOnUse" xlink:href="#linearGradient4206" />
-  <linearGradient id="linearGradient4206">
-   <stop stop-color="#fff" offset="0" />
-   <stop stop-color="#babdb6" offset="1" />
-  </linearGradient>
-  <linearGradient id="linearGradient13" x1="325.4" x2="328.4" y1="63.27" y2="68.74" gradientTransform="matrix(.5 0 0 .5 -489.8 -97.75)" gradientUnits="userSpaceOnUse" xlink:href="#linearGradient4206" />
-  <linearGradient id="linearGradient14" x1="-47.16" x2="-46.15" y1="39.38" y2="44.17" gradientTransform="translate(386,50)" gradientUnits="userSpaceOnUse">
-   <stop stop-color="#e9cc65" offset="0" />
-   <stop stop-color="#e9cc65" stop-opacity="0" offset="1" />
-  </linearGradient>
-  <linearGradient id="linearGradient15" x1="-48" x2="-46.75" y1="40.38" y2="45.69" gradientTransform="translate(386,50)" gradientUnits="userSpaceOnUse">
-   <stop stop-color="#9b813b" offset="0" />
-   <stop stop-color="#9b813b" stop-opacity="0" offset="1" />
-  </linearGradient>
-  <linearGradient id="scPlug" x1="323" y1="65" x2="329" y2="67" gradientUnits="userSpaceOnUse">
-   <stop offset="0" stop-color="#bdd5a2" />
-   <stop offset=".35" stop-color="#8eb06a" />
-   <stop offset="1" stop-color="#4d733e" />
-  </linearGradient>
-  <linearGradient id="scBoot" x1="323" y1="65" x2="329" y2="67" gradientUnits="userSpaceOnUse">
-   <stop offset="0" stop-color="#9dbd7b" />
-   <stop offset=".4" stop-color="#789b55" />
-   <stop offset="1" stop-color="#3c602f" />
+  <linearGradient id="plug" x1="19.5" x2="32.5" y1="0" y2="0" gradientUnits="userSpaceOnUse">
+   <stop stop-color="#52e690" offset="0" />
+   <stop stop-color="#17b558" offset=".5" />
+   <stop stop-color="#0b7f39" offset="1" />
   </linearGradient>
  </defs>
- <clipPath id="b">
-  <rect x="68.78" y="-.0933" width="58.26" height="58.26" rx="2.648" />
- </clipPath>
- <filter id="c" x="-.021" y="-.021" width="1.042" height="1.042" color-interpolation-filters="sRGB">
-  <feGaussianBlur stdDeviation=".28282197" />
- </filter>
- <clipPath id="h">
-  <path d="m-6.562 24.53c-0.3877 0-0.6917 0.219-0.9062 0.469l-0.031-0.03-0.031 0.06-0.3438 0.313-4.25 1.218c-0.03 0-0.06 0.02-0.09 0.03-0.549 0.274-0.902 0.554-1.094 0.937-0.192 0.384-0.116 0.867 0.125 1.156 0.329 0.394 0.858 0.553 1.407 0.657l-0.407 0.437c-0.06 0.05-0.1 0.116-0.125 0.188-0.03 0.121-0.07 0.316-0.125 0.5-0.02 0.04-0.03 0.08-0.03 0.125v6.656c0 0.299 0.113 0.582 0.313 0.813 0.199 0.23 0.511 0.406 0.875 0.406h7.843c0.3236 0 0.6569-0.116 0.9063-0.375l4.651-4.81c0.2259-0.235 0.3437-0.539 0.3437-0.875v-6.625c0-0.335-0.1178-0.64-0.3437-0.875-0.2227-0.229-0.5504-0.375-0.874-0.375z" />
- </clipPath>
- <filter id="i" x="-.03844" y="-.04352" width="1.077" height="1.087" color-interpolation-filters="sRGB">
-  <feGaussianBlur stdDeviation=".1491362" />
- </filter>
- <filter id="p" x="-.02026" y="-.02354" width="1.04" height="1.047" color-interpolation-filters="sRGB">
-  <feGaussianBlur stdDeviation=".071069152" />
- </filter>
- <filter id="x" x="-.03625" y="-.04222" width="1.071" height="1.083" color-interpolation-filters="sRGB">
-  <feGaussianBlur stdDeviation=".16679387" />
- </filter>
- <clipPath id="A">
-  <path d="m-95.3 143.8s-4.189 3.27-8.1 6.5c-1.95 1.62-3.69 3.22-4.72 4.78-0.51 0.78-0.98 1.62-0.65 2.78 0.16 0.58 0.61 1.12 1.09 1.41 0.48 0.28 0.96 0.4 1.5 0.47 2.13 0.24 4.73-0.4 7.849-1.28 3.113-0.89 6.669-2.09 10.25-3.25 3.581-1.17 7.196-2.31 10.34-3 3.147-0.7 5.835-0.89 7.375-0.5 0.729 0.18 0.745 0.3 0.75 0.31 0 0 0.06 0.33-0.219 0.94-0.567 1.2-2.245 3.11-4.187 4.93-3.885 3.64-8.844 7.13-8.844 7.13l1.75 2.44s5.041-3.52 9.156-7.38c2.058-1.93 3.879-3.89 4.813-5.87 0.466-1 0.776-2.12 0.343-3.25-0.433-1.14-1.541-1.87-2.812-2.19-2.46-0.62-5.444-0.21-8.781 0.53-3.337 0.73-7.019 1.85-10.62 3.03-3.607 1.18-7.129 2.4-10.12 3.25-2.913 0.83-5.293 1.22-6.473 1.13 0.62-0.95 2.3-2.56 4.16-4.1 3.721-3.08 7.969-6.37 7.969-6.37z" />
- </clipPath>
- <mask id="B" maskUnits="userSpaceOnUse">
-  <rect x="-115.6" y="147" width="51.28" height="17.34" rx=".6657" fill="url(#C)" fill-rule="evenodd" stroke-width="2" />
- </mask>
- <linearGradient id="C" x1="-112.3" x2="-112.3" y1="148.9" y2="164.5" gradientUnits="userSpaceOnUse">
-  <stop offset="0" />
-  <stop stop-color="#fff" offset=".2177" />
-  <stop stop-color="#fff" offset=".7659" />
-  <stop offset="1" />
- </linearGradient>
- <filter id="D" x="-.0125" y="-.04971" width="1.026" height="1.099" color-interpolation-filters="sRGB">
-  <feGaussianBlur stdDeviation="0.001 0.244" />
- </filter>
- <filter id="H" x="-.395" y="-.5737" width="1.79" height="2.147" color-interpolation-filters="sRGB">
-  <feGaussianBlur stdDeviation="2.8946329" />
- </filter>
- <g transform="matrix(1.297 0 0 1.297 -13.6 -.805)" enable-background="new">
-  <g enable-background="new">
-   <rect x="14.5" y="1.5" width="32" height="29" rx="2.877" ry="2.781" fill="url(#linearGradient7887)" fill-rule="evenodd" stroke="#888a85" stroke-dashoffset=".7" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".9924" />
-   <path transform="matrix(2.143 0 0 2.087 44.43 -.6302)" d="m-12.5 1.498c-0.573 0-1.002 0.429-1.002 1.002v11c0 0.573 0.429 1.002 1.002 1.002h12c0.573 0 1.002-0.429 1.002-1.002v-11c0-0.573-0.429-1.002-1.002-1.002z" fill="none" stroke="url(#linearGradient7889)" stroke-dashoffset=".7" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".9924" stroke-width=".4729" />
-   <rect transform="matrix(1.016 0 0 1.016 -.49 -.2715)" x="15.38" y="2.875" width="32" height="29" rx="3.723" ry="3.723" fill-rule="evenodd" filter="url(#filter5386)" opacity=".1205" />
-  </g>
+ <g transform="matrix(1.297 0 0 1.297 -13.6 -.805)">
+  <rect x="14.5" y="1.5" width="32" height="29" rx="2.877" ry="2.781" fill="url(#tile)" fill-rule="evenodd" stroke="#888a85" stroke-linecap="round" stroke-linejoin="round" />
+  <path transform="matrix(2.143 0 0 2.087 44.43 -.6302)" d="m-12.5 1.498c-0.573 0-1.002 0.429-1.002 1.002v11c0 0.573 0.429 1.002 1.002 1.002h12c0.573 0 1.002-0.429 1.002-1.002v-11c0-0.573-0.429-1.002-1.002-1.002z" fill="none" stroke="url(#edge)" stroke-linecap="round" stroke-linejoin="round" stroke-width=".4729" />
+  <rect transform="matrix(1.016 0 0 1.016 -.49 -.2715)" x="15.38" y="2.875" width="32" height="29" rx="3.723" ry="3.723" fill-rule="evenodd" filter="url(#soft)" opacity=".1205" />
  </g>
- <g transform="matrix(1.785 0 0 1.785 -557 -94.28)" enable-background="new">
-  <path d="M322 59H331A.5.5 0 0 1 331.5 59.5V69A.5.5 0 0 1 331 69.5H322A.5.5 0 0 1 321.5 69V59.5A.5.5 0 0 1 322 59Z" fill="#789964" fill-rule="evenodd" stroke="#e1e7d8" stroke-width="1.1" />
-  <path d="M322.6 60.5H325.5V59.9H327.5V60.5H330.4V68.4H322.6Z" fill="#354b31" fill-rule="evenodd" />
-  <path d="m327.7 103.7s20-14 12-16-28.06 7.627-38 7c-10.11-0.638 22.5-9.83 24.77-27.71" fill="none" filter="url(#filter4618-7)" opacity=".4944" stroke="url(#radialGradient4612-0)" stroke-width="2" />
-  <path d="M326.5 64.2C326.5 69.7 324.3 72.4 320.7 76C315.8 80.9 309.3 85.4 302 90" fill="none" stroke="#9b813b" stroke-width="3.3" stroke-linecap="round" />
-  <path d="M326.5 64.2C326.5 69.7 324.3 72.4 320.7 76C315.8 80.9 309.3 85.4 302 90" fill="none" stroke="#e9cc65" stroke-width="2.4" stroke-linecap="round" />
-  <rect x="323.1" y="61.7" width="6.8" height="5.5" rx=".35" fill="url(#scPlug)" stroke="#49643c" stroke-width=".55" />
-  <path d="M323.7 66.7V62.3H329.3" fill="none" stroke="#e4edda" stroke-width=".55" stroke-opacity=".8" />
-  <path d="M325 60.3H328V62.1H325Z" fill="#c7d8b8" stroke="#5d7850" stroke-width=".35" />
-  <path d="M324.2 64H328.8V66.3C328.2 70.5 325.1 74 321.9 77.2L319.5 74.8C322.7 71.6 324.2 69 324.2 66.3Z" fill="url(#scBoot)" />
-  <path d="M324.2 64V66.3C324.2 69 322.7 71.6 319.5 74.8M328.8 64V66.3C328.2 70.5 325.1 74 321.9 77.2" fill="none" stroke="#456139" stroke-width=".45" stroke-linecap="round" />
-  <path d="M324.4 65.7H328.5M324.1 67.8L328.2 68.4M323.3 70L327.1 71.3M321.8 72.4L325.2 73.9" fill="none" stroke="#38532e" stroke-opacity=".7" stroke-width=".55" stroke-linecap="round" />
-  <path d="M324.8 64.6V66.3C324.6 68.8 323 71.7 321.8 73.3" fill="none" stroke="#d4e3bb" stroke-opacity=".6" stroke-width=".55" stroke-linecap="round" />
- </g>
+ <rect x="14.5" y="9.5" width="23" height="21" rx="1.2" fill="url(#adapter)" stroke="#07682c" stroke-width=".9" />
+ <path d="M23 9.05H29V12.6H23Z" fill="#04391a" />
+ <rect x="17" y="12.25" width="18" height="15.5" rx=".6" fill="#04391a" />
+ <rect x="19.5" y="12.7" width="13" height="14.6" rx=".8" fill="url(#plug)" stroke="#07682c" stroke-width=".8" />
+ <path d="M24.2 12.7V9.9H27.8V12.7" fill="#2fd877" stroke="#07682c" stroke-width=".7" />
+ <rect x="22.45" y="17.3" width="7.1" height="5.4" rx=".3" fill="#0f9a47" stroke="url(#groove)" stroke-width="1.785" />
+ <path d="M26 24C26 28 23 34 19.7 37.5C14.5 42 8 45.6 -2 49.5" fill="none" stroke="#8c7208" stroke-width="3.2" stroke-linecap="round" />
+ <path d="M26 24C26 28 23 34 19.7 37.5C14.5 42 8 45.6 -2 49.5" fill="none" stroke="#ffd60a" stroke-width="2.2" stroke-linecap="round" />
+ <path d="M23 19.2L29 18.8C29.3 27 27 34 21.6 39.6L18.4 36.2C21.8 32.5 23 26 23 19.2Z" fill="url(#plug)" stroke="#07682c" stroke-width=".8" stroke-linejoin="round" />
+ <path d="M23 22.4L29 22.7M22.7 25.4L28.8 26.1M22.1 28.2L28.2 29.4M21 31L27 32.6M19.7 33.8L25.1 35.8" fill="none" stroke="#07682c" stroke-width=".8" />
 </svg>
