@@ -468,6 +468,27 @@ function dscp_text(map) {
 	return join(' ', out);
 }
 
+function ip_text(data, offset) {
+	return join('.', map([ 0, 1, 2, 3 ], (i) => number(data, offset + i, 1)));
+}
+
+function mcast_rows(item) {
+	let raw = item.mcast_tables, rows = [];
+
+	/* Each row: attribute number, length, then 24 bytes of the table row. */
+	for (let at = 0; at + 52 <= length(raw ?? ''); at += 52) {
+		let attr = number(raw, at / 2, 1), row = substr(raw, at + 4, 48);
+
+		if (item.class_id == 309 && (attr == 7 || attr == 8))
+			push(rows, `key ${number(row, 0, 2) & 0x3ff}: GEM ${number(row, 2, 2)}, VLAN ${number(row, 4, 2)}, source ${ip_text(row, 6)}, groups ${ip_text(row, 10)} to ${ip_text(row, 14)}, bandwidth ${number(row, 18, 4)}`);
+		else if (item.class_id == 310 && attr == 6)
+			push(rows, `key ${number(row, 0, 2) & 0x3ff}: VLAN ${number(row, 2, 2)}, max groups ${number(row, 4, 2)}, max bandwidth ${number(row, 6, 4)}, profile ${number(row, 10, 2)}`);
+		else if (item.class_id == 281 && attr == 9)
+			push(rows, `GEM ${number(row, 0, 2)}, key ${number(row, 2, 2)}, groups ${ip_text(row, 4)} to ${ip_text(row, 8)}`);
+	}
+	return rows;
+}
+
 export function decode(item) {
 	let layout = layouts[item.class_id];
 	let data = item.data;
@@ -506,6 +527,12 @@ export function decode(item) {
 			r.summary = rule_summary(r);
 			push(fields.rules, rule_text(r.summary));
 		}
+	}
+	if (item.class_id == 281 || item.class_id == 309 || item.class_id == 310) {
+		let rows = mcast_rows(item);
+
+		if (length(rows))
+			fields.table_rows = rows;
 	}
 	return fields;
 }

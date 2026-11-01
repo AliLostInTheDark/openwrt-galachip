@@ -383,10 +383,9 @@ static int luna_xpon_get_ani_topology(struct omci_device *odev,
 		.gem_port_count = 256,
 		.qos_configuration = BIT(3) | BIT(4),
 		.downstream_queues_per_uni = 8,
-		/* Nokia's VEIP service arrives over PLOAM without OMCI Creates:
-		 * omcid seeds it, as on the GC1601. */
-		.flags = OMCI_TOPOLOGY_F_PROFILE_SERVICES |
-			 OMCI_TOPOLOGY_F_FULL_UNI_ENTITY,
+		/* No profile services: OLTs create their own GEMs and VLANs, and
+		 * the seeds carried one Airtel line's values onto every other. */
+		.flags = OMCI_TOPOLOGY_F_FULL_UNI_ENTITY,
 	};
 	return 0;
 }
@@ -915,6 +914,50 @@ static void luna_xpon_ds_rate_sync(void)
 
 /* Upstream peak rates shape the GEM's queue; downstream ones police its VLAN.
  * Burst sizes have no hardware path here. */
+/* Test switch: stop one downstream-only GEM in hardware, to tell which GEM a
+ * doubled stream arrives on. Reprovisioning that GEM installs it again. */
+static unsigned int ds_gem_off;
+
+static void luna_xpon_ds_gem_gate(unsigned int gem, bool on)
+{
+	unsigned int i;
+
+	for (i = 0; gem && i < LUNA_XPON_GEMS; i++) {
+		struct luna_xpon_gem *g = &luna_xpon.gem[i];
+
+		if (!g->valid || !g->hw || g->gem != gem ||
+		    g->dir != OMCI_GEM_PORT_DIRECTION_ANI_TO_UNI)
+			continue;
+		if (on)
+			luna_xpon_hw_gem_install(i, g->gem, -1);
+		else
+			luna_xpon_hw_gem_remove(i);
+		pr_info("luna-xpon: downstream GEM %u %s\n", gem, on ? "restored" : "stopped");
+	}
+}
+
+static int ds_gem_off_set(const char *val, const struct kernel_param *kp)
+{
+	unsigned int gem;
+	int rc = kstrtouint(val, 0, &gem);
+
+	if (rc)
+		return rc;
+	mutex_lock(&luna_xpon.lock);
+	luna_xpon_ds_gem_gate(ds_gem_off, true);
+	luna_xpon_ds_gem_gate(gem, false);
+	ds_gem_off = gem;
+	mutex_unlock(&luna_xpon.lock);
+	return 0;
+}
+
+static const struct kernel_param_ops ds_gem_off_ops = {
+	.set = ds_gem_off_set,
+	.get = param_get_uint,
+};
+module_param_cb(ds_gem_off, &ds_gem_off_ops, &ds_gem_off, 0644);
+MODULE_PARM_DESC(ds_gem_off, "Stop this downstream-only GEM in hardware (0: none)");
+
 static int luna_xpon_set_gem_rate(struct omci_device *odev, u16 gem,
 				  bool upstream, u32 rate, u32 burst)
 {

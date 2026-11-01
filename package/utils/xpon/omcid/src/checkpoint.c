@@ -6,7 +6,7 @@
 #include "daemon.h"
 
 #define CHECKPOINT_MAGIC 0x4f4d4331
-#define CHECKPOINT_VERSION 4
+#define CHECKPOINT_VERSION 7
 #define CHECKPOINT_MAX (2U * 1024 * 1024)
 #define CHECKPOINT_MAX_TABLE (256U * 1024)
 
@@ -17,7 +17,7 @@ struct checkpoint_header {
 	u32 upload_index, profile_quirks, flags;
 	u16 mib_sync;
 	u16 uni_entity;
-	u8 profile_effective, loid_status, voice_calls, pm_interval, alarm_sequence, veip_learned;
+	u8 profile_effective, loid_status, voice_calls, pm_interval, alarm_sequence, veip_learned, veip_port_learned;
 	u8 alarm_snapshot_count;
 	struct omci_alarm_entry alarm_snapshot[OMCI_ALARM_SNAPSHOT_LEN];
 	u64 pm_base[5], ber_base;
@@ -111,6 +111,7 @@ int omcid_checkpoint_save(struct omcid *ctx)
 	h->profile_effective = a->profile_effective;
 	h->profile_quirks = a->profile_quirks;
 	h->veip_learned = a->veip_learned;
+	h->veip_port_learned = a->veip_port_learned;
 	h->loid_status = a->loid_status;
 	h->voice_calls = a->voice_calls;
 	h->pm_interval = a->pm_interval;
@@ -218,6 +219,7 @@ static bool object_valid(const u8 *raw)
 	static const size_t bool_offsets[] = {
 		offsetof(struct omci_mib_object, pending_delete),
 		offsetof(struct omci_mib_object, qos_configured),
+		offsetof(struct omci_mib_object, olt_written),
 		offsetof(struct omci_mib_object, arc_clean),
 		offsetof(struct omci_mib_object, olt_g.vendor_id_valid),
 		offsetof(struct omci_mib_object, olt_g.equipment_id_valid),
@@ -376,6 +378,7 @@ int omcid_checkpoint_load(struct omcid *ctx)
 	a->profile_effective = h->profile_effective;
 	a->profile_quirks = h->profile_quirks;
 	a->veip_learned = h->veip_learned;
+	a->veip_port_learned = h->veip_port_learned;
 	a->loid_status = h->loid_status;
 	a->voice_calls = h->voice_calls;
 	a->alarm_sequence = h->alarm_sequence;

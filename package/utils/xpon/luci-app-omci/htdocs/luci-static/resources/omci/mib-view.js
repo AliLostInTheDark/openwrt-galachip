@@ -38,6 +38,8 @@ function entityText(id) {
 }
 
 function originText(o) {
+	if (o.origin_name == 'default' && o.olt_written)
+		return _('ONU-created, OLT-provisioned');
 	return originLabels[o.origin_name] || o.origin_name || '-';
 }
 

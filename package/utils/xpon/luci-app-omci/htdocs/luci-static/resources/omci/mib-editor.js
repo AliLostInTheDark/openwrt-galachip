@@ -62,6 +62,7 @@ function render(group, data, title, description) {
 		E('option', { 'value': 'all' }, _('All origins')),
 		E('option', { 'value': 'default' }, _('Default / seed')),
 		E('option', { 'value': 'olt' }, _('Provisioned by OLT')),
+		E('option', { 'value': 'olt_written' }, _('ONU-created, OLT-provisioned')),
 		E('option', { 'value': 'local' }, _('Local edits')),
 		E('option', { 'value': 'hardware' }, _('Hardware'))
 	]);
@@ -184,7 +185,8 @@ function render(group, data, title, description) {
 	function renderTable() {
 		var filtered = objects.filter(function(o) {
 			var c = byId[o.class_id] || { category_name: 'unknown', flags: 0 };
-			return predicate(c) && (originFilter.value == 'all' || o.origin_name == originFilter.value);
+			return predicate(c) && (originFilter.value == 'all' || o.origin_name == originFilter.value ||
+				(originFilter.value == 'olt_written' && o.origin_name == 'default' && o.olt_written));
 		});
 		count.textContent = _('%d object(s)').format(filtered.length);
 		if (createButton)

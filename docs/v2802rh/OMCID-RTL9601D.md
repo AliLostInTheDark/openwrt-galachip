@@ -26,8 +26,9 @@ The current RTL9601D backend describes the resources it implements:
 
 **Superseded for the MIB:** `luna_xpon_get_ani_topology()` now advertises what
 Nokia requires: 8 queues per T-CONT and per UNI, 256 GEM ports, QoS bitmap
-`BIT(3) | BIT(4)`, and profile services enabled (Nokia's VEIP service arrives
-without OMCI Creates). The eight queues drain through one hardware queue per
+`BIT(3) | BIT(4)`. Profile services are disabled again: the Airtel MIB report
+of 2026-10-26 shows the OLT creating GEMs 256/257 and their VLAN filters itself,
+so the seeds were not needed and leaked its VLANs onto other lines. The eight queues drain through one hardware queue per
 T-CONT, and the driver holds 64 service slots.
 
 These are backend limits, not claims about the chip's full capacity.

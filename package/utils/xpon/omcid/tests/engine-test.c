@@ -292,6 +292,25 @@ int main(void)
 		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object));
 		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0301, &object) == -ENOENT);
 		CHECK(odev.agent.veip_learned == 6);
+
+		/* A Set on a VEIP the MIB lacks moves it, whatever its low byte */
+		memset(create, 0, sizeof(create));
+		create[0] = 0x80;
+		request(&odev, 16, 8, OMCI_CLASS_VEIP, 0x0702, create, 3);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0702, &object));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_UNI_G, 0x0702, &object));
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object) == -ENOENT);
+		CHECK(odev.agent.veip_learned == 7 && odev.agent.veip_port_learned == 2);
+
+		/* A MIB reset keeps it */
+		request(&odev, 17, 15, OMCI_CLASS_ONU_DATA, 0, NULL, 0);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0702, &object));
+
+		memset(create, 0, sizeof(create));
+		create[0] = 10;
+		put_unaligned_be16(0x0601, create + 1);
+		request(&odev, 18, 4, OMCI_CLASS_EXTENDED_VLAN, 0x0601, create, 3);
+		CHECK(odev.agent.veip_learned == 6 && odev.agent.veip_port_learned == 1);
 		odev.agent.veip_learned = 0;
 
 		/* Back to generic profile */
@@ -309,6 +328,30 @@ int main(void)
 	CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_ONU_G, 0, &object));
 	CHECK(omci_native_receive(&odev, data, 3) == -EINVAL);
 	CHECK(transmissions >= 10);
+	/* A multicast ACL row must not land over the profile's attributes. */
+	{
+		static const u8 create[] = { 3, 0, 1, 0x03, 0xf7, 2, 0, 0, 0, 0 };
+		struct omci_mib_object mcast;
+		u8 set[26] = { 0x02, 0x00, 0x40, 0x00, 0x07, 0xff, 0x03, 0xf7 };
+
+		request(&odev, 90, 4, 309, 0x401, create, sizeof(create));
+		request(&odev, 91, 8, 309, 0x401, set, sizeof(set));
+		CHECK(!omci_agent_mib_get(&odev, 309, 0x401, &mcast));
+		CHECK(mcast.data[0] == 3 && mcast.data[2] == 1);
+		CHECK(get_unaligned_be16(mcast.data + 3) == 0x03f7);
+		CHECK(mcast.mcast_rows[0].attr == 7 && mcast.mcast_rows[0].len == 24);
+		CHECK(mcast.mcast_rows[0].data[2] == 0x07 && mcast.mcast_rows[0].data[3] == 0xff);
+
+		/* Rewriting a key replaces its row; a delete operation frees it. */
+		set[9] = 0x01;
+		request(&odev, 92, 8, 309, 0x401, set, sizeof(set));
+		CHECK(!omci_agent_mib_get(&odev, 309, 0x401, &mcast));
+		CHECK(mcast.mcast_rows[0].data[5] == 0xf7 && !mcast.mcast_rows[1].attr);
+		set[2] = 0x80;
+		request(&odev, 93, 8, 309, 0x401, set, sizeof(set));
+		CHECK(!omci_agent_mib_get(&odev, 309, 0x401, &mcast));
+		CHECK(!mcast.mcast_rows[0].attr);
+	}
 	omci_agent_cleanup(&odev);
 	CHECK(!odev.agent.mib.count && !odev.agent.services.count);
 	printf("%u native MIB/transaction/rollback/table tests passed\n", checks);

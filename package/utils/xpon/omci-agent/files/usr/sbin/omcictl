@@ -194,7 +194,7 @@ function print_mib(objects) {
 	printf('%-6s %-8s %-48s %s\n', 'class', 'entity', 'name', 'origin');
 	for (let item in (objects || []))
 		printf('%-6d 0x%04x   %-48s %s\n', item.class_id, item.entity_id,
-			item.name || '-', item.origin_name || '-');
+			item.name || '-', (item.origin_name == 'default' && item.olt_written) ? 'default+olt' : (item.origin_name || '-'));
 }
 
 /* One block per object, decoded fields first; classes without a decoder show hex. */

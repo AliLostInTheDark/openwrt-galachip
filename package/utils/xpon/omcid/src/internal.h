@@ -33,6 +33,15 @@ struct omci_skb_cb {
 
 #define OMCI_SKB_CB(_skb) ((struct omci_skb_cb *)&((_skb)->cb[0]))
 
+#define OMCI_MCAST_TABLE_ROWS		8
+#define OMCI_MCAST_TABLE_ROW_LEN	24
+
+struct omci_mcast_table_row {
+	u8 attr;	/* G.988 attribute number; 0 for a free row */
+	u8 len;
+	u8 data[OMCI_MCAST_TABLE_ROW_LEN];
+};
+
 struct omci_mib_object {
 	u16 class_id;
 	u16 entity_id;
@@ -42,6 +51,8 @@ struct omci_mib_object {
 	u8 data_len;
 	bool pending_delete;
 	bool qos_configured;
+	/* ONU-created, and the OLT has Set it since the last MIB reset. */
+	bool olt_written;
 	/* First byte of the G.988 alarm bitmap: alarm N is BIT(7 - N). */
 	u8 alarms;
 	/* Alarm free with ARC set since arc_clean_since. */
@@ -51,6 +62,7 @@ struct omci_mib_object {
 	struct omci_olt_g olt_g;
 	struct omci_vlan_tagging_filter vlan_filter;
 	struct omci_extended_vlan extended_vlan;
+	struct omci_mcast_table_row mcast_rows[OMCI_MCAST_TABLE_ROWS];
 };
 
 #define OMCI_ALARM_SNAPSHOT_LEN		8
@@ -139,6 +151,7 @@ struct omci_agent {
 	u32 profile_quirks;
 	/* VEIP slot the OLT provisioned, kept across MIB resets. */
 	u8 veip_learned;
+	u8 veip_port_learned;
 
 	struct sk_buff *last_request;
 	struct sk_buff *last_response;
