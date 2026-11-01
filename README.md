@@ -14,45 +14,151 @@ has been run on this board yet.
 
 ## Status
 
-| Area | State |
+### Working
+
+| Feature | Notes |
 | --- | --- |
-| GPON | Working: activation, ranging, AES, FEC, OMCI provisioning |
-| Datapath | Hardware offload between the LAN ports and the PON, with p-bit to GEM mapping |
-| OMCI | Userspace `omcid`; the OLT creates services, the firmware seeds none |
-| Multicast | MEs and tables stored; the stream reaches the bridge doubled on the one line tested, and IGMP limits are not enforced |
-| LuCI | GPON status, configuration, MIB views and the VLAN table |
-| Tested OLTs | Nokia ALCL on Airtel (VLANs 100 and 660) and on JioFiber (VLAN 1015, five GEMs) |
+| GPON registration, AES, FEC, OMCI | On Nokia OLTs, on Airtel and Jio |
+| OLT-driven provisioning | The OLT creates every service; the firmware seeds none |
+| Hardware LAN and PON offload | Plan speed on both lines, with the CPU idle |
+| P-bit to GEM mapping | Running on Jio's five GEMs |
+| Simple VLAN modes and VLAN table | Transparent, Tagged and per-port |
+| VLAN translation in hardware | 302/296 Mbit/s |
+| Downstream GEM rate limit | A 10 Mbit/s limit measured 9.66 |
+| LAN1 at 1G, LAN2 at 2.5G | Through phylink |
+| Loop detection | Tested with a real loop; cuts the port by default |
+| Fibre outage recovery | Re-ranges and works again with no reboot |
+| Optics | GN25L95 with each unit's own calibration |
+| LuCI, `sysupgrade`, `xpon-report` | Status, configuration, MIB views, masked reports |
+| U-Boot install and serial backup | Done on a unit, verified by CRC |
+
+### Implemented, needs testing
+
+| Feature | What's missing |
+| --- | --- |
+| Back to stock | Written, not yet run on a board |
+| CH341A backup and restore | Not yet run; flashrom may not detect the chip |
+| Second service VLAN, such as voice | Provisioned and offloaded, no traffic tested |
+| VEIP learning on `0x301` lines | Needs a line that uses it |
+| QinQ in hardware | Off unless `hw_qinq` is set; needs an OLT with a stacked service |
+| Per-GEM p-bit separation | Needs traffic on every p-bit |
+| Dying gasp | Fires on the ONU; needs an OLT-side check |
+| Long-term stability | Daily use is under way |
+
+### Under investigation or not functional
+
+| Feature | State |
+| --- | --- |
+| Multicast | Tables stored; the stream arrives doubled on Jio, cause unproven |
+| FEC, BIP and alarm reporting to the OLT | Not confirmed from the OLT side |
+| OLT queue scheduling and policing | Partly handled, not confirmed; see [HARDWARE-QOS-IMPLEMENTATION.md](docs/v2802rh/HARDWARE-QOS-IMPLEMENTATION.md) |
+
+### Not implemented
+
+| Feature | Notes |
+| --- | --- |
+| IGMP snooping and IGMP limit enforcement | Limits are stored only |
+| OMCI software download | |
+| VoIP on the ONU | Voice passes through on its VLAN to a phone or router |
+| TR-069 | |
 
 ### Measured
 
 | Line | Setup | Download | Upload |
 | --- | --- | ---: | ---: |
 | Airtel, 300/300 plan | USB NIC, untagged on the ONU | 300 Mbit/s | 305 Mbit/s |
-| Jio | Router on LAN2 at 2.5 Gbit/s, USB NIC, 6 Ookla runs | 976 Mbit/s | 932 Mbit/s |
+| Jio, gigabit plan | Router on LAN2 at 2.5 Gbit/s, USB NIC, 6 Ookla runs | 976 Mbit/s | 932 Mbit/s |
 
 The Jio result needs the router to shape its upload bursts (`tbf` at 1160 Mbit/s
 with TSO on, in that setup). Unshaped 2.5 Gbit/s bursts overflow the ONU's LAN2
 buffer.
 
-### Not tested or not included
-
-- Return to stock and CH341A read or write on this board.
-- OLTs that attach ME 171 to VEIP `0x301`. The code learns the VEIP from ME 171,
-  but this has not run on such a line.
-- QinQ in hardware is off unless `hw_qinq` is set.
-- OMCI software download, VoIP on the ONU, TR-069 and IGMP snooping are not
-  implemented. Voice works by passing the VLAN to a phone or router.
-
 ## Stock firmware compared
+
+Stock details come from its V1.1.8 image, a V1.2.0 unit's OMCI dump and registers, and
+flash backups. A web page in the image shows a feature is offered, not that it works.
+"Not measured" means this project hasn't examined that behaviour on stock.
+
+### Platform
 
 | | Stock firmware | This firmware |
 | --- | --- | --- |
-| System | RTOS `JCO4032_R2.57`, closed | OpenWrt, Linux 6.18, all drivers and daemons in source |
-| Management | Vendor web interface | LuCI, ubus, SSH |
-| OMCI | Vendor | `omcid`, inspectable with `omcictl` and LuCI |
-| Forwarding | Vendor switch rules, single service | Offload built from what the OLT provisions, tagged or untagged per port |
+| Base system | Closed RTOS, V1.1.8 or V1.2.0 on these units | OpenWrt, Linux 6.18, musl, LuCI |
+| Source | Closed | All drivers and daemons are source |
+| Management | Vendor web interface, Telnet, TR-069 | LuCI, ubus, SSH |
+| Image | Vendor format, about 2.2 MiB | OpenWrt sysupgrade, about 3.1 MiB of the 3684 KiB limit |
 | Updates | Vendor images | `sysupgrade`, settings kept |
-| Bootloader | Stock U-Boot | Unchanged, along with its environment, identity and calibration |
+| Clock | NTP | NTP |
+| System log | Log page | `logread` |
+
+### PON stack
+
+| | Stock firmware | This firmware |
+| --- | --- | --- |
+| GPON activation and PLOAM | Closed | Open `luna-gpon` driver with a readable event log |
+| EPON | Pages present | Not supported on this board |
+| OMCI | Closed; `omcicli` | `omcid`, restartable, inspected with `omcictl` and LuCI |
+| OLT interoperability | Not shown in its web pages | Auto detect, Nokia/ALCL, Huawei, ZTE, FiberHome, Dasan, generic |
+| Identity | Serial, PLOAM password, LOID, OMCI versions | The same, plus vendor and equipment ID, marked with what a change costs |
+| Service provisioning | Stored OMCI configuration plus the OLT's | Only what the OLT sends |
+| OLT reboot request | Not measured | Refused by default, can be allowed |
+| Software download from the OLT | Not measured | Not implemented |
+| Fibre outage | Re-ranges, but sometimes needs a reboot to work again | Re-ranges and works again with no reboot |
+| Optics | Stock calibration | The same per-unit GN25L95 calibration, with power, bias and temperature in the logs |
+| FEC, BIP and alarms | Not measured | Under investigation |
+
+### OMCI MIB as seen by the OLT
+
+ONU-created entities. Stock values are from a live V1.2.0 unit.
+
+| Entity | Stock firmware | This firmware |
+| --- | --- | --- |
+| ONU2-G OMCC version | `0xA0` | `0xA0` by default, configurable |
+| ONU2-G total GEM ports | 64 | 256 |
+| ONU2-G priority queues | 128 | 104 |
+| ONU2-G traffic schedulers | 16 | 8 |
+| ANI-G T-CONTs | Not measured | 8 |
+| ANI-G status reporting (DBA) | Not measured | On, switch in LuCI |
+| PPTP Ethernet UNIs | 2 | 4 by default, 1-16 configurable |
+| VEIP | `0x0601` on the captured line | Learned from the OLT, or set in LuCI |
+| ONU-G traffic management option | 2 | 0 by default, configurable |
+| Private entities | Vendor `VsWan*` | Nokia entities with the Nokia/ALCL profile |
+
+### Datapath
+
+| | Stock firmware | This firmware |
+| --- | --- | --- |
+| Mode | Router or bridge | Bridge only |
+| Forwarding | Vendor switch rules; the captured line forwarded one service | Open offload driver, built from what the OLT provisions |
+| Multiple VLAN services | Not measured | Yes |
+| LAN VLAN control | VLAN and port mapping pages | Simple modes or a per-port VLAN table |
+| P-bit to GEM split | Not shown in its web pages | In hardware |
+| VLAN translation | VLAN mapping page | In hardware, 302/296 Mbit/s with the CPU idle |
+| QinQ | Not shown in its web pages | Implemented, off unless `hw_qinq` is set |
+| Downstream GEM rates | Not measured | Up to 4 limits, a 10 Mbit/s limit measured 9.66 |
+| LAN2 pause | Forced on | Follows negotiation |
+| Loop detection | Off in the captured registers | On, cuts the port by default |
+| Multicast | IGMP proxy, MLD | Under investigation: tables stored, stream doubled on Jio; no snooping |
+
+### Diagnostics
+
+| | Stock firmware | This firmware |
+| --- | --- | --- |
+| Tools | `omcicli`, vendor CLI, ping and traceroute pages | `omcictl`, `omci-monitor`, `xpon-report`, ping |
+| OMCI capture | Log download page | On-demand trace |
+| Provisioned services | Basic OMCI page | Full LuCI MIB views, with OLT-written objects marked |
+| Bug report | - | One file, identifiers masked |
+| Fault codes | - | Documented in [DIAG-CODES.md](docs/v2802rh/DIAG-CODES.md) |
+| Reconnect log | - | One line saying what the OLT did |
+
+### In stock only
+
+This firmware is a bridge by design, so a router behind it does these jobs: WAN (PPPoE,
+DHCP, static), NAT, DMZ, port forwarding, routing, tunnels, DHCP server, DNS, UPnP,
+firewall and DoS filters, ACLs, IP QoS. Also not carried over: TR-069, IGMP proxy, MLD,
+port mirror, EPON, Telnet, and LED and reset button settings.
+
+Neither firmware has VoIP. Voice passes through on its VLAN to a phone or router.
 
 ## Flash layout
 

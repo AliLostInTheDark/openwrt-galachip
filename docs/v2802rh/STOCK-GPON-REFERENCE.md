@@ -1,6 +1,7 @@
 # V2802RH: stock GPON state on the live OLT
 
-This is the stock RTOS (`JCO4032_R2.57`), ranged at O5 on the user's OLT
+This is the stock RTOS, V1.2.0 built 25 November 2025 (reporting software image
+`JCO4032_R2.57` over OMCI), ranged at O5 on the user's OLT
 with the internet service on VLAN 100, captured on 2026-10-25. It is the
 reference for the PON stage: the RTL9601D `omcid` backend must support this MIB, and the
 LAN↔PON hardware offload must reproduce the switch rules in section 4.
@@ -19,7 +20,7 @@ Source logs (kept off the repo, they hold session keys):
 | PLOAM password | `00000001` (`30 30 30 30 30 30 30 31 00 00`) |
 | ONT-G | VID `ZYOT`, version `0001`, traffic management option 2 (rate-controlled) |
 | ONT2-G | OMCC version 0xa0, 128 priority queues, 16 schedulers, 64 GEM ports |
-| Software image | `JCO4032_R2.57`, image 0 active and committed |
+| Software image reported over OMCI | `JCO4032_R2.57`, image 0 active and committed; the firmware itself is V1.2.0 |
 | Equipment ID | `MONUV802` (stock vendor ME), ONT-G equipment `0001` |
 | OLT | vendor `ALCL` (Nokia/Alcatel-Lucent) |
 | ONU ID | 5 at this capture (GTC register; `gpon show gtc` prints 0). The OLT assigns it at each registration, so it isn't fixed |
