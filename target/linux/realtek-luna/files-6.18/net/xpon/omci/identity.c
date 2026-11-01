@@ -18,7 +18,6 @@
 
 #define OMCI_IDENTITY_MAX_INPUT_LEN	64
 
-static const u8 default_vendor_id[4] = { 'G', 'P', 'O', 'N' };
 
 static bool omci_source_can_replace(u8 current_source, u8 source)
 {
@@ -512,32 +511,3 @@ int omci_identity_load(struct device *dev, struct omci_identity *identity)
 	return omci_identity_load_nvmem(dev, identity);
 }
 EXPORT_SYMBOL_GPL(omci_identity_load);
-
-void gpon_random_serial_number(const u8 vendor[4], struct omci_identity *identity)
-{
-	u32 serial;
-
-	/*
-	 * GPON serial numbers contain a four-byte vendor identifier followed by
-	 * a four-byte vendor-specific value. Keep a configured vendor identifier
-	 * when available and randomize only the vendor-specific part.
-	 */
-	if (!(identity->valid & OMCI_IDENTITY_F_VENDOR_ID)) {
-		memcpy(identity->vendor_id,
-		       memchr_inv(vendor, 0, 4) ? vendor : default_vendor_id,
-		       sizeof(identity->vendor_id));
-		identity->valid |= OMCI_IDENTITY_F_VENDOR_ID;
-		identity->vendor_source = OMCI_CONFIG_SOURCE_DEFAULT;
-	}
-
-	do {
-		serial = get_random_u32();
-	} while (!serial || serial == U32_MAX);
-
-	memcpy(identity->serial_number, identity->vendor_id,
-	       sizeof(identity->vendor_id));
-	put_unaligned_be32(serial, identity->serial_number + 4);
-	identity->valid |= OMCI_IDENTITY_F_SERIAL_NUMBER;
-	identity->serial_source = OMCI_CONFIG_SOURCE_DRIVER;
-}
-EXPORT_SYMBOL_GPL(gpon_random_serial_number);

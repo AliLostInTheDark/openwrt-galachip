@@ -62,17 +62,8 @@ int omci_agent_init(struct omci_device *odev)
 	agent->config.olt_profile_force = OMCI_OLT_PROFILE_UNSPEC;
 	agent->config.olt_profile_source = OMCI_CONFIG_SOURCE_DEFAULT;
 	agent->config.olt_profile_force_source = OMCI_CONFIG_SOURCE_DEFAULT;
-	memcpy(agent->config.serial_number, "OPEN0001", 8);
-	memcpy(agent->config.vendor_id, "OPEN", 4);
-	strscpy(agent->config.version, "OpenWrt", sizeof(agent->config.version));
-	strscpy(agent->config.software_version[0], "OpenWrt",
-		sizeof(agent->config.software_version[0]));
-	strscpy(agent->config.software_version[1], "OpenWrt",
-		sizeof(agent->config.software_version[1]));
-	/* The same defaults as the engine's own init; omcid validates them. */
+	/* Identity comes from userspace; only the OMCC version has a kernel default. */
 	agent->config.omcc_version = OMCI_OMCC_VERSION_G988_2010_BASELINE;
-	strscpy(agent->config.equipment_id, "OpenWrt",
-		sizeof(agent->config.equipment_id));
 	agent->config.serial_source = OMCI_CONFIG_SOURCE_DEFAULT;
 	agent->config.vendor_source = OMCI_CONFIG_SOURCE_DEFAULT;
 	agent->config.password_source = OMCI_CONFIG_SOURCE_DEFAULT;

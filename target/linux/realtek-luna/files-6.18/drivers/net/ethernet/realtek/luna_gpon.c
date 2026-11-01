@@ -368,11 +368,10 @@ module_param_cb(onu_sn, &onu_sn_ops, &onu_sn, 0644);
 MODULE_PARM_DESC(onu_sn, "ONU serial number (G.984.3 ONU-SN): 4 ASCII ID chars + 8 hex digits");
 
 /*
- * The G.984.3 Password stock sends: the unit's own MIB value, which
- * gpon_provision writes here, else stock's default. The FSM timer is the only
- * writer of the core copy.
+ * The G.984.3 Password, from userspace; none is sent empty. The FSM timer is
+ * the only writer of the core copy.
  */
-static char *onu_password = "1234567890";
+static char *onu_password = "";
 static u8 luna_pwd[GPON_PLOAM_PASSWORD_LEN];
 static bool luna_pwd_dirty;
 static u32 luna_us_ploam_full_drops;	/* urgent PLOAMs refused on a full queue */
@@ -7589,7 +7588,7 @@ static int rtl9602c_gpon_init(void)
 		return -EINVAL;
 	}
 	spin_lock_bh(&luna_pwd_lock);
-	if (gpon_ploam_password_parse(onu_password, luna_pwd))
+	if (*onu_password && gpon_ploam_password_parse(onu_password, luna_pwd))
 		pr_warn("luna-gpon: [SYS-018] onu_password '%s' is not a G.984.3 password; sending an empty one\n",
 			onu_password);
 	gpon_ploam_set_password(&luna_ploam, luna_pwd);
