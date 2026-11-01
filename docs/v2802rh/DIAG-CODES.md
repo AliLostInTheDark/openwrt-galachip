@@ -128,6 +128,9 @@ New messages take the next free number in their group, and a removed code is not
 | `LAN-012` | INFO | lan%u: Link is Down |
 | `LAN-013` | INFO | lan%u: link dropped and recovered within a second (%u drops) |
 | `LAN-014` | INFO | lan2: link dropped and recovered within a second (%u drops) |
+| `LAN-015` | WARN | %s: loop detected, probes return on switch port %u |
+| `LAN-016` | WARN | %s: down for %u s to break the loop |
+| `LAN-017` | INFO | %s: back up after the loop cut |
 
 ## PHY: LAN PHYs and SerDes
 

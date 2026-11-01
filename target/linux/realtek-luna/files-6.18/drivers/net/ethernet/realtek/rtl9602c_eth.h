@@ -63,8 +63,8 @@ struct rtl9602c_eth {
 
 	struct rx_desc	*rx_ring;
 	dma_addr_t	rx_ring_dma;
-	struct sk_buff	*rx_skb[RX_RING_SIZE];
-	dma_addr_t	rx_buf_dma[RX_RING_SIZE];
+	struct page_pool *rx_pool;
+	struct page	*rx_page[RX_RING_SIZE];
 	unsigned int	rx_head;
 	unsigned int	rx_n;		/* RX ring entries in use, <= RX_RING_SIZE (DT) */
 
@@ -157,6 +157,10 @@ struct rtl9602c_eth {
 	 * the SerDes link polled by link_work. */
 	bool		port0_serdes;
 	bool		stock_switch;
+	int		loop_mode;	/* the lan_loop_guard the registers hold */
+	u32		loop_ports;	/* jacks RLDP last called looped */
+	int		loop_cut_port;	/* the jack held down for a loop, or -1 */
+	unsigned int	loop_cut_left;	/* seconds until it comes back up */
 	struct delayed_work link_work;	/* once a second: the SerDes mirror, every jack's carrier */
 	u32		lan_drops[LAN_PORTS];	/* link losses, including those a poll would miss */
 	u8		lan_own_drop;	/* ports whose next link loss the driver caused itself */

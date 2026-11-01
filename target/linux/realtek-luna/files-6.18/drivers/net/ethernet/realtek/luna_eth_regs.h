@@ -467,13 +467,6 @@ static inline bool luna_rx_ready(const struct rx_desc *ring, unsigned int head)
 	return !(READ_ONCE(ring[head].opts1) & D_OWN);
 }
 
-/*
- * Arm one RX slot with a fresh skb.
- *
- * EOR is set on the last slot and nowhere else. Getting that wrong does not
- * fault: the engine walks off the end of the ring into whatever follows it. @nr
- * is the ring's own entry count.
- */
 /* Hand slot @idx back to HW with the buffer it ALREADY holds.
  *
  * The DROP path.  Nothing is unmapped and nothing is freed: the frame sitting
@@ -491,67 +484,6 @@ static inline void luna_rx_rearm(struct rx_desc *ring, unsigned int idx,
 		opts1 |= D_EOR;
 	ring[idx].opts1 = opts1;
 }
-
-/*
- * Allocate and map one replacement buffer. Returns the skb, or NULL.
- *
- * A poll loop hands its skb away on every arm (napi_gro_receive and netif_rx
- * take it, dev_kfree_skb_any frees it), so once the loop body has run there is
- * nothing left to put back. A refill that fails after that point cannot retry
- * next poll: it leaves skbs[idx] pointing at memory the driver no longer owns,
- * behind a descriptor whose D_OWN is clear, so the next poll re-delivers a
- * freed skb and unmaps the same address twice.
- *
- * Call this before consuming the frame, and on NULL drop the frame with
- * luna_rx_rearm(). Never NULL out skbs[idx] as a shortcut: the loops have no
- * !skb guard, so that turns the use-after-free into a NULL deref and still
- * leaves the stale dmas[idx] to be unmapped twice.
- */
-static inline struct sk_buff *luna_rx_alloc(struct net_device *ndev,
-					    struct device *dev,
-					    unsigned int buf_size,
-					    dma_addr_t *da)
-{
-	struct sk_buff *skb = netdev_alloc_skb(ndev, buf_size);
-
-	if (!skb)
-		return NULL;
-	*da = dma_map_single(dev, skb->data, buf_size, DMA_FROM_DEVICE);
-	if (dma_mapping_error(dev, *da)) {
-		dev_kfree_skb_any(skb);
-		return NULL;
-	}
-	return skb;
-}
-
-/* Install an already-allocated buffer in slot @idx and hand it to HW. */
-static inline void luna_rx_arm(struct rx_desc *ring, struct sk_buff **skbs,
-			       dma_addr_t *dmas, unsigned int idx,
-			       unsigned int nr, unsigned int buf_size,
-			       struct sk_buff *skb, dma_addr_t da)
-{
-	skbs[idx] = skb;
-	dmas[idx] = da;
-	ring[idx].addr = da | DMA_BUS_WINDOW;
-	luna_rx_rearm(ring, idx, nr, buf_size);
-}
-
-/* alloc + arm, for callers with nothing to lose: the OPEN path, where the slot
- * is still NULL and a failure simply propagates. */
-static inline int luna_rx_refill(struct net_device *ndev, struct device *dev,
-				    struct rx_desc *ring, struct sk_buff **skbs,
-				    dma_addr_t *dmas, unsigned int idx,
-				    unsigned int nr, unsigned int buf_size)
-{
-	dma_addr_t da;
-	struct sk_buff *skb = luna_rx_alloc(ndev, dev, buf_size, &da);
-
-	if (!skb)
-		return -ENOMEM;
-	luna_rx_arm(ring, skbs, dmas, idx, nr, buf_size, skb, da);
-	return 0;
-}
-
 
 /* GMAC0 clock/reset gate */
 #define IPSEL_GMAC0		BIT(1)

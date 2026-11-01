@@ -23,6 +23,7 @@
 #include <linux/ethtool.h>	/* the LAN jacks' link settings */
 #include <linux/if_vlan.h>	/* the per-jack steering tag */
 #include <linux/leds.h>		/* the board's PON/LOS lamps, handed to net/xpon */
+#include <net/page_pool/helpers.h>
 #include "luna_eth_regs.h"	/* the family MAC/switch register map + per-chip table */
 #include "luna_gpon_regs.h"	/* the family's luna_sw_io(): a struct hwio over the SWCORE base */
 #include "regtable.h"		/* flowcore: gpon_ind_poll() -- the ONE bounded busy-wait */
@@ -924,10 +925,21 @@ static int rtl9602c_eth_set_mac_address(struct net_device *ndev, void *p)
  * The body is in luna_eth_regs.h; this wrapper keeps the name and signature for
  * the call sites.
  */
+static void rtl9602c_rx_arm(struct rtl9602c_eth *ep, unsigned int idx, struct page *page)
+{
+	ep->rx_page[idx] = page;
+	ep->rx_ring[idx].addr = (page_pool_get_dma_addr(page) + NET_SKB_PAD) | DMA_BUS_WINDOW;
+	luna_rx_rearm(ep->rx_ring, idx, ep->rx_n, RX_BUF_SIZE);
+}
+
 static int rtl9602c_eth_refill(struct rtl9602c_eth *ep, unsigned int idx)
 {
-	return luna_rx_refill(ep->ndev, ep->dev, ep->rx_ring, ep->rx_skb,
-				 ep->rx_buf_dma, idx, ep->rx_n, RX_BUF_SIZE);
+	struct page *page = page_pool_dev_alloc_pages(ep->rx_pool);
+
+	if (!page)
+		return -ENOMEM;
+	rtl9602c_rx_arm(ep, idx, page);
+	return 0;
 }
 
 /* ===== M2: G.988 OMCI responder + upstream OMCC */
@@ -1328,8 +1340,9 @@ static int rtl9602c_eth_rx(struct rtl9602c_eth *ep, int budget, bool napi_ctx)
 	while (rx_done < budget) {
 		unsigned int i = ep->rx_head;
 		u32 opts1 = ep->rx_ring[i].opts1;
-		struct sk_buff *skb, *fresh;
-		dma_addr_t fresh_dma;
+		struct page *page, *fresh;
+		struct sk_buff *skb;
+		u8 *data;
 		u32 len;
 
 		if (opts1 & D_OWN)		/* still HW-owned: nothing more */
@@ -1337,7 +1350,7 @@ static int rtl9602c_eth_rx(struct rtl9602c_eth *ep, int budget, bool napi_ctx)
 		ep->dbg_filled++;		/* HW handed this descriptor back */
 
 		/* Secure the REPLACEMENT before consuming the frame */
-		fresh = luna_rx_alloc(ndev, ep->dev, RX_BUF_SIZE, &fresh_dma);
+		fresh = page_pool_dev_alloc_pages(ep->rx_pool);
 		if (!fresh) {
 			ndev->stats.rx_dropped++;
 			luna_rx_rearm(ep->rx_ring, i, ep->rx_n, RX_BUF_SIZE);
@@ -1347,27 +1360,27 @@ static int rtl9602c_eth_rx(struct rtl9602c_eth *ep, int budget, bool napi_ctx)
 		}
 
 		len = (opts1 & RXD_LEN_MASK);
-		skb = ep->rx_skb[i];
-		dma_unmap_single(ep->dev, ep->rx_buf_dma[i], RX_BUF_SIZE,
-				 DMA_FROM_DEVICE);
+		page = ep->rx_page[i];
+		page_pool_dma_sync_for_cpu(ep->rx_pool, page, 0, RX_BUF_SIZE);
+		data = (u8 *)page_address(page) + NET_SKB_PAD;
 
 		/* DS-OMCI classifier + BOTH-ends length guard */
 		if (rtl9602c_rx_is_ds_omci(ep->swm->rx_layout, ep->omci_trap_on,
 					   ep->rx_ring[i].opts2,
 					   ep->rx_ring[i].opts3,
-					   skb->data, len, ep->swm->pon_port,
+					   data, len, ep->swm->pon_port,
 					   ep->swm->omci_cpu_reason,
 					   RX_CPU_PREFIX, RX_BUF_SIZE)) {
 			/* DS OMCI on the OMCC. Capture for /proc, then hand the raw G.988
 			 * message (prefix stripped) to the responder. */
 			ep->dbg_omci_rx++;
 			ep->dbg_omci_rxlen = len - RX_CPU_PREFIX;
-			memcpy(ep->dbg_omci_rxbuf, skb->data + RX_CPU_PREFIX,
+			memcpy(ep->dbg_omci_rxbuf, data + RX_CPU_PREFIX,
 			       min_t(unsigned int, len - RX_CPU_PREFIX,
 				     sizeof(ep->dbg_omci_rxbuf)));
-			rtl9602c_eth_omci_input(ep, skb->data + RX_CPU_PREFIX,
+			rtl9602c_eth_omci_input(ep, data + RX_CPU_PREFIX,
 						len - RX_CPU_PREFIX);
-			dev_kfree_skb_any(skb);
+			page_pool_put_full_page(ep->rx_pool, page, false);
 		} else if (rtl9602c_rx_frame_bad(opts1, RXD_CRCERR | RXD_RCDF,
 						 len, RX_CPU_PREFIX,
 						 RX_BUF_SIZE)) {
@@ -1375,10 +1388,19 @@ static int rtl9602c_eth_rx(struct rtl9602c_eth *ep, int budget, bool napi_ctx)
 			 * RX classification trio fuzz_rx.c drives on x86 */
 			ndev->stats.rx_errors++;
 			ep->dbg_err++;
-			dev_kfree_skb_any(skb);
+			page_pool_put_full_page(ep->rx_pool, page, false);
 		} else {
 			struct net_device *rdev = ndev;	/* receive netdev: eth0, or gpon0 for PON-port WAN frames */
 
+			skb = build_skb(page_address(page), PAGE_SIZE);
+			if (!skb) {
+				ndev->stats.rx_dropped++;
+				page_pool_put_full_page(ep->rx_pool, page, false);
+				goto rx_rearm;
+			}
+			skb_mark_for_recycle(skb);
+			skb_reserve(skb, NET_SKB_PAD);
+			skb->dev = ndev;
 			ep->dbg_good++;
 			/* Do NOT software-strip a 4-byte FCS here */
 			skb_put(skb, len);
@@ -1445,8 +1467,7 @@ static int rtl9602c_eth_rx(struct rtl9602c_eth *ep, int budget, bool napi_ctx)
 		}
 rx_rearm:
 		/* hand the slot back to HW with the buffer secured above */
-		luna_rx_arm(ep->rx_ring, ep->rx_skb, ep->rx_buf_dma, i,
-			    ep->rx_n, RX_BUF_SIZE, fresh, fresh_dma);
+		rtl9602c_rx_arm(ep, i, fresh);
 		ep->rx_head = (i + 1) % ep->rx_n;
 		rx_done++;
 	}
@@ -1573,8 +1594,21 @@ static void rtl9602c_eth_poll(struct timer_list *t)
 
 static int rtl9602c_eth_alloc_rings(struct rtl9602c_eth *ep)
 {
+	struct page_pool_params pp = {
+		.flags = PP_FLAG_DMA_MAP | PP_FLAG_DMA_SYNC_DEV,
+		.pool_size = ep->rx_n,
+		.nid = NUMA_NO_NODE,
+		.dev = ep->dev,
+		.dma_dir = DMA_FROM_DEVICE,
+		.offset = NET_SKB_PAD,
+		.max_len = RX_BUF_SIZE,
+	};
+	struct page_pool *pool = page_pool_create(&pp);
 	unsigned int i;
 
+	if (IS_ERR(pool))
+		return PTR_ERR(pool);
+	ep->rx_pool = pool;
 	ep->rx_ring = dma_alloc_coherent(ep->dev,
 			ep->rx_n * sizeof(struct rx_desc),
 			&ep->rx_ring_dma, GFP_KERNEL);
@@ -1625,12 +1659,14 @@ static void rtl9602c_eth_free_rings(struct rtl9602c_eth *ep)
 	unsigned int i;
 
 	for (i = 0; i < ep->rx_n; i++) {
-		if (ep->rx_skb[i]) {
-			dma_unmap_single(ep->dev, ep->rx_buf_dma[i],
-					 RX_BUF_SIZE, DMA_FROM_DEVICE);
-			dev_kfree_skb_any(ep->rx_skb[i]);
-			ep->rx_skb[i] = NULL;
+		if (ep->rx_page[i]) {
+			page_pool_put_full_page(ep->rx_pool, ep->rx_page[i], false);
+			ep->rx_page[i] = NULL;
 		}
+	}
+	if (ep->rx_pool) {
+		page_pool_destroy(ep->rx_pool);
+		ep->rx_pool = NULL;
 	}
 	for (i = 0; i < TX_RING_SIZE; i++) {
 		if (ep->tx_skb[i]) {
@@ -3977,6 +4013,81 @@ static void rtl9602c_port0_link_poll(struct rtl9602c_eth *ep)
 	mutex_unlock(&rtl9602c_gphy_lock);
 }
 
+/* RLDP, the switch's own loop detection: it sends a probe out of each enabled
+ * port every 2 s and flags a port whose probes come back. Stock ships it off. */
+#define SW_RLDP_EN		0x1a000
+#define SW_RLDP_PORT_TX_EN	0x1a01c
+#define SW_RLDP_LP_ENTER	0x1a020	/* write 1 to clear */
+#define SW_RLDP_LP_LEAVE	0x1a024	/* write 1 to clear */
+#define SW_RLDP_LP_STS		0x1a028
+#define SW_RLDP_LP_PNUM		0x1a02c	/* 3 bits per port: the port it came back on */
+#define RLDP_CUT_SECONDS	30
+
+enum { LOOP_GUARD_OFF, LOOP_GUARD_LOG, LOOP_GUARD_CUT };
+static int lan_loop_guard = LOOP_GUARD_CUT;
+module_param(lan_loop_guard, int, 0644);
+MODULE_PARM_DESC(lan_loop_guard, "LAN loop detection: 0=off, 1=log, 2=also take the looped jack down for 30 s at a time");
+
+static void rtl9602c_loop_cut(struct rtl9602c_eth *ep, int port)
+{
+	if (ep->loop_cut_port >= 0) {
+		dev_info(ep->dev, "[LAN-017] %s: back up after the loop cut\n",
+			 ep->lan_ndev[ep->loop_cut_port]->name);
+		rtl9602c_lan_gate(ep, ep->loop_cut_port, false);
+	}
+	ep->loop_cut_port = port;
+	if (port >= 0) {
+		dev_warn(ep->dev, "[LAN-016] %s: down for %u s to break the loop\n",
+			 ep->lan_ndev[port]->name, RLDP_CUT_SECONDS);
+		rtl9602c_lan_gate(ep, port, true);
+		ep->loop_cut_left = RLDP_CUT_SECONDS;
+	}
+}
+
+static void rtl9602c_loop_poll(struct rtl9602c_eth *ep)
+{
+	int mode = READ_ONCE(lan_loop_guard);
+	u32 ports = 0, sts, changed;
+	unsigned int p;
+
+	if (!ep->stock_switch)
+		return;
+	for (p = 0; p < LAN_PORTS; p++)
+		if (ep->lan_ndev[p])
+			ports |= BIT(p);
+	if (mode != ep->loop_mode) {
+		iowrite32(mode ? ports : 0, ep->sw + SW_RLDP_PORT_TX_EN);
+		iowrite32(mode ? 1 : 0, ep->sw + SW_RLDP_EN);
+		ep->loop_mode = mode;
+	}
+	if (mode != LOOP_GUARD_CUT && ep->loop_cut_port >= 0)
+		rtl9602c_loop_cut(ep, -1);
+	if (!mode)
+		return;
+	sts = ioread32(ep->sw + SW_RLDP_LP_STS) & ports;
+	iowrite32(ports, ep->sw + SW_RLDP_LP_ENTER);
+	iowrite32(ports, ep->sw + SW_RLDP_LP_LEAVE);
+	changed = sts ^ ep->loop_ports;
+	ep->loop_ports = sts;
+	for (p = 0; p < LAN_PORTS; p++) {
+		if (!(changed & BIT(p)))
+			continue;
+		if (sts & BIT(p))
+			dev_warn(ep->dev, "[LAN-015] %s: loop detected, probes return on switch port %u\n",
+				 ep->lan_ndev[p]->name,
+				 (ioread32(ep->sw + SW_RLDP_LP_PNUM) >> (3 * p)) & 7);
+		else
+			dev_info(ep->dev, "%s: loop cleared\n", ep->lan_ndev[p]->name);
+	}
+	if (ep->loop_cut_port >= 0) {
+		if (!--ep->loop_cut_left)
+			rtl9602c_loop_cut(ep, -1);
+	} else if (mode == LOOP_GUARD_CUT && sts) {
+		/* Both ends of a cable report it, and one cut breaks the loop. */
+		rtl9602c_loop_cut(ep, fls(sts) - 1);
+	}
+}
+
 static void rtl9602c_link_work(struct work_struct *work)
 {
 	struct rtl9602c_eth *ep = container_of(to_delayed_work(work),
@@ -3991,6 +4102,7 @@ static void rtl9602c_link_work(struct work_struct *work)
 			rtl9602c_gphy_link_poll(ep, p);
 		}
 	}
+	rtl9602c_loop_poll(ep);
 	schedule_delayed_work(&ep->link_work, HZ);
 }
 
@@ -4078,6 +4190,7 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 	/* The board's own WAN MAC offset from its stock (X100DG: LAN+1). */
 	of_property_read_u32(dev->of_node, "realtek,wan-mac-offset", &wan_mac_offset);
 	ep->port0_serdes = of_property_read_bool(dev->of_node, "realtek,port0-serdes");
+	ep->loop_cut_port = -1;
 	ep->stock_switch = of_property_read_bool(dev->of_node, "realtek,stock-switch-config");
 	ret = rtl9602c_ext_phy_init(ep);
 	if (ret)
