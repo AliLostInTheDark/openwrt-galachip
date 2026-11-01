@@ -22,7 +22,9 @@
 #include <linux/seq_file.h>
 #include <linux/ethtool.h>	/* the LAN jacks' link settings */
 #include <linux/if_vlan.h>	/* the per-jack steering tag */
-#include <linux/leds.h>		/* the board's PON/LOS lamps, handed to net/xpon */
+#include <linux/leds.h>
+#include <linux/phy.h>
+#include <linux/phylink.h>		/* the board's PON/LOS lamps, handed to net/xpon */
 #include <net/page_pool/helpers.h>
 #include "luna_eth_regs.h"	/* the family MAC/switch register map + per-chip table */
 #include "luna_gpon_regs.h"	/* the family's luna_sw_io(): a struct hwio over the SWCORE base */
@@ -249,6 +251,9 @@ MODULE_PARM_DESC(pon_vid, "VLAN of the PON port, apart from the LAN's (default 4
 struct rtl9602c_lan {
 	struct rtl9602c_eth *ep;
 	unsigned int	port;		/* switch port */
+	struct phylink_config pl_config;
+	struct phylink	*pl;
+	struct phy_device *phy;
 };
 
 static struct rtl9602c_eth *g_ep;	/* single-instance, for /proc diag */
@@ -2568,8 +2573,6 @@ static const struct net_device_ops rtl9602c_eth_netdev_ops = {
  * by the descriptor's source port, TX is held to the jack (lan_tx_steer).
  * eth0 stays the conduit -- the rings, the IRQ, the station address the
  * jacks inherit -- and a bridge port only on a configuration from before. */
-static void rtl9602c_lan_carrier_sync(struct rtl9602c_eth *ep, unsigned int port);
-
 static int rtl9602c_lan_open(struct net_device *ndev)
 {
 	struct rtl9602c_lan *lan = netdev_priv(ndev);
@@ -2586,7 +2589,7 @@ static int rtl9602c_lan_open(struct net_device *ndev)
 		if (ret)
 			return ret;
 	}
-	rtl9602c_lan_carrier_sync(ep, lan->port);
+	phylink_start(lan->pl);
 	netif_start_queue(ndev);
 	return 0;
 }
@@ -2597,13 +2600,13 @@ static int rtl9602c_lan_stop(struct net_device *ndev)
 	int ret;
 
 	netif_stop_queue(ndev);
+	phylink_stop(lan->pl);
 	/* The switch would keep forwarding through a jack nobody watches:
 	 * hold its link down while the netdev is, as the bridge expects. */
 	ret = rtl9602c_lan_gate(lan->ep, lan->port, true);
 	if (ret)
 		netdev_warn(ndev, "[LAN-007] the jack's link could not be held down (%d): it keeps forwarding while this netdev is down\n",
 			    ret);
-	netif_carrier_off(ndev);
 	return 0;
 }
 
@@ -2631,224 +2634,60 @@ static const struct net_device_ops rtl9602c_lan_netdev_ops = {
 	.ndo_get_stats64	= rtl9602c_lan_get_stats64,
 };
 
-static void rtl9602c_lan_supported(const struct rtl9602c_lan *lan, unsigned long *mask)
-{
-	linkmode_zero(mask);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_TP_BIT, mask);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, mask);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_10baseT_Half_BIT, mask);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_10baseT_Full_BIT, mask);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Half_BIT, mask);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT, mask);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, mask);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_Pause_BIT, mask);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, mask);
-	if (lan->port == 0 && lan->ep->port0_serdes)
-		linkmode_set_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT, mask);
-}
-
 static bool rtl9602c_lan_is_ext(const struct rtl9602c_lan *lan)
 {
 	return lan->port == 0 && lan->ep->port0_serdes;
 }
 
-/* Keeps the power bit: a port the OLT locked stays down, and takes the new
- * settings when it is unlocked. */
-static int rtl9602c_lan_bmcr_set__locked(struct rtl9602c_eth *ep, unsigned int port, u16 val)
-{
-	int bmcr = rtl9602c_lan_phy_read__locked(ep, port, MII_BMCR);
-
-	if (bmcr < 0)
-		return bmcr;
-	return rtl9602c_lan_phy_write__locked(ep, port, MII_BMCR, (bmcr & BMCR_PDOWN) | val);
-}
-
-static int rtl9602c_lan_restart_aneg__locked(struct rtl9602c_eth *ep, unsigned int port)
-{
-	return rtl9602c_lan_bmcr_set__locked(ep, port, BMCR_ANENABLE | BMCR_ANRESTART);
-}
-
-static int rtl9602c_lan_advertise__locked(struct rtl9602c_lan *lan, const unsigned long *adv)
-{
-	struct rtl9602c_eth *ep = lan->ep;
-	int anar, gbcr, rc;
-
-	anar = rtl9602c_lan_phy_read__locked(ep, lan->port, MII_ADVERTISE);
-	if (anar < 0)
-		return anar;
-	gbcr = rtl9602c_lan_phy_read__locked(ep, lan->port, MII_CTRL1000);
-	if (gbcr < 0)
-		return gbcr;
-	anar &= ~(ADVERTISE_ALL | ADVERTISE_PAUSE_CAP | ADVERTISE_PAUSE_ASYM);
-	gbcr &= ~(ADVERTISE_1000FULL | ADVERTISE_1000HALF);
-	rc = rtl9602c_lan_phy_write__locked(ep, lan->port, MII_ADVERTISE,
-					    anar | linkmode_adv_to_mii_adv_t(adv));
-	if (!rc)
-		rc = rtl9602c_lan_phy_write__locked(ep, lan->port, MII_CTRL1000,
-						    gbcr | linkmode_adv_to_mii_ctrl1000_t(adv));
-	if (rc)
-		return rc;
-	if (rtl9602c_lan_is_ext(lan)) {
-		int v = ext_mdio_read_c45(ep, MDIO_MMD_AN, MDIO_AN_10GBT_CTRL);
-
-		if (v < 0)
-			return v;
-		v &= ~MDIO_AN_10GBT_CTRL_ADV2_5G;
-		if (linkmode_test_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT, adv))
-			v |= MDIO_AN_10GBT_CTRL_ADV2_5G;
-		ext_mdio_write_c45(ep, MDIO_MMD_AN, MDIO_AN_10GBT_CTRL, v);
-	}
-	return rtl9602c_lan_restart_aneg__locked(ep, lan->port);
-}
-
-/* Speed and duplex are what link_work last saw of the port. */
 static int rtl9602c_lan_get_link_ksettings(struct net_device *ndev,
 					   struct ethtool_link_ksettings *cmd)
 {
 	struct rtl9602c_lan *lan = netdev_priv(ndev);
-	struct rtl9602c_eth *ep = lan->ep;
-	const struct rtl9602c_lan_link *l = &ep->lan_link[lan->port];
-	int bmcr, anar, gbcr, lpa, stat1000, ctrl10g = 0, stat10g = 0;
 
-	mutex_lock(&rtl9602c_gphy_lock);
-	bmcr = rtl9602c_lan_phy_read__locked(ep, lan->port, MII_BMCR);
-	anar = rtl9602c_lan_phy_read__locked(ep, lan->port, MII_ADVERTISE);
-	gbcr = rtl9602c_lan_phy_read__locked(ep, lan->port, MII_CTRL1000);
-	lpa = rtl9602c_lan_phy_read__locked(ep, lan->port, MII_LPA);
-	stat1000 = rtl9602c_lan_phy_read__locked(ep, lan->port, MII_STAT1000);
-	if (rtl9602c_lan_is_ext(lan)) {
-		ctrl10g = ext_mdio_read_c45(ep, MDIO_MMD_AN, MDIO_AN_10GBT_CTRL);
-		stat10g = ext_mdio_read_c45(ep, MDIO_MMD_AN, MDIO_AN_10GBT_STAT);
-	}
-	mutex_unlock(&rtl9602c_gphy_lock);
-	if (bmcr < 0 || anar < 0 || gbcr < 0 || lpa < 0 || stat1000 < 0 ||
-	    ctrl10g < 0 || stat10g < 0)
-		return -EIO;
-
-	rtl9602c_lan_supported(lan, cmd->link_modes.supported);
-	linkmode_zero(cmd->link_modes.advertising);
-	linkmode_zero(cmd->link_modes.lp_advertising);
-	linkmode_set_bit(ETHTOOL_LINK_MODE_TP_BIT, cmd->link_modes.advertising);
-	if (bmcr & BMCR_ANENABLE)
-		linkmode_set_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, cmd->link_modes.advertising);
-	mii_adv_mod_linkmode_adv_t(cmd->link_modes.advertising, anar);
-	mii_ctrl1000_mod_linkmode_adv_t(cmd->link_modes.advertising, gbcr);
-	linkmode_mod_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT, cmd->link_modes.advertising,
-			 ctrl10g & MDIO_AN_10GBT_CTRL_ADV2_5G);
-	if (l->up && (bmcr & BMCR_ANENABLE)) {
-		mii_lpa_mod_linkmode_lpa_t(cmd->link_modes.lp_advertising, lpa);
-		mii_stat1000_mod_linkmode_lpa_t(cmd->link_modes.lp_advertising, stat1000);
-		linkmode_mod_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT,
-				 cmd->link_modes.lp_advertising,
-				 stat10g & MDIO_AN_10GBT_STAT_LP2_5G);
-	}
-	cmd->base.port = PORT_TP;
-	cmd->base.phy_address = rtl9602c_lan_is_ext(lan) ? ep->ext_phy : lan->port;
-	cmd->base.autoneg = bmcr & BMCR_ANENABLE ? AUTONEG_ENABLE : AUTONEG_DISABLE;
-	cmd->base.speed = l->up ? l->speed : SPEED_UNKNOWN;
-	cmd->base.duplex = !l->up ? DUPLEX_UNKNOWN :
-			   l->full ? DUPLEX_FULL : DUPLEX_HALF;
-	return 0;
+	return phylink_ethtool_ksettings_get(lan->pl, cmd);
 }
 
 static int rtl9602c_lan_set_link_ksettings(struct net_device *ndev,
 					   const struct ethtool_link_ksettings *cmd)
 {
 	struct rtl9602c_lan *lan = netdev_priv(ndev);
-	__ETHTOOL_DECLARE_LINK_MODE_MASK(supported);
-	int rc;
 
-	if (cmd->base.autoneg == AUTONEG_ENABLE) {
-		const unsigned long *adv = cmd->link_modes.advertising;
-
-		rtl9602c_lan_supported(lan, supported);
-		if (!linkmode_subset(adv, supported))
-			return -EINVAL;
-		if (!(linkmode_adv_to_mii_adv_t(adv) & ADVERTISE_ALL) &&
-		    !linkmode_adv_to_mii_ctrl1000_t(adv) &&
-		    !linkmode_test_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT, adv))
-			return -EINVAL;
-		mutex_lock(&rtl9602c_gphy_lock);
-		rc = rtl9602c_lan_advertise__locked(lan, adv);
-		mutex_unlock(&rtl9602c_gphy_lock);
-		return rc;
-	}
-	/* Gigabit and up need autonegotiation for master and slave. */
-	if (cmd->base.speed != SPEED_10 && cmd->base.speed != SPEED_100)
-		return -EINVAL;
-	if (cmd->base.duplex != DUPLEX_FULL && cmd->base.duplex != DUPLEX_HALF)
-		return -EINVAL;
-	mutex_lock(&rtl9602c_gphy_lock);
-	rc = rtl9602c_lan_bmcr_set__locked(lan->ep, lan->port,
-					   (cmd->base.speed == SPEED_100 ? BMCR_SPEED100 : 0) |
-					   (cmd->base.duplex == DUPLEX_FULL ? BMCR_FULLDPLX : 0));
-	mutex_unlock(&rtl9602c_gphy_lock);
-	return rc;
+	return phylink_ethtool_ksettings_set(lan->pl, cmd);
 }
 
 static int rtl9602c_lan_nway_reset(struct net_device *ndev)
 {
 	struct rtl9602c_lan *lan = netdev_priv(ndev);
-	int bmcr, rc;
 
-	mutex_lock(&rtl9602c_gphy_lock);
-	bmcr = rtl9602c_lan_phy_read__locked(lan->ep, lan->port, MII_BMCR);
-	if (bmcr < 0)
-		rc = bmcr;
-	else if (!(bmcr & BMCR_ANENABLE))
-		rc = -EINVAL;
-	else
-		rc = rtl9602c_lan_restart_aneg__locked(lan->ep, lan->port);
-	mutex_unlock(&rtl9602c_gphy_lock);
-	return rc;
+	return phylink_ethtool_nway_reset(lan->pl);
 }
 
 static void rtl9602c_lan_get_pauseparam(struct net_device *ndev,
 					struct ethtool_pauseparam *pause)
 {
 	struct rtl9602c_lan *lan = netdev_priv(ndev);
-	int anar;
 
-	mutex_lock(&rtl9602c_gphy_lock);
-	anar = rtl9602c_lan_phy_read__locked(lan->ep, lan->port, MII_ADVERTISE);
-	mutex_unlock(&rtl9602c_gphy_lock);
-	if (anar < 0)
-		return;
-	pause->autoneg = AUTONEG_ENABLE;
-	pause->rx_pause = !!(anar & ADVERTISE_PAUSE_CAP);
-	pause->tx_pause = !(anar & ADVERTISE_PAUSE_CAP) != !(anar & ADVERTISE_PAUSE_ASYM);
+	phylink_ethtool_get_pauseparam(lan->pl, pause);
 }
 
-/* Pause follows negotiation on a copper port. Port 0's ability is forced, so its
- * bits move here too: b5 TX, b6 RX; the link poll writes them back. */
 static int rtl9602c_lan_set_pauseparam(struct net_device *ndev,
 				       struct ethtool_pauseparam *pause)
 {
 	struct rtl9602c_lan *lan = netdev_priv(ndev);
-	struct rtl9602c_eth *ep = lan->ep;
-	int anar, rc;
-	u8 fc = (pause->rx_pause ? FLOW_CTRL_RX : 0) | (pause->tx_pause ? FLOW_CTRL_TX : 0);
 
-	if (!pause->autoneg)
-		return -EINVAL;
-	mutex_lock(&rtl9602c_gphy_lock);
-	anar = rtl9602c_lan_phy_read__locked(ep, lan->port, MII_ADVERTISE);
-	if (anar < 0) {
-		rc = anar;
-		goto out;
-	}
-	anar &= ~(ADVERTISE_PAUSE_CAP | ADVERTISE_PAUSE_ASYM);
-	rc = rtl9602c_lan_phy_write__locked(ep, lan->port, MII_ADVERTISE,
-					    anar | mii_advertise_flowctrl(fc));
-	if (rc)
-		goto out;
-	if (rtl9602c_lan_is_ext(lan))
-		ep->port0_pause_off = (pause->tx_pause ? 0 : BIT(5)) |
-				      (pause->rx_pause ? 0 : BIT(6));
-	rc = rtl9602c_lan_restart_aneg__locked(ep, lan->port);
-out:
-	mutex_unlock(&rtl9602c_gphy_lock);
-	return rc;
+	return phylink_ethtool_set_pauseparam(lan->pl, pause);
+}
+
+/* Keeps the power bit: a port the OLT locked stays down, and takes the new
+ * settings when it is unlocked. */
+static int rtl9602c_lan_restart_aneg__locked(struct rtl9602c_eth *ep, unsigned int port)
+{
+	int bmcr = rtl9602c_lan_phy_read__locked(ep, port, MII_BMCR);
+
+	if (bmcr < 0)
+		return bmcr;
+	return rtl9602c_lan_phy_write__locked(ep, port, MII_BMCR, (bmcr & BMCR_PDOWN) |
+					      BMCR_ANENABLE | BMCR_ANRESTART);
 }
 
 /* MDIO_AN_EEE_ADV or MDIO_AN_EEE_LPABLE; the GPHY maps them at page 0xa5d. */
@@ -2991,10 +2830,11 @@ static const struct {
 static int rtl9602c_uni_autodetect_set(void *cookie, unsigned int port, u8 mode)
 {
 	struct rtl9602c_eth *ep = cookie;
-	__ETHTOOL_DECLARE_LINK_MODE_MASK(adv);
+	struct ethtool_link_ksettings cmd = { };
+	unsigned long *adv = cmd.link_modes.advertising;
 	struct rtl9602c_lan *lan;
 	unsigned int i;
-	int anar, rc;
+	int rc;
 
 	if (port >= LAN_PORTS || !ep->lan_ndev[port])
 		return mode ? -EINVAL : 0;
@@ -3028,16 +2868,14 @@ static int rtl9602c_uni_autodetect_set(void *cookie, unsigned int port, u8 mode)
 	    rtl9602c_uni_autodetect_modes[i].full && rtl9602c_lan_is_ext(lan))
 		linkmode_set_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT, adv);
 
-	mutex_lock(&rtl9602c_gphy_lock);
-	anar = rtl9602c_lan_phy_read__locked(ep, port, MII_ADVERTISE);
-	if (anar < 0) {
-		rc = anar;
-	} else {
-		linkmode_mod_bit(ETHTOOL_LINK_MODE_Pause_BIT, adv, anar & ADVERTISE_PAUSE_CAP);
-		linkmode_mod_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, adv, anar & ADVERTISE_PAUSE_ASYM);
-		rc = rtl9602c_lan_advertise__locked(lan, adv);
-	}
-	mutex_unlock(&rtl9602c_gphy_lock);
+	/* Through the PHY, not phylink: the OLT's callers don't hold RTNL. */
+	linkmode_set_bit(ETHTOOL_LINK_MODE_TP_BIT, adv);
+	linkmode_mod_bit(ETHTOOL_LINK_MODE_Pause_BIT, adv,
+			 linkmode_test_bit(ETHTOOL_LINK_MODE_Pause_BIT, lan->phy->advertising));
+	linkmode_mod_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, adv,
+			 linkmode_test_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, lan->phy->advertising));
+	cmd.base.autoneg = AUTONEG_ENABLE;
+	rc = phy_ethtool_ksettings_set(lan->phy, &cmd);
 	if (!rc) {
 		ep->uni_autodetect[port] = mode;
 		dev_info(ep->dev, "%s: OLT set auto-detection %#x\n", ep->lan_ndev[port]->name, mode);
@@ -3070,6 +2908,9 @@ static const struct ethtool_ops rtl9602c_lan_ethtool_ops = {
  *	};
  * reg is the switch port, label the netdev's name. No node: eth0 alone
  * carries the LAN, as before. */
+static int rtl9602c_lan_phylink(struct rtl9602c_eth *ep, struct rtl9602c_lan *lan,
+				struct device_node *pn);
+
 static int rtl9602c_lan_register(struct rtl9602c_eth *ep)
 {
 	struct device *dev = ep->dev;
@@ -3116,6 +2957,11 @@ static int rtl9602c_lan_register(struct rtl9602c_eth *ep)
 			break;
 		}
 		ep->lan_ndev[port] = ndev;
+		ret = rtl9602c_lan_phylink(ep, lan, pn);
+		if (ret) {
+			dev_err(dev, "[LAN-018] %s: no PHY: %d\n", label, ret);
+			break;
+		}
 		dev_info(dev, "%s: switch port %u\n", ndev->name, port);
 	}
 	if (ret)
@@ -3414,14 +3260,15 @@ static int rtl9602c_uni_gate_apply(struct rtl9602c_eth *ep, unsigned int port,
 
 	/* A SerDes port has no GPHY in its path: the forced link IS the gate. */
 	if (port == 0 && ep->port0_serdes) {
-		force = SW_ABLTY_SERDES_UP;
+		/* Unlocked, the link comes back with the PHY's next poll. */
+		force = ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, port));
 		if (locked)
 			force &= ~ABLTY_LINK;
 		iowrite32(force, ep->sw + SW_FORCE_P_ABLTY(ep, port));
 		iowrite32(0xfff, ep->sw + SW_ABLTY_FORCE_MODE(ep, port));
 		force = ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, port));
 		mutex_unlock(&rtl9602c_gphy_lock);
-		if (!(force & ABLTY_LINK) != locked) {
+		if (locked && (force & ABLTY_LINK)) {
 			dev_err(ep->dev,
 				"[PHY-007] UNI port %u: the SerDes link gate did not take -- FORCE_P_ABLTY %08x\n",
 				port, force);
@@ -3825,60 +3672,104 @@ static int rtl9602c_ext_phy_init(struct rtl9602c_eth *ep)
 	return 0;
 }
 
-/* Link changes in phylink's words, per LAN jack: LAN1 is the GPHY port,
- * LAN2 the SerDes one. Pause is the ability word's TX (b5) / RX (b6). */
-static const char *rtl9602c_speed_str(u32 speed)
+/* The LAN jacks' PHYs behind one bus: a GPHY's address is its switch port, the
+ * RTL8221B has its own. The accessors take the lock all of them share. */
+static int rtl9602c_mdio_read(struct mii_bus *bus, int addr, int reg)
 {
-	switch (speed) {
-	case SPEED_10: return "10Mbps";
-	case SPEED_100: return "100Mbps";
-	case SPEED_1000: return "1Gbps";
-	case SPEED_2500: return "2.5Gbps";
-	default: return "Unknown";
-	}
+	struct rtl9602c_eth *ep = bus->priv;
+	int rc;
+
+	mutex_lock(&rtl9602c_gphy_lock);
+	rc = rtl9602c_lan_phy_read__locked(ep, addr == ep->ext_phy && ep->port0_serdes ? 0 : addr, reg);
+	mutex_unlock(&rtl9602c_gphy_lock);
+	return rc;
 }
 
-static void rtl9602c_link_log(struct rtl9602c_eth *ep, unsigned int lan, bool up,
-			      u32 speed, bool full, u32 ablty)
+static int rtl9602c_mdio_write(struct mii_bus *bus, int addr, int reg, u16 val)
 {
-	static const char * const pause[] = { "off", "tx", "rx", "rx/tx" };
+	struct rtl9602c_eth *ep = bus->priv;
+	int rc;
 
-	if (!up) {
-		dev_info(ep->dev, "lan%u: [LAN-012] Link is Down\n", lan);
-		return;
-	}
-	dev_info(ep->dev, "lan%u: Link is Up - %s/%s - flow control %s\n", lan,
-		 rtl9602c_speed_str(speed), full ? "Full" : "Half",
-		 pause[(ablty >> 5) & 0x3]);
+	mutex_lock(&rtl9602c_gphy_lock);
+	rc = rtl9602c_lan_phy_write__locked(ep, addr == ep->ext_phy && ep->port0_serdes ? 0 : addr, reg, val);
+	mutex_unlock(&rtl9602c_gphy_lock);
+	return rc;
 }
 
-/* What the jack's netdev shows: carrier now, speed and duplex to ethtool. */
-static void rtl9602c_lan_link_set(struct rtl9602c_eth *ep, unsigned int port,
-				  bool up, u32 speed, bool full)
+static bool rtl9602c_phy_is_ext(struct phy_device *phy)
 {
-	struct net_device *ndev;
+	struct rtl9602c_eth *ep = phy->mdio.bus->priv;
 
-	if (port >= LAN_PORTS)
-		return;
-	ep->lan_link[port].seen = true;
-	ep->lan_link[port].up = up;
-	ep->lan_link[port].speed = speed;
-	ep->lan_link[port].full = full;
-	ndev = ep->lan_ndev[port];
-	if (!ndev)
-		return;
-	if (up)
-		netif_carrier_on(ndev);
-	else
-		netif_carrier_off(ndev);
+	return ep->port0_serdes && phy->mdio.addr == ep->ext_phy;
 }
 
-static void rtl9602c_lan_carrier_sync(struct rtl9602c_eth *ep, unsigned int port)
+static int rtl9602c_gphy_match(struct phy_device *phy, const struct phy_driver *drv)
 {
-	if (port < LAN_PORTS)
-		rtl9602c_lan_link_set(ep, port, ep->lan_link[port].up,
-				      ep->lan_link[port].speed,
-				      ep->lan_link[port].full);
+	return phy->mdio.bus->read == rtl9602c_mdio_read && !rtl9602c_phy_is_ext(phy);
+}
+
+static int rtl9602c_ext_match(struct phy_device *phy, const struct phy_driver *drv)
+{
+	return phy->mdio.bus->read == rtl9602c_mdio_read && rtl9602c_phy_is_ext(phy);
+}
+
+/* Static: the switch isn't up yet when the PHYs bind, and a stray access hangs it. */
+static int rtl9602c_phy_get_features(struct phy_device *phy)
+{
+	linkmode_set_bit(ETHTOOL_LINK_MODE_TP_BIT, phy->supported);
+	linkmode_set_bit(ETHTOOL_LINK_MODE_MII_BIT, phy->supported);
+	linkmode_set_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, phy->supported);
+	linkmode_set_bit(ETHTOOL_LINK_MODE_10baseT_Half_BIT, phy->supported);
+	linkmode_set_bit(ETHTOOL_LINK_MODE_10baseT_Full_BIT, phy->supported);
+	linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Half_BIT, phy->supported);
+	linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT, phy->supported);
+	linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, phy->supported);
+	linkmode_set_bit(ETHTOOL_LINK_MODE_Pause_BIT, phy->supported);
+	linkmode_set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, phy->supported);
+	if (rtl9602c_phy_is_ext(phy))
+		linkmode_set_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT, phy->supported);
+	return 0;
+}
+
+static int rtl9602c_ext_config_init(struct phy_device *phy)
+{
+	__set_bit(PHY_INTERFACE_MODE_SGMII, phy->possible_interfaces);
+	__set_bit(PHY_INTERFACE_MODE_2500BASEX, phy->possible_interfaces);
+	return 0;
+}
+
+static int rtl9602c_ext_read_mmd(struct phy_device *phy, int devad, u16 reg)
+{
+	struct rtl9602c_eth *ep = phy->mdio.bus->priv;
+	int rc;
+
+	mutex_lock(&rtl9602c_gphy_lock);
+	rc = ext_mdio_read_c45(ep, devad, reg);
+	mutex_unlock(&rtl9602c_gphy_lock);
+	return rc;
+}
+
+static int rtl9602c_ext_write_mmd(struct phy_device *phy, int devad, u16 reg, u16 val)
+{
+	struct rtl9602c_eth *ep = phy->mdio.bus->priv;
+
+	mutex_lock(&rtl9602c_gphy_lock);
+	ext_mdio_write_c45(ep, devad, reg, val);
+	mutex_unlock(&rtl9602c_gphy_lock);
+	return 0;
+}
+
+static int rtl9602c_ext_config_aneg(struct phy_device *phy)
+{
+	int rc = phy_modify_mmd_changed(phy, MDIO_MMD_AN, MDIO_AN_10GBT_CTRL,
+					MDIO_AN_10GBT_CTRL_ADV2_5G,
+					linkmode_test_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT,
+							  phy->advertising) ?
+					MDIO_AN_10GBT_CTRL_ADV2_5G : 0);
+
+	if (rc < 0)
+		return rc;
+	return __genphy_config_aneg(phy, rc > 0);
 }
 
 /* RTL8221B PHYSR (VEND2 0xa434): duplex bit 3, speed bits 10:9 and 5:4. */
@@ -3896,68 +3787,25 @@ static u32 rtl9602c_port0_speed(struct rtl9602c_eth *ep, bool *full)
 	}
 }
 
-/* A GPHY port links on its own; its live ability word says how. The log
- * names the jack as the panel does: port 1 is LAN1, port 0 LAN2. */
-static void rtl9602c_gphy_link_poll(struct rtl9602c_eth *ep, unsigned int port)
+/* Follow the copper's speed with the SerDes, as stock's link task does, so a
+ * LAN2 port's link only comes up on a SerDes that matches. An administrative
+ * lock keeps it down whatever the cable does. BMSR's link bit latches low, so
+ * the second read is the live state. */
+static int rtl9602c_ext_read_status(struct phy_device *phy)
 {
-	static const u32 speed[] = { SPEED_10, SPEED_100, SPEED_1000, SPEED_UNKNOWN };
-	u32 sts = ioread32(ep->sw + ep->swm->p_ablty + 4 * port) &
-		  (ABLTY_LINK | BIT(2) | BIT(5) | BIT(6) | 0x3);
-	bool up = sts & ABLTY_LINK;
-	u16 bmsr = BMSR_LSTATUS;
-	bool own;
-
-	/* BMSR's link bit latches low until read: low with the link up on both
-	 * polls means it dropped and came back in between. */
-	mutex_lock(&rtl9602c_gphy_lock);
-	if (rtl9602c_gphy_read__locked(ep, port, MII_BMSR, &bmsr))
-		bmsr = BMSR_LSTATUS;
-	own = ep->lan_own_drop & BIT(port);
-	if (ep->lan_link[port].seen && ep->lan_link[port].up &&
-	    (!up || !(bmsr & BMSR_LSTATUS))) {
-		ep->lan_own_drop &= ~BIT(port);
-		if (!own) {
-			ep->lan_drops[port]++;
-			if (up)
-				dev_info(ep->dev, "lan%u: [LAN-013] link dropped and recovered within a second (%u drops)\n",
-					 port == 0 ? 2 : 1, ep->lan_drops[port]);
-		}
-	}
-	mutex_unlock(&rtl9602c_gphy_lock);
-
-	if (sts == ep->gphy_sts[port] && ep->lan_link[port].seen)
-		return;
-	ep->gphy_sts[port] = sts;
-	/* The first look at a port with no link is not news. */
-	if (sts || ep->lan_link[port].seen)
-		rtl9602c_link_log(ep, port == 0 ? 2 : 1, up, speed[sts & 0x3],
-				  sts & BIT(2), sts);
-	rtl9602c_lan_link_set(ep, port, up, speed[sts & 0x3], sts & BIT(2));
-}
-
-/* Mirror the external PHY's link into port 0's forced link, so a LAN2 jack
- * with no cable is a down port to the switch, as a copper port would be. An
- * administrative lock keeps it down whatever the cable does. BMSR's link bit
- * latches low, so the second read is the live state. The bit-banged bus has
- * one user at a time: the gphy lock, which the gate holds too. */
-static void rtl9602c_port0_link_poll(struct rtl9602c_eth *ep)
-{
-	u32 cur, want = SW_ABLTY_SERDES_UP & ~ep->port0_pause_off, speed = SPEED_UNKNOWN;
-	int bmsr, latched;
+	struct rtl9602c_eth *ep = phy->mdio.bus->priv;
+	u32 cur, speed = SPEED_UNKNOWN;
+	int bmsr, latched, stat, rc;
 	bool up, link, full = false;
 
 	mutex_lock(&rtl9602c_gphy_lock);
 	latched = ext_mdio_read(ep, MII_BMSR);
 	bmsr = ext_mdio_read(ep, MII_BMSR);
 	up = bmsr >= 0 && (bmsr & BMSR_LSTATUS);
-	if (ep->lan_link[0].seen && ep->lan_link[0].up) {
-		if (!up) {
-			ep->lan_drops[0]++;
-		} else if (latched >= 0 && !(latched & BMSR_LSTATUS)) {
-			ep->lan_drops[0]++;
-			dev_info(ep->dev, "lan2: [LAN-014] link dropped and recovered within a second (%u drops)\n",
-				 ep->lan_drops[0]);
-		}
+	if (phy->link && up && latched >= 0 && !(latched & BMSR_LSTATUS)) {
+		ep->lan_drops[0]++;
+		dev_info(ep->dev, "lan2: [LAN-014] link dropped and recovered within a second (%u drops)\n",
+			 ep->lan_drops[0]);
 	}
 	if (up)
 		speed = rtl9602c_port0_speed(ep, &full);
@@ -3972,13 +3820,6 @@ static void rtl9602c_port0_link_poll(struct rtl9602c_eth *ep)
 			hsgmii = speed == SPEED_2500;
 		option = hsgmii ? RTL8221B_SDS_OPTION_HSGMII : RTL8221B_SDS_OPTION_SGMII;
 		if (hsgmii != ep->lan_sds_hsgmii || ep->ext_phy_option != option) {
-			int rc;
-
-			cur = ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, 0));
-			iowrite32(cur & ~ABLTY_LINK, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
-			if (ep->lan_link[0].up)
-				rtl9602c_link_log(ep, 2, false, SPEED_UNKNOWN, false, cur);
-			rtl9602c_lan_link_set(ep, 0, false, SPEED_UNKNOWN, false);
 			rc = rtl9602c_ext_phy_setup(ep, option);
 			if (rc) {
 				dev_warn_ratelimited(ep->dev, "[PHY-016] LAN2 PHY SerDes option %u failed: %d; retrying\n",
@@ -3992,25 +3833,191 @@ static void rtl9602c_port0_link_poll(struct rtl9602c_eth *ep)
 			up = false;
 		}
 	}
-	if (speed == SPEED_UNKNOWN && !ep->lan_link[0].up)
+	if (speed == SPEED_UNKNOWN && !phy->link)
 		up = false;
 	link = up && !rtl9602c_uni_port_locked(0);
-	if (!link)
-		want &= ~ABLTY_LINK;
-	else if (speed == SPEED_UNKNOWN && ep->lan_link[0].up) {
-		speed = ep->lan_link[0].speed;
-		full = ep->lan_link[0].full;
-	}
-	cur = ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, 0));
-	if (cur != want)
-		iowrite32(want, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
-	if (link != ep->lan_link[0].up || !ep->lan_link[0].seen ||
-	    (link && (speed != ep->lan_link[0].speed || full != ep->lan_link[0].full))) {
-		if (link || ep->lan_link[0].seen)
-			rtl9602c_link_log(ep, 2, link, speed, full, want);
-		rtl9602c_lan_link_set(ep, 0, link, link ? speed : SPEED_UNKNOWN, full);
+	if (!link) {
+		cur = ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, 0));
+		if (cur & ABLTY_LINK)
+			iowrite32(cur & ~ABLTY_LINK, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
 	}
 	mutex_unlock(&rtl9602c_gphy_lock);
+
+	phy->link = link;
+	phy->autoneg_complete = link;
+	phy->interface = ep->lan_sds_hsgmii ? PHY_INTERFACE_MODE_2500BASEX :
+					      PHY_INTERFACE_MODE_SGMII;
+	if (!link) {
+		phy->speed = SPEED_UNKNOWN;
+		phy->duplex = DUPLEX_UNKNOWN;
+		return 0;
+	}
+	if (speed != SPEED_UNKNOWN) {
+		phy->speed = speed;
+		phy->duplex = full ? DUPLEX_FULL : DUPLEX_HALF;
+	}
+	rc = genphy_read_lpa(phy);
+	if (rc < 0)
+		return rc;
+	stat = phy_read_mmd(phy, MDIO_MMD_AN, MDIO_AN_10GBT_STAT);
+	if (stat < 0)
+		return stat;
+	linkmode_mod_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT, phy->lp_advertising,
+			 stat & MDIO_AN_10GBT_STAT_LP2_5G);
+	phy_resolve_aneg_pause(phy);
+	return 0;
+}
+
+static struct phy_driver rtl9602c_phy_drivers[] = {
+	{
+		.name		= "Luna GPHY",
+		.match_phy_device = rtl9602c_gphy_match,
+		.get_features	= rtl9602c_phy_get_features,
+		.config_aneg	= genphy_config_aneg,
+		.read_status	= genphy_read_status,
+	}, {
+		.name		= "Luna RTL8221B",
+		.match_phy_device = rtl9602c_ext_match,
+		.get_features	= rtl9602c_phy_get_features,
+		.config_init	= rtl9602c_ext_config_init,
+		.config_aneg	= rtl9602c_ext_config_aneg,
+		.read_status	= rtl9602c_ext_read_status,
+		.read_mmd	= rtl9602c_ext_read_mmd,
+		.write_mmd	= rtl9602c_ext_write_mmd,
+	},
+};
+
+static void rtl9602c_phy_drivers_unregister(void *data)
+{
+	phy_drivers_unregister(rtl9602c_phy_drivers, ARRAY_SIZE(rtl9602c_phy_drivers));
+}
+
+static void rtl9602c_mac_config(struct phylink_config *config, unsigned int mode,
+				const struct phylink_link_state *state)
+{
+}
+
+static void rtl9602c_mac_link_down(struct phylink_config *config, unsigned int mode,
+				   phy_interface_t interface)
+{
+	struct rtl9602c_lan *lan = container_of(config, struct rtl9602c_lan, pl_config);
+	struct rtl9602c_eth *ep = lan->ep;
+	unsigned int port = lan->port;
+
+	mutex_lock(&rtl9602c_gphy_lock);
+	if (ep->lan_link[port].up) {
+		if (ep->lan_own_drop & BIT(port))
+			ep->lan_own_drop &= ~BIT(port);
+		else
+			ep->lan_drops[port]++;
+		dev_info(ep->dev, "%s: [LAN-012] Link is Down\n", ep->lan_ndev[port]->name);
+	}
+	ep->lan_link[port].up = false;
+	ep->lan_link[port].speed = SPEED_UNKNOWN;
+	if (rtl9602c_lan_is_ext(lan))
+		iowrite32(ioread32(ep->sw + SW_FORCE_P_ABLTY(ep, 0)) & ~ABLTY_LINK,
+			  ep->sw + SW_FORCE_P_ABLTY(ep, 0));
+	mutex_unlock(&rtl9602c_gphy_lock);
+}
+
+/* A GPHY port's MAC follows its PHY by itself; port 0's ability is forced. */
+static void rtl9602c_mac_link_up(struct phylink_config *config, struct phy_device *phy,
+				 unsigned int mode, phy_interface_t interface,
+				 int speed, int duplex, bool tx_pause, bool rx_pause)
+{
+	struct rtl9602c_lan *lan = container_of(config, struct rtl9602c_lan, pl_config);
+	struct rtl9602c_eth *ep = lan->ep;
+	unsigned int port = lan->port;
+
+	mutex_lock(&rtl9602c_gphy_lock);
+	ep->lan_link[port].up = true;
+	ep->lan_link[port].speed = speed;
+	ep->lan_link[port].full = duplex == DUPLEX_FULL;
+	if (rtl9602c_lan_is_ext(lan)) {
+		u32 want;
+
+		ep->port0_pause_off = (tx_pause ? 0 : BIT(5)) | (rx_pause ? 0 : BIT(6));
+		want = SW_ABLTY_SERDES_UP & ~ep->port0_pause_off;
+		if (rtl9602c_uni_port_locked(0))
+			want &= ~ABLTY_LINK;
+		iowrite32(want, ep->sw + SW_FORCE_P_ABLTY(ep, 0));
+	}
+	mutex_unlock(&rtl9602c_gphy_lock);
+}
+
+static const struct phylink_mac_ops rtl9602c_phylink_ops = {
+	.mac_config	= rtl9602c_mac_config,
+	.mac_link_down	= rtl9602c_mac_link_down,
+	.mac_link_up	= rtl9602c_mac_link_up,
+};
+
+static struct mii_bus *rtl9602c_mdio_bus(struct rtl9602c_eth *ep)
+{
+	struct mii_bus *bus = devm_mdiobus_alloc(ep->dev);
+	int rc;
+
+	if (!bus)
+		return ERR_PTR(-ENOMEM);
+	bus->name = "luna-lan";
+	bus->priv = ep;
+	bus->parent = ep->dev;
+	bus->read = rtl9602c_mdio_read;
+	bus->write = rtl9602c_mdio_write;
+	bus->phy_mask = ~0;	/* created by hand: no scan of a switch not up yet */
+	snprintf(bus->id, MII_BUS_ID_SIZE, "luna-lan");
+	rc = phy_drivers_register(rtl9602c_phy_drivers, ARRAY_SIZE(rtl9602c_phy_drivers),
+				  THIS_MODULE);
+	if (rc)
+		return ERR_PTR(rc);
+	rc = devm_add_action_or_reset(ep->dev, rtl9602c_phy_drivers_unregister, NULL);
+	if (rc)
+		return ERR_PTR(rc);
+	rc = devm_mdiobus_register(ep->dev, bus);
+	return rc ? ERR_PTR(rc) : bus;
+}
+
+static int rtl9602c_lan_phylink(struct rtl9602c_eth *ep, struct rtl9602c_lan *lan,
+				struct device_node *pn)
+{
+	static struct mii_bus *bus;
+	bool ext = rtl9602c_lan_is_ext(lan);
+	phy_interface_t iface = ext ? PHY_INTERFACE_MODE_SGMII : PHY_INTERFACE_MODE_INTERNAL;
+	int rc;
+
+	if (ext && !ep->ext_phy_ok)
+		return -ENODEV;
+	if (!bus) {
+		bus = rtl9602c_mdio_bus(ep);
+		if (IS_ERR(bus)) {
+			rc = PTR_ERR(bus);
+			bus = NULL;
+			return rc;
+		}
+	}
+	lan->phy = phy_device_create(bus, ext ? ep->ext_phy : lan->port,
+				     ext ? 0x001cc849 : 0x001cc800, false, NULL);
+	if (IS_ERR(lan->phy))
+		return PTR_ERR(lan->phy);
+	rc = phy_device_register(lan->phy);
+	if (rc) {
+		phy_device_free(lan->phy);
+		return rc;
+	}
+	lan->pl_config.dev = &ep->lan_ndev[lan->port]->dev;
+	lan->pl_config.type = PHYLINK_NETDEV;
+	lan->pl_config.mac_capabilities = MAC_ASYM_PAUSE | MAC_SYM_PAUSE | MAC_10 | MAC_100 |
+					  MAC_1000FD | (ext ? MAC_2500FD : 0);
+	__set_bit(iface, lan->pl_config.supported_interfaces);
+	if (ext)
+		__set_bit(PHY_INTERFACE_MODE_2500BASEX, lan->pl_config.supported_interfaces);
+	lan->pl = phylink_create(&lan->pl_config, of_fwnode_handle(pn), iface,
+				 &rtl9602c_phylink_ops);
+	if (IS_ERR(lan->pl))
+		return PTR_ERR(lan->pl);
+	rtnl_lock();
+	rc = phylink_connect_phy(lan->pl, lan->phy);
+	rtnl_unlock();
+	return rc;
 }
 
 /* RLDP, the switch's own loop detection: it sends a probe out of each enabled
@@ -4092,16 +4099,7 @@ static void rtl9602c_link_work(struct work_struct *work)
 {
 	struct rtl9602c_eth *ep = container_of(to_delayed_work(work),
 					       struct rtl9602c_eth, link_work);
-	unsigned int p;
 
-	for (p = 0; p < LAN_PORTS && p < ep->swm->n_copper; p++) {
-		if (p == 0 && ep->port0_serdes) {
-			if (ep->ext_phy_ok)
-				rtl9602c_port0_link_poll(ep);
-		} else {
-			rtl9602c_gphy_link_poll(ep, p);
-		}
-	}
 	rtl9602c_loop_poll(ep);
 	schedule_delayed_work(&ep->link_work, HZ);
 }

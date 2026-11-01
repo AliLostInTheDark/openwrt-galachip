@@ -143,7 +143,6 @@ struct rtl9602c_eth {
 	 * else eth0, so a bridge built on eth0 alone keeps working. */
 	struct net_device *lan_ndev[LAN_PORTS];
 	struct rtl9602c_lan_link {
-		bool		seen;		/* link_work has looked at the port */
 		bool		up;
 		bool		full;
 		u32		speed;		/* SPEED_* while up */
@@ -167,7 +166,6 @@ struct rtl9602c_eth {
 	u32		port0_pause_off;	/* pause bits taken out of port 0's forced ability */
 	u8		uni_autodetect[LAN_PORTS];	/* the OLT's last ME 11 auto-detection value */
 	u16		uni_pause[LAN_PORTS];	/* its last ME 11 pause time */
-	u32		gphy_sts[LAN_PORTS];	/* last logged GPHY link/speed/duplex, per port */
 
 	/* The external PHY's MDIO bus, bit-banged on two GPIOs as stock does it
 	 * (DT realtek,ext-mdio-gpios = MDC, MDIO; realtek,ext-phy-addr). */

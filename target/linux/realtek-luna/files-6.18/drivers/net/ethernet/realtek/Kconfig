@@ -45,6 +45,7 @@ config RTL9602C_ETH
 	depends on REALTEK_LUNA
 	select LUNA_ETH_MIB
 	select PAGE_POOL
+	select PHYLINK
 	default y
 	help
 	  Clean-room driver for the RTL9602C GMAC + on-chip switch core.
