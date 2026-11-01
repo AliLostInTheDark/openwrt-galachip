@@ -344,3 +344,19 @@ To examine the full LAN2 upload, repeat the same capture with the cable
 left on LAN2 for the whole speed test. No firmware change is made from
 these measurements; bypass, generation stability and both physical ports
 are now supported by timed board evidence.
+
+## Source layout and management VLANs
+
+The offload builds as `rtl9601d_l2.o` and `rtl9601d_vlan.o`, sharing `rtl9602c_eth.h`
+and `rtl9601d_l2.h`.
+
+Traffic the ONU starts leaves in VLAN 1. On a jack where VLAN 1 is tagged, the peer
+needs a VLAN 1 interface to answer it, for example `wan.1` on a router. `omci-management`
+replies to traffic a peer starts through its own untagged path.
+
+## Building
+
+`docs/v2802rh/vsol-v2802rh.diffconfig` holds this board's OpenWrt settings, including
+the kernel and dropbear options that can't live in `config-6.18`:
+
+    cp docs/v2802rh/vsol-v2802rh.diffconfig .config && make defconfig && make

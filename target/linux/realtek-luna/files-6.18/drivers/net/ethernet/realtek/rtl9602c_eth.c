@@ -3910,7 +3910,6 @@ static void rtl9602c_mac_link_down(struct phylink_config *config, unsigned int m
 			ep->lan_own_drop &= ~BIT(port);
 		else
 			ep->lan_drops[port]++;
-		dev_info(ep->dev, "%s: [LAN-012] Link is Down\n", ep->lan_ndev[port]->name);
 	}
 	ep->lan_link[port].up = false;
 	ep->lan_link[port].speed = SPEED_UNKNOWN;

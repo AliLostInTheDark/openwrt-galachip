@@ -125,7 +125,6 @@ New messages take the next free number in their group, and a removed code is not
 | `LAN-009` | ERR | %s (switch port %u) not registered: %d |
 | `LAN-010` | ERR | UNI port %u is not one of this board's %u copper ports -- REFUSED, nothing is written |
 | `LAN-011` | ERR | UNI port %u: the MAC gate did not take -- FORCE_P_ABLTY %08x, ABLTY_FORCE_MODE %08x, so the administrative state is NOT applied |
-| `LAN-012` | INFO | lan%u: Link is Down |
 | `LAN-014` | INFO | lan2: link dropped and recovered within a second (%u drops) |
 | `LAN-015` | WARN | %s: loop detected, probes return on switch port %u |
 | `LAN-016` | WARN | %s: down for %u s to break the loop |

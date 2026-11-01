@@ -36,6 +36,18 @@ PON flow-control watermarks `0x2311c`/`0x23120` use stock's values.
 - `0x2d80c` port 2 egress rate: stock's field is `0x1ffff`, about 1 Gbit/s. Ours
   is unlimited, which suits the 1.24 Gbit/s upstream.
 
+## Added beyond stock
+
+- LAN jacks run on phylink. A PHY driver in `rtl9602c_eth.c` keeps stock's RTL8221B
+  SerDes sequence. LAN2 pause follows negotiation, where stock forces it on. Link
+  messages are phylink's. EEE stays on the driver's own code.
+- RX uses a page pool, one 4k page per buffer.
+- RLDP loop detection, off in stock. Registers: enable `0x1a000`, TX mask `0x1a01c`,
+  enter and leave status `0x1a020`/`0x1a024` (write 1 to clear), looped `0x1a028`,
+  peer port `0x1a02c`. `lan_loop_guard`: 0 off, 1 log, 2 cut (default). See LAN-015 to 017.
+- The kernel has no built-in identity. Password, serial, vendor and versions come from
+  userspace. Airtel's Nokia OLT accepted an empty password.
+
 ## Still open
 
 | Item | What is known | What is missing |
