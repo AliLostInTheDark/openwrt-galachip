@@ -15,14 +15,14 @@ Source logs (kept off the repo, they hold session keys):
 
 | Item | Value |
 |---|---|
-| GPON serial | `ZYOT 0x20095605` (vendor ZYOT; ONT-G and circuit packs report `ZYOT20095680142f0f`) |
+| GPON serial | `ZYOT[masked]` (vendor ZYOT; ONT-G and circuit packs report the same vendor with a masked identifier) |
 | PLOAM password | `00000001` (`30 30 30 30 30 30 30 31 00 00`) |
 | ONT-G | VID `ZYOT`, version `0001`, traffic management option 2 (rate-controlled) |
 | ONT2-G | OMCC version 0xa0, 128 priority queues, 16 schedulers, 64 GEM ports |
 | Software image | `JCO4032_R2.57`, image 0 active and committed |
 | Equipment ID | `MONUV802` (stock vendor ME), ONT-G equipment `0001` |
 | OLT | vendor `ALCL` (Nokia/Alcatel-Lucent) |
-| ONU ID | 5 (GTC register; `gpon show gtc` prints 0) |
+| ONU ID | 5 at this capture (GTC register; `gpon show gtc` prints 0). The OLT assigns it at each registration, so it isn't fixed |
 
 The serial and MACs live in the `config` block (0x25000), which OpenWrt
 keeps read-only.

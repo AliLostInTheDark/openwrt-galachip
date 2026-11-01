@@ -8,6 +8,9 @@ variants are not covered.
 The device is an ONU bridge. Use a separate router for PPPoE/IPoE, NAT, DHCP
 and firewalling. OLT provisioning and authentication requirements vary by ISP.
 
+For the VSOL V2802RH (Realtek RTL9601D), see
+[docs/v2802rh/README.md](docs/v2802rh/README.md).
+
 ## Status
 
 | Area | State |
@@ -451,6 +454,10 @@ Based on OpenWrt, Linux and LuCI.
 The `omci-agent` and `luci-app-omci` packages are based on the original Airoha
 GPON OMCI packages by [@Sirherobrine23](https://github.com/Sirherobrine23)
 (**Matheus Sampaio Queiroga**).
+
+The `realtek-luna` target and the shared GPON core come from the port by
+**Herman Brule** ([@alphaonex86](https://github.com/alphaonex86),
+[alphaonex86/openwrt](https://github.com/alphaonex86/openwrt)).
 
 The optical power gauges, activation stages, apply-cost badges, line status in
 the header and diagnostic report download on the GPON and EPON pages follow

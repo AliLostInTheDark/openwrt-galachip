@@ -3,7 +3,7 @@
 ## 2026-10-25, build d6d62122d0 (RAM boot, Nokia/ALCL OLT)
 
 Works:
-- O5 with ZYOT20095605, no PLOAM password.
+- O5 with ZYOT[masked], no PLOAM password.
 - omcid stays up (responder userspace, agent operational).
 - Profile nokia-alcl configured/effective/forced; MIB sync 4, 163 objects.
 - 41 OMCI responses.
@@ -144,3 +144,24 @@ MIB. The PLOAM handler now binds an assigned Alloc-ID at once (`ONU: T-CONT N
 answering Alloc-ID N ahead of OMCI`), omcid's install takes the slot over or moves
 the Alloc-ID, and removing a T-CONT whose Alloc-ID is still assigned binds it again.
 The `early_tcont` module parameter turns this off.
+
+## 2026-11-01 to 11-02: both lines without seeds, second unit installed
+
+Profile services stay off: the OLT creates every GEM and VLAN (2d55524ab0).
+
+JioFiber (Nokia ALCL, VLAN 1015, p-bits split over five GEMs and T-CONTs): the unit
+is on flash with the OLT's tables stored and 15 OLT-written objects. Six Ookla runs
+averaged 976 down and 932 up with a router on LAN2 at 2.5 Gbit/s through a USB NIC.
+Unshaped 2.5 Gbit/s bursts overflow LAN2, so that router runs TSO and `tbf` at 1160
+Mbit/s. Multicast needs a source-specific join and arrives doubled on GEM 2047; see
+[STOCK-PORT-AUDIT.md](STOCK-PORT-AUDIT.md).
+
+Airtel (Nokia ALCL), second unit: backed up from stock U-Boot with `md.b`, checked
+by CRC, tested from RAM, then flashed through `sf write` at 0x27000. It reaches O5
+with GEM 256 on VLAN 100 and GEM 257 on VLAN 660, both encrypted and offloaded. ME
+171 on VEIP 0x0601 drops untagged frames and passes tagged 100 and 660. The 300/300
+plan measured 300 down and 305 up on a USB NIC. Traffic on VLAN 660 hasn't been
+tested. Lines where ME 171 uses VEIP 0x301 also haven't been tested.
+
+Return to stock and CH341A recovery are documented in [README.md](README.md) but
+still haven't been run on a board.

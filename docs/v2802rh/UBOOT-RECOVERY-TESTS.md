@@ -1,5 +1,8 @@
 # V2802RH U-Boot recovery tests
 
+This is the record of the chainload experiments. The current install keeps the
+stock U-Boot and doesn't need any of this; see [README.md](README.md).
+
 2026-10-26: host checks passed; the new builds still need the board tests
 below. Nothing was flashed by the agent. Keep the existing stock bootloader
 and its saved boot command until the flash tests have been approved and run.

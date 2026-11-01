@@ -354,6 +354,11 @@ Traffic the ONU starts leaves in VLAN 1. On a jack where VLAN 1 is tagged, the p
 needs a VLAN 1 interface to answer it, for example `wan.1` on a router. `omci-management`
 replies to traffic a peer starts through its own untagged path.
 
+The reverse also breaks. On 2026-11-02 a router with its address on `wan.1`, wired
+to a jack where VLAN 1 is untagged, had no ARP with the ONU, so the ONU's NTP failed
+while SSH from a PC on the other jack kept working. Moving the address to plain
+`wan` fixed the path.
+
 ## Building
 
 `docs/v2802rh/vsol-v2802rh.diffconfig` holds this board's OpenWrt settings, including

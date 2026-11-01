@@ -41,6 +41,8 @@ Selecting the Nokia profile still supplies its interoperability MEs and
 quirks. On RTL9601D it no longer invents Alloc-IDs/GEMs 256/257, VLANs
 100/660, mappers or bridge services. Those must come from OLT provisioning.
 Other providers explicitly retain their prior profile-service behavior.
+Objects the OLT has written are marked (`OMCI_ATTR_OLT_WRITTEN`), and `omcid` learns
+the VEIP from the one ME 171 attaches to rather than assuming `0x0601`.
 Both startup and runtime obtain topology through the same backend call;
 a missing topology operation no longer substitutes a 32-T-CONT model.
 
@@ -55,8 +57,9 @@ reinstall them.
 Services must reference an installed GEM and the matching granted
 T-CONT/Alloc-ID. The backend checks direction and its single-queue limit.
 PCP selects the service independently of its one hardware queue. Explicit
-multi-queue scheduling, policing and multicast service installation remain
-unsupported; they are not silently accepted.
+multi-queue scheduling and policing remain unsupported; they are not silently
+accepted. A multicast or downstream-only GEM is recorded and selects no upstream
+rule. omcid stores the multicast tables but does not enforce their IGMP limits.
 
 ## ABI and retained MIB
 

@@ -52,9 +52,9 @@ PON flow-control watermarks `0x2311c`/`0x23120` use stock's values.
 
 | Item | What is known | What is missing |
 |---|---|---|
-| PCP to different GEMs | One upstream rule per p-bit on field (8,3). Measured 2026-11-01: frames sent with p-bit 5 passed a rule requiring 5 and stopped at one requiring 0. This can't separate the tag's p-bit from an internal priority that follows it | A split-GEM OLT such as JioFiber's to test |
+| PCP to different GEMs | One upstream rule per p-bit on field (8,3). Measured 2026-11-01: frames sent with p-bit 5 passed a rule requiring 5 and stopped at one requiring 0. This can't separate the tag's p-bit from an internal priority that follows it. JioFiber's five-GEM split ran from 2026-11-01 with the offload active and internet working | Per-GEM proof with traffic on every p-bit |
 | VLAN translation and QinQ in hardware | Classifier rules in both directions, see L2-OFFLOAD.md. Translation measured at 302/296 Mbit/s with the CPU idle; its action values hold. QinQ's are inferred from `cfg2raw` tables | QinQ: an OLT that carries a stacked service; off unless `hw_qinq` is set |
-| Multicast GEM, IGMP/MLD snooping | `l2_ipMcastAddr_*`, `l2_ipmcMode_*`. The Airtel OLT creates classes 309 and 310 with every value zero and no multicast GEM | Not started; needs an IPTV service to test |
+| Multicast GEM, IGMP/MLD snooping | `l2_ipMcastAddr_*`, `l2_ipmcMode_*`. The Airtel OLT creates classes 309 and 310 with every value zero and no multicast GEM. On Jio, omcid stores the OLT's tables and a source-specific join (232.24.0.1 from 10.70.220.50) brings the stream on GEM 2047 | Every packet arrives doubled, cause unproven (a capture from the HSGQ would decide). IGMP limits are stored, not enforced |
 | eFuse memory patches | Read and logged at bring-up | Written only if a chip turns out to carry any: the addresses are unchecked fuse data |
 
 ## Dying gasp and pause time

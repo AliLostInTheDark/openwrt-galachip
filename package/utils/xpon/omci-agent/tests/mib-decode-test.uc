@@ -75,8 +75,8 @@ check('131 binary string', f.equipment_id, '0x060204000002 (6.2.4.0.0.2)');
 check('131 empty', f.version, '');
 check('131 zero raw', f.time_of_day, '');
 
-f = decode({ class_id: 65296, data: data([ '000000000000000000000000000000', '5a594f545a594f5420095605' ]) });
-check('vendor serial', f.attr_10, 'ZYOT ZYOT20095605');
+f = decode({ class_id: 65296, data: data([ '000000000000000000000000000000', '5a594f545a594f5412345678' ]) });
+check('vendor serial', f.attr_10, 'ZYOT ZYOT12345678');
 
 f = decode({ class_id: 262, data: data([ '0100' ]) });
 check('262 alloc', f.alloc_id, 256);
