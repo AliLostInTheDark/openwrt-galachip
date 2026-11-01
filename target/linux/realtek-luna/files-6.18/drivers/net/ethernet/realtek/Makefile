@@ -58,7 +58,7 @@ ccflags-y += -I$(srctree)/drivers/net/flowcore
 # OMCI capacities are selected by the common header from CONFIG_LUNA_GPON.
 # The NIC storage owner and the separately built responder must share one ABI.
 
-obj-$(CONFIG_RTL9602C_ETH) += rtl9602c_eth.o
+obj-$(CONFIG_RTL9602C_ETH) += rtl9602c_eth.o rtl9601d_l2.o rtl9601d_vlan.o
 obj-$(CONFIG_LUNA_GPON) += luna_gpon.o luna_ponmac.o
 # omcid's backend, beside the in-kernel responder it replaces
 obj-$(if $(CONFIG_XPON_OMCI),$(CONFIG_LUNA_GPON)) += luna_xpon.o
@@ -66,6 +66,8 @@ obj-$(CONFIG_LUNA_ETH_MIB) += luna_eth_mib.o
 # The datapath hot path keeps -O2 even under the size-optimized (-Os) kernel:
 # the NIC RX/TX + GEM/PON-MAC forwarding must not lose per-packet performance.
 CFLAGS_rtl9602c_eth.o += -O2
+CFLAGS_rtl9601d_l2.o += -O2
+CFLAGS_rtl9601d_vlan.o += -O2
 CFLAGS_luna_gpon.o += -O2
 CFLAGS_luna_ponmac.o += -O2
 obj-$(CONFIG_8139CP) += 8139cp.o

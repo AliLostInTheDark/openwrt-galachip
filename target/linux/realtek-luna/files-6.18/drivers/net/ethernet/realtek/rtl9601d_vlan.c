@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Local bridge VLAN policy; included by rtl9601d_l2.c. */
-static bool v2802_l2_vlan_filtering(struct rtl9602c_eth *ep)
+/* Local bridge VLAN policy for the V2802RH L2 offload. */
+#include <linux/if_bridge.h>
+#include <linux/if_vlan.h>
+#include <linux/rtnetlink.h>
+#include <linux/unaligned.h>
+
+#include "rtl9602c_eth.h"
+#include "rtl9601d_l2.h"
+
+bool v2802_l2_vlan_filtering(struct rtl9602c_eth *ep)
 {
 	struct net_device *br;
 	bool enabled;
@@ -20,9 +28,9 @@ static bool v2802_l2_vlan_info(const struct net_device *dev, u16 vid,
 	return dev && !br_vlan_get_info(dev, vid, info);
 }
 
-static bool v2802_l2_vlan_reserved(u16 vid)
+bool v2802_l2_vlan_reserved(u16 vid)
 {
-	return vid == pon_vid ||
+	return vid == rtl9602c_pon_vid ||
 	       (vid >= SW_LAN_STEER_VID_BASE && vid < SW_LAN_STEER_VID_BASE + LAN_PORTS);
 }
 
@@ -56,7 +64,7 @@ static int v2802_l2_vlan_rewrites(struct rtl9602c_eth *ep,
 }
 
 /* The bridge owns admission and egress format; OMCI still owns the GEM. */
-static int v2802_l2_vlan_plan(struct rtl9602c_eth *ep,
+int v2802_l2_vlan_plan(struct rtl9602c_eth *ep,
 			    struct luna_l2_service *services, int count)
 {
 	struct net_device *br = v2802_l2_bridge(ep);
@@ -115,7 +123,7 @@ static int v2802_l2_vlan_plan(struct rtl9602c_eth *ep,
 	return v2802_l2_vlan_rewrites(ep, services, count);
 }
 
-static void v2802_l2_vlan_ingress(struct rtl9602c_eth *ep, u32 *pvid, u32 *accept)
+void v2802_l2_vlan_ingress(struct rtl9602c_eth *ep, u32 *pvid, u32 *accept)
 {
 	unsigned int p;
 
@@ -133,7 +141,7 @@ static void v2802_l2_vlan_ingress(struct rtl9602c_eth *ep, u32 *pvid, u32 *accep
 
 /* With hardware relay gated, retain VLAN tags for the Linux bridge. A
  * per-jack steering PVID distinguishes originally untagged CPU copies. */
-static int v2802_l2_vlan_fallback(struct rtl9602c_eth *ep)
+int v2802_l2_vlan_fallback(struct rtl9602c_eth *ep)
 {
 	struct bridge_vlan_info info;
 	struct net_device *br = v2802_l2_bridge(ep);
@@ -187,7 +195,7 @@ static int v2802_l2_vlan_fallback(struct rtl9602c_eth *ep)
 	return 0;
 }
 
-static int v2802_l2_priority(struct rtl9602c_eth *ep, struct sk_buff *skb)
+int v2802_l2_priority(struct rtl9602c_eth *ep, struct sk_buff *skb)
 {
 	unsigned int p;
 	u16 tci;
@@ -234,12 +242,12 @@ static ssize_t l2_port_priority_store(struct device *dev,
 	rtnl_unlock();
 	return count;
 }
-static DEVICE_ATTR_RW(l2_port_priority);
+DEVICE_ATTR_RW(l2_port_priority);
 
 static ssize_t l2_vlan_reserved_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%u %u %u\n", pon_vid,
+	return sysfs_emit(buf, "%u %u %u\n", rtl9602c_pon_vid,
 			  SW_LAN_STEER_VID(0), SW_LAN_STEER_VID(1));
 }
-static DEVICE_ATTR_RO(l2_vlan_reserved);
+DEVICE_ATTR_RO(l2_vlan_reserved);

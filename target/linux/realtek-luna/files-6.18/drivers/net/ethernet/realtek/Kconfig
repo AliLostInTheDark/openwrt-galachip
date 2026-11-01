@@ -41,7 +41,7 @@ config LUNA_ETH_MIB
 	tristate
 
 config RTL9602C_ETH
-	tristate "Realtek RTL9602C (Luna) GMAC + switch"
+	bool "Realtek RTL9602C (Luna) GMAC + switch"
 	depends on REALTEK_LUNA
 	select LUNA_ETH_MIB
 	default y

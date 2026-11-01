@@ -1,7 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* V2802RH SFU: switch VLAN forwarding and upstream GEM classification.
- * Included by rtl9602c_eth.c, which owns the switch table engine.
+ * rtl9602c_eth.c owns the switch table engine.
  */
+#include <linux/delay.h>
+#include <linux/etherdevice.h>
+#include <linux/if_bridge.h>
+#include <linux/if_vlan.h>
+#include <linux/iopoll.h>
+#include <linux/module.h>
+#include <linux/of.h>
+#include <linux/rtnetlink.h>
+#include <net/switchdev.h>
+
+#include "regtable.h"
+#include "rtl9602c_eth.h"
+#include "rtl9601d_l2.h"
+
 /* L2 unicast table and classifier registers. */
 #define L2_CMD_WR		BIT(3)	/* 0 = read, 1 = write */
 #define L2_CMD_METHOD_SH	4	/* [6:4] 0 = MAC-hash, 1 = direct address */
@@ -13,54 +27,19 @@
 #define L34_CF_ACTION_CTRL	0x16038
 #define L34_CF_SID_ENABLE	BIT(5)
 
-#include <linux/if_bridge.h>
-#include <linux/iopoll.h>
-#include <linux/rtnetlink.h>
-#include <net/switchdev.h>
 
-#define V2802_L2_VLANS 64
 #define V2802_L2_FIRST 32
-#define V2802_L2_RULES (4 * LUNA_L2_SERVICES)
 #define V2802_PISO_BITS 11
 #define V2802_FLUSH_CTRL 0x17024
 #define V2802_FLUSH_PORTS 0x17028
 
 static DEFINE_SPINLOCK(v2802_l2_lock);
 
-static struct {
-	struct rtl9602c_eth *ep;
-	struct delayed_work work;
-	struct notifier_block netdev_nb, switchdev_nb, switchdev_blocking_nb;
-	struct luna_l2_service service[V2802_L2_VLANS];
-	u32 vlan[V2802_L2_VLANS];
-	u32 pvid, cfg, flood[3], management_vlan, piso[2], accept;
-	s8 pcp[LAN_PORTS];
-	u64 marked[3], trapped[3];
-	u32 last_reason[3];
-	u8 own_mac[2 + LAN_PORTS][ETH_ALEN];
-	unsigned int own_macs;
-	bool management_saved, isolation_saved;
-	unsigned int count, generation, retries;
-	int error;
-	bool requested, active, saved, gated, stopping;
-	/* The bridge ports offloaded: pon0 and the LAN side (eth0, or the jacks). */
-	struct net_device *offloaded[2 + LAN_PORTS];
-	unsigned int n_offloaded;
-	DECLARE_BITMAP(rules, V2802_L2_RULES);
-	unsigned int next_rule;
-	DECLARE_BITMAP(bridge_vids, VLAN_N_VID);
-	DECLARE_BITMAP(netdev_vids, VLAN_N_VID);
-	DECLARE_BITMAP(dirty_vids, VLAN_N_VID);
-	DECLARE_BITMAP(want_vids, VLAN_N_VID);
-	DECLARE_BITMAP(wan_vids, VLAN_N_VID);
-	char changed_by[32];	/* the caller behind the latest rebuild */
-	struct luna_l2_service plan[V2802_L2_VLANS];	/* under RTNL */
-	struct luna_l2_service next_plan[V2802_L2_VLANS];	/* under RTNL */
-} v2802_l2;
+struct v2802_l2_state v2802_l2;
 
 /* CPU-forwarded upstream frames have the LAN VID, but the OLT's MAC was
  * learned in the WAN VID. They are normal traffic, not a unicast storm. */
-static int v2802_l2_storm(struct rtl9602c_eth *ep, bool hardware_only)
+int v2802_l2_storm(struct rtl9602c_eth *ep, bool hardware_only)
 {
 	u32 value = ioread32(ep->sw + SW_STORM_CTRL_UC_CTRL);
 
@@ -98,7 +77,7 @@ static int v2802_l2_xact(u8 type, u16 addr, u32 *words, unsigned int n,
 }
 
 /* The state lock never waits for the indirect table engine. */
-static int v2802_l2_table(u8 type, u16 addr, u32 *words, unsigned int n,
+int v2802_l2_table(u8 type, u16 addr, u32 *words, unsigned int n,
 			    bool write)
 {
 	struct rtl9602c_eth *ep = v2802_l2.ep;
@@ -180,7 +159,7 @@ static int v2802_l2_own_entry(const u8 *mac, u16 vid, bool add)
 /* The bridge, seen from the PON port: pon0 is its member in either topology,
  * eth0 + pon0 (a configuration from before the jacks had netdevs) or
  * lan1 + lan2 + pon0. */
-static struct net_device *v2802_l2_bridge(struct rtl9602c_eth *ep)
+struct net_device *v2802_l2_bridge(struct rtl9602c_eth *ep)
 {
 	return ep->wan_ndev ? netdev_master_upper_dev_get(ep->wan_ndev) : NULL;
 }
@@ -197,15 +176,6 @@ static bool v2802_l2_lan_member(struct rtl9602c_eth *ep, const struct net_device
 			return true;
 	return false;
 }
-
-static u32 v2802_l2_cpu_vlan(bool present);
-
-static bool v2802_l2_rewritten(const struct luna_l2_service *s)
-{
-	return s->translated || s->stacked;
-}
-
-#include "rtl9601d_vlan.c"
 
 static void v2802_l2_own_mac_add(const u8 *mac)
 {
@@ -330,10 +300,10 @@ static bool v2802_l2_steer_vid(u16 vid)
 
 static bool v2802_l2_managed_vid(u16 vid)
 {
-	return vid && vid != SW_DEFAULT_VID && vid != pon_vid && !v2802_l2_steer_vid(vid);
+	return vid && vid != SW_DEFAULT_VID && vid != rtl9602c_pon_vid && !v2802_l2_steer_vid(vid);
 }
 
-static u32 v2802_l2_cpu_vlan(bool present)
+u32 v2802_l2_cpu_vlan(bool present)
 {
 	return present ? BIT(11) | SW_VLAN_IVL | BIT(3) | BIT(2) : 0;
 }
@@ -897,7 +867,7 @@ static int v2802_l2_sync_vids(struct rtl9602c_eth *ep)
 }
 
 /* VLAN-device callbacks share the OMCI VLAN owner, including while offloaded. */
-static int v2802_l2_netdev_vid(struct rtl9602c_eth *ep, u16 vid, bool add)
+int v2802_l2_netdev_vid(struct rtl9602c_eth *ep, u16 vid, bool add)
 {
 	bool old;
 	int rc;
@@ -1435,7 +1405,7 @@ static int v2802_l2_switchdev_event(struct notifier_block *nb, unsigned long eve
 	return NOTIFY_DONE;
 }
 
-static bool v2802_l2_forwarded(struct sk_buff *skb, unsigned int port,
+bool v2802_l2_forwarded(struct sk_buff *skb, unsigned int port,
 			       unsigned int reason)
 {
 	unsigned long flags;
@@ -1489,7 +1459,7 @@ static int v2802_l2_ingress_port(struct rtl9602c_eth *ep, const struct sk_buff *
 	return -1;
 }
 
-static bool v2802_l2_wan_allowed(struct rtl9602c_eth *ep, const struct sk_buff *skb)
+bool v2802_l2_wan_allowed(struct rtl9602c_eth *ep, const struct sk_buff *skb)
 {
 	int port;
 	u16 tci;
@@ -1503,7 +1473,7 @@ static bool v2802_l2_wan_allowed(struct rtl9602c_eth *ep, const struct sk_buff *
 
 /* The bridge keeps the legacy native-service form. Tag only relayed service
  * frames: locally generated, untagged management replies remain untagged. */
-static int v2802_l2_lan_prepare(struct rtl9602c_eth *ep, struct sk_buff *skb,
+int v2802_l2_lan_prepare(struct rtl9602c_eth *ep, struct sk_buff *skb,
 				unsigned int port)
 {
 	int vid, rc;
@@ -1530,13 +1500,11 @@ static int v2802_l2_lan_prepare(struct rtl9602c_eth *ep, struct sk_buff *skb,
 	return 0;
 }
 
-static int v2802_l2_parent_id(struct net_device *dev, struct netdev_phys_item_id *id)
+int v2802_l2_parent_id(struct net_device *dev, struct netdev_phys_item_id *id)
 {
 	if (!of_machine_is_compatible("vsol,v2802rh"))
 		return -EOPNOTSUPP;
 	id->id_len = ETH_ALEN;
-	if (!g_ep)
-		return -ENODEV;
 	memcpy(id->id, "V2802R", ETH_ALEN);
 	return 0;
 }
@@ -1696,7 +1664,7 @@ static void v2802_l2_fini(void *data)
 	rtnl_unlock();
 }
 
-static int v2802_l2_init(struct rtl9602c_eth *ep)
+int v2802_l2_init(struct rtl9602c_eth *ep)
 {
 	unsigned long flags;
 	int rc;

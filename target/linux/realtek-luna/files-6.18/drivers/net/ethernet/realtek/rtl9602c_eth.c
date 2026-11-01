@@ -30,7 +30,8 @@
 #include "gpon_omci_trace.h"	/* G.988 decode-to-a-buffer for the log */
 #include "gpon_omci_diag.h"
 #include "gpon_omci_me.h"	/* the common OMCI ME store + context */
-#include "luna_gpon_nic.h"
+#include "rtl9602c_eth.h"
+#include "rtl9601d_l2.h"
 #include "luna_eth_mib.h"
 #include "luna_gmac_logic.h"	/* family GMAC ring packings (flowcore) */
 #include "gpon_hwaddr.h"	/* the ONE station-address ladder (drivers/net/gpon) */
@@ -72,11 +73,6 @@ module_param_cb(lan_tx_steer, &rtl9602c_lan_tx_steer_ops, &lan_tx_steer, 0644);
 MODULE_PARM_DESC(lan_tx_steer,
 		 "how a lanN netdev's frame is held to its own jack: -1=board default (V2802RH CPU tag, others VLAN), 0=plain (the switch floods), 1=per-jack VLAN, 2=in-band CPU tag");
 
-/* The per-jack steering VLANs, from the top of the range: an OLT's service
- * VLANs are low, and the L2 offload refuses a service on one of these. */
-#define SW_LAN_STEER_VID_BASE	4092u
-#define SW_LAN_STEER_VID(port)	(SW_LAN_STEER_VID_BASE + (port))
-#define LAN_PORTS		2u	/* jacks a board may declare: switch ports 0..1 */
 
 
 /* ExtSpa / PON port (word3[22:16] = (port&0x7F)<<16). */
@@ -163,7 +159,6 @@ static_assert(R_TXOKCNT == 0x10 && R_TXERR == 0x14 && R_MISSPKT == 0x18 &&
 
 /* TX cpu-tag DESCRIPTOR path: UNUSED */
 
-#define OTX_RING_SIZE	8	/* dedicated US-OMCI TX ring (low-rate control) */
 #define OMCI_RESV	2	/* LAN xmit stops this many slots early so the sparse shared-ring OMCI inject always has room (never dropped) */
 #define DUMMY_RING_SIZE	4	/* idle filler armed on the unused HW TX rings (gap rings) */
 #define RX_CPU_PREFIX	2	/* switch CPU-port prepends a 2-byte offset word on RX */
@@ -204,7 +199,6 @@ static bool rtl9602c_uni_port_locked(unsigned int port)
 #define SW_FC_PON_GLB_HI_TH		0x2311c
 #define SW_FC_PON_GLB_LO_TH		0x23120
 #define SW_STORM_CTRL_UM_CTRL		0x1703c	/* per-port enable, likewise UC/BC/DHCP */
-#define SW_STORM_CTRL_UC_CTRL		0x17040
 #define SW_STORM_CTRL_BC_CTRL		0x17048
 #define SW_STORM_CTRL_DHCP_CTRL		0x17060
 #define SW_STORM_CTRL_UM_METER_IDX	0x1704c	/* 4-bit meter index per port */
@@ -229,32 +223,17 @@ static bool rtl9602c_uni_port_locked(unsigned int port)
 #define SW_FC_P_FCOFF_LO_TH	0x230F8
 #define SW_TAG_AWARE		BIT(9)
 #define SW_TRAP_TAG_INSERT_EN	BIT(8)
-/*
- * VLAN filtering: VLAN_CTRL @ 0x13008 bit0 = VLAN_FILTERING; VLAN_INGRESS @
- * 0x13004 = per-port ingress filter, in luna_eth_regs.h. SW_VLAN_FILTERING has
- * no twin in that header.
- */
-#define SW_VLAN_FILTERING	BIT(0)
 /* Operational value: VLAN_CTRL=0x19 (filtering + VID0/VID4095 type bits). */
 #define SW_VLAN_CTRL_VAL	0x19	/* filtering on at init: required for reliable
 					 * onlining during ranging and config-apply.
 					 * luna_lan_keep_open_poll() later sets bit0 from
 					 * luna_vlan_filter_ok. */
-#define SW_DEFAULT_VID		1
 /* The PON port's own VLAN (members PON + CPU), as stock does (PON 4025, LAN 4005): a WAN
  * broadcast then floods to the CPU only, never to a LAN port. 0 = the PON shares VID 1. */
-static uint pon_vid = 4025;
-module_param(pon_vid, uint, 0444);
+uint rtl9602c_pon_vid = 4025;
+module_param_named(pon_vid, rtl9602c_pon_vid, uint, 0444);
 MODULE_PARM_DESC(pon_vid, "VLAN of the PON port, apart from the LAN's (default 4025 as stock; 0 = shared VID 1)");
-#define SW_WAN_PVID	(pon_vid ? pon_vid : SW_DEFAULT_VID)
-/* Indirect VLAN 4k-table access (field positions):
- * TBL_ACCESS_CTRL[31]=start [20:9]=addr/VID [6:4]=method(1) [3]=cmd(1=write)
- * [2:0]=type(1=VLAN); STS bit13=BUSY; WR_DATA holds the entry word. */
-#define SW_TBL_CTRL		0x12000
-#define SW_TBL_STS		0x12004
-#define SW_TBL_WRDATA		0x12008
-#define SW_TBL_BUSY		BIT(13)
-#define SW_TBL_TRIES		1000u	/* the bound the poll below refuses at */
+#define SW_WAN_PVID	(rtl9602c_pon_vid ? rtl9602c_pon_vid : SW_DEFAULT_VID)
 #define SW_TBL_VLAN_WR(vid)	(BIT(31) | (((vid) & 0xfff) << 9) | (1u << 4) | (1u << 3) | 1u)
 #define CPUTAG1_OMCI_SID(s)	(((s) & 0x7f) << 8)	/* R_CPUTAG1CR[14:8] */
 #define CPUTAG1_B1		0x2	/* bit1: live 9602C stock reads CPUTAG1CR=0x4002; not present in the 9607C register map */
@@ -264,156 +243,6 @@ MODULE_PARM_DESC(pon_vid, "VLAN of the PON port, apart from the LAN's (default 4
  */
 #define CPUTAG1_LOW		0x02	/* live-stock ref ONU devmem: CPUTAG1CR = 0x4002 */
 
-#include "rtl9602c_l34_logic.h"
-#include "luna_gpon_nic.h"
-
-struct rtl9602c_eth {
-	/* The per-chip table. */
-	const struct luna_sw_map *swm;
-	void __iomem	*base;
-	void __iomem	*sw;	/* switch core */
-	void __iomem	*txgo;	/* network-engine TX-fetch page 0x18001000; +0x38 bit31 = per-packet GO */
-	struct net_device *ndev;
-	struct net_device *wan_ndev;	/* gpon0: WAN data-GEM netdev (DS demux'd from PON port 2, US steered to GPON_DATA_FLOW) */
-	struct device	*dev;
-
-	struct rx_desc	*rx_ring;
-	dma_addr_t	rx_ring_dma;
-	struct sk_buff	*rx_skb[RX_RING_SIZE];
-	dma_addr_t	rx_buf_dma[RX_RING_SIZE];
-	unsigned int	rx_head;
-	unsigned int	rx_n;		/* RX ring entries in use, <= RX_RING_SIZE (DT) */
-
-	struct tx_desc	*tx_ring;
-	dma_addr_t	tx_ring_dma;
-	struct sk_buff	*tx_skb[TX_RING_SIZE];
-	dma_addr_t	tx_buf_dma[TX_RING_SIZE];
-	unsigned int	tx_buf_len[TX_RING_SIZE];
-	unsigned int	tx_head, tx_dirty;
-	spinlock_t	tx_lock;	/* serialises tx_head/tx_ring: xmit (process)
-					 * vs OMCI inject (poll-timer softirq) */
-	/* HW ring rotation: the slot TxFDP currently points at (0 after open).
-	 * The stall recovery re-arms TxFDP at the first PENDING slot and moves
-	 * EOR to the slot before it, so the 64 descriptors stay one ring, just
-	 * rotated: HW index j <-> SW slot (rot + j) % size. SW head/dirty slot
-	 * numbering is unchanged; only the EOR placement and the TxCDO->slot
-	 * translation depend on rot. */
-	unsigned int	tx_rot, otx_rot;
-	/*
-	 * TX-DMA park watchdog. stall_since = jiffies of the first tick that
-	 * saw OWN stuck at the HW cursor with no dirty progress; 0 = healthy.
-	 * recover_work runs the IP-block power-cycle + re-arm.
-	 */
-	unsigned long	stall_since;
-	unsigned int	stall_lastdirty;
-	unsigned int	stall_level;	/* 0: next escalation = soft re-arm;
-					 * 1: soft re-arm failed -> IP cycle */
-	u32		dbg_rearm;	/* soft TxFDP re-arms (publish + watchdog) */
-	struct work_struct recover_work;
-	bool		closing;	/* gate recover_work vs ndo_stop teardown */
-	bool		hw_up;		/* rings + DMA live from the first open on: the OMCC
-					 * and gpon0 ride them whatever eth0's state */
-	unsigned int	lan_tx_default;
-	bool		in_recovery;	/* GMAC block may be power-gated: /proc
-					 * diag must not touch its MMIO (bus abort) */
-	u32		dbg_tx_recover;	/* completed GMAC power-cycle recoveries */
-
-	/* Dedicated US-OMCI TX ring (the stock OMCC TX ring, default ring 4).
-	 * Small single-purpose ring: US OMCI is low-rate control traffic, so a
-	 * handful of descriptors is ample, and keeping it separate from the LAN
-	 * ring 0 means the OMCC steering descriptor never mixes with LAN frames. */
-	struct tx_desc	*otx_ring;
-	dma_addr_t	otx_ring_dma;
-	struct sk_buff	*otx_skb[OTX_RING_SIZE];
-	dma_addr_t	otx_buf_dma[OTX_RING_SIZE];
-	unsigned int	otx_buf_len[OTX_RING_SIZE];
-	unsigned int	otx_head, otx_dirty;
-	/* Idle dummy TX ring armed on the UNUSED HW TX rings */
-	struct tx_desc	*dummy_ring;
-	dma_addr_t	dummy_ring_dma;
-	/* Shared-ring-0 OMCI path (omci_tx_ring==0) */
-	int		omci_r0_last_slot;
-	/* US OMCI (OMCC) responder state. */
-	u8		omci_sn[8];	/* G.984.3 ONU-SN (4 ASCII ID + 4 serial),
-					 * for the ONU-G Vendor-ID/Serial GET reply */
-	u8		omci_mds;	/* ONU-data (ME 2) MIB-Data-Sync counter */
-	/* omci_audit_reads and omci_mds_tries USED TO BE HERE */
-	u32		dbg_omci_tx;		/* US OMCI responses queued */
-	u32		dbg_omci_tx_drop;	/* dropped: ring full / alloc / map */
-	u32		dbg_omci_unhandled;	/* requests with no modelled reply */
-
-	struct timer_list poll_timer;	/* IRQ-driven: 100ms TX-unpark backstop; no IRQ: 2ms pure-poll */
-	struct napi_struct napi;
-	int		irq;	/* GMAC0 INTC input (platform_get_irq); <=0 = pure-poll fallback */
-	spinlock_t sw_table_lock;
-	struct {
-		u32 down, up;
-		bool valid;
-	} uni_rate[LAN_PORTS];
-	struct {
-		u32 ageing_s, learn_limit, max_frame;
-	} uni_l2[LAN_PORTS];
-	bool uni_l2_used;
-	/* The LAN jacks as netdevs (the DT ethernet-ports node), by switch
-	 * port. A frame from port p goes up lan_ndev[p] when that is running,
-	 * else eth0, so a bridge built on eth0 alone keeps working. */
-	struct net_device *lan_ndev[LAN_PORTS];
-	struct rtl9602c_lan_link {
-		bool		seen;		/* link_work has looked at the port */
-		bool		up;
-		bool		full;
-		u32		speed;		/* SPEED_* while up */
-	} lan_link[LAN_PORTS];
-	bool		lan_steer_blocked;	/* an OLT service took a steering VID */
-	u32		dbg_lan_relay_skipped;	/* LAN->LAN copies the CPU refused: the switch did it */
-	struct led_classdev *pon_led, *los_led;	/* the board's lamps, net/xpon drives them */
-
-	/* Port 0 runs over the SerDes to an external PHY (DT realtek,port0-serdes):
-	 * its internal GPHY stays powered down and the MAC link is forced, following
-	 * the SerDes link polled by link_work. */
-	bool		port0_serdes;
-	bool		stock_switch;
-	struct delayed_work link_work;	/* once a second: the SerDes mirror, every jack's carrier */
-	u32		lan_drops[LAN_PORTS];	/* link losses, including those a poll would miss */
-	u8		lan_own_drop;	/* ports whose next link loss the driver caused itself */
-	u32		port0_pause_off;	/* pause bits taken out of port 0's forced ability */
-	u8		uni_autodetect[LAN_PORTS];	/* the OLT's last ME 11 auto-detection value */
-	u16		uni_pause[LAN_PORTS];	/* its last ME 11 pause time */
-	u32		gphy_sts[LAN_PORTS];	/* last logged GPHY link/speed/duplex, per port */
-
-	/* The external PHY's MDIO bus, bit-banged on two GPIOs as stock does it
-	 * (DT realtek,ext-mdio-gpios = MDC, MDIO; realtek,ext-phy-addr). */
-	struct gpio_desc *ext_mdc, *ext_mdio;
-	u8		ext_phy;
-	bool		ext_phy_ok;	/* answered on that bus; drives port 0's link */
-	/* DT realtek,ext-phy-reset-gpios: stock pulses it before every SerDes
-	 * option change (rtk_rtl8226b_moudle_init1, GPIO 27 on the V2802RH). */
-	struct gpio_desc *ext_phy_reset;
-	bool		lan_sds_hsgmii;	/* the LAN SerDes runs HSGMII (2.5G); else SGMII */
-	bool		lan_sds_set;	/* rtl9602c_lan_sds_program ran since the bring-up */
-	u8		ext_phy_option;	/* verified RTL8221B SerDes option; 0 if unknown */
-	u8		ext_phy_target;	/* retained across a failed reset/configuration */
-
-	/* Bootloader GMAC0 control snapshot (inherited). */
-	u32		ub_tcr, ub_rcr, ub_config, ub_cputagcr, ub_cputag1cr;
-	u32		ub_iocmd, ub_iocmd1;
-
-	/* RX datapath debug counters (see /proc/ethdump). */
-	u32		dbg_poll;	/* poll-timer ticks */
-	u32		dbg_filled;	/* RX descriptors HW handed back (D_OWN cleared) */
-	u32		dbg_good;	/* frames pushed up the stack */
-	u32		dbg_err;	/* RX descriptors with error/oversize */
-	u32		dbg_rx_repoll;	/* frames found waiting after the IRQ re-arm, re-polled */
-	u32		dbg_rxlen;	/* raw length of the last captured RX frame */
-	u8		dbg_rxbuf[48];	/* first bytes of the last RX frame (pre-pull) */
-
-	/* OMCI (OMCC stream) trap, armed by the GPON driver once it installs the
-	 * OMCC GEM datapath (rtl9602c_eth_set_omci_sid). */
-	bool		omci_trap_on;
-	u32		dbg_omci_rx;	/* DS OMCI frames trapped to the CPU */
-	u32		dbg_omci_rxlen;	/* length of the last OMCI frame */
-	u8		dbg_omci_rxbuf[48];	/* the last DS OMCI baseline message */
-};
 
 /* netdev_priv of a LAN jack's netdev */
 struct rtl9602c_lan {
@@ -689,17 +518,10 @@ u32 rtl9602c_eth_omci_tx_dirty(void)
 EXPORT_SYMBOL(rtl9602c_eth_omci_tx_dirty);
 
 /* Minimal switch bring-up */
-static void rtl9602c_sw_tbl_pause(void)
+void rtl9602c_sw_tbl_pause(void)
 {
 	udelay(1);
 }
-
-/* One VLAN 4k-table entry: ext[17:11] | IVL[10] | untag[7:4] | mbr[3:0], FID 0. The extension
- * ports are the CPU's: without them the VLAN filter drops its traffic. Bit 10 clear is SVL, one
- * MAC table for every VLAN (the SDK's fidMode_set writes it inverted): a WAN VLAN needs IVL, or
- * a reply to a LAN host is looked up where that host was learned, a LAN port outside the VLAN,
- * and dropped. */
-#define SW_VLAN_IVL	BIT(10)
 
 static int rtl9602c_vlan_write(struct rtl9602c_eth *ep, u16 vid, u32 mbr, u32 untag, u32 ext,
 			       bool ivl)
@@ -721,8 +543,6 @@ static int rtl9602c_vlan_write(struct rtl9602c_eth *ep, u16 vid, u32 mbr, u32 un
 	spin_unlock_irqrestore(&ep->sw_table_lock, flags);
 	return rc;
 }
-
-#include "rtl9601d_l2.c"
 
 /* The values the V2802RH's stock RTOS runs with (docs/v2802rh/
  * STOCK-REGISTER-CHECKLIST.md): storm control on meters 8-15, its frame
@@ -974,10 +794,10 @@ static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 				    "[L2-004] swcore VLAN 4k-table engine still BUSY after %u tries (rc=%d): default VLAN %u may not be installed, LAN egress may stay filtered\n",
 				    SW_TBL_TRIES, rc, SW_DEFAULT_VID);
 		/* As stock's 4025: the PON floods to the CPU only */
-		if (pon_vid && rtl9602c_vlan_write(ep, pon_vid, pon, pon, 0x1, true) < 0)
+		if (rtl9602c_pon_vid && rtl9602c_vlan_write(ep, rtl9602c_pon_vid, pon, pon, 0x1, true) < 0)
 			netdev_warn(ep->ndev,
 				    "[L2-005] swcore VLAN table BUSY writing the PON VLAN %u: WAN broadcasts may reach the LAN ports\n",
-				    pon_vid);
+				    rtl9602c_pon_vid);
 		iowrite32(0, ep->sw + SW_VLAN_PORT_ACCEPT_FRAME_TYPE);	/* accept all frame types */
 		/*
 		 * PVID is a 12-bit element array packed two per word; see
@@ -1014,7 +834,7 @@ static void rtl9602c_sw_min_init(struct rtl9602c_eth *ep)
 		}
 		iowrite32(0xf, ep->sw + SW_VLAN_INGRESS);	/* ingress filter, ports 0-3 */
 		iowrite32(SW_VLAN_CTRL_VAL, ep->sw + SW_VLAN_CTRL); /* enable VLAN function */
-		luna_gpon_vlan_filter_ok(pon_vid != 0);
+		luna_gpon_vlan_filter_ok(rtl9602c_pon_vid != 0);
 	}
 	/* Force the CPU port link up. */
 	iowrite32(SW_ABLTY_1G_FD_UP, ep->sw + SW_FORCE_P_ABLTY(ep, ep->swm->cpu_port));
@@ -1407,7 +1227,7 @@ static int rtl9602c_wan_vid(struct rtl9602c_eth *ep, u16 vid, bool add)
 
 	if (ep == READ_ONCE(v2802_l2.ep) && !READ_ONCE(v2802_l2.stopping))
 		return v2802_l2_netdev_vid(ep, vid, add);
-	if (!ep->sw || !pon_vid || !vid || vid == SW_DEFAULT_VID || vid == pon_vid)
+	if (!ep->sw || !rtl9602c_pon_vid || !vid || vid == SW_DEFAULT_VID || vid == rtl9602c_pon_vid)
 		return 0;
 	return rtl9602c_vlan_write(ep, vid, add ? mbr : 0, 0, add ? 0x1 : 0, add) < 0 ?
 	       -EBUSY : 0;
