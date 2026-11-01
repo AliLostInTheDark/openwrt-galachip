@@ -48,24 +48,6 @@ config RTL9602C_ETH
 	help
 	  Clean-room driver for the RTL9602C GMAC + on-chip switch core.
 
-config RTL9602C_FLOWOFFLOAD
-	bool "Realtek RTL9602C (Luna) hardware flow offload"
-	depends on RTL9602C_ETH
-	default y
-	select GPON_FLOW_OFFLOAD	# the COMMON TC lifecycle, drivers/net/gpon/
-	help
-	  Drive the Luna L34/TC flow engine as an nf_flow_table hardware
-	  offload backend, through the shared lifecycle in drivers/net/gpon/.
-
-	  This symbol exists so the accelerator can be turned OFF (2026-09-08).
-	  RTL9602C_ETH used to select the core itself, which welded the two
-	  together: the Luna boards could not be built without the offload, so
-	  the offload-vs-AQM comparison -- an operator decision taken with
-	  NUMBERS -- had no second state to measure on this family. Cortina had
-	  a prompted symbol and Luna had none; now both do.
-
-	  Say Y unless you are measuring the software path deliberately.
-
 config LUNA_GPON
 	tristate "Realtek Luna GPON MAC"
 	depends on REALTEK_LUNA

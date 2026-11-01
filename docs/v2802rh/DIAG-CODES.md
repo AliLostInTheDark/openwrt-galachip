@@ -150,19 +150,6 @@ New messages take the next free number in their group, and a removed code is not
 | `PHY-015` | WARN | RTL8221B SerDes setup pending; link polling will retry |
 | `PHY-016` | WARN | LAN2 PHY SerDes option %u failed: %d; retrying |
 
-## NAT: L34 hardware NAT
-
-| Code | Level | Message |
-|---|---|---|
-| `NAT-001` | WARN | L34 hw-nat init failed; software forwarding |
-| `NAT-002` | WARN | L34: no address notifier; a WAN that changes address keeps its stale tables |
-| `NAT-003` | WARN | L34: the common TC lifecycle could not be created; software forwarding |
-| `NAT-004` | WARN | L34: could not bind the TC lifecycle to the device; software forwarding |
-| `NAT-005` | ERR | rtl9602c-l34: table %u entry %u write failed (%d) |
-| `NAT-006` | WARN | rtl9602c-l34: neighbour L2 slot %u changed before unpin |
-| `NAT-007` | ERR | rtl9602c-l34: WAN classifier setup failed (%d) |
-| `NAT-008` | WARN | rtl9602c-l34: WAN rows kept: owners neigh=%u out_reserved=%u in_reserved=%u |
-
 ## SYS: Bring-up, board description, identity
 
 | Code | Level | Message |

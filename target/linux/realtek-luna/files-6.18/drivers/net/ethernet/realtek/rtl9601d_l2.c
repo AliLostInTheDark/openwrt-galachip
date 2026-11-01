@@ -2,6 +2,17 @@
 /* V2802RH SFU: switch VLAN forwarding and upstream GEM classification.
  * Included by rtl9602c_eth.c, which owns the switch table engine.
  */
+/* L2 unicast table and classifier registers. */
+#define L2_CMD_WR		BIT(3)	/* 0 = read, 1 = write */
+#define L2_CMD_METHOD_SH	4	/* [6:4] 0 = MAC-hash, 1 = direct address */
+#define L2_RDATA		0x1201c	/* word0..2 @ +4 */
+#define L34_WORDS_L2UC		3
+#define L2_METHOD_MAC		0
+#define L34_CF_CFG		0x1600c
+#define L34_CF_P1_COUNT_SH	5
+#define L34_CF_ACTION_CTRL	0x16038
+#define L34_CF_SID_ENABLE	BIT(5)
+
 #include <linux/if_bridge.h>
 #include <linux/iopoll.h>
 #include <linux/rtnetlink.h>
@@ -1692,7 +1703,7 @@ static int v2802_l2_init(struct rtl9602c_eth *ep)
 
 	if (!of_machine_is_compatible("vsol,v2802rh") || !luna_xpon_active())
 		return 0;
-	if (hw_nat || !ep->sw || !ep->wan_ndev)
+	if (!ep->sw || !ep->wan_ndev)
 		return -EOPNOTSUPP;
 	memset(&v2802_l2, 0, sizeof(v2802_l2));
 	v2802_l2.requested = true;
