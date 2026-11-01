@@ -116,11 +116,18 @@ native_vid() {
 }
 
 run() {
-	local signature previous ports addresses vids port index reserved failed tick identities ifindex
+	local signature previous ports addresses vids port index reserved failed tick identities ifindex event
 	mkdir -p "$STATE"
 	touch "$STATE/links"
+	# Link and address changes wake the loop. The timeout below catches what
+	# they can't, such as a classifier removed by hand.
+	rm -f "$STATE/events"
+	mkfifo "$STATE/events" || exit 1
+	ip monitor link address > "$STATE/events" &
+	monitor=$!
+	exec 3< "$STATE/events"
 	trap 'exit' INT TERM
-	trap cleanup EXIT
+	trap 'kill "$monitor" 2>/dev/null; cleanup' EXIT
 	while :; do
 		config_load network
 		config_get ports lan omci_management_ports
@@ -157,12 +164,12 @@ run() {
 			fi
 			[ "$failed" = 1 ] || previous="$signature"
 		fi
+		sync_links || previous=
+		read -r -t 60 event <&3
+		[ -d "/proc/$monitor" ] || exit 1
+		# One change arrives as a burst of events, ours included.
 		for tick in 1 2 3 4 5; do
-			if ! sync_links; then
-				previous=
-				break
-			fi
-			sleep 1
+			read -r -t 1 event <&3 || break
 		done
 	done
 }
