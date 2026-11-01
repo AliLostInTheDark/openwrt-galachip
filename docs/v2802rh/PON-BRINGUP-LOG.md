@@ -163,5 +163,5 @@ with GEM 256 on VLAN 100 and GEM 257 on VLAN 660, both encrypted and offloaded. 
 plan measured 300 down and 305 up on a USB NIC. Traffic on VLAN 660 hasn't been
 tested. Lines where ME 171 uses VEIP 0x301 also haven't been tested.
 
-Return to stock and CH341A recovery are documented in [README.md](README.md) but
+Return to stock and CH341A recovery are documented in [README.md](../../README.md) but
 still haven't been run on a board.
