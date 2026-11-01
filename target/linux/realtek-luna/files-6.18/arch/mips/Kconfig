@@ -677,7 +677,7 @@ config MACH_NINTENDO64
 	select IRQ_MIPS_CPU
 
 config REALTEK_LUNA
-	bool "Realtek Luna GPON ONU (RTL960xC RLX Taroko / RTL9607C interAptiv)"
+	bool "Realtek Luna GPON ONU (RTL960x RLX Taroko)"
 	select BOOT_RAW
 	select COMMON_CLK
 	select CPU_HAS_WB
@@ -688,31 +688,17 @@ config REALTEK_LUNA
 	select TIMER_OF
 	select REALTEK_OTTO_TIMER
 	select SYS_HAS_CPU_MIPS32_R1
-	select SYS_HAS_CPU_MIPS32_R2
 	select SYS_HAS_EARLY_PRINTK
 	select SYS_SUPPORTS_32BIT_KERNEL
 	select SYS_SUPPORTS_BIG_ENDIAN
 	select CPU_R4K_CACHE_TLB
 	select HAVE_PCI
-	# Two SoC families share this platform; gate each one's CPU features on
-	# its CPU choice so the per-subtarget config selects exactly one:
-	#   RTL960xC "Taroko" (RLX, MIPS32 R1): R3000-style single-EntryLo TLB
-	#     (6-bit ASID) paired with an r4k-style cache.
-	select CPU_R3K_TLB if CPU_MIPS32_R1
-	#   RTL9607C "interAptiv" (MIPS32 R2): R4000 TLB (8-bit ASID) in a
-	#     Coherent Processing System, with a GIC, the R2 vectored/external
-	#     interrupt modes.
-	select SYS_SUPPORTS_SMP if CPU_MIPS32_R2
-	select SYS_SUPPORTS_MIPS_CPS if CPU_MIPS32_R2
-	select MIPS_CPU_SCACHE if CPU_MIPS32_R2
-	select MIPS_GIC if CPU_MIPS32_R2
-	select CLKSRC_MIPS_GIC if CPU_MIPS32_R2
-	select CPU_MIPSR2_IRQ_VI if CPU_MIPS32_R2
-	select CPU_MIPSR2_IRQ_EI if CPU_MIPS32_R2
+	# RLX "Taroko" (MIPS32 R1): R3000-style single-EntryLo TLB (6-bit ASID)
+	# paired with an r4k-style cache.
+	select CPU_R3K_TLB
 	help
 	  Realtek "Luna" GPON ONU SoCs built on the RLX "Taroko" core
-	  (RTL9602C/RTL9603C, MIPS32 R1, R3000-style TLB) or on the MIPS
-	  interAptiv core (RTL9607C, MIPS32 R2, R4000 TLB + GIC + CPS).
+	  (RTL9601D and RTL9602C, MIPS32 R1, R3000-style TLB).
 	  Big-endian MIPS, run-from-RAM bring-up.
 
 config RALINK

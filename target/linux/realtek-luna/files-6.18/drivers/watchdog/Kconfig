@@ -1995,7 +1995,7 @@ config LUNA_WDT
 	select WATCHDOG_CORE
 	help
 	  Hardware watchdog in the timer/counter block of the Realtek "Luna"
-	  GPON ONU SoCs -- RTL9602C, RTL9603C, RTL9607C and relatives.  It is a
+	  GPON ONU SoCs, such as the RTL9601D and RTL9602C.  It is a
 	  two-phase counter: the first phase raises the block's own timeout
 	  interrupt, the second resets the chip.  This driver programs it for a
 	  full-chip reset, which on this silicon re-enters the boot ROM.

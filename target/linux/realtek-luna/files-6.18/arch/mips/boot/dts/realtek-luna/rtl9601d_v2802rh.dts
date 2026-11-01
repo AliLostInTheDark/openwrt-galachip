@@ -6,7 +6,7 @@
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/leds/common.h>
 
-/* The RTL9601D runs the RTL9602C platform map (see rtl9601d_x100dg.dts). Stock
+/* The RTL9601D runs the RTL9602C platform map. Stock
  * on this board is Realtek's RTOS SDK ("8671x", SDK V1.3.1), not Linux, so what
  * follows comes from its U-Boot env, its boot console and a full flash dump. */
 / {
@@ -29,7 +29,7 @@
 		bootargs = "console=ttyS0,115200";
 	};
 
-	/* 32 MiB DDR2 (U-Boot: "DRAM: 32 MB"), laid out as the X100DG's. */
+	/* 32 MiB DDR2 (U-Boot: "DRAM: 32 MB"), laid out as on other RTL9601D boards. */
 	memory@0 {
 		device_type = "memory";
 		reg = <0x00000000 0x016ff000>, <0x01800000 0x006ff000>;
@@ -101,7 +101,7 @@
 	/* Semtech GN25L95, host-calibrated from the stock rtl-25l95-backup.bin.
 	 * Stock drives TX_DISABLE on GPIO 13 ("debug gpio set pin 13"). Bus 0
 	 * fails every access (RAM boot: GN calibration err=-5 at the first
-	 * write), so it is taken to be on bus 1, as on the X100DG. */
+	 * write), so it is taken to be on bus 1. */
 	pon-optics {
 		realtek,i2c-bus = <1>;
 		realtek,tx-disable-pin = <13>;
