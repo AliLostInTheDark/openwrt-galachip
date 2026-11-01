@@ -38,7 +38,19 @@ define Image/Prepare
 		$(TARGET_DIR)/www/luci-static/resources/icons/tunnel* \
 		$(TARGET_DIR)/www/luci-static/resources/icons/vrf* \
 		$(TARGET_DIR)/www/luci-static/resources/icons/port_pse*; \
-	rm -rf $(TARGET_DIR)/www/luci-static/resources/view/system/led-trigger; \
+	rm -rf $(TARGET_DIR)/www/luci-static/resources/view/system/led-trigger
+	# No package manager in the image; sysupgrade only reads lib/apk/packages.
+	rm -rf $(TARGET_DIR)/lib/apk/db
+	# Nothing left calls these: ucode's debugger, the removed graphs' collector,
+	# RPS tuning on a single core, GPIO switches this board does not have.
+	rm -f $(TARGET_DIR)/usr/bin/udbg $(TARGET_DIR)/usr/bin/luci-bwc \
+		$(TARGET_DIR)/etc/init.d/packet_steering $(TARGET_DIR)/etc/rc.d/*packet_steering \
+		$(TARGET_DIR)/etc/init.d/gpio_switch $(TARGET_DIR)/etc/rc.d/*gpio_switch
+	# omci-management needs these of kmod-sched-core; the rest would only load
+	# at boot and hold RAM.
+	cd $(TARGET_DIR)/lib/modules/$(LINUX_VERSION) && rm -f act_skbedit.ko cls_basic.ko \
+		cls_flow.ko cls_fw.ko cls_route.ko cls_u32.ko em_u32.ko sch_hfsc.ko sch_htb.ko sch_tbf.ko
+	printf '%s\n' act_gact act_mirred cls_matchall sch_ingress > $(TARGET_DIR)/etc/modules.d/70-sched-core
 	if [ -d $(TARGET_DIR)/usr/share/luci/menu.d ]; then \
 		$(CP) $(TOPDIR)/target/linux/realtek-luna/taroko/v2802rh/menu.d/* \
 			$(TARGET_DIR)/usr/share/luci/menu.d/; \

@@ -264,16 +264,15 @@ MODULE_PARM_DESC(pon_vid, "VLAN of the PON port, apart from the LAN's (default 4
  */
 #define CPUTAG1_LOW		0x02	/* live-stock ref ONU devmem: CPUTAG1CR = 0x4002 */
 
+#ifdef CONFIG_GPON_FLOW_OFFLOAD
 /* The switch L34 (NAPT) offload module is compiled in via this driver's TU to
  * avoid a separate Kbuild object; it carries its own header include guard. */
 #include "rtl9602c_l34.c"
-#ifdef CONFIG_GPON_FLOW_OFFLOAD
 #include <net/pkt_cls.h>	/* enum tc_setup_type, for the ndo below */
 #include "gpon_flow_offload.h"	/* the core TC-offload lifecycle */
 /* Forward-declared because both netdevs need it. */
 static int rtl9602c_l34_setup_tc(struct net_device *dev,
 				 enum tc_setup_type type, void *type_data);
-#endif
 
 /*
  * HW NAT (switch L34 offload) gate, a module parameter rather than Kconfig so
@@ -282,6 +281,13 @@ static int rtl9602c_l34_setup_tc(struct net_device *dev,
 static int hw_nat;	/* the V2802RH bridges: no L3/L4 NAT to offload */
 module_param(hw_nat, int, 0444);
 MODULE_PARM_DESC(hw_nat, "enable RTL9602C switch L34 hardware NAT offload (0=off)");
+#else
+#include "rtl9602c_l34_logic.h"
+#include "luna_l34_acc.h"
+#include "luna_gpon_nic.h"
+#include "rtl9602c_l34.h"
+#define hw_nat 0
+#endif
 
 struct rtl9602c_eth {
 	/* The per-chip table. */
@@ -370,8 +376,8 @@ struct rtl9602c_eth {
 		u32 ageing_s, learn_limit, max_frame;
 	} uni_l2[LAN_PORTS];
 	bool uni_l2_used;
-	struct rtl9602c_l34 l34;	/* switch L3/L4 (NAPT) hardware-offload engine */
 #ifdef CONFIG_GPON_FLOW_OFFLOAD
+	struct rtl9602c_l34 l34;	/* switch L3/L4 (NAPT) hardware-offload engine */
 	struct gpon_flow_offload *fo;	/* the COMMON TC lifecycle, drivers/net/gpon/ */
 	struct notifier_block l34_addr_nb;	/* releases the WAN rows when its address leaves */
 #endif
@@ -4329,6 +4335,7 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 			gpon_hwaddr_src_name(src));
 	}
 
+#ifdef CONFIG_GPON_FLOW_OFFLOAD
 	/* Bring up the switch L3/L4 NAT engine */
 	/*
 	 * The diagnostic is registered whatever the gate does, so it can report
@@ -4343,7 +4350,6 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 			dev_warn(dev, "[NAT-001] L34 hw-nat init failed; software forwarding\n");
 		} else {
 			dev_dbg(dev, "L34 hw-nat engine initialised\n");
-#ifdef CONFIG_GPON_FLOW_OFFLOAD
 			/* The COMMON lifecycle owns the cookie map and the entry */
 			ep->fo = gpon_flow_offload_new(&rtl9602c_l34_flow_ops, ep);
 			ep->l34_addr_nb.notifier_call = rtl9602c_l34_inetaddr_event;
@@ -4364,17 +4370,19 @@ static int rtl9602c_eth_probe(struct platform_device *pdev)
 			}
 			/* the flowdump node renders the lifecycle's own diag line */
 			ep->l34.fo = ep->fo;
-#endif
 		}
 	}
+#endif
 
 	ndev->netdev_ops = &rtl9602c_eth_netdev_ops;
 	ret = luna_mib_attach(ndev, ep->sw, ep->swm);
 	if (ret)
 		return dev_err_probe(dev, ret, "switch statistics attach failed\n");
+#ifdef CONFIG_GPON_FLOW_OFFLOAD
 	/* TC feature bit; nftables TC_SETUP_FT registration does not consult it. */
 	ndev->hw_features |= NETIF_F_HW_TC;
 	ndev->features |= NETIF_F_HW_TC;
+#endif
 	/* Permit a LIVE MAC change (no iface down/up) */
 	ndev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
 	netif_carrier_off(ndev);

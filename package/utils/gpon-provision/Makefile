@@ -6,9 +6,10 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gpon-provision
 PKG_VERSION:=1
-PKG_RELEASE:=6
+PKG_RELEASE:=7
 PKG_LICENSE:=GPL-2.0-or-later
 PKG_MAINTAINER:=Confiared <brule.herman@confiared.com>
+PKG_BUILD_DEPENDS:=zlib
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -16,7 +17,6 @@ define Package/gpon-provision
   SECTION:=utils
   CATEGORY:=Utilities
   TITLE:=Per-board GPON ONU provisioning (MAC/SN from factory partition)
-  DEPENDS:=+zlib
 endef
 
 define Package/gpon-provision/description
@@ -34,7 +34,7 @@ endef
 
 define Build/Compile
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) \
-		-o $(PKG_BUILD_DIR)/rtk_factory $(PKG_BUILD_DIR)/rtk_factory.c -lz
+		-o $(PKG_BUILD_DIR)/rtk_factory $(PKG_BUILD_DIR)/rtk_factory.c -l:libz.a
 endef
 
 define Package/gpon-provision/install

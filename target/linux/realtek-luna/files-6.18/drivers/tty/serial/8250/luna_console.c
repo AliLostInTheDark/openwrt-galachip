@@ -35,7 +35,7 @@
 
 #include "8250.h"
 
-#define LUNA_CON_RING_BYTES	(64 * 1024)
+#define LUNA_CON_RING_BYTES	(32 * 1024)
 #define LUNA_CON_BYTE_US	87	/* one 8N1 character at 115200 */
 #define LUNA_CON_SPIN_US	10000	/* bound on a synchronous wait for THRE */
 
