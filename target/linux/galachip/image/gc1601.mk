@@ -49,6 +49,12 @@ define Build/gc1601-u-boot-proper
 	[ "$$(stat -c %s $@)" -eq 122880 ]
 endef
 
+# ROM-headed SPL for NOR 0-0x2000: install with an SPI programmer only.
+define Build/gc1601-u-boot-spl
+	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot-spl.bin >> $@
+	[ "$$(stat -c %s $@)" -le 8192 ]
+endef
+
 define Device/tplink_xz000-g7
   DEVICE_VENDOR := TP-Link
   DEVICE_MODEL := XZ000-G7
@@ -62,8 +68,9 @@ define Device/tplink_xz000-g7
   IMAGES := sysupgrade.bin
   IMAGE/sysupgrade.bin := append-kernel | pad-to $$(BLOCKSIZE) | \
     append-rootfs | pad-rootfs | check-size | append-metadata
-  ARTIFACTS := u-boot-proper.img
+  ARTIFACTS := u-boot-proper.img u-boot-spl.bin
   ARTIFACT/u-boot-proper.img := gc1601-u-boot-proper
+  ARTIFACT/u-boot-spl.bin := gc1601-u-boot-spl
   DEVICE_PACKAGES := kmod-gc1601-gpon-diag kmod-gc1601-epon-diag xpon-report \
     omci-agent omcid luci-app-omci luci-app-onu-system luci-theme-slate uhttpd-mod-ucode \
     epon-oamd luci-app-epon \
