@@ -295,6 +295,10 @@ struct gc1601_eth {
 	struct delayed_work tx_auto_work;
 	struct work_struct tx_probe_work;
 	struct delayed_work tx_loopback_work;
+	struct delayed_work diag_work;
+	u32 diag_mac[25];
+	u32 diag_seq;
+	bool queue_capped;
 	u16 tx_resume_slot;
 	u32 rx_poll_calls;
 	u32 rx_pending_last;
@@ -1708,6 +1712,7 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 	ret = gc1601_tcont_queue_setup(priv);
 	if (ret)
 		return ret;
+	priv->queue_capped = false;
 	if (!priv->tcont_boot_valid && priv->os_base) {
 		unsigned int t;
 
@@ -3616,6 +3621,116 @@ static void gc1601_tx_loopback_work(struct work_struct *work)
 			 priv->tx_probe_sent);
 }
 
+/*
+ * Upload crash hunt: sample the engine every diag_ms and print what moved,
+ * so the last console lines before a silent reset show the engine state.
+ */
+static unsigned int diag_ms = 250;
+module_param(diag_ms, uint, 0644);
+MODULE_PARM_DESC(diag_ms, "Engine state sample period on the console in ms, 0 disables");
+
+static bool queue_cap;
+module_param(queue_cap, bool, 0644);
+MODULE_PARM_DESC(queue_cap, "Cap T-CONT and UNI queue limits inside the 512-buffer pool");
+
+static const u16 gc1601_diag_mac[] = {
+	0x714, 0x718, 0x724, 0x728, 0x72c, 0x730, 0x734, 0x738,
+	0x740, 0x744, 0x778, 0x780, 0x784, 0x78c, 0x790, 0x794,
+	0x7a4, 0x7a8, 0x7ac, 0x7b0, 0x7b4, 0x7b8, 0x7bc, 0x7c0,
+	0x81c,
+};
+static_assert(ARRAY_SIZE(gc1601_diag_mac) ==
+	      sizeof_field(struct gc1601_eth, diag_mac) / sizeof(u32));
+
+static int gc1601_diag_queue_limits(struct gc1601_eth *priv, bool cap)
+{
+	unsigned int i;
+	int ret = 0;
+
+	for (i = 0; i < GC_CVRD_TCONT_QUEUES && !ret; i++) {
+		bool q0 = !(i % 8);
+		u32 max = cap ? (q0 ? 256 : 64) : (q0 ? 1080 : 720);
+
+		ret = gc1601_cvrd_write(priv, GC_CVRD_OUTMAX | i, 32 | (max << 11));
+	}
+	for (i = 0; i < GC_CVRD_UNI_QUEUES && !ret; i++) {
+		u32 max = cap ? (i ? 64 : 256) : (i ? 720 : 1080);
+
+		priv->cvrd_uni_outmax[i] = 32 | (max << 11);
+		ret = gc1601_cvrd_write(priv, GC_CVRD_OUTMAX | (GC_CVRD_UNI0 + i),
+					priv->cvrd_uni_outmax[i]);
+	}
+	return ret;
+}
+
+/* Non-zero OUTCNT/INCNT of T-CONTs 0-3, the UNI and the CPU queues. */
+static int gc1601_diag_queues(struct gc1601_eth *priv, char *buf, size_t size)
+{
+	static const struct { u16 first, count; } ranges[] = {
+		{ 0, 32 }, { GC_CVRD_UNI0, GC_CVRD_UNI_QUEUES },
+		{ GC_CVRD_CPU, GC_CVRD_CPU_QUEUES },
+	};
+	unsigned int r, i;
+	int len = 0;
+
+	for (r = 0; r < ARRAY_SIZE(ranges); r++) {
+		for (i = ranges[r].first; i < ranges[r].first + ranges[r].count; i++) {
+			u32 out, in = 0;
+
+			if (gc1601_queue_read(priv, GC_CVRD_OUTCNT, i, &out, 1) ||
+			    (i < GC_CVRD_CPU &&
+			     gc1601_queue_read(priv, GC_CVRD_INCNT, i, &in, 1)))
+				return len + scnprintf(buf + len, size - len, " QFAIL@%x", i);
+			if (out || in)
+				len += scnprintf(buf + len, size - len, " %x=%x/%x", i, out, in);
+		}
+	}
+	return len;
+}
+
+static void gc1601_diag_work(struct work_struct *work)
+{
+	struct gc1601_eth *priv = container_of(to_delayed_work(work),
+					       struct gc1601_eth, diag_work);
+	void __iomem *gmac = priv->base[GC1601_GMAC];
+	char mac[256], queues[512];
+	int mac_len = 0, q_len = 0;
+	unsigned int i;
+
+	if (!diag_ms || !priv->running)
+		goto out;
+
+	for (i = 0; i < ARRAY_SIZE(gc1601_diag_mac); i++) {
+		u32 val = readl(gmac + gc1601_diag_mac[i]);
+
+		if (val != priv->diag_mac[i])
+			mac_len += scnprintf(mac + mac_len, sizeof(mac) - mac_len, " %x+%u",
+					     gc1601_diag_mac[i], val - priv->diag_mac[i]);
+		priv->diag_mac[i] = val;
+	}
+
+	queues[0] = '\0';
+	if (rtnl_trylock()) {
+		if (queue_cap != priv->queue_capped && !priv->queue_read_failed) {
+			int ret = gc1601_diag_queue_limits(priv, queue_cap);
+
+			dev_info(priv->dev, "diag: queue limits %s (%d)\n",
+				 queue_cap ? "capped" : "stock", ret);
+			priv->queue_capped = queue_cap;
+		}
+		if (!priv->queue_read_failed)
+			q_len = gc1601_diag_queues(priv, queues, sizeof(queues));
+		rtnl_unlock();
+	}
+
+	if (mac_len || q_len || priv->tx_pending)
+		dev_info(priv->dev, "diag %u: txp=%u busy=%llu allocf=%u cap=%d q[%s ] mac[%s ]\n",
+			 priv->diag_seq++, priv->tx_pending, priv->tx_busy_events,
+			 priv->rx_alloc_failures, priv->queue_capped, queues, mac);
+out:
+	schedule_delayed_work(&priv->diag_work, msecs_to_jiffies(diag_ms ?: 1000));
+}
+
 static int gc1601_eth_open(struct net_device *netdev)
 {
 	struct gc1601_eth *priv = netdev_priv(netdev);
@@ -3662,6 +3777,7 @@ static int gc1601_eth_open(struct net_device *netdev)
 
 	timer_setup(&priv->poll_timer, gc1601_poll_timer, 0);
 	mod_timer(&priv->poll_timer, jiffies + msecs_to_jiffies(50));
+	schedule_delayed_work(&priv->diag_work, 0);
 
 	return 0;
 
@@ -3684,6 +3800,7 @@ static int gc1601_eth_stop(struct net_device *netdev)
 	cancel_delayed_work_sync(&priv->tx_loopback_work);
 	cancel_work_sync(&priv->tx_probe_work);
 	cancel_delayed_work_sync(&priv->tx_auto_work);
+	cancel_delayed_work_sync(&priv->diag_work);
 
 	/* Let queued descriptors finish while the GMAC is still transmitting. */
 	for (i = 0; i < 100; i++) {
@@ -4535,6 +4652,7 @@ static int gc1601_eth_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&priv->tx_auto_work, gc1601_tx_auto_work);
 	INIT_WORK(&priv->tx_probe_work, gc1601_tx_probe_work);
 	INIT_DELAYED_WORK(&priv->tx_loopback_work, gc1601_tx_loopback_work);
+	INIT_DELAYED_WORK(&priv->diag_work, gc1601_diag_work);
 	priv->tx_detected_slot = -1;
 	priv->rx_first_slot = -1;
 
