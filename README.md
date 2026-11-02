@@ -17,7 +17,8 @@ and firewalling. OLT provisioning and authentication requirements vary by ISP.
 | Datapath | Hardware switch offload between the LAN port and the PON at line rate |
 | OMCI | Userspace responder (`omcid`); the kernel engine has been removed |
 | LuCI | Status and configuration for GPON, EPON and the PON mode, with a light/dark theme |
-| Tested OLT | Nokia ISAM (GPON, India) |
+| U-Boot | Optional U-Boot 2026.10 (SPL and proper), self-updating, recoverable over serial without a programmer |
+| Tested OLTs | Nokia ISAM (GPON, India); Airtel India (GPON) |
 
 ## Features
 
@@ -46,7 +47,9 @@ and firewalling. OLT provisioning and authentication requirements vary by ISP.
 - SSH diagnostics: `omcictl`, sysfs counters, an on-demand OMCI trace and a
   one-line log of what the OLT did after each reconnect.
 - RAM boot and installation through the stock U-Boot, or an optional
-  OpenWrt-built U-Boot 2026.10 (proper and SPL) with self-update.
+  OpenWrt-built U-Boot 2026.10 (SPL and proper) that updates itself as one
+  image, shows write progress, restores the stock firmware with one command,
+  and recovers over the serial console even with a broken SPL.
 
 ## How it works
 
@@ -104,13 +107,16 @@ ONU-created entities, compared with the stock firmware's defaults.
 | --- | --- | --- |
 | Forwarding | `gcnet.ko` switch flows | Open SFU offload driver for the same switch |
 | Upstream queues | Queue 0 of each T-CONT | One per P-bit (queue 0 as an option) |
+| Packet buffers | 1440, with queue limits of 1080/720 | U-Boot's 512, with queue limits sized to them: a T-CONT queue holds at most 192 in and 256 out, so one fast upload cannot drain the pool |
 | CPU path | Vendor bridge | `pon0` bridge, used only for traffic without a hardware flow |
 | OLT frame size, UNI rate limits, queue weights | Applied | Off until tested on a live OLT (see below) |
 
 Settings whose register effects are not yet verified on hardware are module
 parameters, off by default: `gc1601_eth.uni_omci_attrs` (OLT frame size, pause
 and UNI rate limits), `gc1601_eth.gem_sfu_shaping` (per-GEM peak shaping) and
-`gc1601_eth.tcont_qos` (OLT queue policy and weights).
+`gc1601_eth.tcont_qos` (OLT queue policy and weights). The T-CONT queue
+limits can be tuned live with `gc1601_eth.tcont_depth` and
+`gc1601_eth.tcont_out`; a setting that would exceed the buffer pool is refused.
 
 ### Diagnostics
 
@@ -125,6 +131,18 @@ and UNI rate limits), `gc1601_eth.gem_sfu_shaping` (per-GEM peak shaping) and
 OMCI software download, VoIP, IGMP snooping and TR-069 are not implemented.
 
 ## Measured performance
+
+GPON on Airtel India, 300/300 Mbit/s plan, PC directly on the LAN port,
+Ookla on one server:
+
+| Test | Download | Upload |
+| --- | ---: | ---: |
+| Single connection (4 runs) | 248-298 Mbit/s | 199-245 Mbit/s |
+| Multiple connections | about 300 Mbit/s | about 245-300 Mbit/s |
+
+A single TCP upload needs more buffering than the stock queue limits give:
+with them it backs off at about 70 Mbit/s, or drains the packet pool and
+hangs the engine. The limits above keep it near the plan rate.
 
 GPON on a Nokia ISAM OLT, 300/300 Mbit/s plan, PC directly on the LAN port:
 
@@ -189,7 +207,7 @@ control**. Interrupt autoboot to reach the stock U-Boot `=>` prompt.
 
 Connect the PC directly by Ethernet and set its address to
 `192.168.1.10/24`. The G7 uses `192.168.1.1`; no DHCP server is included.
-Place the initramfs image in the TFTP root as `g7-initramfs.zImage`.
+Place the initramfs image in the TFTP root under its build name.
 
 ### 3. Boot from RAM
 
@@ -201,7 +219,7 @@ setenv ipaddr 192.168.1.1
 setenv serverip 192.168.1.10
 mw.l 9080000c 0
 setenv bootargs console=ttyS0,115200n8 earlycon
-tftpboot 41000000 g7-initramfs.zImage
+tftpboot 41000000 openwrt-galachip-gc1601-tplink_xz000-g7-initramfs-zImage
 ```
 
 The `mw.l` command disables the watchdog for this loader session.
@@ -394,31 +412,37 @@ The 4 MiB flash leaves little room for additional packages.
 
 ## U-Boot (optional)
 
-The build also publishes an upstream U-Boot 2026.10 for the G7, documented in
+The build also publishes an upstream U-Boot 2026.10 for the G7, under
+upstream U-Boot's file names, documented in
 [package/boot/uboot-galachip](package/boot/uboot-galachip/README.md):
 
-| File | NOR | Installed with |
+| File (`openwrt-galachip-gc1601-tplink_xz000-g7-…`) | NOR | Use |
 | --- | --- | --- |
-| `openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-proper.img` | `0x2000`, 120 KiB | `run upgrade_uboot`, or an SPI programmer |
-| `openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-ram.bin` | none, runs from RAM | `tftpboot 41000000`, `go 41000000` |
-| `openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-spl.bin` | `0`, up to 8 KiB | SPI programmer only |
+| `…-u-boot-with-spl.bin` | `0`, 128 KiB | The whole boot loader, SPL and proper: `run upgrade_uboot` |
+| `…-u-boot.bin` | none, runs from RAM | Chainloaded with `tftpboot 41000000` and `go 41000000`, for the first install |
+| `…-u-boot-spl.bin` | `0`, up to 8 KiB | Mask ROM recovery over the serial console, or an SPI programmer |
+| `…-u-boot.img` | `0x2000`, 120 KiB | U-Boot proper alone, for an SPI programmer |
 
-Proper boots behind the stock SPL, so it installs without a programmer:
-start `openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-ram.bin` from the stock U-Boot (`tftpboot 41000000`,
-`go 41000000`) and run `run upgrade_uboot`; see
-[INSTALLATION.md](package/boot/uboot-galachip/INSTALLATION.md). Later updates,
-with the image in the TFTP root:
+To install from the stock U-Boot, serve `…-u-boot.bin` and
+`…-u-boot-with-spl.bin` by TFTP, start the first with `tftpboot 41000000`
+and `go 41000000`, then:
 
 ```text
 run upgrade_uboot
 ```
 
+It checks the SPL the way the chip's mask ROM does and U-Boot proper by its
+CRCs before writing, rewrites only the blocks that changed, and compares the
+result. Later updates are the same command from the installed U-Boot; see
+[INSTALLATION.md](package/boot/uboot-galachip/INSTALLATION.md).
+
 Useful commands at the `G7>` prompt: `run boot_tftp` (RAM boot of the
 initramfs), `run upgrade_tftp` (flash the sysupgrade image), `run backup_flash`
-(TFTP the whole 4 MiB NOR to the PC as `xz000-g7-flash.bin`), `run restore_stock`
-(write this unit's raw `firmware.bin` backup, served as `g7-stock-firmware.bin`). The driver
-refuses writes to the SPL, `misc` and `hwconfig`. Sysupgrade never touches the
-bootloader. ROM recovery has not been tested: a broken SPL needs the programmer.
+(TFTP the whole 4 MiB NOR to the PC as `xz000-g7-flash.bin`) and
+`run restore_stock` (write this unit's raw `firmware.bin` backup, served as
+`g7-stock-firmware.bin`, verify it and boot stock). `sf erase`, `sf write`
+and `sf update` show a progress bar with the speed. The flash driver refuses
+writes to `misc` and `hwconfig`; sysupgrade never touches the boot loader.
 
 ## Recovery
 
@@ -450,8 +474,20 @@ cmp.b 41000000 40c00000 3b0000
 ```
 
 Require `Total of 3866624 byte(s) were the same` before power-cycling.
-If verification fails, keep power on and retain the serial session.
-Bootloader or factory-data damage may require an external SPI programmer.
+If verification fails, keep power on and retain the serial session. With the
+OpenWrt U-Boot installed, `run restore_stock` does all of this in one step.
+
+If the boot loader itself is broken, the chip's mask ROM stops at a
+`1. SPI-NOR / 2. UART(Xmodem)` menu. Send the SPL over the serial console
+with [rom-xmodem.py](package/boot/uboot-galachip/tools/rom-xmodem.py)
+(standard XMODEM senders fail with this ROM), then `run upgrade_uboot`:
+
+```sh
+python3 rom-xmodem.py /dev/ttyUSB0 openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-spl.bin
+```
+
+Damage to `misc` or `hwconfig` can only be repaired from this unit's own
+backup with an external SPI programmer.
 
 ## Building
 
