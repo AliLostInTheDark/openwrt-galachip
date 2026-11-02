@@ -19,9 +19,13 @@ server `192.168.1.10`. Read the factory MAC at absolute NOR `0x3ef100`; an inval
 MAC requires a runtime `setenv ethaddr`. No random/shared fallback address.
 
 NOR runs single-lane, mode 0, at up to 50 MHz with 256-byte PIO bursts, as
-the Linux driver does. Program and erase are accepted only inside the
-firmware partition (`0x20000`-`0x3d0000`); the boot region, `misc` and
-`hwconfig` are refused by the SPI driver. Probe does not unlock the chip.
+the Linux driver does. The SPI driver accepts program and erase only for
+U-Boot proper and the firmware partition (`0x2000`-`0x3d0000`), with erases
+aligned to their own block size. Everything else is refused below every
+command and script: chip erase, status-register writes, any erase or program
+touching the SPL (`0`-`0x2000`), `misc` and `hwconfig`. NOR uses 4 KiB
+erases, so updating proper never erases the SPL block. The SPL can only be
+replaced with the SPI programmer. Probe does not unlock the chip.
 There is no persistent environment, HTTP recovery, mtest or optical
 calibration operation.
 
@@ -32,6 +36,8 @@ calibration operation.
 | `run boot_flash` | Default `bootcmd`: `fwload` the tagged kernel from NOR, then `bootz`. |
 | `run boot_tftp` | `tftpboot ${bootfile}` (the OpenWrt initramfs zImage), `zdtb`, `bootz`. |
 | `run backup_flash` | Read the whole 4 MiB NOR and `tftpput` it as `xz000-g7-flash.bin`. |
+| `run upgrade_uboot` | `tftpboot ${ubootfile}` (proper.img), `ubcheck`, `sf update` at `0x2000`, read back and compare. |
+| `ubcheck <addr> <size>` | Check a loaded proper.img: size, footer and wrapper CRC32s, entry. |
 | `run upgrade_tftp` | `tftpboot ${upgradefile}` (sysupgrade.bin), check tag and size, `sf update` at `0x20000`. |
 | `fwload <addr>` | Load the tagged kernel; sets `filesize` and `fdt_addr`. |
 | `zdtb <addr>` | Set `fdt_addr` to the DTB appended to a loaded zImage. |

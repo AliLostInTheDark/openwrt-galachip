@@ -171,21 +171,49 @@ static void spi_tests(void)
 		assert(!gc_spi_exec(&slave, &w));
 		assert(spi_opcode == 2 && spi_written == 6 && !spi_left);
 		assert(raw(0xa0000008) == 11 && (raw(0xa000000c) & BIT(1)));
-		w.addr.val = 0x1ff00;
+		w.addr.val = 0x1ff8;
 		assert(gc_spi_exec(&slave, &w) == -EROFS);
+		w.addr.val = 0x2000;
+		assert(!gc_spi_exec(&slave, &w));
 		w.addr.val = 0x3cfff8;
 		assert(gc_spi_exec(&slave, &w) == -EROFS);
 		assert(!gc_spi_exec(&slave, &e));
 		e.addr.val = 0x3d0000;
 		assert(gc_spi_exec(&slave, &e) == -EROFS);
-		e.addr.val = 0x10000;
+		e.addr.val = 0;
 		assert(gc_spi_exec(&slave, &e) == -EROFS);
+		e.addr.val = 0x12000;
+		assert(gc_spi_exec(&slave, &e) == -EINVAL);
 		e.cmd.opcode = 0x20;
+		e.addr.val = 0x1000;
+		assert(gc_spi_exec(&slave, &e) == -EROFS);
+		e.addr.val = 0x2800;
+		assert(gc_spi_exec(&slave, &e) == -EINVAL);
+		e.addr.val = 0x2000;
+		assert(!gc_spi_exec(&slave, &e));
 		e.addr.val = 0x3cf000;
 		assert(!gc_spi_exec(&slave, &e));
-		e.cmd.opcode = 0xc7;
-		e.addr.nbytes = 0;
-		assert(gc_spi_exec(&slave, &e) == -EROFS);
+		/* Nothing may erase or program the SPL block at 0-0x2000. */
+		{
+			static const u8 erases[] = { 0x20, 0x52, 0xd8, 0x60, 0xc7, 0x01 };
+			unsigned int k;
+			u32 a;
+
+			for (k = 0; k < ARRAY_SIZE(erases); k++) {
+				e.cmd.opcode = erases[k];
+				for (a = 0; a < 0x2000; a += 0x200) {
+					e.addr.nbytes = 3;
+					e.addr.val = a;
+					assert(gc_spi_exec(&slave, &e));
+				}
+				e.addr.nbytes = 0;
+				assert(gc_spi_exec(&slave, &e));
+			}
+			for (a = 0; a < 0x2000; a += 4) {
+				w.addr.val = a;
+				assert(gc_spi_exec(&slave, &w));
+			}
+		}
 	}
 	fifo_stuck = true;
 	assert(gc_spi_exec(&slave, &op) == -ETIMEDOUT);

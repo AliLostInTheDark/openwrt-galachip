@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * FTSPI020 single-lane SPI-memory controller for GC1601. Program and erase
- * stay inside the firmware partition; boot and factory regions are refused.
+ * reach U-Boot proper and the firmware partition only; SPL and the factory
+ * regions are refused.
  * Based on Faraday's GPL implementation, Copyright (C) 2020 Faraday Technology
  * Author: Bing-Yao Luo <bjluo@faraday-tech.com>
  */
@@ -15,7 +16,7 @@
 
 /* PIO burst per FIFO-ready wait, as CR2 selects and the Linux driver uses. */
 #define XFR_SIZE 256U
-#define WRITABLE_START 0x20000U
+#define WRITABLE_START 0x2000U
 #define WRITABLE_END 0x3d0000U
 
 struct gc_spi { void *base; ulong input_rate; bool failed; };
@@ -74,6 +75,9 @@ static int gc_spi_check(const struct spi_mem_op *op)
 	if (span) {
 		if (op->addr.nbytes != 3 || (op->cmd.opcode == 0x02) != out ||
 		    (op->cmd.opcode != 0x02 && op->data.nbytes))
+			return -EINVAL;
+		/* An erase clears its whole block, whatever the low address bits. */
+		if (op->cmd.opcode != 0x02 && op->addr.val & (span - 1))
 			return -EINVAL;
 		if (op->addr.val < WRITABLE_START || op->addr.val >= WRITABLE_END ||
 		    span > WRITABLE_END - op->addr.val)

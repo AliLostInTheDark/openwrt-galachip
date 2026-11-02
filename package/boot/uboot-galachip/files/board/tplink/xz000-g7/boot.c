@@ -7,6 +7,7 @@
 #include <vsprintf.h>
 #include <asm/unaligned.h>
 #include <linux/libfdt.h>
+#include <u-boot/crc.h>
 #include <gc1601_bounds.h>
 
 #define FW_OFFSET 0x20000U
@@ -96,3 +97,41 @@ static int do_fwload(struct cmd_tbl *cmd, int flag, int argc, char *const argv[]
 U_BOOT_CMD(fwload, 2, 0, do_fwload,
 	   "load the tagged OpenWrt kernel from NOR",
 	   "<addr>\n    - sets filesize and fdt_addr (appended DTB)");
+
+/* proper.img: wrapper, padding, then a 32-byte footer of CRC32-checked words. */
+#define PROPER_SIZE 0x1e000U
+
+static int do_ubcheck(struct cmd_tbl *cmd, int flag, int argc, char *const argv[])
+{
+	ulong addr, size;
+	const u8 *image;
+	const u32 *footer;
+	u32 length;
+
+	if (argc != 3)
+		return CMD_RET_USAGE;
+	addr = hextoul(argv[1], NULL);
+	size = hextoul(argv[2], NULL);
+	if (size != PROPER_SIZE || !gc1601_load_range(addr, size)) {
+		printf("proper.img must be 0x%x bytes\n", PROPER_SIZE);
+		return CMD_RET_FAILURE;
+	}
+	image = (void *)addr;
+	footer = (void *)(image + PROPER_SIZE - 32);
+	length = get_unaligned_le32(&footer[2]);
+	if (crc32(0, (void *)footer, 28) != get_unaligned_le32(&footer[7]) ||
+	    get_unaligned_le32(&footer[0]) != 0x31503747 ||
+	    get_unaligned_le32(&footer[1]) != 1 ||
+	    get_unaligned_le32(&footer[3]) != 0x40100000 ||
+	    length < 64 || length > PROPER_SIZE - 32 ||
+	    crc32(0, image, length) != get_unaligned_le32(&footer[4])) {
+		puts("Not a valid XZ000-G7 proper.img\n");
+		return CMD_RET_FAILURE;
+	}
+	printf("proper.img OK: wrapper %u bytes, CRC32 %08x\n", length,
+	       get_unaligned_le32(&footer[4]));
+	return CMD_RET_SUCCESS;
+}
+U_BOOT_CMD(ubcheck, 3, 0, do_ubcheck,
+	   "check a loaded XZ000-G7 proper.img",
+	   "<addr> <size>");

@@ -75,7 +75,7 @@ def inspect_build(build, cross):
                 "HAS_CUSTOM_SYS_INIT_SP_ADDR", "LMB"]
     absent = ["CMD_SAVEENV", "CMD_MEMTEST", "ENV_IS_IN_SPI_FLASH", "SPI_FLASH_UNLOCK_ALL",
               "SPI_FLASH_SOFT_RESET", "SPI_FLASH_SFDP_SUPPORT", "NET_RANDOM_ETHADDR"]
-    commands = ["bootz", "fwload", "zdtb", "ethdiag", "tftpput", "loadx", "loady", "crc32", "sleep", "sf",
+    commands = ["bootz", "fwload", "zdtb", "ubcheck", "ethdiag", "tftpput", "loadx", "loady", "crc32", "sleep", "sf",
                 "ping", "tftpboot", "bdinfo"]
     for name in ("ram", "production"):
         config = (build / name / ".config").read_text()

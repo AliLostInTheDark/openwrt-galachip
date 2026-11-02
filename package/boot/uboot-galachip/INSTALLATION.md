@@ -34,6 +34,7 @@ Record complete UART logs for every trial.
 Rollback uses this unit's own verified backup. Never restore a different
 unit's factory or calibration areas.
 
-U-Boot's `sf` may write only the firmware partition (`run upgrade_tftp`);
-the SPI driver refuses the boot region, `misc` and `hwconfig`. Boot-region
-changes use the programmer. No `saveenv` or ROM strap manipulation.
+U-Boot may write U-Boot proper (`run upgrade_uboot`, after a programmer
+trial of the same build) and the firmware partition (`run upgrade_tftp`).
+The SPI driver refuses any erase or program of the SPL, `misc` and
+`hwconfig`; the SPL is replaced only with the programmer. No `saveenv` or ROM strap manipulation.
