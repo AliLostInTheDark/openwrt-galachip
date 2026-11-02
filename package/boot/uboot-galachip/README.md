@@ -96,7 +96,7 @@ compressed CRC, LZMA profile/length, decoder result, end marker and expanded CRC
 The existing firmware tag has magic `0x03000003`, a 512-byte header and kernel
 length at `0x78`. It has **no CRC field**. `fwload` bounds that length to
 the firmware partition, checks zImage bounds and the appended DTB. RAM
-variants stop at the prompt; the production variant offers a three-second
+variants stop at the prompt; the production variant offers a one-second
 interrupt window before `run boot_flash`.
 
 ## Memory and startup contracts

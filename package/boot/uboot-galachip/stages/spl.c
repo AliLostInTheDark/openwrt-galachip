@@ -81,9 +81,12 @@ static int spi_read_stage(void *destination)
 	REG(SPI + 0x10) |= 0x100;
 	if (wait_bits(SPI + 0x10, 0x100, 0))
 		return -1;
-	/* Slowest controller divisor, mode 0, completion enabled, PIO 32 bytes. */
-	REG(SPI + 0x10) = (REG(SPI + 0x10) & ~0x13U) | 3;
-	REG(SPI + 0x20) = (REG(SPI + 0x20) & ~(3U | (3U << 12))) | 2;
+	/*
+	 * 50 MHz (/4, the SoC's rated maximum, as Linux and U-Boot run it),
+	 * mode 0, completion enabled, PIO in 256-byte bursts.
+	 */
+	REG(SPI + 0x10) = (REG(SPI + 0x10) & ~0x13U) | 1;
+	REG(SPI + 0x20) = (REG(SPI + 0x20) & ~(3U | (3U << 12))) | 2 | 3U << 12;
 	REG(SPI + 0x24) = 1;
 	REG(SPI) = 0;
 	REG(SPI + 4) = 0x01000000;
@@ -95,12 +98,13 @@ static int spi_read_stage(void *destination)
 	if (wait_bits(SPI + 0x24, 1, 1) || id != 0x16701c)
 		return -1;
 	REG(SPI + 0x24) = 1;
+	/* Fast Read: 3 address bytes and 8 dummy cycles, valid at 50 MHz. */
 	REG(SPI) = 0x2000;
-	REG(SPI + 4) = 0x01000003;
+	REG(SPI + 4) = 0x01080003;
 	REG(SPI + 8) = STAGE_SIZE;
-	REG(SPI + 0x0c) = 0x03000001;
+	REG(SPI + 0x0c) = 0x0b000001;
 	while (left) {
-		chunk = left < 32 ? left : 32;
+		chunk = left < 256 ? left : 256;
 		if (wait_bits(SPI + 0x18, 2, 2))
 			return -1;
 		left -= chunk;
