@@ -190,8 +190,8 @@ function print_classes(classes) {
 			join(',', item.flag_names || []));
 }
 
-/* G.988 terms: ONU-created, OLT-created, or ONU-created and OLT-configured. */
-const origin_text = { default: 'onu-created', olt: 'olt-created', local: 'local-override', hardware: 'hardware' };
+/* ONU-created, OLT-provisioned, or ONU-created and OLT-configured. */
+const origin_text = { default: 'onu-created', olt: 'olt-provisioned', local: 'local-override', hardware: 'hardware' };
 
 function origin(item) {
 	if (item.origin_name == 'default' && item.olt_written)

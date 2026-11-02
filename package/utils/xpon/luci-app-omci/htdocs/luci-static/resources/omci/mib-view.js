@@ -10,10 +10,10 @@ var words = {
 	pbs: 'PBS', fec: 'FEC'
 };
 
-/* G.988 terms: an ME is created autonomously by the ONU or by the OLT. */
+/* An ME is created autonomously by the ONU (G.988) or provisioned by the OLT. */
 var originLabels = {
 	'default': _('ONU-created'), 'local': _('Local override'),
-	'olt': _('OLT-created'), 'hardware': _('Hardware')
+	'olt': _('OLT-provisioned'), 'hardware': _('Hardware')
 };
 
 function label(name) {

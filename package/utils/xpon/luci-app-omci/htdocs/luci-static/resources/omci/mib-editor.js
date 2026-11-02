@@ -60,8 +60,8 @@ function render(group, data, title, description) {
 	var byId, groupClasses, createButton;
 	var originFilter = E('select', { 'class': 'cbi-input-select', 'id': 'omci-mib-origin-filter' }, [
 		E('option', { 'value': 'all' }, _('All origins')),
-		E('option', { 'value': 'olt_any' }, _('OLT-provisioned')),
-		E('option', { 'value': 'olt' }, _('OLT-created')),
+		E('option', { 'value': 'olt_any' }, _('OLT-provisioned or configured')),
+		E('option', { 'value': 'olt' }, _('OLT-provisioned')),
 		E('option', { 'value': 'olt_written' }, _('ONU-created, OLT-configured')),
 		E('option', { 'value': 'default' }, _('ONU-created')),
 		E('option', { 'value': 'local' }, _('Local override')),
