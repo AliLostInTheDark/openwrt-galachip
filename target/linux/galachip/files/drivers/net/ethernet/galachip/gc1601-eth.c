@@ -159,6 +159,29 @@ static const char * const gc1601_reg_names[GC1601_NUM_WINDOWS] = {
 #define GC_CVRD_UNI_QUEUES	8
 #define GC_CVRD_CPU_QUEUES	16
 
+/* upload_watch: queues sampled during an upload test. */
+#define GC1601_WATCH_TCONTS	4
+#define GC1601_WATCH_QUEUES	(GC1601_WATCH_TCONTS * 8)
+#define GC1601_WATCH_DR		16
+#define GC1601_WATCH_GMAC	10
+#define GC1601_WATCH_MAX	(120 * HZ)
+
+struct gc1601_watch_queue {
+	u32 max;		/* configured limit word */
+	u16 peak_lo, peak_hi;	/* highest count word halves seen */
+};
+
+struct gc1601_upload_watch {
+	bool active;
+	unsigned long start, end;
+	unsigned int samples, skipped;
+	int error;
+	u32 gmac[2][GC1601_WATCH_GMAC];
+	u32 dr[2][GC1601_WATCH_DR][12];
+	struct gc1601_watch_queue tcont[GC1601_WATCH_QUEUES];
+	struct gc1601_watch_queue uni[GC_CVRD_UNI_QUEUES];
+};
+
 /* RX door registers (0x90dd4000) */
 #define GC_RX_ENABLE		0x00
 #define GC_RX_ALLOC_RESP	0x0c
@@ -319,6 +342,8 @@ struct gc1601_eth {
 	unsigned long irq_storm_jiffies;
 	bool queue_read_failed;
 	bool ingress_read_failed;
+	struct delayed_work upload_work;
+	struct gc1601_upload_watch *upload;
 	bool sfu_read_failed;
 	bool stats_read_failed;
 	u8 stats_index;
@@ -3684,6 +3709,9 @@ static int gc1601_eth_stop(struct net_device *netdev)
 	cancel_delayed_work_sync(&priv->tx_loopback_work);
 	cancel_work_sync(&priv->tx_probe_work);
 	cancel_delayed_work_sync(&priv->tx_auto_work);
+	cancel_delayed_work_sync(&priv->upload_work);
+	if (priv->upload)
+		priv->upload->active = false;
 
 	/* Let queued descriptors finish while the GMAC is still transmitting. */
 	for (i = 0; i < 100; i++) {
@@ -4405,6 +4433,279 @@ out:
 }
 static DEVICE_ATTR_RO(stats_snapshot);
 
+/*
+ * upload_watch: a read-only before/after report for an upload test.
+ * "start" takes a baseline and samples queue fill every tick, "stop" ends
+ * the window (or 120 s does), and reading prints what changed and where
+ * the hardware ran full or dropped. Nothing here writes a datapath register.
+ */
+/* smac_get_port_stastics offsets; the GMAC is the LAN port, so RX is upload. */
+static const struct {
+	u16 offset;
+	const char *name;
+} gc1601_watch_gmac[] = {
+	{ 0x780, "rx_frames" }, { 0x784, "rx_octets" }, { 0x7ac, "rx_dropped" },
+	{ 0x81c, "rx_lost" }, { 0x7b0, "rx_pause" }, { 0x794, "rx_crc" },
+	{ 0x7a8, "rx_oversize" }, { 0x718, "tx_frames" }, { 0x714, "tx_octets" },
+	{ 0x740, "tx_dropped" },
+};
+static_assert(ARRAY_SIZE(gc1601_watch_gmac) == GC1601_WATCH_GMAC);
+
+static void gc1601_watch_peak(struct gc1601_watch_queue *q, u32 count)
+{
+	q->peak_lo = max_t(u16, q->peak_lo, GC_CVRD_LO(count));
+	q->peak_hi = max_t(u16, q->peak_hi, GC_CVRD_HI(count));
+}
+
+static bool gc1601_watch_full(const struct gc1601_watch_queue *q)
+{
+	return (GC_CVRD_LO(q->max) && q->peak_lo >= GC_CVRD_LO(q->max)) ||
+	       (GC_CVRD_HI(q->max) && q->peak_hi >= GC_CVRD_HI(q->max));
+}
+
+/* Called with RTNL held. */
+static int gc1601_watch_sample(struct gc1601_eth *priv, struct gc1601_upload_watch *w,
+			       bool limits)
+{
+	unsigned int i;
+	u32 word;
+	int ret;
+
+	for (i = 0; i < GC1601_WATCH_QUEUES; i++) {
+		if (limits) {
+			ret = gc1601_queue_read(priv, GC_CVRD_OUTMAX, i, &w->tcont[i].max, 1);
+			if (ret)
+				return ret;
+		}
+		ret = gc1601_queue_read(priv, GC_CVRD_OUTCNT, i, &word, 1);
+		if (ret)
+			return ret;
+		gc1601_watch_peak(&w->tcont[i], word);
+	}
+	for (i = 0; i < GC_CVRD_UNI_QUEUES; i++) {
+		if (limits) {
+			ret = gc1601_queue_read(priv, GC_CVRD_INMAX, GC_CVRD_UNI0 + i,
+						&w->uni[i].max, 1);
+			if (ret)
+				return ret;
+		}
+		ret = gc1601_queue_read(priv, GC_CVRD_INCNT, GC_CVRD_UNI0 + i, &word, 1);
+		if (ret)
+			return ret;
+		gc1601_watch_peak(&w->uni[i], word);
+	}
+	w->samples++;
+	return 0;
+}
+
+/* The vendor STT_tbl_dr_get rows; the hardware may clear them on read. */
+static int gc1601_watch_dr(struct gc1601_eth *priv, u32 dr[][12])
+{
+	void __iomem *base = priv->base[GC1601_STATISTICS];
+	unsigned int index, word;
+	u32 done;
+	int ret;
+
+	if (priv->ingress_read_failed)
+		return -EIO;
+	for (index = 0; index < GC1601_WATCH_DR; index++) {
+		writel(0, base + GC_DESC_TABLE_DONE);
+		writel(GC_DESC_TABLE_READ | BIT(22) | index, base + GC_DESC_TABLE_INDEX);
+		ret = readl_poll_timeout(base + GC_DESC_TABLE_DONE, done, done == 1, 1, 1000);
+		if (ret) {
+			priv->ingress_read_failed = true;
+			return ret;
+		}
+		for (word = 0; word < 12; word++)
+			dr[index][word] = readl(base + GC_DESC_TABLE_DATA0 + word * sizeof(u32));
+	}
+	return 0;
+}
+
+static void gc1601_watch_gmac_read(struct gc1601_eth *priv, u32 *counters)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(gc1601_watch_gmac); i++)
+		counters[i] = readl(priv->base[GC1601_GMAC] + gc1601_watch_gmac[i].offset);
+}
+
+/* Called with RTNL held. */
+static void gc1601_watch_finish(struct gc1601_eth *priv, struct gc1601_upload_watch *w)
+{
+	int ret;
+
+	w->active = false;
+	w->end = jiffies;
+	gc1601_watch_gmac_read(priv, w->gmac[1]);
+	ret = gc1601_watch_dr(priv, w->dr[1]);
+	if (ret && !w->error)
+		w->error = ret;
+}
+
+static void gc1601_upload_work(struct work_struct *work)
+{
+	struct gc1601_eth *priv = container_of(to_delayed_work(work), struct gc1601_eth,
+					       upload_work);
+	struct gc1601_upload_watch *w;
+
+	if (!rtnl_trylock()) {
+		w = READ_ONCE(priv->upload);
+		if (w)
+			w->skipped++;
+		goto again;
+	}
+	w = priv->upload;
+	if (!w || !w->active) {
+		rtnl_unlock();
+		return;
+	}
+	if (priv->queue_read_failed || time_after(jiffies, w->start + GC1601_WATCH_MAX)) {
+		gc1601_watch_finish(priv, w);
+		rtnl_unlock();
+		return;
+	}
+	w->error = gc1601_watch_sample(priv, w, false);
+	if (w->error)
+		gc1601_watch_finish(priv, w);
+	rtnl_unlock();
+	if (w->error)
+		return;
+again:
+	schedule_delayed_work(&priv->upload_work, 1);
+}
+
+static ssize_t upload_watch_store(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct gc1601_eth *priv = netdev_priv(dev_get_drvdata(dev));
+	struct gc1601_upload_watch *w = NULL;
+	bool start = sysfs_streq(buf, "start");
+	int ret = 0;
+
+	if (!start && !sysfs_streq(buf, "stop"))
+		return -EINVAL;
+	if (start) {
+		w = kzalloc(sizeof(*w), GFP_KERNEL);
+		if (!w)
+			return -ENOMEM;
+	}
+
+	rtnl_lock();
+	if (!start) {
+		if (priv->upload && priv->upload->active)
+			gc1601_watch_finish(priv, priv->upload);
+		goto out;
+	}
+	if (!READ_ONCE(priv->running) || priv->queue_read_failed) {
+		ret = READ_ONCE(priv->running) ? -EIO : -ENETDOWN;
+		kfree(w);
+		goto out;
+	}
+	kfree(priv->upload);
+	priv->upload = w;
+	w->start = jiffies;
+	gc1601_watch_gmac_read(priv, w->gmac[0]);
+	ret = gc1601_watch_dr(priv, w->dr[0]);
+	if (!ret)
+		ret = gc1601_watch_sample(priv, w, true);
+	w->error = ret;
+	w->active = !ret;
+	if (w->active)
+		schedule_delayed_work(&priv->upload_work, 1);
+out:
+	rtnl_unlock();
+	return ret ? ret : count;
+}
+
+static ssize_t upload_watch_show(struct device *dev, struct device_attribute *attr,
+				 char *buf)
+{
+	struct gc1601_eth *priv = netdev_priv(dev_get_drvdata(dev));
+	struct gc1601_upload_watch *w;
+	bool gmac_drops = false, full = false, dr_changed = false;
+	unsigned int i, word;
+	ssize_t len = 0;
+
+	rtnl_lock();
+	w = priv->upload;
+	if (!w) {
+		len = sysfs_emit(buf, "idle: echo start > upload_watch, run the upload, echo stop\n");
+		goto out;
+	}
+	len += sysfs_emit_at(buf, len, "%s window_ms=%u samples=%u skipped=%u error=%d\n",
+			     w->active ? "running" : "stopped",
+			     jiffies_to_msecs((w->active ? jiffies : w->end) - w->start),
+			     w->samples, w->skipped, w->error);
+	if (w->active) {
+		len += sysfs_emit_at(buf, len, "echo stop first for the report\n");
+		goto out;
+	}
+
+	len += sysfs_emit_at(buf, len, "-- LAN port (GMAC): delta (start -> end)\n");
+	for (i = 0; i < ARRAY_SIZE(gc1601_watch_gmac); i++) {
+		u32 delta = w->gmac[1][i] - w->gmac[0][i];
+
+		len += sysfs_emit_at(buf, len, "%-12s %u (%u -> %u)\n", gc1601_watch_gmac[i].name,
+				     delta, w->gmac[0][i], w->gmac[1][i]);
+		if (gc1601_watch_gmac[i].offset == 0x7ac || gc1601_watch_gmac[i].offset == 0x81c ||
+		    gc1601_watch_gmac[i].offset == 0x7b0)
+			gmac_drops |= w->gmac[1][i] != w->gmac[0][i];
+	}
+
+	len += sysfs_emit_at(buf, len, "-- UNI ingress queues: peak count lo/hi vs inmax lo/hi\n");
+	for (i = 0; i < GC_CVRD_UNI_QUEUES; i++) {
+		const struct gc1601_watch_queue *q = &w->uni[i];
+
+		if (!q->peak_lo && !q->peak_hi)
+			continue;
+		full |= gc1601_watch_full(q);
+		len += sysfs_emit_at(buf, len, "uni q%u peak %u/%u max %u/%u%s\n", i,
+				     q->peak_lo, q->peak_hi, GC_CVRD_LO(q->max), GC_CVRD_HI(q->max),
+				     gc1601_watch_full(q) ? " FULL" : "");
+	}
+
+	len += sysfs_emit_at(buf, len, "-- T-CONT queues: peak count lo/hi vs outmax lo/hi\n");
+	for (i = 0; i < GC1601_WATCH_QUEUES; i++) {
+		const struct gc1601_watch_queue *q = &w->tcont[i];
+
+		if (!q->peak_lo && !q->peak_hi)
+			continue;
+		full |= gc1601_watch_full(q);
+		len += sysfs_emit_at(buf, len, "tcont%u q%u peak %u/%u max %u/%u%s\n", i / 8, i % 8,
+				     q->peak_lo, q->peak_hi, GC_CVRD_LO(q->max), GC_CVRD_HI(q->max),
+				     gc1601_watch_full(q) ? " FULL" : "");
+	}
+
+	len += sysfs_emit_at(buf, len, "-- STT drop table rows that changed (start / end)\n");
+	for (i = 0; i < GC1601_WATCH_DR; i++) {
+		if (!memcmp(w->dr[0][i], w->dr[1][i], sizeof(w->dr[0][i])))
+			continue;
+		dr_changed = true;
+		len += sysfs_emit_at(buf, len, "dr=%u", i);
+		for (word = 0; word < 12; word++)
+			if (w->dr[0][i][word] != w->dr[1][i][word])
+				len += sysfs_emit_at(buf, len, " w%u:%x/%x", word,
+						     w->dr[0][i][word], w->dr[1][i][word]);
+		len += sysfs_emit_at(buf, len, "\n");
+	}
+
+	len += sysfs_emit_at(buf, len, "-- verdict\n");
+	if (gmac_drops)
+		len += sysfs_emit_at(buf, len, "LAN port dropped, lost or paused frames: ingress overflow\n");
+	if (full)
+		len += sysfs_emit_at(buf, len, "a queue reached its limit (FULL above): tail drops likely\n");
+	if (dr_changed)
+		len += sysfs_emit_at(buf, len, "the drop table counted events (rows above)\n");
+	if (!gmac_drops && !full && !dr_changed)
+		len += sysfs_emit_at(buf, len,
+			"no drops or full queues seen: upstream grants (OLT DBA) or the far end limit the upload\n");
+out:
+	rtnl_unlock();
+	return len;
+}
+static DEVICE_ATTR_RW(upload_watch);
+
 static ssize_t gem_shapers_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
@@ -4500,6 +4801,7 @@ static struct attribute *gc1601_eth_attrs[] = {
 	&dev_attr_ingress_snapshot.attr,
 	&dev_attr_stats_index.attr,
 	&dev_attr_stats_snapshot.attr,
+	&dev_attr_upload_watch.attr,
 	&dev_attr_sfu_snapshot.attr,
 	&dev_attr_gem_shapers.attr,
 	&dev_attr_buffer_ids.attr,
@@ -4535,6 +4837,7 @@ static int gc1601_eth_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&priv->tx_auto_work, gc1601_tx_auto_work);
 	INIT_WORK(&priv->tx_probe_work, gc1601_tx_probe_work);
 	INIT_DELAYED_WORK(&priv->tx_loopback_work, gc1601_tx_loopback_work);
+	INIT_DELAYED_WORK(&priv->upload_work, gc1601_upload_work);
 	priv->tx_detected_slot = -1;
 	priv->rx_first_slot = -1;
 
@@ -4668,6 +4971,8 @@ static void gc1601_eth_remove(struct platform_device *pdev)
 	mutex_unlock(&gc1601_uni_lock);
 	device_remove_group(&pdev->dev, &gc1601_eth_group);
 	unregister_netdev(netdev);
+	cancel_delayed_work_sync(&priv->upload_work);
+	kfree(priv->upload);
 	dma_free_coherent(priv->dev, GC1601_RING_SIZE * sizeof(struct gc1601_desc),
 			  priv->tx_ring, priv->tx_ring_dma);
 	netif_napi_del(&priv->napi);
