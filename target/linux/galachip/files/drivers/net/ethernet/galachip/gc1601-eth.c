@@ -570,9 +570,10 @@ static int gc1601_cvrd_write(struct gc1601_eth *priv, u32 index, u32 data);
 
 /*
  * T-CONT queue input depth in buffers. Stock's 128 is ~5 ms at 300 Mbit/s:
- * a single TCP upload overruns it and backs off; several flows do not.
+ * a single TCP upload overruns it and backs off (205 Mbit/s against 246
+ * at 256 on Airtel); several flows do not.
  */
-static unsigned int tcont_depth = 128;
+static unsigned int tcont_depth = 256;
 
 static int gc1601_descriptor_setup(struct gc1601_eth *priv)
 {
@@ -646,10 +647,13 @@ static int gc1601_tcont_queue_setup(struct gc1601_eth *priv)
 		bool q0 = !(i % 8);
 
 		ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | i, 32 | (tcont_depth << 11));
-		/* Pool-sized limits, as for the UNI queues in descriptor_setup. */
+		/*
+		 * Input plus output of queue 0 stays at 384, leaving 128 of
+		 * the 512 buffers for pon0, the CPU and the UNI.
+		 */
 		if (!ret)
 			ret = gc1601_cvrd_write(priv, GC_CVRD_OUTMAX | i,
-						32 | ((q0 ? 256 : 64) << 11));
+						32 | ((q0 ? 128 : 64) << 11));
 		if (!ret)
 			ret = gc1601_cvrd_write(priv, GC_CVRD_ALLCFG | i, q0 ? 0x4f8 : 0x390);
 		if (ret)
@@ -873,7 +877,7 @@ static int tcont_depth_set(const char *val, const struct kernel_param *kp)
 	ret = kstrtouint(val, 0, &depth);
 	if (ret)
 		return ret;
-	if (depth < 32 || depth > 256)	/* with the 256 output limit, inside the pool */
+	if (depth < 32 || depth > 256)	/* with the 128 output limit, inside the pool */
 		return -ERANGE;
 
 	rtnl_lock();
@@ -2633,7 +2637,7 @@ static int gc1601_qos_encode(const struct gc1601_tcont_qos *qos,
 	for (q = 0; q < 8; q++) {
 		tables->fill[q] = sp ? BIT(16) : qos->weight[q] * scale;
 		tables->inmax[q] = 32 | (tcont_depth << 11);
-		tables->outmax[q] = 32 | ((sp ? (q ? 64 : 256) : 128) << 11);
+		tables->outmax[q] = 32 | ((sp ? (q ? 64 : 128) : 128) << 11);
 		tables->cfg[q][0] = sp ? (q ? 0x390 : 0x4f8) : 0x140;
 	}
 	return 0;
