@@ -16,7 +16,6 @@ import os
 import select
 import struct
 import sys
-import termios
 import time
 
 SOH, EOT, ACK, NAK, CAN = 0x01, 0x04, 0x06, 0x15, 0x18
@@ -35,6 +34,8 @@ class StdioPort:
         os.write(1, data)
 
     def reset_input_buffer(self):
+        import termios
+
         termios.tcflush(0, termios.TCIFLUSH)
 
 
