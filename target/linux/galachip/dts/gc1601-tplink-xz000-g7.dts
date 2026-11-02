@@ -31,9 +31,9 @@
 		#size-cells = <1>;
 		ranges;
 
-		/* Free list and the 1440-buffer pool; the loader's rings sit inside. */
+		/* The loader leaves these DMA pointers installed when Linux starts. */
 		loader_dma: dma@40800000 {
-			reg = <0x40800000 0x002d1000>;
+			reg = <0x40800000 0x00112000>;
 		};
 
 		/*
