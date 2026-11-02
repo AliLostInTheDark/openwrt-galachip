@@ -329,13 +329,14 @@ function set_uci_options(values) {
 function apply_uci_section(section, device) {
 	let applied = [];
 
-	/* Legacy combined version first; explicit versions intentionally win. */
+	/* Legacy combined version and vendor-id first; explicit versions and
+	 * serial number intentionally win when both are configured. */
 	let ordered = [];
 	for (let spec in config_specs)
-		if (spec.legacy)
+		if (spec.legacy || spec.name == 'vendor-id')
 			push(ordered, spec);
 	for (let spec in config_specs)
-		if (!spec.legacy)
+		if (!spec.legacy && spec.name != 'vendor-id')
 			push(ordered, spec);
 
 	for (let spec in ordered) {
@@ -675,7 +676,7 @@ function sync_transmit(fresh) {
 	let current = readfile(path);
 	if (current == null)
 		return;
-	if (trim(current) != '1') {
+	if (fresh || trim(current) != '1') {
 		if (!writefile(path, '1'))
 			return;
 		current = readfile(path);

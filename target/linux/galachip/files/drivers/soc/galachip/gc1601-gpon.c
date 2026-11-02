@@ -1392,7 +1392,14 @@ void gc1601_gpon_start(struct gc1601_pon *pon)
 
 	if (g->running)
 		return;
-	if (!g->allow_tx)
+	/*
+	 * gc1601_pon_start() resets the MAC and turns optical TX off; if
+	 * userspace already set allow_tx before pon_start, restore optical TX.
+	 */
+	if (g->allow_tx && !g->olt_tx_disabled && !pon->tx_hold &&
+	    pon->bosa_state == GC1601_BOSA_READY && !gc1601_bosa_soft_tx(pon, true))
+		gc1601_pon_tx_on(pon);
+	else
 		gc1601_pon_tx_off(pon);
 	g->state = O1;
 	g->retained_valid = false;
@@ -1407,8 +1414,9 @@ void gc1601_gpon_start(struct gc1601_pon *pon)
 	g->lof = true;
 	spin_unlock_irq(&g->lock);
 	g->running = true;
-	dev_info(pon->dev, "GPON serial number %.4s%08X\n", g->serial,
-		 get_unaligned_be32(g->serial + 4));
+	if (!g->identity_wait)
+		dev_info(pon->dev, "GPON serial number %.4s%08X\n", g->serial,
+			 get_unaligned_be32(g->serial + 4));
 	/* The poll reports only changes: start the LEDs from no signal. */
 	gc1601_xpon_report_signal(pon, true, true);
 	hrtimer_start(&g->poll, ns_to_ktime(GPON_POLL_NS), HRTIMER_MODE_REL);
@@ -1444,7 +1452,8 @@ static void gc1601_gpon_identity_release(struct gc1601_pon *pon)
 	if (!g->identity_wait)
 		return;
 	g->identity_wait = false;
-	dev_info(pon->dev, "GPON identity wait over\n");
+	dev_info(pon->dev, "GPON identity wait over, serial number %.4s%08X\n",
+		 g->serial, get_unaligned_be32(g->serial + 4));
 	if (g->running && g->state == O2 && g->have_overhead && gc1601_gpon_may_range(g))
 		gc1601_gpon_enter(pon, O3);
 }
@@ -1527,6 +1536,8 @@ static ssize_t allow_tx_store(struct device *dev, struct device_attribute *attr,
 	ret = kstrtobool(buf, &on);
 	if (ret)
 		return ret;
+	if (on && READ_ONCE(pon->bosa_state) != GC1601_BOSA_READY)
+		flush_delayed_work(&pon->bringup);
 
 	mutex_lock(&pon->lock);
 	if (on && pon->bosa_state != GC1601_BOSA_READY) {

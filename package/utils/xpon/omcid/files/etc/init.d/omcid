@@ -7,22 +7,60 @@ START=11
 STOP=90
 USE_PROCD=1
 
+seed_omci_attr() {
+	local dir="$1" opt="$2" attr="$3" val
+
+	config_get val main "$opt"
+	[ -n "$val" ] && [ -w "$dir/$attr" ] && printf '%s' "$val" > "$dir/$attr" 2>/dev/null
+}
+
+seed_omci_sysfs() {
+	local dir
+
+	for dir in /sys/class/xpon/*/omci; do
+		[ -d "$dir" ] || continue
+		# Seed userspace UCI values before omcid binds so configured fields
+		# override factory defaults while empty fields keep factory data.
+		seed_omci_attr "$dir" vendor_id vendor_id
+		seed_omci_attr "$dir" serial serial_number
+		seed_omci_attr "$dir" password password
+		seed_omci_attr "$dir" loid loid
+		seed_omci_attr "$dir" loid_password loid_password
+		seed_omci_attr "$dir" equipment_id equipment_id
+		seed_omci_attr "$dir" version hardware_version
+		seed_omci_attr "$dir" version software_version_0
+		seed_omci_attr "$dir" version software_version_1
+		seed_omci_attr "$dir" hardware_version hardware_version
+		seed_omci_attr "$dir" software_version_0 software_version_0
+		seed_omci_attr "$dir" software_version_1 software_version_1
+		seed_omci_attr "$dir" omcc_version omcc_version
+		seed_omci_attr "$dir" traffic_management_option traffic_management_option
+		seed_omci_attr "$dir" onu_type onu_type
+		seed_omci_attr "$dir" uni_count uni_count
+		seed_omci_attr "$dir" olt_profile olt_profile
+		seed_omci_attr "$dir" olt_profile_force olt_profile_force
+		seed_omci_attr "$dir" enabled agent_enabled
+		seed_omci_attr "$dir" permissive agent_permissive
+		seed_omci_attr "$dir" fake_omci agent_fake_omci
+		seed_omci_attr "$dir" reboot agent_reboot
+	done
+}
+
 start_service() {
-	local mode trace transmit
+	local mode trace
 
 	config_load xpon
 	config_get mode main mode gpon
 	[ "$mode" = epon ] && return 0
 	config_load omci
 	config_get_bool trace main trace 0
-	config_get_bool transmit main transmit 1
+	seed_omci_sysfs
 
 	procd_open_instance
 	procd_set_param command /usr/sbin/omcid
 	# omci.main.trace: record the OMCI exchange from boot (omci-diag report)
 	[ "$trace" = 1 ] && procd_append_param command -t
-	# range as soon as omcid owns the device; omci.main.transmit 0 holds it
-	[ "$transmit" = 1 ] && procd_append_param command -r
+	# omci.agent (rpcd) applies all UCI settings and releases identity_wait/allow_tx.
 	# A restart reloads /tmp/omcid-0.state; give up after repeated failures.
 	procd_set_param respawn 3600 5 5
 	procd_set_param stdout 1

@@ -408,6 +408,11 @@ void gc1601_epon_start(struct gc1601_pon *pon)
 
 	if (e->running || !pon->emac)
 		return;
+	if (e->allow_tx && !pon->tx_hold &&
+	    pon->bosa_state == GC1601_BOSA_READY && !gc1601_bosa_soft_tx(pon, true)) {
+		gc1601_pon_tx_on(pon);
+		gc1601_epon_update_llid_en(pon);
+	}
 	spin_lock_irq(&e->lock);
 	e->head = e->tail = 0;
 	e->loss_pending = false;
@@ -424,8 +429,8 @@ void gc1601_epon_start(struct gc1601_pon *pon)
 	mod_delayed_work(system_wq, &e->discovery, HZ);
 	gc1601_epon_report(pon, false, false, 0);
 	hrtimer_start(&e->poll, ns_to_ktime(EPON_POLL_NS), HRTIMER_MODE_REL);
-	dev_info(pon->dev, "EPON MAC running, LLID 0 %pM, laser off until allow_tx\n",
-		 e->mac);
+	dev_info(pon->dev, "EPON MAC running, LLID 0 %pM, %s\n",
+		 e->mac, e->allow_tx ? "transmitter allowed" : "laser off until allow_tx");
 }
 
 void gc1601_epon_stop(struct gc1601_pon *pon)
@@ -585,16 +590,23 @@ static ssize_t epon_mac_store(struct device *dev, struct device_attribute *attr,
 {
 	struct gc1601_pon *pon = dev_get_drvdata(dev);
 	u8 mac[ETH_ALEN];
+	bool reset;
 
-	if (!mac_pton(buf, mac) || !is_valid_ether_addr(mac))
-		return -EINVAL;
 	if (!pon->emac)
 		return -EOPNOTSUPP;
+	reset = sysfs_streq(buf, "") || sysfs_streq(buf, "default");
+	if (!reset && (!mac_pton(buf, mac) || !is_valid_ether_addr(mac)))
+		return -EINVAL;
 
 	mutex_lock(&pon->lock);
-	ether_addr_copy(pon->epon.mac, mac);
+	if (reset) {
+		eth_zero_addr(pon->epon.mac);
+		gc1601_epon_default_mac(pon);
+	} else {
+		ether_addr_copy(pon->epon.mac, mac);
+	}
 	if (pon->mode == GC1601_PON_EPON)
-		gc1601_epon_set_llid_mac(pon, 0, mac);
+		gc1601_epon_set_llid_mac(pon, 0, pon->epon.mac);
 	mutex_unlock(&pon->lock);
 	return count;
 }

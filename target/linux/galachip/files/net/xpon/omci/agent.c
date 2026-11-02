@@ -9,6 +9,8 @@
 
 #include <linux/errno.h>
 #include <linux/kernel.h>
+#include <linux/of.h>
+#include <linux/property.h>
 #include <linux/string.h>
 #include <net/netlink.h>
 
@@ -16,6 +18,28 @@
 #include "internal.h"
 
 #define OMCI_OMCC_VERSION_G988_2010_BASELINE	0xa0
+
+static void omci_agent_load_board(struct omci_device *odev)
+{
+	struct omci_agent *agent = &odev->agent;
+	struct device *dev = odev->parent ? odev->parent->parent : NULL;
+	int count;
+	u8 type;
+
+	if (!dev)
+		return;
+	if (!device_property_read_u8(dev, "omci-onu-type", &type) &&
+	    (type == OMCI_ONU_TYPE_SFU || type == OMCI_ONU_TYPE_HGU)) {
+		agent->config.onu_type = type;
+		agent->config.onu_type_source = OMCI_CONFIG_SOURCE_DEVICE_TREE;
+	}
+	if (dev->of_node) {
+		count = of_count_phandle_with_args(dev->of_node,
+						   "omci-uni-ports", NULL);
+		if (count >= 1 && count <= 8)
+			agent->config.uni_count = count;
+	}
+}
 
 static void omci_agent_identity_state_locked(const struct omci_agent *agent,
 					     struct omci_identity *identity)
@@ -81,6 +105,7 @@ int omci_agent_init(struct omci_device *odev)
 	agent->config.software_version_source[1] = OMCI_CONFIG_SOURCE_DEFAULT;
 	agent->config.omcc_version_source = OMCI_CONFIG_SOURCE_DEFAULT;
 	agent->config.equipment_source = OMCI_CONFIG_SOURCE_DEFAULT;
+	omci_agent_load_board(odev);
 	return 0;
 }
 

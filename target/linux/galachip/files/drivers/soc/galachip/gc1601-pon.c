@@ -718,6 +718,9 @@ static void gc1601_pon_start(struct gc1601_pon *pon)
 	ktime_t start = ktime_get();
 	int mode, ret;
 
+	/* Finish any pending boot BOSA bring-up before touching the MAC. */
+	flush_delayed_work(&pon->bringup);
+
 	/* A mode switch already set up and started the new MAC. */
 	if (READ_ONCE(pon->gpon.running) || READ_ONCE(pon->epon.running))
 		return;
@@ -734,7 +737,7 @@ static void gc1601_pon_start(struct gc1601_pon *pon)
 		dev_err(pon->dev, "%s mode: SerDes failed: %d\n", gc1601_pon_mode_name(mode), ret);
 		return;
 	}
-	dev_info(pon->dev, "PON up in %s mode in %lld ms: SerDes locked, RX on, laser off\n",
+	dev_info(pon->dev, "PON up in %s mode in %lld ms: SerDes locked, RX on\n",
 		 gc1601_pon_mode_name(mode), ktime_ms_delta(ktime_get(), start));
 
 	if (mode == GC1601_PON_EPON) {

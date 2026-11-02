@@ -6,7 +6,7 @@ START=15
 USE_PROCD=1
 
 pon_mode_apply() {
-	local want dev cur up
+	local want dev cur up onu_mac
 
 	config_load xpon
 	config_get want main mode gpon
@@ -14,6 +14,17 @@ pon_mode_apply() {
 	gpon|epon) ;;
 	*) logger -t pon-mode "unknown mode '$want', using gpon"; want=gpon ;;
 	esac
+
+	# In EPON mode, apply any saved userspace LLID 0 MAC before switching
+	# mode or starting the MAC so the factory MAC never registers first.
+	if [ "$want" = epon ]; then
+		config_load epon
+		config_get onu_mac main onu_mac
+		for dev in /sys/class/xpon/*/device/epon_mac; do
+			[ -w "$dev" ] || continue
+			echo "${onu_mac:-default}" > "$dev" 2>/dev/null
+		done
+	fi
 
 	for dev in /sys/class/xpon/*; do
 		[ -w "$dev/mode_current" ] || continue

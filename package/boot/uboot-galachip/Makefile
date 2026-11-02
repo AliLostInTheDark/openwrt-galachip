@@ -39,7 +39,7 @@ define Build/Compile
 		--cross-compile "$(TARGET_CROSS)" \
 		--jobs $(or $(patsubst -j%,%,$(filter -j%,$(PKG_JOBS))),1) \
 		--revision "$(shell git rev-parse HEAD 2>/dev/null || echo unknown)" \
-		--localversion "-OpenWrt-$(REVISION)"
+		--localversion="-OpenWrt-$(REVISION)"
 endef
 
 # Only U-Boot proper is published, as a device artifact. The SPL and the

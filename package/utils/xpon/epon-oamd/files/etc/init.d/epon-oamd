@@ -38,7 +38,8 @@ start_service() {
 	[ "$vlan_mode" = tag ] && vlan="tag:${vlan_id:-0}"
 
 	# The LLID 0 MAC the OLT registers and, on many OLTs, authorises.
-	[ -n "$onu_mac" ] && echo "$onu_mac" > /sys/class/net/pon0/device/epon_mac
+	# If unconfigured or empty, reset to the board's factory MAC.
+	echo "${onu_mac:-default}" > /sys/class/net/pon0/device/epon_mac 2>/dev/null
 
 	# Who (re)starts the daemon, and with what, next to its own kernel log lines.
 	echo "<5>epon-oamd init: ${action:-?} by $(cat /proc/$PPID/comm 2>/dev/null) ($PPID), active=$active vlan=$vlan debug=$debug loid=${loid:+set} ident=${ident:-none}" > /dev/kmsg 2>/dev/null
