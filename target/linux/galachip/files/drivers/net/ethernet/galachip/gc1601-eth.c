@@ -30,7 +30,7 @@
 #include <linux/soc/galachip/gc1601.h>
 #include <linux/unaligned.h>
 
-#define GC1601_BUFFER_COUNT	512
+#define GC1601_BUFFER_COUNT	1440	/* PMU_container_init's pool; the loader sets up 512 */
 #define GC1601_BUFFER_SIZE	2048
 #define GC1601_RING_SIZE	256
 #define GC1601_IRQ_RETRY_MS	200	/* polling after an IRQ storm, then retry */
@@ -50,10 +50,11 @@
 /* GMAC TX octets count the FCS beyond the descriptor length (iperf: +4.0/frame). */
 #define GC1601_PROBE_OCTET_EXTRA	4
 
-/* Physical bases in loader-reserved memory (0x40800000..0x40911fff) */
+/* Physical bases in reserved memory (0x40800000..0x40ad0fff) */
 #define GC1601_FREE_LIST_PHYS	0x40800000
 #define GC1601_PKT_POOL_PHYS	0x40801000
-#define GC1601_RX_RING_PHYS	0x40901000	/* the loader's: 16 containers, 4 KiB apart */
+/* The loader's RX ring, inside our pool: drained once at setup, before RX runs. */
+#define GC1601_RX_RING_PHYS	0x40901000	/* 16 containers, 4 KiB apart */
 #define GC1601_TX_RING_PHYS	0x40911000
 
 /* PMU_register_edev: one RX ring per container, container 15 carries OMCI. */
@@ -164,7 +165,8 @@ static const char * const gc1601_reg_names[GC1601_NUM_WINDOWS] = {
 #define GC_RX_ALLOC_RESP	0x0c
 #define GC_RX_RELEASE_BUF	0x10
 #define GC_RX_ALLOC_REQ		0x14
-#define GC_RX_PARTITION		0x18
+#define GC_RX_PARTITION		0x18	/* pool size in bits 31:16; reads back other state */
+#define GC_RX_POOL_SIZE		(GC1601_BUFFER_COUNT << 16)
 #define GC_RX_CTRL		0x20
 #define GC_RX_CTRL_VAL		0x0f	/* as U-Boot */
 #define GC_RX_PUBLISH_TX	0x38
@@ -230,6 +232,7 @@ struct gc1601_eth {
 	/* Scheduler tables as the first open left them, restored on withdrawal. */
 	struct gc1601_qos_tables tcont_boot[16];
 	bool tcont_boot_valid;
+	bool pool_reset;	/* probe: take our pool even over the loader's */
 	u16 sr_ha_frame;	/* HA frame limit as SR_hw_init leaves it */
 	struct gc1601_gem_meter gem_meter[GC1601_GEM_METERS];
 	spinlock_t gem_meter_lock;	/* bucket ownership, also read by NAPI/TX */
@@ -562,7 +565,7 @@ static void gc1601_cold_finish(struct gc1601_eth *priv)
 {
 	writel(0x10, priv->base[GC1601_TX_CONFIG] + 0x14);
 	writel(0, priv->queue_base + 0x0c);
-	writel(0x02000000, priv->base[GC1601_RX] + GC_RX_PARTITION);
+	writel(GC_RX_POOL_SIZE, priv->base[GC1601_RX] + GC_RX_PARTITION);
 	writel(0x51555555, priv->switch_base + 0x4198);
 }
 
@@ -1610,7 +1613,11 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 		}
 	}
 
-	if (cold) {
+	/*
+	 * A loader that ran its network leaves a 512-buffer pool behind, so
+	 * the probe-time setup always rebuilds the free list for ours.
+	 */
+	if (cold || priv->pool_reset) {
 		__be16 *free_list = phys_to_virt(GC1601_FREE_LIST_PHYS);
 		u32 val;
 		int ret;
@@ -1642,6 +1649,7 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 		dma_sync_single_for_device(priv->dev, GC1601_FREE_LIST_PHYS,
 					   GC1601_BUFFER_COUNT * sizeof(__be16),
 					   DMA_TO_DEVICE);
+		priv->pool_reset = false;
 	}
 
 	writel(mode | GC_BUF_READ_CLEAR_EN,
@@ -1740,11 +1748,11 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 	writel(priv->tx_ring_dma, priv->base[GC1601_TX_RING] + GC_TX_RING_BASE);
 
 	writel(0x30000800, priv->base[GC1601_BUFFERS] + GC_BUF_POOL_CFG);
-	writel(0x60, priv->base[GC1601_RX] + GC_RX_PARTITION);
+	writel(GC_RX_POOL_SIZE, priv->base[GC1601_RX] + GC_RX_PARTITION);
 	writel(GC_RX_CTRL_VAL, priv->base[GC1601_RX] + GC_RX_CTRL);
 
 	dev_dbg(priv->dev, "RX setup: partition=%08x (readback %08x), rx_ctrl=%08x (readback %08x)\n",
-		0x60, readl(priv->base[GC1601_RX] + GC_RX_PARTITION),
+		GC_RX_POOL_SIZE, readl(priv->base[GC1601_RX] + GC_RX_PARTITION),
 		GC_RX_CTRL_VAL,
 		readl(priv->base[GC1601_RX] + GC_RX_CTRL));
 
@@ -4376,7 +4384,8 @@ static ssize_t free_list_show(struct device *dev,
 
 	dma_sync_single_for_cpu(priv->dev, GC1601_FREE_LIST_PHYS,
 				GC1601_BUFFER_COUNT * sizeof(__be16), DMA_FROM_DEVICE);
-	for (i = 0; i < GC1601_BUFFER_COUNT; i++)
+	/* 1440 entries overflow a page; the head shows whether it is intact. */
+	for (i = 0; i < 768; i++)
 		len += sysfs_emit_at(buf, len, "%s%04x",
 				     i % 16 ? " " : (i ? "\n" : ""),
 				     be16_to_cpu(list[i]));
@@ -4734,6 +4743,7 @@ static int gc1601_eth_probe(struct platform_device *pdev)
 	 * buffers the PON still holds. Every open then takes the warm path.
 	 */
 	rtnl_lock();
+	priv->pool_reset = true;
 	ret = gc1601_hw_setup(priv);
 	gc1601_hw_stop(priv);
 	rtnl_unlock();
