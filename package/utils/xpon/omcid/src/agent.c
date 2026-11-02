@@ -3284,12 +3284,12 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 			continue;
 		if (object->class_id == OMCI_CLASS_VLAN_TAGGING_FILTER_DATA &&
 		    object->vlan_filter.valid) {
+			/*
+			 * The ANI filter's VID and P-bit entries stay services even
+			 * beside OLT VLAN treatment: they key the upstream flows per
+			 * P-bit, and VID-only flows break Airtel (ARP, then speed).
+			 */
 			has_vlan_rules |= object->vlan_filter.num_entries != 0;
-			/* The ANI filter admits the resulting VID; it must not create
-			 * a second transparent path around the OLT's VLAN treatment. */
-			if (olt_treatment && (object->entity_id == bridge_port_entity ||
-					      object->entity_id == service_entity))
-				continue;
 			for (i = 0; i < object->vlan_filter.num_entries; i++) {
 				ret = omci_agent_stage_service_rule_locked(
 					odev, services, lan_port->entity_id,
