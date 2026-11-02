@@ -570,12 +570,13 @@ static int gc1601_cvrd_write(struct gc1601_eth *priv, u32 index, u32 data);
 
 /*
  * T-CONT queue limits in buffers. Stock's 128 input is ~5 ms at 300 Mbit/s:
- * a single TCP upload overruns it and backs off (205 Mbit/s against 246
- * at 256 on Airtel); several flows do not. Queue 0's output stage carries
- * that rate only with 256: at 128 it stays empty and upload falls to ~118.
- * Together they stay inside the 512-buffer pool (peak seen: 451).
+ * a single TCP upload overruns it and backs off (205 Mbit/s); several flows
+ * do not. Queue 0's output stage carries the rate only with 256: at 128 it
+ * stays empty and upload falls to ~118. Input 192 matches 256 on Airtel
+ * (215-245 against 199-229 single-server) and caps the queue at 448 of the
+ * 512 buffers; 256 + 256 peaked at 450.
  */
-static unsigned int tcont_depth = 256;
+static unsigned int tcont_depth = 192;
 static unsigned int tcont_out = 256;
 
 static int gc1601_descriptor_setup(struct gc1601_eth *priv)
