@@ -1,0 +1,19 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: of: fdt: no leading space when extending an empty command line
+
+CMDLINE_EXTEND adds a separator even when the boot loader passed no
+arguments, so the command line starts with a space.
+
+diff -ru a/drivers/of/fdt.c b/drivers/of/fdt.c
+--- a/drivers/of/fdt.c	2026-11-03 01:53:57.888744635 +0530
++++ b/drivers/of/fdt.c	2026-11-03 01:53:57.897648465 +0530
+@@ -1128,7 +1128,8 @@
+ 	 */
+ #ifdef CONFIG_CMDLINE
+ #if defined(CONFIG_CMDLINE_EXTEND)
+-	strlcat(cmdline, " ", COMMAND_LINE_SIZE);
++	if (((char *)cmdline)[0])
++		strlcat(cmdline, " ", COMMAND_LINE_SIZE);
+ 	strlcat(cmdline, CONFIG_CMDLINE, COMMAND_LINE_SIZE);
+ #elif defined(CONFIG_CMDLINE_FORCE)
+ 	strscpy(cmdline, CONFIG_CMDLINE, COMMAND_LINE_SIZE);

@@ -1,0 +1,20 @@
+Name environment locations without CMD_SAVEENV too: env_load() prints
+the name, which otherwise shows as "<NULL>".
+
+diff -ru a/include/env_internal.h b/include/env_internal.h
+--- a/include/env_internal.h	2026-11-03 01:53:57.870487510 +0530
++++ b/include/env_internal.h	2026-11-03 01:53:57.882586203 +0530
+@@ -176,12 +176,8 @@
+ #define U_BOOT_ENV_LOCATION(__name)					\
+ 	ll_entry_declare(struct env_driver, __name, env_driver)
+ 
+-/* Declare the name of a location */
+-#ifdef CONFIG_CMD_SAVEENV
++/* Declare the name of a location; env_load() prints it even without saveenv */
+ #define ENV_NAME(_name) .name = _name,
+-#else
+-#define ENV_NAME(_name)
+-#endif
+ 
+ #ifdef CONFIG_CMD_SAVEENV
+ #define env_save_ptr(x) x
