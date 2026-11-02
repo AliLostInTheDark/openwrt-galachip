@@ -123,7 +123,8 @@ void stage_main(void)
 
 	uart_init();
 	REG(0x9080000c) = 0;
-	uart_puts("\nU-Boot SPL " PLAIN_VERSION " (" U_BOOT_DATE " - " U_BOOT_TIME " "
+	/* The mask ROM already ends its output with blank lines. */
+	uart_puts("U-Boot SPL " PLAIN_VERSION " (" U_BOOT_DATE " - " U_BOOT_TIME " "
 		  U_BOOT_TZ ")\n");
 	if (ddr_init())
 		fail("DDR cold initialization/access failed; recovery needs working DDR");
