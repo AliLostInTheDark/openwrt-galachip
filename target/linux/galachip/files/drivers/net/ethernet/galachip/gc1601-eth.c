@@ -298,7 +298,6 @@ struct gc1601_eth {
 	struct delayed_work diag_work;
 	u32 diag_mac[25];
 	u32 diag_seq;
-	bool queue_capped;
 	u16 tx_resume_slot;
 	u32 rx_poll_calls;
 	u32 rx_pending_last;
@@ -577,15 +576,16 @@ static int gc1601_descriptor_setup(struct gc1601_eth *priv)
 	writel(readl(base + GC_DESC_CTRL) | 0x14, base + GC_DESC_CTRL);
 
 	/*
-	 * Stock limits (PMU_buffer_init): UNI0 queue 0 may hold 1080 buffers,
-	 * queues 1-7 720, CPU queues 128. The loader's 32 overflow when the
-	 * 2.5G PON bursts into the 1G UNI.
+	 * PMU_buffer_init's 1080/720 assume stock's larger pool: with ours a
+	 * single fast flow drains it and the engine hangs the bus. Queue 0
+	 * may hold 256 buffers, queues 1-7 64; the loader's 32 overflow when
+	 * the 2.5G PON bursts into the 1G UNI.
 	 */
 	for (i = 0; i < GC_CVRD_UNI_QUEUES; i++) {
 		u32 index = GC_CVRD_UNI0 + i;
 		int ret;
 
-		priv->cvrd_uni_outmax[i] = i ? 0x00168020 : 0x0021c020;
+		priv->cvrd_uni_outmax[i] = 32 | ((i ? 64 : 256) << 11);
 		priv->cvrd_uni_allcfg[i] = i ? 0x390 : 0x4f8;
 		ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | index, 0x00040020);
 		if (!ret)
@@ -640,9 +640,10 @@ static int gc1601_tcont_queue_setup(struct gc1601_eth *priv)
 		bool q0 = !(i % 8);
 
 		ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | i, 32 | (128 << 11));
+		/* Pool-sized limits, as for the UNI queues in descriptor_setup. */
 		if (!ret)
 			ret = gc1601_cvrd_write(priv, GC_CVRD_OUTMAX | i,
-						32 | ((q0 ? 1080 : 720) << 11));
+						32 | ((q0 ? 256 : 64) << 11));
 		if (!ret)
 			ret = gc1601_cvrd_write(priv, GC_CVRD_ALLCFG | i, q0 ? 0x4f8 : 0x390);
 		if (ret)
@@ -1712,7 +1713,6 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 	ret = gc1601_tcont_queue_setup(priv);
 	if (ret)
 		return ret;
-	priv->queue_capped = false;
 	if (!priv->tcont_boot_valid && priv->os_base) {
 		unsigned int t;
 
@@ -2594,7 +2594,7 @@ static int gc1601_qos_encode(const struct gc1601_tcont_qos *qos,
 	for (q = 0; q < 8; q++) {
 		tables->fill[q] = sp ? BIT(16) : qos->weight[q] * scale;
 		tables->inmax[q] = 32 | (128 << 11);
-		tables->outmax[q] = 32 | ((sp ? (q ? 720 : 1080) : 128) << 11);
+		tables->outmax[q] = 32 | ((sp ? (q ? 64 : 256) : 128) << 11);
 		tables->cfg[q][0] = sp ? (q ? 0x390 : 0x4f8) : 0x140;
 	}
 	return 0;
@@ -3625,16 +3625,12 @@ static void gc1601_tx_loopback_work(struct work_struct *work)
  * Upload crash hunt: sample the engine every diag_ms and print what moved,
  * so the last console lines before a silent reset show the engine state.
  */
-static unsigned int diag_ms = 250;
+static unsigned int diag_ms;
 module_param(diag_ms, uint, 0644);
 MODULE_PARM_DESC(diag_ms, "Engine state sample period on the console in ms, 0 disables");
 
-static bool queue_cap;
-module_param(queue_cap, bool, 0644);
-MODULE_PARM_DESC(queue_cap, "Cap T-CONT and UNI queue limits inside the 512-buffer pool");
-
 /* The engine has only ever handed out buffer IDs 96-255: 160 usable buffers. */
-static unsigned int pool_warn = 120;
+static unsigned int pool_warn = 200;
 module_param(pool_warn, uint, 0644);
 MODULE_PARM_DESC(pool_warn, "Queued buffers that trigger a pool-low warning and 20 ms sampling");
 
@@ -3646,27 +3642,6 @@ static const u16 gc1601_diag_mac[] = {
 };
 static_assert(ARRAY_SIZE(gc1601_diag_mac) ==
 	      sizeof_field(struct gc1601_eth, diag_mac) / sizeof(u32));
-
-static int gc1601_diag_queue_limits(struct gc1601_eth *priv, bool cap)
-{
-	unsigned int i;
-	int ret = 0;
-
-	for (i = 0; i < GC_CVRD_TCONT_QUEUES && !ret; i++) {
-		bool q0 = !(i % 8);
-		u32 max = cap ? (q0 ? 256 : 64) : (q0 ? 1080 : 720);
-
-		ret = gc1601_cvrd_write(priv, GC_CVRD_OUTMAX | i, 32 | (max << 11));
-	}
-	for (i = 0; i < GC_CVRD_UNI_QUEUES && !ret; i++) {
-		u32 max = cap ? (i ? 64 : 256) : (i ? 720 : 1080);
-
-		priv->cvrd_uni_outmax[i] = 32 | (max << 11);
-		ret = gc1601_cvrd_write(priv, GC_CVRD_OUTMAX | (GC_CVRD_UNI0 + i),
-					priv->cvrd_uni_outmax[i]);
-	}
-	return ret;
-}
 
 /* Non-zero OUTCNT/INCNT of T-CONTs 0-3, the UNI and the CPU queues. */
 static int gc1601_diag_queues(struct gc1601_eth *priv, char *buf, size_t size,
@@ -3687,7 +3662,7 @@ static int gc1601_diag_queues(struct gc1601_eth *priv, char *buf, size_t size,
 			    (i < GC_CVRD_CPU &&
 			     gc1601_queue_read(priv, GC_CVRD_INCNT, i, &in, 1)))
 				return len + scnprintf(buf + len, size - len, " QFAIL@%x", i);
-			*queued += (out & 0xffff) + (in & 0xffff);
+			*queued += GC_CVRD_HI(out) + GC_CVRD_HI(in);
 			if (out || in)
 				len += scnprintf(buf + len, size - len, " %x=%x/%x", i, out, in);
 		}
@@ -3719,13 +3694,6 @@ static void gc1601_diag_work(struct work_struct *work)
 
 	queues[0] = '\0';
 	if (rtnl_trylock()) {
-		if (queue_cap != priv->queue_capped && !priv->queue_read_failed) {
-			int ret = gc1601_diag_queue_limits(priv, queue_cap);
-
-			dev_info(priv->dev, "diag: queue limits %s (%d)\n",
-				 queue_cap ? "capped" : "stock", ret);
-			priv->queue_capped = queue_cap;
-		}
 		if (!priv->queue_read_failed)
 			q_len = gc1601_diag_queues(priv, queues, sizeof(queues),
 						   &queued);
@@ -3733,9 +3701,9 @@ static void gc1601_diag_work(struct work_struct *work)
 	}
 
 	if (mac_len || q_len || priv->tx_pending)
-		dev_info(priv->dev, "diag %u: queued=%u txp=%u busy=%llu allocf=%u cap=%d q[%s ] mac[%s ]\n",
+		dev_info(priv->dev, "diag %u: queued=%u txp=%u busy=%llu allocf=%u q[%s ] mac[%s ]\n",
 			 priv->diag_seq++, queued, priv->tx_pending, priv->tx_busy_events,
-			 priv->rx_alloc_failures, priv->queue_capped, queues, mac);
+			 priv->rx_alloc_failures, queues, mac);
 	if (pool_warn && queued >= pool_warn) {
 		dev_warn(priv->dev, "diag: pool low, %u buffers queued\n", queued);
 		delay = 20;
