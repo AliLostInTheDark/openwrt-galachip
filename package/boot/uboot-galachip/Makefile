@@ -38,7 +38,8 @@ define Build/Compile
 		--output $(PKG_BUILD_DIR)/output \
 		--cross-compile "$(TARGET_CROSS)" \
 		--jobs $(or $(patsubst -j%,%,$(filter -j%,$(PKG_JOBS))),1) \
-		--revision "$(shell git rev-parse HEAD 2>/dev/null || echo unknown)"
+		--revision "$(shell git rev-parse HEAD 2>/dev/null || echo unknown)" \
+		--localversion "-OpenWrt-$(REVISION)"
 endef
 
 # Binary build artifacts only. No image recipe, sysupgrade hook or flash command.

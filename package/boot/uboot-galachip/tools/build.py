@@ -13,6 +13,24 @@ from verify import inspect_build
 
 PACKAGE = Path(__file__).resolve().parents[1]
 
+TOPDIR = PACKAGE.parents[2]
+
+def openwrt_revision():
+    """OpenWrt's scripts/getver.sh revision, e.g. r37201+20-6a8098fbee."""
+    try:
+        return subprocess.run([TOPDIR / "scripts/getver.sh"], cwd=TOPDIR, check=True,
+                              capture_output=True, text=True).stdout.strip() or "unknown"
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+def source_date_epoch():
+    """The last commit's time, as OpenWrt derives SOURCE_DATE_EPOCH."""
+    try:
+        return subprocess.run(["git", "log", "-1", "--format=%ct"], cwd=TOPDIR, check=True,
+                              capture_output=True, text=True).stdout.strip() or "0"
+    except (OSError, subprocess.CalledProcessError):
+        return "0"
+
 def run(args, **kwargs):
     subprocess.run([str(v) for v in args], check=True, **kwargs)
 
@@ -24,6 +42,8 @@ def main():
     p.add_argument("--cross-compile", required=True)
     p.add_argument("--jobs", type=int, default=4)
     p.add_argument("--revision", default="local-uncommitted")
+    p.add_argument("--localversion",
+                   help="appended to the version, as OpenWrt does: -OpenWrt-<REVISION>")
     a = p.parse_args()
     if a.jobs < 1:
         p.error("--jobs must be positive")
@@ -50,13 +70,15 @@ def main():
     if a.source and not (source / "board/tplink/xz000-g7/Kconfig").exists():
         p.error("--source must be prepared by the OpenWrt package")
     shutil.copytree(PACKAGE / "files", source, dirs_exist_ok=True)
-    env = dict(os.environ, SOURCE_DATE_EPOCH="1791158400",
+    localversion = a.localversion or "-OpenWrt-" + openwrt_revision()
+    epoch = os.environ.get("SOURCE_DATE_EPOCH") or source_date_epoch()
+    env = dict(os.environ, SOURCE_DATE_EPOCH=epoch,
                KBUILD_BUILD_USER="openwrt", KBUILD_BUILD_HOST="g7-builder")
     builds = {}
     for variant, config in (("ram", "xz000_g7_ram"), ("production", "xz000_g7")):
         build = output / variant
         command = ["make", "-C", source, "O=" + str(build),
-                   "CROSS_COMPILE=" + a.cross_compile, "LOCALVERSION=-g7"]
+                   "CROSS_COMPILE=" + a.cross_compile, "LOCALVERSION=" + localversion]
         run(command + [config + "_defconfig"], env=env)
         run(command + ["-j" + str(a.jobs)], env=env)
         builds[variant] = build / "u-boot.bin"
@@ -69,7 +91,7 @@ def main():
          "UBOOT_SRC=" + str(source), "CROSS_COMPILE=" + a.cross_compile,
          "-j" + str(a.jobs)], cwd=stage_dir, env=env)
     package(stage_dir, builds["ram"], builds["production"],
-            output / "artifacts", a.revision)
+            output / "artifacts", a.revision, int(epoch))
     inspect_build(output, a.cross_compile)
     print("RAM-only artifacts:", output / "artifacts")
 

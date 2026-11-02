@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import lzma
+import os
 import struct
 import zlib
 from pathlib import Path
@@ -66,7 +67,7 @@ def uart_image(raw):
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
-def package(stage_dir, ram, production, output, revision):
+def package(stage_dir, ram, production, output, revision, epoch):
     output.mkdir(parents=True, exist_ok=True)
     proper = proper_image((stage_dir / "wrapper.bin").read_bytes())
     spl = rom_image((stage_dir / "spl.bin").read_bytes())
@@ -81,7 +82,7 @@ def package(stage_dir, ram, production, output, revision):
         "upstream": "v2026.10", "source_sha256": ARCHIVE_SHA256,
         "port_revision": revision, "hardware_status": "RAM U-Boot and wrapper tested; SPL and ROM recovery untested; RAM-only",
         "rom_recovery": "ROM recovery not demonstrated; install and recover by SPI programmer",
-        "source_date_epoch": 1791158400,
+        "source_date_epoch": epoch,
         "addresses": {"ram_entry": "0x41000000", "wrapper": "0x40100000",
                       "proper": "0x40010000", "spl": "0x80000000"},
         "limits": {"spl_payload": SPL_LIMIT, "proper_expanded": PROPER_MAX,
@@ -127,7 +128,8 @@ def main():
         (args.stage_dir / "proper.lzma").write_bytes(packed)
         (args.stage_dir / "meta.bin").write_bytes(header)
     else:
-        package(args.stage_dir, args.ram, args.production, args.output, args.revision)
+        package(args.stage_dir, args.ram, args.production, args.output, args.revision,
+                int(os.environ.get("SOURCE_DATE_EPOCH", "0")))
 
 if __name__ == "__main__":
     main()
