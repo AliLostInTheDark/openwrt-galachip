@@ -37,6 +37,7 @@ calibration operation.
 | `run boot_flash` | Default `bootcmd`: `fwload` the tagged kernel from NOR, then `bootz`. |
 | `run boot_tftp` | `tftpboot ${bootfile}` (the OpenWrt initramfs zImage), `zdtb`, `bootz`. |
 | `run backup_flash` | Read the whole 4 MiB NOR and `tftpput` it as `xz000-g7-flash.bin`. |
+| `run restore_stock` | `tftpboot ${bootfile_stock}` (this unit's raw `firmware` backup, exactly `0x3b0000` bytes), check tag and size, `sf update` at `0x20000`, read back and compare. U-Boot stays; stock firmware boots with `boot_flash`. |
 | `run upgrade_uboot` | `tftpboot ${bootfile_uboot}` (proper.img), `ubcheck`, `sf update` at `0x2000`, read back and compare. |
 | `ubcheck <addr> <size>` | Check a loaded proper.img: size, footer and wrapper CRC32s, entry. |
 | `run upgrade_tftp` | `tftpboot ${bootfile_upg}` (sysupgrade.bin), check tag and size, `sf update` at `0x20000`. |

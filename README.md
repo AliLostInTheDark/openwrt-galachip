@@ -412,7 +412,8 @@ run upgrade_uboot
 
 Useful commands at the `G7>` prompt: `run boot_tftp` (RAM boot of the
 initramfs), `run upgrade_tftp` (flash the sysupgrade image), `run backup_flash`
-(TFTP the whole 4 MiB NOR to the PC as `xz000-g7-flash.bin`). The driver
+(TFTP the whole 4 MiB NOR to the PC as `xz000-g7-flash.bin`), `run restore_stock`
+(write this unit's raw `firmware.bin` backup, served as `g7-stock-firmware.bin`). The driver
 refuses writes to the SPL, `misc` and `hwconfig`. Sysupgrade never touches the
 bootloader. ROM recovery has not been tested: a broken SPL needs the programmer.
 
