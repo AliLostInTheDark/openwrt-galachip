@@ -43,18 +43,10 @@ define Image/Prepare
 	fi
 	# No package manager in the image; sysupgrade only reads lib/apk/packages.
 	rm -rf $(TARGET_DIR)/lib/apk/db
-	# Nothing left calls these: ucode's debugger, the removed graphs' collector,
-	# RPS tuning on a single core, GPIO switches this board does not have.
+	# Nothing calls these: ucode's debugger, the removed graphs' collector,
+	# and RPS tuning, which exits on a single core.
 	rm -f $(TARGET_DIR)/usr/bin/udbg $(TARGET_DIR)/usr/bin/luci-bwc \
-		$(TARGET_DIR)/etc/init.d/packet_steering $(TARGET_DIR)/etc/rc.d/*packet_steering \
-		$(TARGET_DIR)/etc/init.d/gpio_switch $(TARGET_DIR)/etc/rc.d/*gpio_switch
-	# omci-management needs these of kmod-sched-core; the rest would only load
-	# at boot and hold RAM.
-	if [ -f $(TARGET_DIR)/etc/modules.d/70-sched-core ]; then \
-		cd $(TARGET_DIR)/lib/modules/$(LINUX_VERSION) && rm -f act_skbedit.ko cls_basic.ko \
-			cls_flow.ko cls_fw.ko cls_route.ko cls_u32.ko em_u32.ko sch_hfsc.ko sch_htb.ko sch_tbf.ko; \
-		printf '%s\n' act_gact act_mirred cls_matchall sch_ingress > $(TARGET_DIR)/etc/modules.d/70-sched-core; \
-	fi
+		$(TARGET_DIR)/etc/init.d/packet_steering $(TARGET_DIR)/etc/rc.d/*packet_steering
 	# A source tree checked out with umask 002 gives group-writable
 	# directories, and dropbear refuses public keys below one of them
 	find $(TARGET_DIR) ! -type l -perm /022 ! -perm -1000 -exec chmod go-w {} +
@@ -100,6 +92,6 @@ define Device/tplink_xz000-g7
     -uclient-fetch -urandom-seed -urngd -ca-bundle \
     -libustream-mbedtls -rpcd-mod-iwinfo -libiwinfo-data -libiwinfo \
     -luci-lib-uqr -odhcpd -odhcpd-ipv6only -odhcp6c -dnsmasq \
-    -firewall4 -nftables -ppp -ppp-mod-pppoe -procd-ujail
+    -firewall4 -nftables -ppp -ppp-mod-pppoe
 endef
 TARGET_DEVICES += tplink_xz000-g7
