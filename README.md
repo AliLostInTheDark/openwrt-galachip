@@ -44,7 +44,8 @@ and firewalling. OLT provisioning and authentication requirements vary by ISP.
   from the ONU's read-only status API.
 - SSH diagnostics: `omcictl`, sysfs counters, an on-demand OMCI trace and a
   one-line log of what the OLT did after each reconnect.
-- RAM boot and installation through the stock U-Boot.
+- RAM boot and installation through the stock U-Boot, or an optional
+  OpenWrt-built U-Boot 2026.10 (proper and SPL) with self-update.
 
 ## How it works
 
@@ -157,7 +158,7 @@ the standards.
 ## Installation
 
 Back up the unit, boot OpenWrt from RAM, then install with `sysupgrade`.
-Replacing U-Boot or installing an SPL is not required.
+Replacing U-Boot is optional; see [U-Boot](#u-boot-optional).
 
 ### 1. Requirements
 
@@ -389,6 +390,31 @@ sysupgrade /tmp/g7-sysupgrade.bin
 
 Use `-n` for a clean configuration. Check operation after a power-off cold boot.
 The 4 MiB flash leaves little room for additional packages.
+
+## U-Boot (optional)
+
+The build also publishes an upstream U-Boot 2026.10 for the G7, documented in
+[package/boot/uboot-galachip](package/boot/uboot-galachip/README.md):
+
+| File | NOR | Installed with |
+| --- | --- | --- |
+| `openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-proper.img` | `0x2000`, 120 KiB | `run upgrade_uboot`, or an SPI programmer |
+| `openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-spl.bin` | `0`, up to 8 KiB | SPI programmer only |
+
+Proper boots behind the stock SPL, so it can be installed on its own. The
+first install needs an SPI programmer and a verified full-chip backup; see
+[INSTALLATION.md](package/boot/uboot-galachip/INSTALLATION.md). Afterwards,
+with the image in the TFTP root:
+
+```text
+run upgrade_uboot
+```
+
+Useful commands at the `G7>` prompt: `run boot_tftp` (RAM boot of the
+initramfs), `run upgrade_tftp` (flash the sysupgrade image), `run backup_flash`
+(TFTP the whole 4 MiB NOR to the PC as `xz000-g7-flash.bin`). The driver
+refuses writes to the SPL, `misc` and `hwconfig`. Sysupgrade never touches the
+bootloader. ROM recovery has not been tested: a broken SPL needs the programmer.
 
 ## Recovery
 
