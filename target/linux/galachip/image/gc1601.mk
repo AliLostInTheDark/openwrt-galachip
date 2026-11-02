@@ -52,20 +52,20 @@ define Image/Prepare
 	find $(TARGET_DIR) ! -type l -perm /022 ! -perm -1000 -exec chmod go-w {} +
 endef
 
-# U-Boot proper for NOR 0x2000-0x20000: install from the stock U-Boot.
-define Build/gc1601-u-boot-proper
-	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot-proper.img >> $@
+# U-Boot proper alone, NOR 0x2000-0x20000, for an SPI programmer.
+define Build/gc1601-u-boot-img
+	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot.img >> $@
 	[ "$$(stat -c %s $@)" -eq 122880 ]
 endef
 
-# RAM U-Boot: tftpboot 41000000 and go 41000000 from the stock U-Boot.
-define Build/gc1601-u-boot-ram
-	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot-ram.bin >> $@
+# RAM U-Boot, chainloaded: tftpboot 41000000 and go 41000000 from any U-Boot.
+define Build/gc1601-u-boot-bin
+	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot.bin >> $@
 endef
 
 # Whole boot region, SPL + proper, NOR 0-0x20000: install with run upgrade_uboot.
-define Build/gc1601-u-boot
-	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot.bin >> $@
+define Build/gc1601-u-boot-with-spl
+	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot-with-spl.bin >> $@
 	[ "$$(stat -c %s $@)" -eq 131072 ]
 endef
 
@@ -88,11 +88,11 @@ define Device/tplink_xz000-g7
   IMAGES := sysupgrade.bin
   IMAGE/sysupgrade.bin := append-kernel | pad-to $$(BLOCKSIZE) | \
     append-rootfs | pad-rootfs | check-size | append-metadata
-  ARTIFACTS := u-boot.bin u-boot-proper.img u-boot-spl.bin u-boot-ram.bin
-  ARTIFACT/u-boot.bin := gc1601-u-boot
-  ARTIFACT/u-boot-proper.img := gc1601-u-boot-proper
+  ARTIFACTS := u-boot-with-spl.bin u-boot.bin u-boot.img u-boot-spl.bin
+  ARTIFACT/u-boot-with-spl.bin := gc1601-u-boot-with-spl
+  ARTIFACT/u-boot.bin := gc1601-u-boot-bin
+  ARTIFACT/u-boot.img := gc1601-u-boot-img
   ARTIFACT/u-boot-spl.bin := gc1601-u-boot-spl
-  ARTIFACT/u-boot-ram.bin := gc1601-u-boot-ram
   DEVICE_PACKAGES := kmod-gc1601-gpon-diag kmod-gc1601-epon-diag xpon-report \
     omci-agent omcid luci-app-omci luci-app-onu-system luci-theme-bootstrap uhttpd-mod-ucode \
     epon-oamd luci-app-epon \

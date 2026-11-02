@@ -2,7 +2,7 @@
 
 U-Boot **v2026.10** for the GC1601/FA626TE XZ000-G7 with 32 MiB DDR and
 4 MiB EN25QH32B NOR. **SPL and U-Boot proper ship as one boot-region image,
-`u-boot.bin`, which `run upgrade_uboot` installs, also from the stock U-Boot,
+`u-boot-with-spl.bin`, which `run upgrade_uboot` installs, also from the stock U-Boot,
 without a programmer ([INSTALLATION.md](INSTALLATION.md)). The replacement SPL passed 10 cold and
 20 reset boots, UART recovery and mask ROM UART recovery.** See [HARDWARE-TESTS.md](HARDWARE-TESTS.md).
 The experimental `gc1601-loader` package is separate and unchanged.
@@ -39,8 +39,8 @@ calibration operation.
 | `run boot_tftp` | `tftpboot ${bootfile}` (the OpenWrt initramfs zImage), `zdtb`, `bootz`. |
 | `run backup_flash` | Read the whole 4 MiB NOR and `tftpput` it as `xz000-g7-flash.bin`. |
 | `run restore_stock` | `tftpboot ${bootfile_stock}` (this unit's raw `firmware` backup, exactly `0x3b0000` bytes), check tag and size, `sf update` at `0x20000`, read back and compare. U-Boot stays; stock firmware boots with `boot_flash`. |
-| `run upgrade_uboot` | `tftpboot ${bootfile_uboot}` (u-boot.bin), `ubcheck`, `sf update` of `0`-`0x20000`, read back and compare. |
-| `ubcheck <addr> <size>` | Check a loaded u-boot.bin (SPL header, size and word sum as the ROM checks them, then proper) or proper.img (footer and wrapper CRC32s, entry). |
+| `run upgrade_uboot` | `tftpboot ${bootfile_uboot}` (u-boot-with-spl.bin), `ubcheck`, `sf update` of `0`-`0x20000`, read back and compare. |
+| `ubcheck <addr> <size>` | Check a loaded u-boot-with-spl.bin (SPL header, size and word sum as the ROM checks them, then proper) or proper.img (footer and wrapper CRC32s, entry). |
 | `run upgrade_tftp` | `tftpboot ${bootfile_upg}` (sysupgrade.bin), check tag and size, `sf update` at `0x20000`. |
 | `fwload <addr>` | Load the tagged kernel; sets `filesize` and `fdt_addr`. |
 | `zdtb <addr>` | Set `fdt_addr` to the DTB appended to a loaded zImage. |
@@ -70,10 +70,11 @@ in both the OpenWrt recipe and standalone builder. Reusing an output directory
 with a different patch identity is rejected.
 
 In OpenWrt the package is built by default for `tplink_xz000-g7` and
-publishes four device artifacts: `…-u-boot.bin`, the whole boot region and
-the default `bootfile_uboot` for `run upgrade_uboot`; `…-u-boot-ram.bin`,
-started from the stock U-Boot to run that install; `…-u-boot-proper.img`;
-and `…-u-boot-spl.bin`, the ROM-headed SPL for a programmer (its payload
+publishes four device artifacts under upstream U-Boot names:
+`…-u-boot-with-spl.bin`, the whole boot region and the default
+`bootfile_uboot` for `run upgrade_uboot`; `…-u-boot.bin`, the RAM image
+chainloaded with `go` from any U-Boot to run that install; `…-u-boot.img`,
+proper alone; and `…-u-boot-spl.bin`, the ROM-headed SPL for a programmer (its payload
 without the 16-byte header goes over the ROM's UART menu). Sysupgrade never
 touches the bootloader.
 
@@ -81,10 +82,10 @@ touches the bootloader.
 
 | File | Purpose |
 | --- | --- |
-| `xz000-g7-uboot-ram.bin` | Raw warm-entry U-Boot, load and enter at `0x41000000`. |
-| `xz000-g7-uboot-proper.img` | Exactly `0x1e000` bytes: raw executable wrapper, checked LZMA payload and integrity footer, compatible with the installed SPL's raw entry. |
-| `xz000-g7-spl-rom.bin` | 16-byte ROM header followed by at most `0x1c00` bytes of SRAM first-stage code. |
-| `xz000-g7-bootregion.bin` | Exactly `0x20000` bytes: ROM/SPL, erased padding, then proper.img. Published as `…-u-boot.bin`. |
+| `xz000-g7-uboot-ram.bin` | Raw warm-entry U-Boot, load and enter at `0x41000000`. Published as `…-u-boot.bin`. |
+| `xz000-g7-uboot-proper.img` | Published as `…-u-boot.img`. Exactly `0x1e000` bytes: raw executable wrapper, checked LZMA payload and integrity footer, compatible with the installed SPL's raw entry. |
+| `xz000-g7-spl-rom.bin` | Published as `…-u-boot-spl.bin`. 16-byte ROM header followed by at most `0x1c00` bytes of SRAM first-stage code. |
+| `xz000-g7-bootregion.bin` | Exactly `0x20000` bytes: ROM/SPL, erased padding, then proper.img. Published as `…-u-boot-with-spl.bin`. |
 | `xz000-g7-uboot-uart.pkg` | Checked RAM U-Boot package for the wrapper's XMODEM failure path. |
 | `manifest.json` | Revision, configuration hashes, artifact sizes/hashes, entries and limits. |
 | `host-inspection.json` | ISA, relocation, command, stack and SRAM assertions. |

@@ -42,18 +42,19 @@ define Build/Compile
 		--localversion="-OpenWrt-$(REVISION)"
 endef
 
-# u-boot.bin is the whole boot region (SPL + proper) for upgrade_uboot;
-# proper.img installs from the stock U-Boot, which keeps the stock SPL.
+# Upstream names: u-boot-with-spl.bin is the whole boot region for
+# upgrade_uboot, u-boot.bin the RAM image chainloaded with go, u-boot.img
+# proper alone and u-boot-spl.bin the ROM-headed SPL.
 define Build/InstallDev
 	$(INSTALL_DIR) $(STAGING_DIR_IMAGE)
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/output/artifacts/xz000-g7-bootregion.bin \
-		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot.bin
+		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot-with-spl.bin
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/$(UBOOT_IMAGE) \
-		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot-proper.img
+		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot.img
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/output/artifacts/xz000-g7-spl-rom.bin \
 		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot-spl.bin
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/output/artifacts/xz000-g7-uboot-ram.bin \
-		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot-ram.bin
+		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot.bin
 endef
 
 define Package/u-boot/install/default

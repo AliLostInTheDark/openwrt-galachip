@@ -4,8 +4,8 @@
 
 The RAM-started U-Boot installs the whole boot region, SPL and proper, with
 4 KiB erases; a broken SPL recovers over the mask ROM's UART menu (below).
-Serve the RAM U-Boot (`…-u-boot-ram.bin` in the OpenWrt image directory;
-`xz000-g7-uboot-ram.bin` here) and `…-u-boot.bin` (named as
+Serve the RAM U-Boot (`…-u-boot.bin` in the OpenWrt image directory;
+`xz000-g7-uboot-ram.bin` here) and `…-u-boot-with-spl.bin` (named as
 `bootfile_uboot`) by TFTP,
 then at the stock `=>` prompt, one line at a time:
 
@@ -13,7 +13,7 @@ then at the stock `=>` prompt, one line at a time:
 setenv ipaddr 192.168.1.1
 setenv serverip 192.168.1.10
 mw.l 9080000c 0
-tftpboot 41000000 openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-ram.bin
+tftpboot 41000000 openwrt-galachip-gc1601-tplink_xz000-g7-u-boot.bin
 go 41000000
 ```
 
