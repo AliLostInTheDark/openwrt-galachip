@@ -571,6 +571,12 @@ static void gc1601_cold_finish(struct gc1601_eth *priv)
 
 static int gc1601_cvrd_write(struct gc1601_eth *priv, u32 index, u32 data);
 
+/*
+ * T-CONT queue input depth in buffers. Stock's 128 is ~5 ms at 300 Mbit/s:
+ * a single TCP upload overruns it and backs off; several flows do not.
+ */
+static unsigned int tcont_depth = 128;
+
 static int gc1601_descriptor_setup(struct gc1601_eth *priv)
 {
 	void __iomem *base = priv->base[GC1601_DESCRIPTORS];
@@ -642,7 +648,7 @@ static int gc1601_tcont_queue_setup(struct gc1601_eth *priv)
 	for (i = 0; i < GC_CVRD_TCONT_QUEUES; i++) {
 		bool q0 = !(i % 8);
 
-		ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | i, 32 | (128 << 11));
+		ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | i, 32 | (tcont_depth << 11));
 		/* Pool-sized limits, as for the UNI queues in descriptor_setup. */
 		if (!ret)
 			ret = gc1601_cvrd_write(priv, GC_CVRD_OUTMAX | i,
@@ -859,6 +865,39 @@ static const struct kernel_param_ops sfu_flow_param_ops = {
 module_param_cb(sfu_queue_zero, &sfu_flow_param_ops, &sfu_queue_zero, 0644);
 MODULE_PARM_DESC(sfu_queue_zero, "force SFU upstream flows to T-CONT hardware queue 0");
 module_param_cb(sfu_pcp_class5, &sfu_flow_param_ops, &sfu_pcp_class5, 0644);
+
+static int tcont_depth_set(const char *val, const struct kernel_param *kp)
+{
+	struct net_device *netdev;
+	struct gc1601_eth *priv;
+	unsigned int depth, i;
+	int ret;
+
+	ret = kstrtouint(val, 0, &depth);
+	if (ret)
+		return ret;
+	if (depth < 32 || depth > 1024)
+		return -ERANGE;
+
+	rtnl_lock();
+	tcont_depth = depth;
+	netdev = READ_ONCE(gc1601_pe_netdev);
+	if (netdev) {
+		priv = netdev_priv(netdev);
+		for (i = 0; i < GC_CVRD_TCONT_QUEUES && !ret; i++)
+			ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | i,
+						32 | (depth << 11));
+	}
+	rtnl_unlock();
+	return ret;
+}
+
+static const struct kernel_param_ops tcont_depth_ops = {
+	.set = tcont_depth_set,
+	.get = param_get_uint,
+};
+module_param_cb(tcont_depth, &tcont_depth_ops, &tcont_depth, 0644);
+MODULE_PARM_DESC(tcont_depth, "T-CONT queue input depth in buffers (32-1024)");
 MODULE_PARM_DESC(sfu_pcp_class5, "set match class 5 on upstream P-bit SFU flows");
 
 /* Indirect L3 table write: index, then the data words, last word first. */
@@ -2601,7 +2640,7 @@ static int gc1601_qos_encode(const struct gc1601_tcont_qos *qos,
 	tables->sp = sp ? 0xff : 0;
 	for (q = 0; q < 8; q++) {
 		tables->fill[q] = sp ? BIT(16) : qos->weight[q] * scale;
-		tables->inmax[q] = 32 | (128 << 11);
+		tables->inmax[q] = 32 | (tcont_depth << 11);
 		tables->outmax[q] = 32 | ((sp ? (q ? 64 : 256) : 128) << 11);
 		tables->cfg[q][0] = sp ? (q ? 0x390 : 0x4f8) : 0x140;
 	}
