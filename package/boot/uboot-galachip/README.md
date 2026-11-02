@@ -9,19 +9,38 @@ The experimental `gc1601-loader` package is separate and unchanged.
 
 Driver-model NS16550 UART, SCU clocks, FTTMR010 timer, FTSPI020 SPI memory,
 MDIO/PHY and packet-engine Ethernet; `ping`, TFTP, upstream `loadx/loady`,
-`bootz`, and read-only `g7boot` for the existing tagged OpenWrt format.
+`bootz`, and `fwload`/`zdtb` for the existing tagged OpenWrt format.
 The packet engine establishes SRAM, pool, rings, switch defaults and CPU/UNI
 queue profiles rather than requiring V5's inherited ring-base signature.
 
-Environment defaults are volatile: 115200n8, device `192.168.1.1`, server
-`192.168.1.10`. Read the factory MAC at absolute NOR `0x3ef100`; an invalid
+Environment defaults are volatile and live in
+`files/board/tplink/xz000-g7/xz000-g7.env`: 115200n8, device `192.168.1.1`,
+server `192.168.1.10`. Read the factory MAC at absolute NOR `0x3ef100`; an invalid
 MAC requires a runtime `setenv ethaddr`. No random/shared fallback address.
 
-NOR access is deliberately **read-only**, single-lane and mode 0, requesting
-at most 25 MHz. The controller chooses /2, /4, /6 or /8 without exceeding the
-request, or returns an error. Probe does not unlock the chip. There is no
-persistent environment, HTTP recovery, vendor flashing alias, mtest, automatic
-bootloader update, partition migration or optical calibration operation.
+NOR runs single-lane, mode 0, at up to 50 MHz with 256-byte PIO bursts, as
+the Linux driver does. Program and erase are accepted only inside the
+firmware partition (`0x20000`-`0x3d0000`); the boot region, `misc` and
+`hwconfig` are refused by the SPI driver. Probe does not unlock the chip.
+There is no persistent environment, HTTP recovery, mtest or optical
+calibration operation.
+
+## Commands
+
+| Command | Use |
+| --- | --- |
+| `run boot_flash` | Default `bootcmd`: `fwload` the tagged kernel from NOR, then `bootz`. |
+| `run boot_tftp` | `tftpboot ${bootfile}` (the OpenWrt initramfs zImage), `zdtb`, `bootz`. |
+| `run backup_flash` | Read the whole 4 MiB NOR and `tftpput` it as `xz000-g7-flash.bin`. |
+| `run upgrade_tftp` | `tftpboot ${upgradefile}` (sysupgrade.bin), check tag and size, `sf update` at `0x20000`. |
+| `fwload <addr>` | Load the tagged kernel; sets `filesize` and `fdt_addr`. |
+| `zdtb <addr>` | Set `fdt_addr` to the DTB appended to a loaded zImage. |
+| `ethdiag [verbose]` | Packet-engine handoff registers. |
+
+`run` stops at the first failing step. `setenv baudrate 230400` doubles the
+console rate (the 33 MHz UART clock also allows an exact, non-standard
+1031250); 460800 and 921600 are not reachable. The wrapper's XMODEM recovery
+stays at 115200.
 
 ## Build bootloader components
 
@@ -67,11 +86,10 @@ footer CRC before entering it. The wrapper validates the internal header,
 compressed CRC, LZMA profile/length, decoder result, end marker and expanded CRC.
 
 The existing firmware tag has magic `0x03000003`, a 512-byte header and kernel
-length at `0x78`. It has **no CRC field**. `g7boot [external-dtb-address]`
-bounds that length to the firmware partition, checks zImage bounds and uses
-its appended DTB, or a validated external DTB. Standard `bootz` remains
-available for RAM images. RAM variants stop at the prompt; the production
-variant offers a three-second interrupt window before `g7boot`.
+length at `0x78`. It has **no CRC field**. `fwload` bounds that length to
+the firmware partition, checks zImage bounds and the appended DTB. RAM
+variants stop at the prompt; the production variant offers a three-second
+interrupt window before `run boot_flash`.
 
 ## Memory and startup contracts
 

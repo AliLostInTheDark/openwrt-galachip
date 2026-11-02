@@ -13,13 +13,14 @@ static bool fifo_stuck, abort_stuck, complete_stuck, tx_stuck;
 static bool mdio_stuck, alloc_empty, table_stuck;
 static u32 table_reads, global_reset_writes;
 static u32 completions, releases, acknowledgments, spi_left, spi_position, spi_opcode;
+static u32 spi_written;
 static u32 raw(uintptr_t a) { return *(u32 *)a; }
 static void set(uintptr_t a, u32 v) { *(u32 *)a = v; }
 
 u32 mock_read(uintptr_t a)
 {
 	if (a == 0xa0000018)
-		return fifo_stuck ? 0 : 2;
+		return fifo_stuck ? 0 : 3;
 	if (a == 0xa0000024)
 		return complete_stuck || spi_left ? 0 : 1;
 	if (a == 0xa0000100) {
@@ -69,6 +70,10 @@ void mock_write(u32 v, uintptr_t a)
 		set(0x9010000c, raw(0x9010000c) | (a == 0x90100010 ? BIT(8) : 1));
 	if (a == 0xa0000010 && (v & BIT(8)) && !abort_stuck)
 		set(a, v & ~BIT(8));
+	if (a == 0xa0000100 && spi_left) {
+		spi_written += v;
+		spi_left -= min(spi_left, 4U);
+	}
 	if (a == 0xa000000c) {
 		spi_opcode = v >> 24;
 		spi_left = raw(0xa0000008);
@@ -151,6 +156,37 @@ static void spi_tests(void)
 	op.data.dir = SPI_MEM_DATA_OUT;
 	assert(gc_spi_exec(&slave, &op) == -EROFS);
 	op.data.dir = SPI_MEM_DATA_IN;
+	{
+		static const u32 data[] = { 1, 2, 3 };
+		struct spi_mem_op w = {
+			.cmd = { 1, 1, 0x02 }, .addr = { 3, 1, 0x20000 },
+			.data = { .nbytes = 11, .buswidth = 1, .dir = SPI_MEM_DATA_OUT,
+				  .buf.out = data },
+		};
+		struct spi_mem_op e = { .cmd = { 1, 1, 0xd8 }, .addr = { 3, 1, 0x3c0000 } };
+		struct spi_mem_op wren = { .cmd = { 1, 1, 0x06 } };
+
+		assert(!gc_spi_exec(&slave, &wren));
+		assert(raw(0xa000000c) == (0x06000000 | BIT(1) | BIT(0)));
+		assert(!gc_spi_exec(&slave, &w));
+		assert(spi_opcode == 2 && spi_written == 6 && !spi_left);
+		assert(raw(0xa0000008) == 11 && (raw(0xa000000c) & BIT(1)));
+		w.addr.val = 0x1ff00;
+		assert(gc_spi_exec(&slave, &w) == -EROFS);
+		w.addr.val = 0x3cfff8;
+		assert(gc_spi_exec(&slave, &w) == -EROFS);
+		assert(!gc_spi_exec(&slave, &e));
+		e.addr.val = 0x3d0000;
+		assert(gc_spi_exec(&slave, &e) == -EROFS);
+		e.addr.val = 0x10000;
+		assert(gc_spi_exec(&slave, &e) == -EROFS);
+		e.cmd.opcode = 0x20;
+		e.addr.val = 0x3cf000;
+		assert(!gc_spi_exec(&slave, &e));
+		e.cmd.opcode = 0xc7;
+		e.addr.nbytes = 0;
+		assert(gc_spi_exec(&slave, &e) == -EROFS);
+	}
 	fifo_stuck = true;
 	assert(gc_spi_exec(&slave, &op) == -ETIMEDOUT);
 	assert(!p.failed);
@@ -165,7 +201,7 @@ static void spi_tests(void)
 	assert(gc_spi_exec(&slave, &op) == -ETIMEDOUT);
 	complete_stuck = false;
 	assert(!gc_spi_exec(&slave, &op));
-	puts("SPI: FIFO tails, lane/address rejection, timeout, failed abort and recovery passed");
+	puts("SPI: FIFO tails, guarded program/erase, lane/address rejection, timeout, failed abort and recovery passed");
 }
 
 static void network_tests(void)

@@ -60,7 +60,8 @@ void stage_main(void)
 	const ISzAlloc allocator = { alloc, release };
 
 	uart_init();
-	uart_puts("GC1601 checked U-Boot wrapper\n");
+	/* The stock SPL leaves its last status digit without a newline. */
+	uart_puts("\nGC1601 checked U-Boot wrapper\n");
 	if (decode_image(&image_header, compressed_start,
 			 compressed_end - compressed_start, (void *)PROPER_ENTRY,
 			 PROPER_MAX, &allocator))

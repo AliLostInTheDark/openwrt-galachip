@@ -5,7 +5,7 @@
 
 void gc1601_eth_diagnostic(bool verbose);
 
-static int do_g7diag(struct cmd_tbl *cmd, int flag, int argc, char *const argv[])
+static int do_ethdiag(struct cmd_tbl *cmd, int flag, int argc, char *const argv[])
 {
 	if (argc == 2 && strcmp(argv[1], "verbose"))
 		return CMD_RET_USAGE;
@@ -27,4 +27,4 @@ static int do_g7diag(struct cmd_tbl *cmd, int flag, int argc, char *const argv[]
 	gc1601_eth_diagnostic(argc == 2);
 	return 0;
 }
-U_BOOT_CMD(g7diag, 2, 1, do_g7diag, "read GC1601 handoff registers", "[verbose]");
+U_BOOT_CMD(ethdiag, 2, 1, do_ethdiag, "read GC1601 handoff registers", "[verbose]");

@@ -4,8 +4,8 @@
 gave three identical 4 MiB reads of this unit (SHA256 `8698f068...8335`), and a
 full-chip erase, write and verify restored that backup. Independent ROM UART
 recovery is still unproven and is no longer required for a proper trial. The
-package contains no installer and its NOR controller stays read-only; all
-boot-region writes use the programmer, not `sf` from U-Boot.
+package contains no bootloader installer; all boot-region writes use the
+programmer, not `sf` from U-Boot.
 
 Before each write:
 
@@ -19,7 +19,7 @@ Before each write:
    erases from the file.
 4. On failure, rewrite the verified backup the same way.
 
-Order: proper first, keeping stock SPL; then `g7boot`, the timer, `reset` and
+Order: proper first, keeping stock SPL; then `run boot_flash`, the timer, `reset` and
 the 20 cold/20 reset matrix; SPL last, after its own explicit authorization.
 Record complete UART logs for every trial.
 
@@ -34,5 +34,6 @@ Record complete UART logs for every trial.
 Rollback uses this unit's own verified backup. Never restore a different
 unit's factory or calibration areas.
 
-No `sf erase/write/update`, `mtd`, `saveenv` or ROM strap manipulation is
-authorized by this document.
+U-Boot's `sf` may write only the firmware partition (`run upgrade_tftp`);
+the SPI driver refuses the boot region, `misc` and `hwconfig`. Boot-region
+changes use the programmer. No `saveenv` or ROM strap manipulation.
