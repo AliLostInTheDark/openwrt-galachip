@@ -94,7 +94,12 @@ static int do_fwload(struct cmd_tbl *cmd, int flag, int argc, char *const argv[]
 		return CMD_RET_FAILURE;
 	/* The tag has no CRC field; do not invent an integrity guarantee for it. */
 	env_set_hex("filesize", length);
-	return find_appended_dtb(addr, length);
+	if (find_appended_dtb(addr, length))
+		return CMD_RET_FAILURE;
+	/* Stock kernels carry the vendor EVB DTB, whose command line has the wrong layout. */
+	if (!fdt_node_check_compatible((void *)env_get_hex("fdt_addr", 0), 0, "faraday,gc1601"))
+		return env_set("bootargs", env_get("bootargs_stock"));
+	return env_set("bootargs", NULL);
 }
 U_BOOT_CMD(fwload, 2, 0, do_fwload,
 	   "load the tagged OpenWrt kernel from NOR",
