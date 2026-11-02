@@ -4,9 +4,11 @@
 import ctypes
 import importlib.util
 import lzma
+import os
 import random
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("images", ROOT / "tools/images.py")
 images = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(images)
+sys.path.insert(0, str(ROOT / "tools"))
+import flash_image
 
 def packet(seq, data, corrupt=False):
     crc = 0
@@ -218,6 +222,39 @@ class Images(unittest.TestCase):
         result, out = self.receive(stream + [-1, 24], 128)
         self.assertEqual(result, -1)
         self.assertEqual(out, b"!" * 128)
+
+class FlashImage(unittest.TestCase):
+    def backup(self):
+        data = bytearray(os.urandom(flash_image.CHIP_SIZE))
+        data[0x20000:0x20004] = struct.pack("<I", flash_image.FIRMWARE_MAGIC)
+        return bytes(data)
+
+    def test_only_boot_region_changes(self):
+        backup = self.backup()
+        proper = images.proper_image(b"\xe5" * 4096)
+        image = flash_image.build(backup, proper)
+        self.assertEqual(image[:0x2000], backup[:0x2000])
+        self.assertEqual(image[0x2000:0x20000], proper)
+        self.assertEqual(image[0x20000:], backup[0x20000:])
+        spl = images.rom_image(b"\x01" * 64)
+        image = flash_image.build(backup, proper, spl)
+        self.assertEqual(image[:len(spl)], spl)
+        self.assertEqual(image[0x20000:], backup[0x20000:])
+
+    def test_rejects_bad_inputs(self):
+        backup = self.backup()
+        proper = images.proper_image(b"\xe5" * 4096)
+        for bad in (proper[:-1], proper[:100] + b"\0" + proper[101:],
+                    proper[:-4] + b"\0\0\0\0"):
+            with self.assertRaises(ValueError):
+                flash_image.build(backup, bad)
+        for bad in (backup[:-1], backup[:0x20000] + b"\0" * 4 + backup[0x20004:]):
+            with self.assertRaises(ValueError):
+                flash_image.build(bad, proper)
+        spl = bytearray(images.rom_image(b"\x01" * 64))
+        spl[20] ^= 1
+        with self.assertRaises(ValueError):
+            flash_image.build(backup, proper, bytes(spl))
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -80,7 +80,7 @@ def package(stage_dir, ram, production, output, revision):
     manifest = {
         "upstream": "v2026.10", "source_sha256": ARCHIVE_SHA256,
         "port_revision": revision, "hardware_status": "RAM U-Boot and wrapper tested; SPL and ROM recovery untested; RAM-only",
-        "rom_recovery": "not demonstrated; installation blocked",
+        "rom_recovery": "ROM recovery not demonstrated; install and recover by SPI programmer",
         "source_date_epoch": 1791158400,
         "addresses": {"ram_entry": "0x41000000", "wrapper": "0x40100000",
                       "proper": "0x40010000", "spl": "0x80000000"},

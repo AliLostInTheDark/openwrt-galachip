@@ -1,31 +1,27 @@
 # Installation and rollback gate
 
-**Installation is blocked.** Independent power-on ROM UART recovery has not
-been demonstrated. The package intentionally contains no installer, automatic
-bootloader update or environment-saving command. Its NOR controller is
-read-only in this release.
+**Recovery is by external SPI programmer.** On 2026-11-02 a CH341A clip
+gave three identical 4 MiB reads of this unit (SHA256 `8698f068...8335`), and a
+full-chip erase, write and verify restored that backup. Independent ROM UART
+recovery is still unproven and is no longer required for a proper trial. The
+package contains no installer and its NOR controller stays read-only; all
+boot-region writes use the programmer, not `sf` from U-Boot.
 
-This is the later review procedure, not flash-write instructions.
+Before each write:
 
-1. Validate the current unit's complete 4 MiB backup and independent ROM marker
-   recovery. Keep the installed SPL and an independently recoverable original
-   boot region. A valid-but-hung SPL must not be the only recovery route.
-2. Complete the RAM proper/wrapper/UART/TFTP/Linux tests with the exact manifest.
-   Verify the actual installed boot chain and keep factory data from this unit.
-3. Before an SPL-preserving proper trial, prove **4 KiB erase** operation in the
-   exact flashing implementation to be used. The legacy 64 KiB erase path can
-   include SPL when touching the first proper block. Chip datasheet support
-   alone is not evidence that the software emits the required opcode.
-4. If that 4 KiB path is unavailable or unverified, **stop the proper-only trial**.
-   Do not round offsets, enlarge the partition or erase the first 64 KiB.
-5. Only after recovery, erase geometry and a separately authorized write method
-   are established, install the proper allocation while preserving SPL.
-   Compare loaded sizes/CRCs/hashes before writing, then read back and compare
-   every byte before resetting. Trial U-Boot proper first; SPL last.
-6. Replacing SPL needs its own explicit authorization and independent rollback
-   demonstration. A DDR failure cannot use the DRAM-backed UART receiver.
-7. After any permitted write, verify that the full protected regions below
-   remain identical. Record complete UART logs and finish the 20+20 boot matrix.
+1. Read the chip three times with the programmer; all hashes must match the
+   last verified backup, or take a new verified backup.
+2. Build the image with `tools/flash_image.py <backup> <proper.img> <out>`.
+   It checks the proper footer and wrapper CRC, and rejects any change
+   outside `0x2000`-`0x20000`. Add `--spl` only for the final SPL step.
+3. Write the whole file with flashrom, which verifies after writing. Full-chip
+   writes avoid the 4 KiB erase question: flashrom rewrites every block it
+   erases from the file.
+4. On failure, rewrite the verified backup the same way.
+
+Order: proper first, keeping stock SPL; then `g7boot`, the timer, `reset` and
+the 20 cold/20 reset matrix; SPL last, after its own explicit authorization.
+Record complete UART logs for every trial.
 
 | Region | Offset | Length |
 | --- | --- | --- |
@@ -35,13 +31,8 @@ This is the later review procedure, not flash-write instructions.
 | Misc/factory — preserve | `3d0000` | `20000` |
 | Optical calibration — preserve | `3f0000` | `10000` |
 
-Rollback must use the exact original bytes for this unit's boot region, with
-the same verified erase/write/readback method. Do not restore a different
-unit's factory areas or overwrite firmware as part of a bootloader rollback.
-The absence of a CH341A makes the independent ROM gate essential; it does not
-make a warm U-Boot serial receiver an independent recovery mechanism.
+Rollback uses this unit's own verified backup. Never restore a different
+unit's factory or calibration areas.
 
 No `sf erase/write/update`, `mtd`, `saveenv` or ROM strap manipulation is
-authorized by this document. Once the gate passes, prepare the exact command
-sequence against the then-current hardware evidence instead of reusing a
-stale generic recipe.
+authorized by this document.
