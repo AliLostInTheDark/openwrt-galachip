@@ -60,10 +60,11 @@ function render(group, data, title, description) {
 	var byId, groupClasses, createButton;
 	var originFilter = E('select', { 'class': 'cbi-input-select', 'id': 'omci-mib-origin-filter' }, [
 		E('option', { 'value': 'all' }, _('All origins')),
-		E('option', { 'value': 'default' }, _('Default / seed')),
-		E('option', { 'value': 'olt' }, _('Provisioned by OLT')),
-		E('option', { 'value': 'olt_written' }, _('ONU-created, OLT-provisioned')),
-		E('option', { 'value': 'local' }, _('Local edits')),
+		E('option', { 'value': 'olt_any' }, _('OLT-provisioned')),
+		E('option', { 'value': 'olt' }, _('OLT-created')),
+		E('option', { 'value': 'olt_written' }, _('ONU-created, OLT-configured')),
+		E('option', { 'value': 'default' }, _('ONU-created')),
+		E('option', { 'value': 'local' }, _('Local override')),
 		E('option', { 'value': 'hardware' }, _('Hardware'))
 	]);
 	var tableRoot = E('div', { 'class': 'omci-table-scroll', 'tabindex': '0',
@@ -182,11 +183,25 @@ function render(group, data, title, description) {
 		]);
 	}
 
+	function originMatches(o) {
+		switch (originFilter.value) {
+		case 'all':
+			return true;
+		case 'olt_any':
+			return o.origin_name == 'olt' || !!o.olt_written;
+		case 'olt_written':
+			return o.origin_name == 'default' && !!o.olt_written;
+		case 'default':
+			return o.origin_name == 'default' && !o.olt_written;
+		default:
+			return o.origin_name == originFilter.value;
+		}
+	}
+
 	function renderTable() {
 		var filtered = objects.filter(function(o) {
 			var c = byId[o.class_id] || { category_name: 'unknown', flags: 0 };
-			return predicate(c) && (originFilter.value == 'all' || o.origin_name == originFilter.value ||
-				(originFilter.value == 'olt_written' && o.origin_name == 'default' && o.olt_written));
+			return predicate(c) && originMatches(o);
 		});
 		count.textContent = _('%d object(s)').format(filtered.length);
 		if (createButton)

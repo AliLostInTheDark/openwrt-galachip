@@ -10,9 +10,10 @@ var words = {
 	pbs: 'PBS', fec: 'FEC'
 };
 
+/* G.988 terms: an ME is created autonomously by the ONU or by the OLT. */
 var originLabels = {
-	'default': _('Default / seed'), 'local': _('Local edits'),
-	'olt': _('Provisioned by OLT'), 'hardware': _('Hardware')
+	'default': _('ONU-created'), 'local': _('Local override'),
+	'olt': _('OLT-created'), 'hardware': _('Hardware')
 };
 
 function label(name) {
@@ -39,7 +40,7 @@ function entityText(id) {
 
 function originText(o) {
 	if (o.origin_name == 'default' && o.olt_written)
-		return _('ONU-created, OLT-provisioned');
+		return _('ONU-created, OLT-configured');
 	return originLabels[o.origin_name] || o.origin_name || '-';
 }
 

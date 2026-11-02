@@ -162,13 +162,13 @@ function line(status) {
 	]);
 }
 
-/* What the OLT provisioned, in sentences, from the MIB objects it created. */
+/* What the OLT provisioned, in sentences, from the MIB objects it created or configured. */
 function provisioned(objects, vlan) {
 	var allocs = mib.allocIds(objects), gems = mib.gemPorts(objects);
 	var vlans = mib.provisionedVlans(objects), lead = [];
 	var vids = Object.keys(vlans).map(Number).sort(function(a, b) { return a - b; });
 
-	if (!(objects || []).some(function(o) { return o.origin_name == 'olt'; }))
+	if (!(objects || []).some(mib.oltProvisioned))
 		return E('p', { 'class': 'xpon-lead' },
 			_('The OLT has not provisioned anything yet. Its services appear here once the ONU is registered and the OLT has sent its configuration.'));
 

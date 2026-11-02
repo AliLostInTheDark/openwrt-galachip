@@ -11,6 +11,11 @@ function hexBytes(hex) {
 	return bytes;
 }
 
+/* Created by the OLT, or created by the ONU and then configured by the OLT. */
+function oltProvisioned(o) {
+	return o.origin_name == 'olt' || !!o.olt_written;
+}
+
 function be16(bytes, off) {
 	return ((bytes[off] || 0) << 8) | (bytes[off + 1] || 0);
 }
@@ -75,7 +80,7 @@ function provisionedVlans(objects) {
 	(objects || []).forEach(function(o) {
 		var b, n, i, entries;
 
-		if (o.origin_name != 'olt')
+		if (!oltProvisioned(o))
 			return;
 
 		if (o.class_id == 84) {
@@ -133,7 +138,7 @@ function oltPriority(objects, vid) {
 	var texts = [];
 
 	(objects || []).forEach(function(o) {
-		if (o.origin_name != 'olt' || o.class_id != 171)
+		if (!oltProvisioned(o) || o.class_id != 171)
 			return;
 		((o.extended_vlan || {}).rules || []).forEach(function(r) {
 			var tagged = r.filter_inner_pbit != 15, accept, send;
@@ -182,10 +187,10 @@ function allocIds(objects) {
 	}).sort(function(a, b) { return a - b; });
 }
 
-/* GEM port network CTPs the OLT created. */
+/* GEM port network CTPs the OLT provisioned. */
 function gemPorts(objects) {
 	return (objects || []).filter(function(o) {
-		return o.class_id == 268 && o.origin_name == 'olt';
+		return o.class_id == 268 && oltProvisioned(o);
 	}).map(function(o) {
 		return be16(hexBytes(o.data), 0);
 	}).sort(function(a, b) { return a - b; });
@@ -199,5 +204,6 @@ return baseclass.extend({
 	oltPriority: oltPriority,
 	mapperPriority: mapperPriority,
 	allocIds: allocIds,
-	gemPorts: gemPorts
+	gemPorts: gemPorts,
+	oltProvisioned: oltProvisioned
 });

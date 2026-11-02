@@ -763,6 +763,12 @@ omci_agent_should_fake_result(const struct omci_agent *agent, u16 class_id,
 	       omci_agent_result_can_be_faked(result);
 }
 
+/* The OLT created this object, or Set it after the ONU created it. */
+static bool omci_mib_object_olt_provisioned(const struct omci_mib_object *object)
+{
+	return object->origin == OMCI_MIB_ORIGIN_OLT || object->olt_written;
+}
+
 static int
 omci_mib_add_default_profile_mask(struct omci_agent *agent, u8 profile,
 				  u16 class_id, u16 entity_id,
@@ -772,6 +778,11 @@ omci_mib_add_default_profile_mask(struct omci_agent *agent, u8 profile,
 	const struct omci_me_desc *desc;
 	struct omci_mib_object *object;
 	int ret;
+
+	/* A default never replaces what the OLT provisioned. */
+	object = omci_mib_lookup(agent, class_id, entity_id);
+	if (object && omci_mib_object_olt_provisioned(object))
+		return 0;
 
 	desc = omci_me_lookup_profile(profile, class_id);
 	object = kzalloc(sizeof(*object), GFP_KERNEL);
@@ -1172,7 +1183,8 @@ omci_agent_profile_reconcile_locked(struct omci_device *odev,
 		return 0;
 
 	xa_for_each(&agent->mib, index, object) {
-		if (!object->owner_profile || object->owner_profile == new_profile)
+		if (!object->owner_profile || object->owner_profile == new_profile ||
+		    omci_mib_object_olt_provisioned(object))
 			continue;
 		xa_erase(&agent->mib, index);
 		kfree(object);
@@ -1191,7 +1203,8 @@ omci_agent_profile_reconcile_locked(struct omci_device *odev,
 		ret = omci_agent_move_veip_default(odev,
 				OMCI_UNI_ENTITY_ID(omci_agent_veip_slot_for_profile(agent, new_profile),
 						   omci_agent_veip_port(agent)));
-		if (ret) {
+		/* -EBUSY: the OLT already provisioned the current VEIP; it stays. */
+		if (ret && ret != -EBUSY) {
 			agent->profile_effective = old_profile;
 			return ret;
 		}
@@ -1601,7 +1614,7 @@ static void omci_mib_drop_default(struct omci_agent *agent, u16 class_id,
 	unsigned long key = omci_mib_key(class_id, entity_id);
 	struct omci_mib_object *object = xa_load(&agent->mib, key);
 
-	if (!object || object->origin != OMCI_MIB_ORIGIN_DEFAULT)
+	if (!object || object->origin != OMCI_MIB_ORIGIN_DEFAULT || object->olt_written)
 		return;
 	xa_erase(&agent->mib, key);
 	kfree(object);
@@ -1656,6 +1669,9 @@ static int omci_agent_move_veip_default(struct omci_device *odev, u16 entity)
 
 	if (old == entity)
 		return 0;
+	object = old ? omci_mib_lookup(agent, OMCI_CLASS_VEIP, old) : NULL;
+	if (object && object->olt_written)
+		return -EBUSY;
 	ret = omci_agent_get_ani_topology(odev, &topology);
 	if (ret)
 		return ret;
@@ -2815,6 +2831,9 @@ static int omci_agent_mib_reset_locked(struct omci_device *odev, bool all,
 		}
 	} else {
 		omci_agent_reset_olt_objects_locked(agent);
+		/* What the OLT Set on ONU-created MEs goes with the reset. */
+		xa_for_each(&agent->mib, index, object)
+			object->olt_written = false;
 	}
 
 	/*
@@ -3314,7 +3333,7 @@ omci_agent_stage_service_rule_locked(struct omci_device *odev,
 	 * that really uses GEM 256/257 without OMCI Create (no origin-OLT GEM
 	 * CTP) is unaffected.
 	 */
-	if (gem->origin == OMCI_MIB_ORIGIN_DEFAULT &&
+	if (gem->origin == OMCI_MIB_ORIGIN_DEFAULT && !gem->olt_written &&
 	    omci_agent_has_olt_gem_ctp_locked(agent))
 		return 0;
 
@@ -3511,7 +3530,7 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 		    !omci_agent_vlan_associated(object, lan_port->entity_id, uni_entity,
 					bridge_port_entity, service_entity))
 			continue;
-		olt_treatment |= object->origin == OMCI_MIB_ORIGIN_OLT;
+		olt_treatment |= omci_mib_object_olt_provisioned(object);
 	}
 
 	xa_for_each(&agent->mib, index, object) {
@@ -3546,7 +3565,7 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 			}
 		} else if (object->class_id == OMCI_CLASS_EXTENDED_VLAN &&
 			   object->extended_vlan.valid) {
-			if (olt_treatment && object->origin == OMCI_MIB_ORIGIN_DEFAULT)
+			if (olt_treatment && !omci_mib_object_olt_provisioned(object))
 				continue;
 			has_vlan_rules |= object->extended_vlan.rule_count != 0;
 			for (i = 0; i < object->extended_vlan.rule_count; i++) {
@@ -3878,7 +3897,7 @@ static int omci_agent_reconcile_resources_locked(struct omci_device *odev)
 				continue;
 			/* Default GEM seeds are installed only by resolved services. */
 			if (classes[i] == OMCI_CLASS_GEM_PORT_CTP &&
-			    object->origin == OMCI_MIB_ORIGIN_DEFAULT) {
+			    object->origin == OMCI_MIB_ORIGIN_DEFAULT && !object->olt_written) {
 				if (!omci_agent_has_olt_gem_ctp_locked(agent)) {
 					ret = omci_agent_gem_rate_locked(odev, object,
 									 object->pending_delete);
@@ -4098,7 +4117,11 @@ static u8 omci_agent_create_locked(struct omci_device *odev,
 	 * instance replaces it, e.g. Nokia's class 171 on the slot 6 VEIP.
 	 */
 	omci_agent_learn_veip_slot(odev, class_id, content, content_len);
-	omci_mib_drop_default(agent, class_id, entity_id);
+	object = omci_mib_lookup(agent, class_id, entity_id);
+	if (object && object->origin == OMCI_MIB_ORIGIN_DEFAULT) {
+		xa_erase(&agent->mib, omci_mib_key(class_id, entity_id));
+		kfree(object);
+	}
 	if (omci_mib_lookup(agent, class_id, entity_id))
 		return OMCI_RESULT_INSTANCE_EXISTS;
 
@@ -6080,7 +6103,7 @@ static bool omci_mib_has_olt_objects_locked(struct omci_agent *agent)
 	unsigned long index;
 
 	xa_for_each(&agent->mib, index, object)
-		if (object->origin == OMCI_MIB_ORIGIN_OLT && !object->pending_delete)
+		if (omci_mib_object_olt_provisioned(object) && !object->pending_delete)
 			return true;
 
 	return false;
@@ -7009,7 +7032,7 @@ int omci_agent_handoff(struct omci_device *odev)
 	mutex_lock(&agent->lock);
 	/* An active OLT MIB must not be silently discarded at a live handoff. */
 	xa_for_each(&agent->mib, index, object)
-		if (object->origin != OMCI_MIB_ORIGIN_DEFAULT) {
+		if (object->origin != OMCI_MIB_ORIGIN_DEFAULT || object->olt_written) {
 			ret = -EBUSY;
 			goto out;
 		}

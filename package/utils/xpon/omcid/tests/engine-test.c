@@ -352,6 +352,33 @@ int main(void)
 		CHECK(!omci_agent_mib_get(&odev, 309, 0x401, &mcast));
 		CHECK(!mcast.mcast_rows[0].attr);
 	}
+	/* OLT provisioning on an ONU-created VEIP wins over learning another. */
+	{
+		struct omci_mib_object *o;
+		unsigned long i;
+		u8 set[3] = { 0x80, 0, 0 };
+		u8 create[3] = { 10 };
+		u16 veip = 0, other;
+
+		xa_for_each(&odev.agent.mib, i, o)
+			if (o->class_id == OMCI_CLASS_VEIP)
+				veip = o->entity_id;
+		CHECK(veip);
+		other = veip == 0x0a01 ? 0x0301 : 0x0a01;
+		request(&odev, 94, 8, OMCI_CLASS_VEIP, veip, set, sizeof(set));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, veip, &object) &&
+		      object.olt_written);
+		put_unaligned_be16(other, create + 1);
+		request(&odev, 95, 4, OMCI_CLASS_EXTENDED_VLAN, 0x0123, create, sizeof(create));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, veip, &object) &&
+		      object.olt_written);
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, other, &object) == -ENOENT);
+
+		/* A MIB reset returns it to its ONU-created state. */
+		request(&odev, 96, 15, OMCI_CLASS_ONU_DATA, 0, NULL, 0);
+		xa_for_each(&odev.agent.mib, i, o)
+			CHECK(!o->olt_written);
+	}
 	omci_agent_cleanup(&odev);
 	CHECK(!odev.agent.mib.count && !odev.agent.services.count);
 	printf("%u native MIB/transaction/rollback/table tests passed\n", checks);

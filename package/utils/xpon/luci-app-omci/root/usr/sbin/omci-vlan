@@ -101,7 +101,7 @@ function olt_vlan() {
 	let rules = [], filters = 0;
 
 	for (let object in objects ?? []) {
-		if (object.origin_name != 'olt')
+		if (object.origin_name != 'olt' && !object.olt_written)
 			continue;
 		if (object.class_id == CLASS_EXTENDED_VLAN) {
 			for (let rule in object.extended_vlan?.rules ?? [])

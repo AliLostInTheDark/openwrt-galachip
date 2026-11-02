@@ -190,18 +190,27 @@ function print_classes(classes) {
 			join(',', item.flag_names || []));
 }
 
+/* G.988 terms: ONU-created, OLT-created, or ONU-created and OLT-configured. */
+const origin_text = { default: 'onu-created', olt: 'olt-created', local: 'local-override', hardware: 'hardware' };
+
+function origin(item) {
+	if (item.origin_name == 'default' && item.olt_written)
+		return 'onu-created,olt-configured';
+	return origin_text[item.origin_name] || item.origin_name || '-';
+}
+
 function print_mib(objects) {
 	printf('%-6s %-8s %-48s %s\n', 'class', 'entity', 'name', 'origin');
 	for (let item in (objects || []))
 		printf('%-6d 0x%04x   %-48s %s\n', item.class_id, item.entity_id,
-			item.name || '-', (item.origin_name == 'default' && item.olt_written) ? 'default+olt' : (item.origin_name || '-'));
+			item.name || '-', origin(item));
 }
 
 /* One block per object, decoded fields first; classes without a decoder show hex. */
 function print_objects(objects) {
 	for (let item in (objects || [])) {
 		printf('%s (class %d) entity 0x%04x, %s\n', item.name || 'Unknown ME',
-			item.class_id, item.entity_id, item.origin_name || '-');
+			item.class_id, item.entity_id, origin(item));
 		if (!item.fields) {
 			printf('  data: %s\n\n', item.data || '');
 			continue;
