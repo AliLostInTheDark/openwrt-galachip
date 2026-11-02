@@ -21,7 +21,7 @@ static void recover(void)
 	int length;
 
 	for (;;) {
-		uart_puts("Wrapper failed; send xz000-g7-uboot-uart.pkg by XMODEM-CRC\n");
+		uart_puts("\nWrapper failed; send xz000-g7-uboot-uart.pkg by XMODEM-CRC\n");
 		length = xmodem_receive(package, UART_MAX);
 		if (length > 0 && uart_image_valid(package, length))
 			stage_jump(0x41000000);
@@ -60,6 +60,41 @@ static void release(ISzAllocPtr context, void *address)
  * may run during LZMA decoding. The D-cache stays off. Proper is entered
  * with the I-cache off and invalidated, as before.
  */
+/*
+ * Flat MMU table for the decode: DDR (0x40000000-0x41ffffff) write-through
+ * cacheable, everything else uncached. Write-through never leaves dirty
+ * lines, so turning the D-cache off needs only an invalidate. 16 KiB at
+ * 0x40400000, clear of the output, wrapper, heap, stack and DMA ranges.
+ */
+#define MMU_TABLE 0x40400000U
+
+static void dcache(int on)
+{
+	uint32_t *table = (uint32_t *)MMU_TABLE, cr, i;
+
+	asm volatile("mrc p15, 0, %0, c1, c0, 0" : "=r"(cr));
+	if (on) {
+		/* Section: AP read/write, domain 0, bit 4 set, C for DDR, B clear. */
+		for (i = 0; i < 4096; i++)
+			table[i] = i << 20 | 3 << 10 | 0x12 |
+				   (i >= 0x400 && i < 0x420 ? 8 : 0);
+		asm volatile("mcr p15, 0, %0, c7, c10, 4" : : "r"(0) : "memory");
+		asm volatile("mcr p15, 0, %0, c2, c0, 0" : : "r"(MMU_TABLE));
+		asm volatile("mcr p15, 0, %0, c3, c0, 0" : : "r"(1));
+		asm volatile("mcr p15, 0, %0, c8, c7, 0" : : "r"(0));
+		asm volatile("mcr p15, 0, %0, c7, c6, 0" : : "r"(0));
+		cr |= 5;
+	} else {
+		cr &= ~5U;
+	}
+	asm volatile("mcr p15, 0, %0, c1, c0, 0" : : "r"(cr) : "memory");
+	if (!on) {
+		asm volatile("mcr p15, 0, %0, c7, c6, 0" : : "r"(0) : "memory");
+		asm volatile("mcr p15, 0, %0, c8, c7, 0" : : "r"(0));
+		asm volatile("mcr p15, 0, %0, c7, c10, 4" : : "r"(0) : "memory");
+	}
+}
+
 static void icache(int on)
 {
 	uint32_t cr;
@@ -75,16 +110,22 @@ void stage_main(void)
 {
 	const ISzAlloc allocator = { alloc, release };
 
+	int ret;
+
+	/* Silent on success, as upstream decompression is; recover() reports. */
 	uart_init();
-	/* The stock SPL leaves its last status digit without a newline. */
-	uart_puts("\nGC1601 checked U-Boot wrapper\n");
 	icache(1);
-	if (decode_image(&image_header, compressed_start,
-			 compressed_end - compressed_start, (void *)PROPER_ENTRY,
-			 PROPER_MAX, &allocator)) {
-		icache(0);
-		recover();
-	}
+	dcache(1);
+	ret = decode_image(&image_header, compressed_start,
+			   compressed_end - compressed_start, (void *)PROPER_ENTRY,
+			   PROPER_MAX, &allocator);
+	dcache(0);
+	/* Check the decoded image again in DDR itself, with the D-cache off. */
+	if (!ret && stage_crc((void *)PROPER_ENTRY, image_header.expanded) !=
+	    image_header.expanded_crc)
+		ret = -1;
 	icache(0);
+	if (ret)
+		recover();
 	stage_jump(PROPER_ENTRY);
 }
