@@ -21,6 +21,8 @@ typedef uint16_t __be16;
 #define min(a,b) ((a) < (b) ? (a) : (b))
 #define max(a,b) ((a) > (b) ? (a) : (b))
 #define ENOTSUPP EOPNOTSUPP
+#define SPI_RX_DUAL BIT(12)
+#define SPI_RX_QUAD BIT(13)
 #define MDIO_DEVAD_NONE -1
 #define SPEED_1000 1000
 #define SPEED_100 100

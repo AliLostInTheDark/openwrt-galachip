@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * FTSPI020 single-lane SPI-memory controller for GC1601. Program and erase
+ * FTSPI020 SPI-memory controller for GC1601: single lane, plus 1-1-2 dual
+ * reads when the slave mode asks for SPI_RX_DUAL. Program and erase
  * reach U-Boot proper and the firmware partition only; SPL and the factory
  * regions are refused.
  * Based on Faraday's GPL implementation, Copyright (C) 2020 Faraday Technology
@@ -41,12 +42,13 @@ static bool gc_spi_supports(struct spi_slave *slave, const struct spi_mem_op *op
 		op->addr.nbytes <= 3 && (!op->addr.nbytes || op->addr.buswidth == 1) &&
 		(!op->dummy.nbytes || op->dummy.buswidth == 1) &&
 		op->dummy.nbytes <= 31 &&
-		(!op->data.nbytes || op->data.buswidth == 1);
+		(!op->data.nbytes || op->data.buswidth == 1 ||
+		 (op->data.buswidth == 2 && op->data.dir == SPI_MEM_DATA_IN));
 }
 
 static bool gc_spi_read_op(u8 opcode)
 {
-	return opcode == 0x03 || opcode == 0x0b || opcode == 0x05 ||
+	return opcode == 0x03 || opcode == 0x0b || opcode == 0x3b || opcode == 0x05 ||
 	       opcode == 0x9f || opcode == 0x35 || opcode == 0x15 ||
 	       opcode == 0x5a;
 }
@@ -115,9 +117,12 @@ static int gc_spi_exec(struct spi_slave *slave, const struct spi_mem_op *op)
 	writel(op->addr.val, p->base);
 	writel(BIT(24) | op->addr.nbytes | (op->dummy.nbytes * 8 << 16), p->base + 4);
 	writel(left, p->base + 8);
-	/* CMD3: opcode, direction (bits 3:1, 1 = out or no data), completion. */
-	writel((u32)op->cmd.opcode << 24 | (left && !out ? 0 : BIT(1)) | BIT(0),
-	       p->base + 0x0c);
+	/*
+	 * CMD3: opcode, protocol (bits 7:5, 1 = 1-1-2), direction (bits 3:1,
+	 * 1 = out or no data) and completion.
+	 */
+	writel((u32)op->cmd.opcode << 24 | (op->data.buswidth == 2 ? 1 << 5 : 0) |
+	       (left && !out ? 0 : BIT(1)) | BIT(0), p->base + 0x0c);
 	while (left) {
 		ret = readl_poll_timeout(p->base + 0x18, val,
 					 val & (out ? BIT(0) : BIT(1)), 100000);
@@ -178,7 +183,7 @@ static int gc_spi_mode(struct udevice *bus, uint mode)
 {
 	struct gc_spi *p = dev_get_priv(bus);
 
-	if (mode)
+	if (mode & ~SPI_RX_DUAL)
 		return -ENOTSUPP;
 	clrbits_le32(p->base + 0x10, BIT(4));
 	return 0;

@@ -68,7 +68,7 @@ def inspect_build(build, cross):
         report["stack"][name] = {"conservative_bound": bound, "budget": budget,
                                  "frames": frames,
                                  "bss_end": hex(syms[name]["__bss_end"])}
-    required = ["ENV_IS_NOWHERE", "SYS_ICACHE_OFF", "SYS_DCACHE_OFF", "SPI_MEM",
+    required = ["ENV_IS_NOWHERE", "SYS_DCACHE_OFF", "SPI_MEM",
                 "DM_SPI", "DM_SPI_FLASH", "SYS_NS16550_MEM32", "DM_MDIO", "DM_ETH",
                 "DM_ETH_PHY",
                 "CMD_LOADB", "CMD_BOOTZ", "CMD_CRC32", "CMD_SLEEP",

@@ -147,9 +147,27 @@ static void spi_tests(void)
 	assert(gc_spi_speed(&bus, 24999999) == -ERANGE);
 	assert(!gc_spi_speed(&bus, 25000000));
 	assert((raw(0xa0000010) & 3) == 3);
-	op.data.buswidth = 2;
+	op.data.buswidth = 4;
 	assert(!gc_spi_supports(&slave, &op));
+	op.data.buswidth = 2;
+	op.cmd.opcode = 0x3b;
+	op.dummy.nbytes = 1;
+	op.dummy.buswidth = 1;
+	assert(gc_spi_supports(&slave, &op));
+	memset(bytes, 0xaa, sizeof(bytes));
+	assert(!gc_spi_exec(&slave, &op));
+	assert(raw(0xa000000c) == (0x3b000000 | 1 << 5 | BIT(0)));
+	assert((raw(0xa0000004) >> 16 & 0xff) == 8);
+	for (i = 0; i < 259; i++)
+		assert(bytes[i + 1] == (i & 255));
+	op.data.dir = SPI_MEM_DATA_OUT;
+	assert(!gc_spi_supports(&slave, &op));
+	op.data.dir = SPI_MEM_DATA_IN;
+	op.cmd.opcode = 0x03;
+	op.dummy.nbytes = 0;
 	op.data.buswidth = 1;
+	assert(gc_spi_mode(&bus, SPI_RX_DUAL) == 0);
+	assert(gc_spi_mode(&bus, SPI_RX_QUAD) == -ENOTSUPP);
 	op.addr.val = 0xfffffe;
 	assert(gc_spi_exec(&slave, &op) == -EINVAL);
 	op.addr.val = 0;
@@ -229,7 +247,7 @@ static void spi_tests(void)
 	assert(gc_spi_exec(&slave, &op) == -ETIMEDOUT);
 	complete_stuck = false;
 	assert(!gc_spi_exec(&slave, &op));
-	puts("SPI: FIFO tails, guarded program/erase, lane/address rejection, timeout, failed abort and recovery passed");
+	puts("SPI: FIFO tails, dual read, guarded program/erase, lane/address rejection, timeout, failed abort and recovery passed");
 }
 
 static void network_tests(void)

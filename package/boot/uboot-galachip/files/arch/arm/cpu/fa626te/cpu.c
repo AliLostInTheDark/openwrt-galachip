@@ -9,8 +9,21 @@ int __weak gc1601_eth_handoff(void)
 	return 0;
 }
 
-void enable_caches(void) {}
-void invalidate_icache_all(void) {}
+/*
+ * Only the I-cache: it needs no MMU, and with the D-cache off nothing can
+ * leave stale code behind it. The D-cache stays off for the uncached DMA.
+ */
+void enable_caches(void)
+{
+	invalidate_icache_all();
+	icache_enable();
+}
+
+void invalidate_icache_all(void)
+{
+	asm volatile("mcr p15, 0, %0, c7, c5, 0" : : "r"(0) : "memory");
+}
+
 void invalidate_dcache_all(void) {}
 void flush_dcache_all(void) {}
 
@@ -19,6 +32,8 @@ int cleanup_before_linux(void)
 	if (gc1601_eth_handoff())
 		hang();
 	disable_interrupts();
+	icache_disable();
+	invalidate_icache_all();
 	asm volatile("mcr p15, 0, %0, c7, c10, 4" : : "r"(0) : "memory");
 	return 0;
 }
