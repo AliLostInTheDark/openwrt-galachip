@@ -25,14 +25,41 @@ blocks.
 
 ## With a programmer
 
-**Recovery is by external SPI programmer.** On 2026-11-02 a CH341A clip
+**Last resort: the external SPI programmer.** On 2026-11-02 a CH341A clip
 gave three identical 4 MiB reads of this unit (SHA256 `8698f068...8335`), and a
 full-chip erase, write and verify restored that backup.
 
-**A broken SPL also recovers over UART alone** (verified 2026-11-03): the mask
-ROM shows its menu; answer `2` and Enter, then send the SPL without its
-16-byte header with `g7-analysis/rom-xmodem.py` (plain `sx` fails). U-Boot
-proper then loads from NOR, where the SPL can be rewritten.
+## Without a programmer: mask ROM UART recovery
+
+Verified 2026-11-03. When the SPL is broken the mask ROM prints:
+
+```text
+Boot from Offset 0: Image header failed! (wrong magic number)
+1. SPI-NOR
+2. UART(Xmodem)
+Please select boot mode[1-2]:
+```
+
+The ROM takes XMODEM-CRC but repeats `C` until the first block and cancels on
+a repeated block, so plain `sx` fails (it resends block 1 on a stale `C`).
+Send with `tools/rom-xmodem.py`; it strips the 16-byte ROM header, since the
+ROM runs the upload from its first byte, so `…-u-boot-spl.bin` goes as is.
+
+By hand in picocom:
+
+```sh
+picocom -b 115200 --send-cmd tools/rom-xmodem.py /dev/ttyUSB1
+```
+
+Type `2` and Enter, then `C-a C-s` and the SPL file name. Or in one step,
+which also stops U-Boot's 1 s autoboot:
+
+```sh
+tools/rom-xmodem.py /dev/ttyUSB1 openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-spl.bin
+```
+
+U-Boot proper then loads from NOR; `run upgrade_uboot` rewrites the boot
+region, SPL included.
 
 Before each write:
 

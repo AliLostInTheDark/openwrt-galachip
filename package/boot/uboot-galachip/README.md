@@ -89,6 +89,10 @@ touches the bootloader.
 | `manifest.json` | Revision, configuration hashes, artifact sizes/hashes, entries and limits. |
 | `host-inspection.json` | ISA, relocation, command, stack and SRAM assertions. |
 
+`tools/rom-xmodem.py` sends an SPL to the mask ROM's UART menu, standalone or
+as picocom's send command ([INSTALLATION.md](INSTALLATION.md)). `sf erase`,
+`sf write` and `sf update` draw a progress bar and report time and KiB/s.
+
 The installed SPL **does not consume a legacy image header** at flash `0x2000`.
 It copies `0x60000` raw bytes to `0x40100000` and calls that address.
 A legacy header prepended there would execute as instructions and break boot.
