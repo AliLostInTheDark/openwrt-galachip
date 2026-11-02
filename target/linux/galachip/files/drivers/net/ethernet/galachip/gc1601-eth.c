@@ -4629,6 +4629,20 @@ static int gc1601_eth_probe(struct platform_device *pdev)
 
 	netif_napi_add(netdev, &priv->napi, gc1601_rx_poll);
 
+	/*
+	 * Bring a cold engine up now, before pon0 can share its buffer pool:
+	 * a first open after pon0 is running rebuilds the free list under
+	 * buffers the PON still holds. Every open then takes the warm path.
+	 */
+	rtnl_lock();
+	ret = gc1601_hw_setup(priv);
+	gc1601_hw_stop(priv);
+	rtnl_unlock();
+	if (ret) {
+		dev_err(dev, "Packet engine setup failed: %d\n", ret);
+		goto err_free_tx_ring;
+	}
+
 	ret = register_netdev(netdev);
 	if (ret) {
 		dev_err(dev, "Failed to register netdevice\n");
