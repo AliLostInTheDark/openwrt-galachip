@@ -27,8 +27,12 @@ the programmer, below.
 
 **Recovery is by external SPI programmer.** On 2026-11-02 a CH341A clip
 gave three identical 4 MiB reads of this unit (SHA256 `8698f068...8335`), and a
-full-chip erase, write and verify restored that backup. Independent ROM UART
-recovery is still unproven and is no longer required for a proper trial. SPL writes use the programmer.
+full-chip erase, write and verify restored that backup. SPL writes use the programmer.
+
+**A broken SPL also recovers over UART alone** (verified 2026-11-03): the mask
+ROM shows its menu; answer `2` and Enter, then send the SPL without its
+16-byte header with `g7-analysis/rom-xmodem.py` (plain `sx` fails). U-Boot
+proper then loads from NOR, where the SPL can be rewritten.
 
 Before each write:
 

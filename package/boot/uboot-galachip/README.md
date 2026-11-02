@@ -4,7 +4,7 @@ U-Boot **v2026.10** for the GC1601/FA626TE XZ000-G7 with 32 MiB DDR and
 4 MiB EN25QH32B NOR. **U-Boot proper runs from NOR behind the stock SPL and
 updates itself (`run upgrade_uboot`); it installs from the stock U-Boot
 without a programmer ([INSTALLATION.md](INSTALLATION.md)). The replacement SPL passed 10 cold and
-20 reset boots and UART recovery; ROM recovery is untested.** See [HARDWARE-TESTS.md](HARDWARE-TESTS.md).
+20 reset boots, UART recovery and mask ROM UART recovery.** See [HARDWARE-TESTS.md](HARDWARE-TESTS.md).
 The experimental `gc1601-loader` package is separate and unchanged.
 
 ## Scope
