@@ -37,9 +37,9 @@ calibration operation.
 | `run boot_flash` | Default `bootcmd`: `fwload` the tagged kernel from NOR, then `bootz`. |
 | `run boot_tftp` | `tftpboot ${bootfile}` (the OpenWrt initramfs zImage), `zdtb`, `bootz`. |
 | `run backup_flash` | Read the whole 4 MiB NOR and `tftpput` it as `xz000-g7-flash.bin`. |
-| `run upgrade_uboot` | `tftpboot ${ubootfile}` (proper.img), `ubcheck`, `sf update` at `0x2000`, read back and compare. |
+| `run upgrade_uboot` | `tftpboot ${bootfile_uboot}` (proper.img), `ubcheck`, `sf update` at `0x2000`, read back and compare. |
 | `ubcheck <addr> <size>` | Check a loaded proper.img: size, footer and wrapper CRC32s, entry. |
-| `run upgrade_tftp` | `tftpboot ${upgradefile}` (sysupgrade.bin), check tag and size, `sf update` at `0x20000`. |
+| `run upgrade_tftp` | `tftpboot ${bootfile_upg}` (sysupgrade.bin), check tag and size, `sf update` at `0x20000`. |
 | `fwload <addr>` | Load the tagged kernel; sets `filesize` and `fdt_addr`. |
 | `zdtb <addr>` | Set `fdt_addr` to the DTB appended to a loaded zImage. |
 | `ethdiag [verbose]` | Packet-engine handoff registers. |
@@ -70,7 +70,7 @@ with a different patch identity is rejected.
 In OpenWrt the package is built by default for `tplink_xz000-g7` and
 publishes one device artifact,
 `openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-proper.img`, which is the
-default `ubootfile` for `run upgrade_uboot`. The SPL and full boot-region
+default `bootfile_uboot` for `run upgrade_uboot`. The SPL and full boot-region
 images stay in the package build directory until the SPL passes a cold-boot
 trial. Sysupgrade never touches the bootloader.
 
@@ -107,6 +107,7 @@ interrupt window before `run boot_flash`.
 | Wrapper and compressed input | `0x40100000–0x4011e000` file allocation. |
 | LZMA probability heap | `0x40200000–0x40210000` |
 | Wrapper stack | `0x40300000–0x40304000` |
+| Wrapper MMU table (decode only) | `0x40400000–0x40404000` |
 | DDR scratch | `0x407f0000–0x407f0010` |
 | Fixed packet-engine DMA | `0x40800000–0x40912000` |
 | Wrapper UART staging | Starts `0x40fffff0`; payload starts `0x41000000`. |

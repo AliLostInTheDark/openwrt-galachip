@@ -88,7 +88,8 @@ def main():
     (stage_dir / "proper.lzma").write_bytes(packed)
     (stage_dir / "meta.bin").write_bytes(header)
     run(["make", "-f", PACKAGE / "stages/Makefile",
-         "UBOOT_SRC=" + str(source), "CROSS_COMPILE=" + a.cross_compile,
+         "UBOOT_SRC=" + str(source), "UBOOT_OBJ=" + str(output / "production"),
+         "CROSS_COMPILE=" + a.cross_compile,
          "-j" + str(a.jobs)], cwd=stage_dir, env=env)
     package(stage_dir, builds["ram"], builds["production"],
             output / "artifacts", a.revision, int(epoch))

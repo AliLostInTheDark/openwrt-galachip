@@ -262,7 +262,6 @@ static void packet_block_reset(void)
 	writel(7, GLOBAL + 0x40010);
 	writel(0x7d, GLOBAL + 0x40008);
 	gc_barrier();
-	puts("GC1601: vendor shared packet-block reset complete\n");
 }
 
 static int engine_init(struct gc_eth *p)

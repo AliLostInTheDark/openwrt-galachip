@@ -84,10 +84,12 @@ static int do_fwload(struct cmd_tbl *cmd, int flag, int argc, char *const argv[]
 		printf("0x%lx cannot hold %u bytes\n", addr, length);
 		return CMD_RET_FAILURE;
 	}
-	printf("NOR: reading %u bytes @ 0x%x to 0x%lx ... ", length,
-	       FW_OFFSET + TAG_SIZE, addr);
 	ret = spi_flash_read_dm(flash, FW_OFFSET + TAG_SIZE, length, (void *)addr);
-	puts(ret ? "failed\n" : "OK\n");
+	printf("SF: %u bytes @ %#x Read: ", length, FW_OFFSET + TAG_SIZE);
+	if (ret)
+		printf("ERROR %d\n", ret);
+	else
+		puts("OK\n");
 	if (ret)
 		return CMD_RET_FAILURE;
 	/* The tag has no CRC field; do not invent an integrity guarantee for it. */

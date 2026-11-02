@@ -6,7 +6,8 @@ OBJCOPY := $(CROSS_COMPILE)objcopy
 CFLAGS := -Os -march=armv5te -marm -ffreestanding -fno-builtin -fno-pic \
 	-fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables \
 	-ffunction-sections -fdata-sections -fstack-usage -Wstack-usage=512 \
-	-Wall -Wextra -I$(STAGES) -I$(STAGES)compat -I$(UBOOT_SRC)/lib/lzma
+	-Wall -Wextra -I$(STAGES) -I$(STAGES)compat -I$(UBOOT_SRC)/lib/lzma \
+	-I$(UBOOT_OBJ)/include/generated
 LDFLAGS := -nostdlib -static -Wl,--gc-sections,--build-id=none
 COMMON := common.o uart.o runtime.o
 
