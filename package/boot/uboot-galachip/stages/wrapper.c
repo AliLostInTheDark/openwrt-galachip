@@ -55,6 +55,22 @@ static void release(ISzAllocPtr context, void *address)
 	allocated = 0;
 }
 
+/*
+ * The FA626TE I-cache needs no MMU and nothing here rewrites code, so it
+ * may run during LZMA decoding. The D-cache stays off. Proper is entered
+ * with the I-cache off and invalidated, as before.
+ */
+static void icache(int on)
+{
+	uint32_t cr;
+
+	asm volatile("mcr p15, 0, %0, c7, c5, 0" : : "r"(0) : "memory");
+	asm volatile("mrc p15, 0, %0, c1, c0, 0" : "=r"(cr));
+	cr = on ? cr | 0x1000 : cr & ~0x1000U;
+	asm volatile("mcr p15, 0, %0, c1, c0, 0" : : "r"(cr) : "memory");
+	asm volatile("mcr p15, 0, %0, c7, c5, 0" : : "r"(0) : "memory");
+}
+
 void stage_main(void)
 {
 	const ISzAlloc allocator = { alloc, release };
@@ -62,9 +78,13 @@ void stage_main(void)
 	uart_init();
 	/* The stock SPL leaves its last status digit without a newline. */
 	uart_puts("\nGC1601 checked U-Boot wrapper\n");
+	icache(1);
 	if (decode_image(&image_header, compressed_start,
 			 compressed_end - compressed_start, (void *)PROPER_ENTRY,
-			 PROPER_MAX, &allocator))
+			 PROPER_MAX, &allocator)) {
+		icache(0);
 		recover();
+	}
+	icache(0);
 	stage_jump(PROPER_ENTRY);
 }
