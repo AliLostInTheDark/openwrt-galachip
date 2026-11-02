@@ -873,7 +873,7 @@ static int tcont_depth_set(const char *val, const struct kernel_param *kp)
 	ret = kstrtouint(val, 0, &depth);
 	if (ret)
 		return ret;
-	if (depth < 32 || depth > 1024)
+	if (depth < 32 || depth > 256)	/* with the 256 output limit, inside the pool */
 		return -ERANGE;
 
 	rtnl_lock();
@@ -894,7 +894,7 @@ static const struct kernel_param_ops tcont_depth_ops = {
 	.get = param_get_uint,
 };
 module_param_cb(tcont_depth, &tcont_depth_ops, &tcont_depth, 0644);
-MODULE_PARM_DESC(tcont_depth, "T-CONT queue input depth in buffers (32-1024)");
+MODULE_PARM_DESC(tcont_depth, "T-CONT queue input depth in buffers (32-256)");
 MODULE_PARM_DESC(sfu_pcp_class5, "set match class 5 on upstream P-bit SFU flows");
 
 /* Indirect L3 table write: index, then the data words, last word first. */
