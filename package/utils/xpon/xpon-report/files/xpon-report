@@ -121,11 +121,13 @@ build_mask() {
 				done
 			fi
 		done
-		printf '%s\n' 's/\(serial[ _]number[ :=]*[A-Za-z][A-Za-z][A-Za-z][A-Za-z]\)[0-9A-Fa-f]*/\1[masked]/g'
+		printf '%s\n' 's/\(serial[ _]number[ :=]*[A-Za-z][A-Za-z][A-Za-z][A-Za-z]\)[0-9A-Fa-f]\{8\}/\1[masked]/g'
+		# any GPON serial, including other ONUs' in the PLOAM log
+		printf '%s\n' 's/\(^\|[^A-Za-z0-9]\)\([A-Z]\{4\}\)[0-9A-F]\{8\}\($\|[^A-Za-z0-9]\)/\1\2[masked]\3/g'
 		# key=value, key='value' and "key": "value"
 		printf '%s\n' 's/\(sn=\)\([[:xdigit:]]\{2\} \)\{7\}[[:xdigit:]]\{2\}/\1[masked]/g'
 		for k in serial serial_number serial-number sn loid LOID password Password loid_password; do
-			printf '%s\n' "s/\($k['\"]\{0,1\}[=:] *['\"]\{0,1\}\)[^' ,}\"]\{1,\}/\1[masked]/g"
+			printf '%s\n' "/\.serial: /!s/\($k['\"]\{0,1\}[=:] *['\"]\{0,1\}\)[^' ,}\"]\{1,\}/\1[masked]/g"
 		done
 	} > "$1"
 }

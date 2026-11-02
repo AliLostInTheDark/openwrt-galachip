@@ -1,25 +1,23 @@
-# OMCI userspace migration: wire core and diagnostics
+# OMCI wire core and diagnostics
 
-This is the first migration stage, not a second OMCI responder. The kernel
-still owns the live MIB, transactions, service resolution, alarms and profiles.
-`omci-monitor` binds a read-only observer and cannot use OMCI TX. It neither
-disables the working agent nor changes registration. It is optional, has no
-init service and is not added to the default 4 MiB image.
+`omci-monitor` is a read-only observer, not an OMCI responder: it cannot use
+OMCI TX or change registration. `omcid` owns the live MIB, transactions,
+service resolution, alarms and profiles. The kernel accepts one owner, so the
+monitor cannot attach while omcid runs; on a running system use omcid's trace
+(see its README) and read it here with `omci-monitor -r`. The package is
+optional, has no init service and is not added to the default 4 MiB image.
 
-The optional sibling `libomci-protocol` now also builds the ME catalogue,
-attribute codec and OLT profiles natively. Both kernel and library use the
-same sources. This is reusable protocol code, not live MIB ownership or an
-exclusive userspace responder.
+`libomci-protocol` builds the ME catalogue, attribute codec and OLT profiles
+natively for omcid.
 
-The original GPL-2.0-only wire codec is shared byte-for-byte with
-`net/xpon/omci/wire.{c,h}`. Keep those copies synchronized. Existing
+The GPL-2.0-only wire codec is this package's `src/wire.{c,h}`. Existing
 `omci-agent`/LuCI ancestry and Matheus Sampaio Queiroga (@Sirherobrine23)
 credits are unchanged. This package adds diagnostics, not a new claim of
 authorship over that work.
 
 ## Usage
 
-Requires matching OMCI UAPI v15 and root for the observer bind:
+Requires matching OMCI UAPI v17 and root for the observer bind:
 
 ```sh
 omci-monitor -d 0
@@ -50,10 +48,10 @@ and preserve them when creating a sanitized fixture. JSON `ms` on replay is
 the replay process's clock, not the original capture timestamp.
 
 TX means the driver accepted the response, not that the OLT received it.
-Trailer generation/checking stays in the driver (software CRC in the GC1601
-backend, despite the historical `HW_MIC` capability name). The codec checks
+Trailer generation/checking stays in the PON driver, which may compute the
+CRC in software despite the historical `HW_MIC` capability name. The codec checks
 framing, not every G.988 semantic or MIC. TX trace is emitted before the
-corresponding RX observation because the current kernel responds first;
+corresponding RX observation because the responder answers first;
 do not use record arrival order as wire order or calculate RTT from it.
 `trace_dropped`, RX sequence gaps, and `transport_loss` expose incomplete
 captures. No timeout or interoperability conclusion is valid across a loss

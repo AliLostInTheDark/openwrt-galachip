@@ -48,6 +48,14 @@
 			"type": "firstchild"
 		}
 	},
+	"admin/network/omci/mib/read": {
+		"title": "Read",
+		"order": 5,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/read"
+		}
+	},
 	"admin/network/omci/mib/inventory": {
 		"title": "Inventory",
 		"order": 10,

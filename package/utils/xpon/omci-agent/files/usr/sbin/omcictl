@@ -28,7 +28,7 @@ function usage(exitcode) {
 		'  class list\n' +
 		'  class show CLASS_ID\n' +
 		'  mib list\n' +
-		'  mib show CLASS_ID [ENTITY_ID]\n' +
+		'  mib show|get CLASS_ID [ENTITY_ID]\n' +
 		'  mib set CLASS_ID ENTITY_ID ATTR_MASK HEX_DATA\n' +
 		'  mib delete CLASS_ID ENTITY_ID\n' +
 		'  mib reset\n' +
@@ -77,8 +77,8 @@ function maybe(value) {
 	return value == null || `${value}` == '' ? 'unavailable' : `${value}`;
 }
 
-function optical_power(nw) {
-	return nw > 0 ? sprintf('%.2f dBm / %.4f mW', 10 * math.log(nw / 1e6) / math.log(10), nw / 1e6) : 'no light';
+function optical_power(label, nw) {
+	return label + (nw > 0 ? sprintf(' %.2f dBm / %.4f mW', 10 * math.log(nw / 1e6) / math.log(10), nw / 1e6) : ' no light');
 }
 
 /* The agent reports integer milli/micro/nano units; print readable ones. */
@@ -86,8 +86,8 @@ const optics = [
 	[ 'bosa_temperature_mc', 'bosa_temperature', (v) => sprintf('%.1f °C / %.1f °F', v / 1000.0, v * 9 / 5000.0 + 32) ],
 	[ 'bosa_voltage_uv', 'bosa_voltage', (v) => sprintf('%.2f V', v / 1e6) ],
 	[ 'bosa_bias_ua', 'bosa_bias', (v) => sprintf('%.1f mA', v / 1000.0) ],
-	[ 'bosa_tx_power_nw', 'bosa_tx_power', optical_power ],
-	[ 'bosa_rx_power_nw', 'bosa_rx_power', optical_power ]
+	[ 'bosa_tx_power_nw', 'bosa_tx_power', (v) => optical_power('1310nm (TX)', v) ],
+	[ 'bosa_rx_power_nw', 'bosa_rx_power', (v) => optical_power('1490nm (RX)', v) ]
 ];
 
 function format_optics(status) {
@@ -191,12 +191,10 @@ function print_classes(classes) {
 }
 
 function print_mib(objects) {
-	printf('%-6s %-8s %-36s %-10s %-8s %s\n',
-		'class', 'entity', 'name', 'origin', 'mask', 'data');
+	printf('%-6s %-8s %-48s %s\n', 'class', 'entity', 'name', 'origin');
 	for (let item in (objects || []))
-		printf('%-6d 0x%04x   %-36s %-10s 0x%04x   %s\n',
-			item.class_id, item.entity_id, item.name || '-',
-			item.origin_name || '-', item.attr_mask || 0, item.data || '');
+		printf('%-6d 0x%04x   %-48s %s\n', item.class_id, item.entity_id,
+			item.name || '-', (item.origin_name == 'default' && item.olt_written) ? 'default+olt' : (item.origin_name || '-'));
 }
 
 /* One block per object, decoded fields first; classes without a decoder show hex. */
@@ -209,8 +207,12 @@ function print_objects(objects) {
 			continue;
 		}
 		for (let name, value in item.fields) {
+			if (name == 'notes')
+				continue;
 			if (type(value) != 'array') {
-				printf('  %-24s %s\n', name, value);
+				let explained = item.fields.notes?.[name];
+
+				printf('  %-24s %s%s\n', name, value, explained ? `  (${explained})` : '');
 				continue;
 			}
 			printf('  %s:\n', name);
@@ -335,14 +337,14 @@ case 'mib': {
 		result = rpc('mib_list', { device }, 'objects');
 		kind = 'mib';
 	}
-	else if (sub == 'show' && length(ARGV) == 2) {
+	else if ((sub == 'show' || sub == 'get') && length(ARGV) == 2) {
 		let class_id = uint(shift(ARGV), 0xffff);
 		let entity_id = uint(shift(ARGV), 0xffff);
 		if (class_id == null || entity_id == null) usage(2);
 		result = [ rpc('mib_get', { device, class_id, entity_id }, 'object') ];
 		kind = 'objects';
 	}
-	else if (sub == 'show' && length(ARGV) == 1) {
+	else if ((sub == 'show' || sub == 'get') && length(ARGV) == 1) {
 		let class_id = uint(shift(ARGV), 0xffff);
 		if (class_id == null) usage(2);
 		result = filter(rpc('mib_list', { device }, 'objects') || [],

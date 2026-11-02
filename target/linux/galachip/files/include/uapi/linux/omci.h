@@ -126,6 +126,8 @@ enum omci_attr {
 	OMCI_ATTR_LOID_STATUS,
 	OMCI_ATTR_DIAGNOSTICS,	/* native control: include on-demand alarm text */
 	OMCI_ATTR_ALARM_TEXT,
+	OMCI_ATTR_MCAST_TABLES,	/* raw multicast table rows */
+	OMCI_ATTR_OLT_WRITTEN,	/* u8: the OLT Set this ONU-created object */
 
 	__OMCI_ATTR_MAX,
 };

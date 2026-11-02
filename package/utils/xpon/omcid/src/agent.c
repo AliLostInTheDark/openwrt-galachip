@@ -1156,7 +1156,8 @@ omci_agent_seed_profile_locked(struct omci_device *odev, u8 profile)
 }
 
 static u8 omci_agent_veip_slot_for_profile(const struct omci_agent *agent, u8 profile);
-static int omci_agent_move_veip_default(struct omci_device *odev, u8 slot);
+static u8 omci_agent_veip_port(const struct omci_agent *agent);
+static int omci_agent_move_veip_default(struct omci_device *odev, u16 entity);
 
 static int
 omci_agent_profile_reconcile_locked(struct omci_device *odev,
@@ -1188,7 +1189,8 @@ omci_agent_profile_reconcile_locked(struct omci_device *odev,
 	if (omci_agent_veip_slot_for_profile(agent, old_profile) !=
 	    omci_agent_veip_slot_for_profile(agent, new_profile)) {
 		ret = omci_agent_move_veip_default(odev,
-				omci_agent_veip_slot_for_profile(agent, new_profile));
+				OMCI_UNI_ENTITY_ID(omci_agent_veip_slot_for_profile(agent, new_profile),
+						   omci_agent_veip_port(agent)));
 		if (ret) {
 			agent->profile_effective = old_profile;
 			return ret;
@@ -1585,6 +1587,14 @@ static u8 omci_agent_veip_slot(const struct omci_agent *agent)
 	return omci_agent_veip_slot_for_profile(agent, agent->profile_effective);
 }
 
+/* The VEIP's low ID byte: 1 unless the OLT provisioned another. */
+static u8 omci_agent_veip_port(const struct omci_agent *agent)
+{
+	if (agent->config.veip_slot || !agent->veip_learned)
+		return 1;
+	return agent->veip_port_learned;
+}
+
 static void omci_mib_drop_default(struct omci_agent *agent, u16 class_id,
 				  u16 entity_id)
 {
@@ -1602,16 +1612,14 @@ static void omci_mib_drop_default(struct omci_agent *agent, u16 class_id,
  * equipment of a slot the current profile does not use, so a profile
  * change does not leave a second VEIP for the OLT to provision.
  */
-static void omci_agent_drop_veip_default(struct omci_agent *agent, u8 slot)
+static void omci_agent_drop_veip_default(struct omci_agent *agent, u16 entity)
 {
-	omci_mib_drop_default(agent, OMCI_CLASS_VEIP,
-			      OMCI_UNI_ENTITY_ID(slot, 1));
-	omci_mib_drop_default(agent, OMCI_CLASS_UNI_G,
-			      OMCI_UNI_ENTITY_ID(slot, 1));
+	omci_mib_drop_default(agent, OMCI_CLASS_VEIP, entity);
+	omci_mib_drop_default(agent, OMCI_CLASS_UNI_G, entity);
 	omci_mib_drop_default(agent, OMCI_CLASS_CARDHOLDER,
-			      OMCI_EQUIPMENT_ENTITY_ID(slot));
+			      OMCI_EQUIPMENT_ENTITY_ID(entity >> 8));
 	omci_mib_drop_default(agent, OMCI_CLASS_CIRCUIT_PACK,
-			      OMCI_EQUIPMENT_ENTITY_ID(slot));
+			      OMCI_EQUIPMENT_ENTITY_ID(entity >> 8));
 }
 
 static void omci_uni_g_default_data(u8 data[OMCI_MAX_ATTR_DATA])
@@ -1621,45 +1629,45 @@ static void omci_uni_g_default_data(u8 data[OMCI_MAX_ATTR_DATA])
 	data[3] = 2;
 }
 
-/* Slot of the VEIP the MIB holds, or 0. */
-static u8 omci_agent_mib_veip_slot(struct omci_agent *agent)
+/* Entity ID of the VEIP the MIB holds, or 0. */
+static u16 omci_agent_mib_veip(struct omci_agent *agent)
 {
 	struct omci_mib_object *object;
 	unsigned long index;
 
 	xa_for_each(&agent->mib, index, object)
 		if (object->class_id == OMCI_CLASS_VEIP)
-			return object->entity_id >> 8;
+			return object->entity_id;
 
 	return 0;
 }
 
-/* Move the ONU-created VEIP, its UNI-G and its equipment to @slot. */
-static int omci_agent_move_veip_default(struct omci_device *odev, u8 slot)
+/* Move the ONU-created VEIP, its UNI-G and its equipment to @entity. */
+static int omci_agent_move_veip_default(struct omci_device *odev, u16 entity)
 {
 	struct omci_agent *agent = &odev->agent;
-	u8 old_slot = omci_agent_mib_veip_slot(agent);
+	u16 old = omci_agent_mib_veip(agent);
+	u8 slot = entity >> 8;
 	struct omci_ani_topology topology;
 	u8 data[OMCI_MAX_ATTR_DATA] = {};
 	struct omci_mib_object *object;
 	unsigned long index;
 	int ret;
 
-	if (old_slot == slot)
+	if (old == entity)
 		return 0;
 	ret = omci_agent_get_ani_topology(odev, &topology);
 	if (ret)
 		return ret;
-	if (old_slot) {
-		omci_agent_drop_veip_default(agent, old_slot);
-		omci_mib_drop_default(agent, OMCI_CLASS_EXTENDED_VLAN,
-				      OMCI_UNI_ENTITY_ID(old_slot, 1));
+	if (old) {
+		omci_agent_drop_veip_default(agent, old);
+		omci_mib_drop_default(agent, OMCI_CLASS_EXTENDED_VLAN, old);
 		/* Its downstream queues follow it. */
 		xa_for_each(&agent->mib, index, object)
 			if (object->class_id == OMCI_CLASS_PRIORITY_QUEUE &&
 			    !(object->entity_id & BIT(15)) &&
-			    get_unaligned_be16(object->data + 9) == OMCI_UNI_ENTITY_ID(old_slot, 1))
-				put_unaligned_be16(OMCI_UNI_ENTITY_ID(slot, 1), object->data + 9);
+			    get_unaligned_be16(object->data + 9) == old)
+				put_unaligned_be16(entity, object->data + 9);
 	}
 	ret = omci_agent_add_equipment_default(agent, &topology, slot,
 					       OMCI_VEIP_UNIT_TYPE, 1, false,
@@ -1667,14 +1675,12 @@ static int omci_agent_move_veip_default(struct omci_device *odev, u8 slot)
 	if (ret)
 		return ret;
 	memset(data, 0, sizeof(data)); /* Administrative state unlocked. */
-	ret = omci_mib_add_default(agent, OMCI_CLASS_VEIP,
-				   OMCI_UNI_ENTITY_ID(slot, 1), data,
+	ret = omci_mib_add_default(agent, OMCI_CLASS_VEIP, entity, data,
 				   sizeof(data));
 	if (ret)
 		return ret;
 	omci_uni_g_default_data(data);
-	ret = omci_mib_add_default_mask(agent, OMCI_CLASS_UNI_G,
-					OMCI_UNI_ENTITY_ID(slot, 1),
+	ret = omci_mib_add_default_mask(agent, OMCI_CLASS_UNI_G, entity,
 					GENMASK(15, 12), data, sizeof(data));
 	if (ret)
 		return ret;
@@ -1693,15 +1699,26 @@ static int omci_agent_move_veip_default(struct omci_device *odev, u8 slot)
  * set-by-create attributes: class 47 has the TP type and pointer at 3 and 4,
  * class 171 the association type and pointer at 0 and 1.
  */
+static void omci_agent_learn_veip(struct omci_device *odev, u16 pointer)
+{
+	struct omci_agent *agent = &odev->agent;
+	u8 slot = pointer >> 8;
+
+	if (agent->config.veip_slot || !(pointer & 0xff) || !slot ||
+	    slot == OMCI_ETHERNET_SLOT || slot >= OMCI_GPON_SLOT ||
+	    omci_mib_lookup(agent, OMCI_CLASS_VEIP, pointer))
+		return;
+	if (!omci_agent_move_veip_default(odev, pointer)) {
+		agent->veip_learned = slot;
+		agent->veip_port_learned = pointer & 0xff;
+	}
+}
+
 static void omci_agent_learn_veip_slot(struct omci_device *odev, u16 class_id,
 				       const u8 *content, size_t len)
 {
-	struct omci_agent *agent = &odev->agent;
 	u16 pointer;
-	u8 slot;
 
-	if (agent->config.veip_slot)
-		return;
 	if (class_id == OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA && len >= 6 &&
 	    content[3] == OMCI_BRIDGE_TP_VEIP)
 		pointer = get_unaligned_be16(content + 4);
@@ -1711,12 +1728,7 @@ static void omci_agent_learn_veip_slot(struct omci_device *odev, u16 class_id,
 	else
 		return;
 
-	slot = pointer >> 8;
-	if ((pointer & 0xff) != 1 || !slot || slot == OMCI_ETHERNET_SLOT ||
-	    slot >= OMCI_GPON_SLOT || omci_mib_lookup(agent, OMCI_CLASS_VEIP, pointer))
-		return;
-	if (!omci_agent_move_veip_default(odev, slot))
-		agent->veip_learned = slot;
+	omci_agent_learn_veip(odev, pointer);
 }
 
 static int omci_agent_populate_defaults(struct omci_device *odev)
@@ -1726,6 +1738,7 @@ static int omci_agent_populate_defaults(struct omci_device *odev)
 	u8 data[OMCI_MAX_ATTR_DATA] = {};
 	unsigned int i, queue;
 	u16 queue_id;
+	u16 veip;
 	u8 veip_slot;
 	int ret;
 
@@ -1764,8 +1777,9 @@ static int omci_agent_populate_defaults(struct omci_device *odev)
 	if (ret)
 		return ret;
 	veip_slot = omci_agent_veip_slot(agent);
-	i = omci_agent_mib_veip_slot(agent);
-	if (i && i != veip_slot)
+	veip = OMCI_UNI_ENTITY_ID(veip_slot, omci_agent_veip_port(agent));
+	i = omci_agent_mib_veip(agent);
+	if (i && i != veip)
 		omci_agent_drop_veip_default(agent, i);
 	ret = omci_agent_add_equipment_default(agent, &topology, veip_slot,
 					       OMCI_VEIP_UNIT_TYPE, 1, false,
@@ -1827,14 +1841,12 @@ static int omci_agent_populate_defaults(struct omci_device *odev)
 
 	memset(data, 0, sizeof(data));
 	data[0] = 0; /* Administrative state unlocked. */
-	ret = omci_mib_add_default(agent, OMCI_CLASS_VEIP,
-				   OMCI_UNI_ENTITY_ID(veip_slot, 1), data,
+	ret = omci_mib_add_default(agent, OMCI_CLASS_VEIP, veip, data,
 				   sizeof(data));
 	if (ret)
 		return ret;
 	omci_uni_g_default_data(data);
-	ret = omci_mib_add_default_mask(agent, OMCI_CLASS_UNI_G,
-					OMCI_UNI_ENTITY_ID(veip_slot, 1),
+	ret = omci_mib_add_default_mask(agent, OMCI_CLASS_UNI_G, veip,
 					GENMASK(15, 12), data, sizeof(data));
 	if (ret)
 		return ret;
@@ -1871,7 +1883,7 @@ static int omci_agent_populate_defaults(struct omci_device *odev)
 	for (i = 0, queue_id = 0; i <= agent->config.uni_count; i++) {
 		u16 uni = i < agent->config.uni_count ?
 			  OMCI_UNI_ENTITY_ID(OMCI_ETHERNET_SLOT, i + 1) :
-			  OMCI_UNI_ENTITY_ID(veip_slot, 1);
+			  veip;
 
 		for (queue = 0; queue < topology.downstream_queues_per_uni; queue++) {
 			omci_downstream_queue_default_data(&topology, uni, queue, data);
@@ -2840,6 +2852,19 @@ static int omci_agent_mib_reset_locked(struct omci_device *odev, bool all,
 	return ret ?: reset_ret;
 }
 
+/*
+ * QoS the hardware cannot do must not fail the OLT's write: that would cost
+ * the service to lose only the shaping. Say so once, in the daemon's log.
+ */
+#define OMCI_QOS_NOTE_ONCE(fmt, ...) do {				\
+	static bool said;						\
+									\
+	if (!said) {							\
+		said = true;						\
+		fprintf(stderr, "omcid: " fmt "\n", ##__VA_ARGS__);	\
+	}								\
+} while (0)
+
 static int omci_agent_gem_rate_locked(struct omci_device *odev,
 				      const struct omci_mib_object *gem, bool remove)
 {
@@ -2857,12 +2882,13 @@ static int omci_agent_gem_rate_locked(struct omci_device *odev,
 		if (!ptr)
 			continue;
 		td = omci_mib_lookup(agent, OMCI_CLASS_TRAFFIC_DESCRIPTOR, ptr);
+		/* Creating it later reconciles this GEM again. */
 		if (!td || !omci_mib_object_active(agent, td))
-			return -ENOENT;
+			continue;
 		/* The decoded vendor path is a peak limiter, not a colour meter. */
 		if (get_unaligned_be32(td->data) || get_unaligned_be32(td->data + 8) ||
 		    td->data[16] || td->data[17] || td->data[18] || td->data[19])
-			return -EOPNOTSUPP;
+			OMCI_QOS_NOTE_ONCE("traffic descriptor %#x: only its peak rate is applied", ptr);
 		rate[i] = get_unaligned_be32(td->data + 4);
 		burst[i] = get_unaligned_be32(td->data + 12);
 	}
@@ -3463,6 +3489,7 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 	const struct omci_vlan_tagging_filter *ani_filter = NULL;
 	bool installed = false;
 	bool has_vlan_rules = false;
+	bool olt_treatment = false;
 	int ret;
 
 	/*
@@ -3478,6 +3505,16 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 		ani_filter = &object->vlan_filter;
 
 	xa_for_each(&agent->mib, index, object) {
+		if (object->class_id != OMCI_CLASS_EXTENDED_VLAN ||
+		    !omci_mib_object_active(agent, object) ||
+		    !object->extended_vlan.valid || !object->extended_vlan.rule_count ||
+		    !omci_agent_vlan_associated(object, lan_port->entity_id, uni_entity,
+					bridge_port_entity, service_entity))
+			continue;
+		olt_treatment |= object->origin == OMCI_MIB_ORIGIN_OLT;
+	}
+
+	xa_for_each(&agent->mib, index, object) {
 		unsigned int i;
 
 		if (!omci_mib_object_active(agent, object) ||
@@ -3488,6 +3525,11 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 		if (object->class_id == OMCI_CLASS_VLAN_TAGGING_FILTER_DATA &&
 		    object->vlan_filter.valid) {
 			has_vlan_rules |= object->vlan_filter.num_entries != 0;
+			/* The ANI filter admits the resulting VID; it must not create
+			 * a second transparent path around the OLT's VLAN treatment. */
+			if (olt_treatment && (object->entity_id == bridge_port_entity ||
+					      object->entity_id == service_entity))
+				continue;
 			for (i = 0; i < object->vlan_filter.num_entries; i++) {
 				ret = omci_agent_stage_service_rule_locked(
 					odev, services, lan_port->entity_id,
@@ -3504,6 +3546,8 @@ omci_agent_stage_path_locked(struct omci_device *odev,
 			}
 		} else if (object->class_id == OMCI_CLASS_EXTENDED_VLAN &&
 			   object->extended_vlan.valid) {
+			if (olt_treatment && object->origin == OMCI_MIB_ORIGIN_DEFAULT)
+				continue;
 			has_vlan_rules |= object->extended_vlan.rule_count != 0;
 			for (i = 0; i < object->extended_vlan.rule_count; i++) {
 				ret = omci_agent_stage_service_rule_locked(
@@ -3640,7 +3684,7 @@ static int omci_agent_apply_uni_attrs_locked(struct omci_device *odev)
 	struct omci_mib_object *port, *pptp, *bsp;
 	unsigned long index, port_index;
 	u16 entity;
-	int ret;
+	int ret, err = 0;
 
 	if (!ops->set_uni_attrs)
 		return 0;
@@ -3697,12 +3741,15 @@ static int omci_agent_apply_uni_attrs_locked(struct omci_device *odev)
 			if (ret) {
 				xa_erase(&agent->uni_attrs, entity);
 				kfree(cached);
-				return ret;
+				err = err ?: ret;
+				continue;
 			}
 		} else {
 			ret = ops->set_uni_attrs(odev, entity, &attrs);
-			if (ret)
-				return ret;
+			if (ret) {
+				err = err ?: ret;
+				continue;
+			}
 		}
 		*cached = attrs;
 	}
@@ -3723,12 +3770,14 @@ static int omci_agent_apply_uni_attrs_locked(struct omci_device *odev)
 			continue;
 		memset(&attrs, 0, sizeof(attrs));
 		ret = ops->set_uni_attrs(odev, index, &attrs);
-		if (ret)
-			return ret;
+		if (ret) {
+			err = err ?: ret;
+			continue;
+		}
 		xa_erase(&agent->uni_attrs, index);
 		kfree(cached);
 	}
-	return 0;
+	return err;
 }
 
 static int omci_agent_tcont_qos_locked(struct omci_device *odev,
@@ -3775,30 +3824,37 @@ static int omci_agent_tcont_qos_locked(struct omci_device *odev,
 		seen |= BIT(priority);
 		ptr = get_unaligned_be16(pq->data + 13);
 		if (root_set && root != ptr)
-			return -EOPNOTSUPP;
+			goto unsupported;
 		root = ptr;
 		root_set = true;
 		ts = ptr ? omci_mib_lookup(agent, OMCI_CLASS_TRAFFIC_SCHEDULER, ptr) : NULL;
+		/* Creating it later reconciles this T-CONT again. */
 		if (ptr && (!ts || !omci_mib_object_active(agent, ts)))
-			return -ENOENT;
+			goto unsupported;
 		/* The hardware has one scheduling stage per Alloc-ID. */
 		if (ts && (get_unaligned_be16(ts->data) != tcont->entity_id ||
 			   get_unaligned_be16(ts->data + 2)))
-			return -EOPNOTSUPP;
+			goto unsupported;
 		policy = ts ? ts->data[4] : tcont->data[3];
 		if (policy != 1 && policy != 2)
-			return -EOPNOTSUPP;
+			goto unsupported;
 		if (!qos.policy)
 			qos.policy = policy;
 		if (qos.policy != policy)
-			return -EOPNOTSUPP;
+			goto unsupported;
 		qos.weight[priority] = pq->data[15];
 		weight |= pq->data[15];
 	}
 	if (!seen || (qos.policy != 1 && qos.policy != 2))
-		return -EOPNOTSUPP;
+		goto unsupported;
 	if (qos.policy == 2 && !weight)
 		return -EINVAL;
+	goto apply;
+
+unsupported:
+	OMCI_QOS_NOTE_ONCE("T-CONT %#x: this scheduler layout is not supported, using one queue",
+			   tcont->entity_id);
+	memset(&qos, 0, sizeof(qos));
 apply:
 	if (tcont->pending_delete)
 		qos.enabled = false;
@@ -3910,6 +3966,115 @@ omci_get_or_create_locked(struct omci_agent *agent, u16 class_id,
 		return NULL;
 
 	return omci_mib_lookup(agent, class_id, entity_id);
+}
+
+/*
+ * Attribute sizes of the multicast MEs, which have no descriptor. A Set packs
+ * only the attributes in its mask, and table rows have no place in the object,
+ * so without this one ACL row lands over the first attributes. Table rows
+ * go to their own store.
+ */
+struct omci_mcast_attr {
+	u8 offset;
+	u8 len;
+	bool table;
+};
+
+static const struct omci_mcast_attr omci_mcast_gem_iwtp_attrs[] = {
+	{ 0, 2, false }, { 2, 1, false }, { 3, 2, false }, { 5, 2, false }, { 7, 1, false }, { 8, 1, false }, { 9, 2, false },
+	{ 11, 1, false }, { 0, 12, true }, { 0, 24, true },
+};
+
+static const struct omci_mcast_attr omci_mcast_profile_attrs[] = {
+	{ 0, 1, false }, { 1, 1, false }, { 2, 1, false }, { 3, 2, false }, { 5, 1, false }, { 6, 4, false },
+	{ 0, 24, true }, { 0, 24, true }, { 0, 10, true }, { 10, 1, false }, { 11, 4, false },
+	{ 15, 4, false }, { 19, 4, false }, { 23, 4, false }, { 27, 1, false }, { 28, 3, false },
+};
+
+static const struct omci_mcast_attr omci_mcast_subscriber_attrs[] = {
+	{ 0, 1, false }, { 1, 2, false }, { 3, 2, false }, { 5, 4, false }, { 9, 1, false }, { 0, 20, true },
+	{ 0, 22, true },
+};
+
+/*
+ * The key of a table row: 281's address table is keyed on its GEM port and
+ * secondary key and deletes with a zero range; the others carry a two bit
+ * operation over a ten bit key, 1 to write, 2 to delete and 3 to clear.
+ */
+static void omci_mcast_table_store(struct omci_mib_object *object, u8 attr,
+				   const u8 *row, u8 len)
+{
+	bool ipv4 = object->class_id == OMCI_CLASS_MULTICAST_GEM_IWTP;
+	u8 op = ipv4 ? (memchr_inv(row + 4, 0, len - 4) ? 1 : 2) : row[0] >> 6;
+	u8 key_hi = ipv4 ? row[0] : row[0] & 0x03;
+	u8 key_len = ipv4 ? 4 : 2;
+	struct omci_mcast_table_row *free_row = NULL;
+	unsigned int i;
+
+	for (i = 0; i < OMCI_MCAST_TABLE_ROWS; i++) {
+		struct omci_mcast_table_row *r = &object->mcast_rows[i];
+
+		if (!r->attr) {
+			free_row = free_row ?: r;
+			continue;
+		}
+		if (r->attr != attr)
+			continue;
+		if (op == 3 || ((ipv4 ? r->data[0] : r->data[0] & 0x03) == key_hi &&
+				!memcmp(r->data + 1, row + 1, key_len - 1))) {
+			memset(r, 0, sizeof(*r));
+			free_row = free_row ?: r;
+		}
+	}
+	if (op != 1 || len > OMCI_MCAST_TABLE_ROW_LEN)
+		return;
+	if (!free_row) {
+		fprintf(stderr, "omcid: multicast table full on class %u, row not stored\n",
+			object->class_id);
+		return;
+	}
+	free_row->attr = attr;
+	free_row->len = len;
+	memcpy(free_row->data, row, len);
+}
+
+static bool omci_mcast_set_locked(struct omci_mib_object *object, u16 mask,
+				  const u8 *data, size_t len)
+{
+	const struct omci_mcast_attr *attrs;
+	unsigned int count, i;
+
+	switch (object->class_id) {
+	case OMCI_CLASS_MULTICAST_GEM_IWTP:
+		attrs = omci_mcast_gem_iwtp_attrs;
+		count = ARRAY_SIZE(omci_mcast_gem_iwtp_attrs);
+		break;
+	case OMCI_CLASS_MULTICAST_OPERATIONS_PROFILE:
+		attrs = omci_mcast_profile_attrs;
+		count = ARRAY_SIZE(omci_mcast_profile_attrs);
+		break;
+	case OMCI_CLASS_MULTICAST_SUBSCRIBER_CONFIG:
+		attrs = omci_mcast_subscriber_attrs;
+		count = ARRAY_SIZE(omci_mcast_subscriber_attrs);
+		break;
+	default:
+		return false;
+	}
+
+	for (i = 0; i < count && len; i++) {
+		if (!(mask & BIT(15 - i)))
+			continue;
+		if (len < attrs[i].len)
+			break;
+		if (attrs[i].table)
+			omci_mcast_table_store(object, i + 1, data, attrs[i].len);
+		else
+			memcpy(object->data + attrs[i].offset, data, attrs[i].len);
+		data += attrs[i].len;
+		len -= attrs[i].len;
+	}
+	object->attr_mask |= mask;
+	return true;
 }
 
 static u8 omci_agent_create_locked(struct omci_device *odev,
@@ -4083,6 +4248,8 @@ static u8 omci_agent_set_locked(struct omci_device *odev, u16 class_id,
 		return OMCI_RESULT_NOT_SUPPORTED;
 
 	mask = get_unaligned_be16(content);
+	if (class_id == OMCI_CLASS_VEIP)
+		omci_agent_learn_veip(odev, entity_id);
 	desc = omci_me_lookup(agent, class_id);
 	allow_create = agent->permissive || agent->fake_omci ||
 		omci_agent_profile_has_quirk(agent,
@@ -4116,6 +4283,9 @@ static u8 omci_agent_set_locked(struct omci_device *odev, u16 class_id,
 	} else if (class_id == OMCI_CLASS_ONU_G) {
 		ret = omci_agent_set_onu_g(odev, object, mask, content + 2,
 					   content_len - 2);
+	} else if (omci_mcast_set_locked(object, mask, content + 2,
+					 content_len - 2)) {
+		ret = 0;
 	} else {
 		memcpy(object->data, content + 2,
 		       min_t(size_t, content_len - 2, sizeof(object->data)));
@@ -4180,6 +4350,7 @@ static u8 omci_agent_set_locked(struct omci_device *odev, u16 class_id,
 		if (ret)
 			goto rollback_processing;
 	}
+	object->olt_written = object->origin == OMCI_MIB_ORIGIN_DEFAULT;
 	omci_agent_increment_mib_sync_locked(agent);
 	ret = OMCI_RESULT_SUCCESS;
 	goto out_free_previous;
@@ -6373,9 +6544,10 @@ __omci_agent_config_set_source(struct omci_device *odev, u16 key,
 		changed = agent->config.veip_slot != scalar;
 		agent->config.veip_slot = scalar;
 		agent->config.veip_slot_source = source;
-		if (changed && omci_agent_mib_veip_slot(agent))
+		if (changed && omci_agent_mib_veip(agent))
 			ret = omci_agent_move_veip_default(odev,
-					omci_agent_veip_slot(agent));
+					OMCI_UNI_ENTITY_ID(omci_agent_veip_slot(agent),
+							   omci_agent_veip_port(agent)));
 		break;
 	case OMCI_CONFIG_TRAFFIC_MGMT_OPTION:
 	case OMCI_CONFIG_ONU_TYPE:

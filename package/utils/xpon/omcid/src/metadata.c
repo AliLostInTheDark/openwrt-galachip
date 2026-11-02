@@ -173,6 +173,24 @@ cancel:
 	return -EMSGSIZE;
 }
 
+static int omci_put_mcast_tables(struct sk_buff *msg,
+				 const struct omci_mib_object *object)
+{
+	u8 raw[sizeof(object->mcast_rows)];
+	size_t len = 0;
+	unsigned int i;
+
+	for (i = 0; i < OMCI_MCAST_TABLE_ROWS; i++) {
+		const struct omci_mcast_table_row *r = &object->mcast_rows[i];
+
+		if (!r->attr)
+			continue;
+		memcpy(raw + len, r, sizeof(*r));
+		len += sizeof(*r);
+	}
+	return len ? nla_put(msg, OMCI_ATTR_MCAST_TABLES, len, raw) : 0;
+}
+
 int omci_native_put_mib_object(struct sk_buff *msg,
 			       const struct omci_mib_object *object,
 			       u32 next_index, const char *name)
@@ -183,10 +201,12 @@ int omci_native_put_mib_object(struct sk_buff *msg,
 	    nla_put(msg, OMCI_ATTR_ATTR_DATA, sizeof(object->data),
 		    object->data) ||
 	    nla_put_u8(msg, OMCI_ATTR_ORIGIN, object->origin) ||
+	    nla_put_u8(msg, OMCI_ATTR_OLT_WRITTEN, object->olt_written) ||
 	    nla_put_u32(msg, OMCI_ATTR_INDEX, next_index) ||
 	    (name && nla_put_string(msg, OMCI_ATTR_NAME, name)))
 		return -EMSGSIZE;
-	if (omci_put_olt_g(msg, object) ||
+	if (omci_put_mcast_tables(msg, object) ||
+	    omci_put_olt_g(msg, object) ||
 	    omci_put_vlan_filter(msg, object) ||
 	    omci_put_extended_vlan(msg, object))
 		return -EMSGSIZE;

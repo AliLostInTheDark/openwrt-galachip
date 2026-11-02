@@ -51,12 +51,28 @@ function epon() {
 	return out;
 }
 
+/* The helper records actual port/peer ownership; indices need not match LAN names. */
+function management_links() {
+	let links = {};
+	for (let line in split(read('/var/run/omci-management/links'), '\n')) {
+		let fields = split(trim(line), /[ \t]+/);
+		if (length(fields) != 3 || fields[2] != '1' ||
+		    !match(fields[0], /^[a-zA-Z0-9_.-]+$/) ||
+		    !match(fields[1], /^omgp[0-9]+$/))
+			continue;
+		links[fields[1]] = fields[0];
+		links[replace(fields[1], 'omgp', 'omgm')] = fields[0];
+	}
+	return links;
+}
+
 const methods = {
 	status: {
 		call: function() {
 			let mode = read('/sys/class/xpon/pon0/mode_current') || null;
 			let out = {
 				mode,
+				management_links: management_links(),
 				ddm: words(read(`${PON}/bosa_ddm`)),
 				/* The module's alarm and warning levels, in nW. */
 				thresholds: words(read(`${PON}/bosa_thresholds`))

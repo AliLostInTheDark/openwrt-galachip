@@ -183,7 +183,7 @@ return baseclass.extend({
 				return E('div', { 'class': 'xpon-stage' + cls, 'title': item[1],
 						  'aria-current': i == current ? 'step' : null }, [ item[0], E('span', {}, item[1]) ]);
 			})),
-			E('p', { 'class': 'xpon-stage-text' }, text)
+			E('p', { 'class': 'xpon-stage-text' }, [ text ])
 		]);
 	},
 
@@ -232,7 +232,7 @@ return baseclass.extend({
 	/* @lines: strings; the first line is the title. */
 	card: function(lines) {
 		return E('div', { 'class': 'xpon-card' }, [ E('strong', {}, lines[0]) ].concat(lines.slice(1).map(function(l) {
-			return E('p', {}, l);
+			return E('p', {}, [ l ]);
 		})));
 	}
 });

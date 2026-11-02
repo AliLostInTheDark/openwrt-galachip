@@ -79,9 +79,10 @@ long omcid_olt_watch_poll(struct omcid_olt_watch *w, unsigned long now,
 
 	if (w->had_outage)
 		snprintf(dark, sizeof(dark), "%lu s OMCC unavailable", w->outage_ms / 1000);
-	snprintf(line, sizeof(line), "omcid: OLT after %s: %s; %u messages over %lu s "
+	snprintf(line, sizeof(line), "omcid: %sOLT after %s: %s; %u messages over %lu s "
 		"(MIB reset %u, upload %u/%u, create %u, set %u, delete %u, get %u), "
-		"MIB sync %u\n", dark, olt_watch_verdict(w), w->messages,
+		"MIB sync %u\n", w->messages ? "" : "[OMC-101] ", dark, olt_watch_verdict(w),
+		w->messages,
 		(w->last_ms - w->up_ms) / 1000, w->count[OLT_MT_MIB_RESET],
 		w->count[OLT_MT_MIB_UPLOAD], w->count[OLT_MT_MIB_UPLOAD_NEXT],
 		w->count[OLT_MT_CREATE], w->count[OLT_MT_SET], w->count[OLT_MT_DELETE],

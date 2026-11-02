@@ -3,6 +3,7 @@
 'require baseclass';
 'require ui';
 'require omci.rpc as omci';
+'require omci.mib-view as mibView';
 'require xpon.widgets as widgets';
 
 var groups = {
@@ -31,8 +32,13 @@ function parseUint(value) {
 }
 
 function normalizeHex(value) {
-	value = String(value || '').trim().replace(/^0[xX]/, '');
+	value = String(value || '').replace(/\s/g, '').replace(/^0[xX]/, '');
 	return /^(?:[0-9a-fA-F]{2})*$/.test(value) && value.length <= 128 ? value.toLowerCase() : null;
+}
+
+/* Grouped bytes, without the zero padding after the last used one. */
+function spacedHex(data) {
+	return String(data || '').replace(/(00)+$/, '').replace(/../g, '$& ').trim();
 }
 
 function field(label, node) {
@@ -52,14 +58,11 @@ function render(group, data, title, description) {
 	var writable = L.hasViewPermission();
 	var predicate = groups[group] || groups.other;
 	var byId, groupClasses, createButton;
-	var originLabels = {
-		'default': _('Default / seed'), 'local': _('Local'),
-		'olt': _('Provisioned by OLT'), 'hardware': _('Hardware')
-	};
 	var originFilter = E('select', { 'class': 'cbi-input-select', 'id': 'omci-mib-origin-filter' }, [
 		E('option', { 'value': 'all' }, _('All origins')),
 		E('option', { 'value': 'default' }, _('Default / seed')),
 		E('option', { 'value': 'olt' }, _('Provisioned by OLT')),
+		E('option', { 'value': 'olt_written' }, _('ONU-created, OLT-provisioned')),
 		E('option', { 'value': 'local' }, _('Local edits')),
 		E('option', { 'value': 'hardware' }, _('Hardware'))
 	]);
@@ -86,11 +89,18 @@ function render(group, data, title, description) {
 		ui.addNotification(null, E('p', {}, _('MIB operation failed: %s').format(error.message || error)), 'error');
 	}
 
-	function complete(operation) {
+	/* A page notification would sit behind the open dialog. */
+	function modalError(node, message) {
+		node.replaceChildren(E('div', { 'class': 'alert-message error' }, message));
+	}
+
+	function complete(operation, errorNode) {
 		return operation.then(function() {
 			ui.hideModal();
-			return reloadObjects();
-		}).catch(notifyError);
+			return reloadObjects().catch(notifyError);
+		}, function(error) {
+			modalError(errorNode, _('MIB operation failed: %s').format(error.message || error));
+		});
 	}
 
 	function modalButton(label, kind, handler) {
@@ -112,45 +122,62 @@ function render(group, data, title, description) {
 			'placeholder': '0x0000', 'readonly': item ? true : null });
 		var maskNode = E('input', { 'class': 'cbi-input-text', 'value': item ? hex(item.attr_mask, 4) : '0xffff' });
 		var dataNode = E('textarea', { 'class': 'cbi-input-text omci-mib-mono', 'rows': 5,
-			'style': 'width:100%;font-family:monospace', 'placeholder': _('Hex bytes without separators (maximum 64 bytes)') }, item ? item.data || '' : '');
+			'style': 'width:100%;font-family:monospace', 'placeholder': _('Hex bytes, spaces optional (maximum 64 bytes)') }, item ? spacedHex(item.data) : '');
+		var errorNode = E('div');
 
 		ui.showModal(item ? _('Edit MIB object') : _('Create MIB object'), [
 			E('p', {}, _('Changes update the live MIB immediately and are recorded as local. The OLT may replace them during provisioning.')),
 			field(_('Class'), classNode), field(_('Entity ID'), entityNode),
-			field(_('Attribute mask'), maskNode), field(_('Attribute data'), dataNode),
+			field(_('Attribute mask'), maskNode), field(_('Attribute data'), dataNode), errorNode,
 			E('div', { 'class': 'omci-mib-actions' }, [
 				modalButton(_('Cancel'), 'reset', ui.hideModal),
 				modalButton(item ? _('Save') : _('Create'), 'positive', function() {
 					var classId = parseUint(item ? classNode.value : classWidget.getValue()), entityId = parseUint(entityNode.value);
 					var mask = parseUint(maskNode.value), bytes = normalizeHex(dataNode.value);
 					if (classId == null || entityId == null || mask == null || bytes == null) {
-						ui.addNotification(null, E('p', {}, _('Class, entity and mask must be between 0 and 65535. Data must be at most 64 bytes of hexadecimal pairs.')), 'error');
+						modalError(errorNode, _('Class, entity and mask must be between 0 and 65535. Data must be at most 64 bytes of hexadecimal pairs.'));
 						return;
 					}
-					return complete(omci.mibSet(0, classId, entityId, mask, bytes));
+					/* The box hides trailing zeros, but omcid reads the length. */
+					if (item)
+						bytes = bytes.padEnd((item.data || '').length, '0');
+					return complete(omci.mibSet(0, classId, entityId, mask, bytes), errorNode);
 				})
 			])
 		], 'omci-mib-editor');
 	}
 
+	function showDetails(item) {
+		ui.showModal(item.name || _('MIB object'), [
+			mibView.object(item),
+			E('div', { 'class': 'omci-mib-actions' }, [ modalButton(_('Close'), 'reset', ui.hideModal) ])
+		], 'omci-mib-editor', 'omci-mib-details');
+	}
+
 	function showDelete(item) {
+		var errorNode = E('div');
+
 		ui.showModal(_('Delete MIB object'), [
 			E('p', {}, _('Delete class %d, entity %s from the live MIB?').format(item.class_id, hex(item.entity_id, 4))),
+			errorNode,
 			E('div', { 'class': 'omci-mib-actions' }, [
 				modalButton(_('Cancel'), 'reset', ui.hideModal),
 				modalButton(_('Delete'), 'negative', function() {
-					return complete(omci.mibDelete(0, item.class_id, item.entity_id));
+					return complete(omci.mibDelete(0, item.class_id, item.entity_id), errorNode);
 				})
 			])
 		]);
 	}
 
 	function showReset() {
+		var errorNode = E('div');
+
 		ui.showModal(_('Reset MIB'), [
 			E('p', {}, _('Reset the live MIB? This removes existing service objects and can interrupt traffic.')),
+			errorNode,
 			E('div', { 'class': 'omci-mib-actions' }, [
 				modalButton(_('Cancel'), 'reset', ui.hideModal),
-				modalButton(_('Reset MIB'), 'negative', function() { return complete(omci.mibReset(0)); })
+				modalButton(_('Reset MIB'), 'negative', function() { return complete(omci.mibReset(0), errorNode); })
 			])
 		]);
 	}
@@ -158,7 +185,8 @@ function render(group, data, title, description) {
 	function renderTable() {
 		var filtered = objects.filter(function(o) {
 			var c = byId[o.class_id] || { category_name: 'unknown', flags: 0 };
-			return predicate(c) && (originFilter.value == 'all' || o.origin_name == originFilter.value);
+			return predicate(c) && (originFilter.value == 'all' || o.origin_name == originFilter.value ||
+				(originFilter.value == 'olt_written' && o.origin_name == 'default' && o.olt_written));
 		});
 		count.textContent = _('%d object(s)').format(filtered.length);
 		if (createButton)
@@ -169,9 +197,7 @@ function render(group, data, title, description) {
 			return;
 		}
 
-		var headings = [ _('Class'), _('Entity'), _('Managed entity'), _('Origin'), _('Mask'), _('Data') ];
-		if (writable)
-			headings.push(_('Actions'));
+		var headings = [ _('Class'), _('Entity'), _('Managed entity'), _('Origin'), _('Summary'), _('Actions') ];
 		var table = E('table', { 'class': 'table omci-mib-table' }, [
 			E('tr', { 'class': 'tr table-titles' }, headings.map(function(label) {
 				return E('th', { 'class': 'th' }, label);
@@ -182,17 +208,21 @@ function render(group, data, title, description) {
 			var cells = [
 				E('td', { 'class': 'td nowrap' }, String(o.class_id)),
 				E('td', { 'class': 'td nowrap' }, hex(o.entity_id, 4)),
-				E('td', { 'class': 'td' }, o.name || c.name || '-'),
-				E('td', { 'class': 'td' }, originLabels[o.origin_name] || o.origin_name || '-'),
-				E('td', { 'class': 'td nowrap' }, hex(o.attr_mask, 4)),
-				E('td', { 'class': 'td', 'style': 'font-family:monospace;overflow-wrap:anywhere;max-width:32em' }, o.data || '')
-			];
-			if (writable)
-				cells.push(E('td', { 'class': 'td nowrap' }, [
-					modalButton(_('Edit'), 'action', function() {
+				E('td', { 'class': 'td' }, [ o.name || c.name || '-' ]),
+				E('td', { 'class': 'td' }, [ mibView.originText(o) ]),
+				E('td', { 'class': 'td', 'style': 'overflow-wrap:anywhere;max-width:32em' }, [ mibView.summary(o) ]),
+				E('td', { 'class': 'td nowrap' }, [
+					modalButton(_('Details'), 'action', function() {
+						return omci.mibGet(0, o.class_id, o.entity_id).then(showDetails).catch(notifyError);
+					}),
+					writable ? ' ' : '',
+					writable ? modalButton(_('Edit'), 'action', function() {
 						return omci.mibGet(0, o.class_id, o.entity_id).then(showEditor).catch(notifyError);
-					}), ' ', modalButton(_('Delete'), 'negative', function() { showDelete(o); })
-				]));
+					}) : '',
+					writable ? ' ' : '',
+					writable ? modalButton(_('Delete'), 'negative', function() { showDelete(o); }) : ''
+				])
+			];
 			table.appendChild(E('tr', { 'class': 'tr' }, cells));
 		});
 		tableRoot.replaceChildren(table);
@@ -205,12 +235,6 @@ function render(group, data, title, description) {
 	renderTable();
 
 	return layout.apply(E([], [
-		E('style', {}, [
-			'.omci-mib-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin:12px 0}',
-			'.omci-mib-filter{display:flex;align-items:center;flex-wrap:wrap;gap:8px}',
-			'.omci-mib-table{min-width:760px}',
-			'.omci-mib-table th{white-space:nowrap}'
-		].join('')),
 		E('h2', {}, title), E('p', {}, description),
 		E('div', { 'class': 'cbi-section omci-mib-filter' }, [
 			E('label', { 'for': 'omci-mib-origin-filter' }, _('Origin filter')), originFilter, count

@@ -3,7 +3,10 @@
 /*
  * Readable fields for MIB objects. The agent returns each object's attribute
  * data as hex in G.988 attribute order, so a field is a name, a byte offset,
- * a length and a format. Classes without a table keep only their hex.
+ * a length and a format. Counts read as decimal and text as ASCII; a string that
+ * is not text shows its hex with each byte's number in brackets. Pointers, TPIDs
+ * and version codes stay in hex as G.988 writes them, each with a plain
+ * explanation in fields.notes. Classes without a table keep only their bytes.
  */
 
 const admin_state = [ 'unlocked', 'locked' ];
@@ -30,19 +33,52 @@ const interwork_options = {
 
 const directions = { '1': 'UNI to ANI', '2': 'ANI to UNI', '3': 'bidirectional' };
 const policies = { '0': 'null', '1': 'strict priority', '2': 'WRR' };
+const tpids = { '33024': '802.1Q', '34984': '802.1ad' };
+const omcc_versions = {
+	'128': 'G.984.4 (06/04)', '129': 'G.984.4 Amd.1 (06/05)', '130': 'G.984.4 Amd.2 (03/06)',
+	'131': 'G.984.4 Amd.3 (12/06)', '132': 'G.984.4 (02/08)', '133': 'G.984.4 Amd.1 (06/09)',
+	'134': 'G.984.4 Amd.2 (2009), baseline', '150': 'G.984.4 Amd.2 (2009), baseline and extended',
+	'160': 'G.988 (2010), baseline', '161': 'G.988 Amd.1 (2011), baseline',
+	'162': 'G.988 Amd.2 (2012), baseline', '163': 'G.988 (2012), baseline',
+	'164': 'G.988 Amd.1 (2014), baseline', '176': 'G.988 (2010), baseline and extended',
+	'177': 'G.988 Amd.1 (2011), baseline and extended',
+	'178': 'G.988 Amd.2 (2012), baseline and extended',
+	'179': 'G.988 (2012), baseline and extended',
+	'180': 'G.988 Amd.1 (2014), baseline and extended'
+};
+const forward_operations = { '16': 'forward by VLAN list' };
+const port_types = { '47': '10/100/1000BASE-T' };
+const igmp_versions = { '1': 'IGMPv1', '2': 'IGMPv2', '3': 'IGMPv3', '16': 'MLDv1', '17': 'MLDv2' };
+
+/* G.988 9.3.13, Extended VLAN tagging operation rule fields */
+const ethertypes = {
+	'1': 'IPv4 (0x0800)', '2': 'PPPoE (0x8863/0x8864)', '3': 'ARP (0x0806)',
+	'4': 'IPv6 (0x86dd)'
+};
+const filter_tpids = {
+	'4': 'TPID 0x8100', '5': 'input TPID', '6': 'input TPID, DEI 0',
+	'7': 'input TPID, DEI 1'
+};
+const treat_tpids = {
+	'0': 'TPID and DEI from inner', '1': 'TPID and DEI from outer',
+	'2': 'output TPID, DEI from inner', '3': 'output TPID, DEI from outer',
+	'4': 'TPID 0x8100', '6': 'output TPID, DEI 0', '7': 'output TPID, DEI 1'
+};
 
 /* [ name, offset, length, format, names ] */
 const layouts = {
 	'2': [ [ 'mib_data_sync', 0, 1 ] ],
 	'5': [
-		[ 'actual_type', 0, 1 ], [ 'expected_type', 1, 1 ],
+		[ 'actual_type', 0, 1, 'enum', port_types ],
+		[ 'expected_type', 1, 1, 'enum', port_types ],
 		[ 'expected_port_count', 2, 1 ],
 		[ 'expected_equipment_id', 3, 20, 'str' ],
 		[ 'actual_equipment_id', 23, 20, 'str' ],
 		[ 'protection_profile', 43, 2, 'ptr' ]
 	],
 	'6': [
-		[ 'type', 0, 1 ], [ 'ports', 1, 1 ], [ 'serial', 2, 8, 'serial' ],
+		[ 'type', 0, 1, 'enum', port_types ], [ 'ports', 1, 1 ],
+		[ 'serial', 2, 8, 'serial' ],
 		[ 'version', 10, 14, 'str' ], [ 'vendor_id', 24, 4, 'str' ],
 		[ 'admin_state', 28, 1, 'enum', admin_state ],
 		[ 'oper_state', 29, 1, 'enum', oper_state ],
@@ -55,7 +91,8 @@ const layouts = {
 		[ 'active', 15, 1 ], [ 'valid', 16, 1 ]
 	],
 	'11': [
-		[ 'expected_type', 0, 1 ], [ 'sensed_type', 1, 1 ],
+		[ 'expected_type', 0, 1, 'enum', port_types ],
+		[ 'sensed_type', 1, 1, 'enum', port_types ],
 		[ 'auto_detect', 2, 1 ], [ 'loopback', 3, 1 ],
 		[ 'admin_state', 4, 1, 'enum', admin_state ],
 		[ 'oper_state', 5, 1, 'enum', oper_state ],
@@ -88,7 +125,7 @@ const layouts = {
 		[ 'mac_learning_depth', 23, 1 ]
 	],
 	'84': [
-		[ 'forward_operation', 24, 1, 'hex' ],
+		[ 'forward_operation', 24, 1, 'code', forward_operations ],
 		[ 'entries', 25, 1 ]
 	],
 	'130': [
@@ -106,8 +143,8 @@ const layouts = {
 	],
 	'171': [
 		[ 'association_type', 0, 1, 'enum', association_types ],
-		[ 'max_table_size', 1, 2 ], [ 'input_tpid', 3, 2, 'ptr' ],
-		[ 'output_tpid', 5, 2, 'ptr' ], [ 'downstream_mode', 7, 1 ],
+		[ 'max_table_size', 1, 2 ], [ 'input_tpid', 3, 2, 'code', tpids ],
+		[ 'output_tpid', 5, 2, 'code', tpids ], [ 'downstream_mode', 7, 1 ],
 		[ 'associated_me', 24, 2, 'ptr' ]
 	],
 	'256': [
@@ -118,22 +155,22 @@ const layouts = {
 		[ 'oper_state', 30, 1, 'enum', oper_state ]
 	],
 	'257': [
-		[ 'equipment_id', 0, 20, 'str' ], [ 'omcc_version', 20, 1, 'hex' ],
+		[ 'equipment_id', 0, 20, 'str' ], [ 'omcc_version', 20, 1, 'code', omcc_versions ],
 		[ 'vendor_product_code', 21, 2 ], [ 'security_capability', 23, 1 ],
 		[ 'security_mode', 24, 1 ], [ 'priority_queues', 25, 2 ],
 		[ 'traffic_schedulers', 27, 1 ], [ 'gem_ports', 29, 2 ]
 	],
 	'262': [
-		[ 'alloc_id', 0, 2, 'ptr' ],
+		[ 'alloc_id', 0, 2, 'alloc' ],
 		[ 'policy', 3, 1, 'enum', policies ]
 	],
 	'263': [
 		[ 'sr_indication', 0, 1 ], [ 'tconts', 1, 2 ],
 		[ 'gem_block_length', 3, 2 ], [ 'sf_threshold', 7, 1 ],
-		[ 'sd_threshold', 8, 1 ], [ 'optical_signal_level', 11, 2, 'ptr' ],
+		[ 'sd_threshold', 8, 1 ], [ 'optical_signal_level', 11, 2 ],
 		[ 'lower_optical_threshold', 13, 1 ],
 		[ 'upper_optical_threshold', 14, 1 ],
-		[ 'response_time', 15, 2 ], [ 'transmit_level', 17, 2, 'ptr' ]
+		[ 'response_time', 15, 2 ], [ 'transmit_level', 17, 2 ]
 	],
 	'264': [
 		[ 'admin_state', 2, 1, 'enum', admin_state ],
@@ -141,7 +178,7 @@ const layouts = {
 		[ 'non_omci_management', 4, 2, 'ptr' ]
 	],
 	'266': [
-		[ 'gem_port', 0, 2, 'ptr' ],
+		[ 'gem_port', 0, 2 ],
 		[ 'interworking', 2, 1, 'enum', interwork_options ],
 		[ 'service_profile', 3, 2, 'ptr' ], [ 'interworking_tp', 5, 2, 'ptr' ],
 		[ 'oper_state', 8, 1, 'enum', oper_state ],
@@ -157,7 +194,7 @@ const layouts = {
 	'272': [ [ 'max_gem_payload', 0, 2 ] ],
 	'277': [
 		[ 'queue_configuration', 0, 1 ], [ 'max_size', 1, 2 ],
-		[ 'allocated_size', 3, 2 ], [ 'related_port', 9, 4, 'ptr' ],
+		[ 'allocated_size', 3, 2 ], [ 'related_port', 9, 4, 'port' ],
 		[ 'scheduler', 13, 2, 'ptr' ], [ 'weight', 15, 1 ]
 	],
 	'278': [
@@ -190,6 +227,18 @@ const layouts = {
 		[ 'format', 28, 1 ], [ 'lower_limit', 29, 4 ],
 		[ 'upper_limit', 33, 4 ], [ 'bit_field', 37, 4, 'ptr' ],
 		[ 'code_points_table_size', 41, 4 ], [ 'support', 45, 1 ]
+	],
+	'309': [
+		[ 'igmp_version', 0, 1, 'enum', igmp_versions ],
+		[ 'igmp_function', 1, 1 ], [ 'immediate_leave', 2, 1 ],
+		[ 'upstream_igmp_tci', 3, 2, 'tci' ],
+		[ 'upstream_igmp_tag_control', 5, 1 ],
+		[ 'upstream_igmp_rate', 6, 4 ]
+	],
+	'310': [
+		[ 'me_type', 0, 1 ], [ 'multicast_operations_profile', 1, 2, 'ptr' ],
+		[ 'max_simultaneous_groups', 3, 2 ], [ 'max_multicast_bandwidth', 5, 4 ],
+		[ 'bandwidth_enforcement', 9, 1 ]
 	],
 	'312': [
 		[ 'interval_end_time', 0, 1 ], [ 'threshold_data', 1, 2, 'ptr' ],
@@ -228,6 +277,7 @@ for (let id in [ 367, 370, 373, 65408, 65414, 65425 ])
 	layouts[id] = huawei_multicast;
 layouts['65295'] = numbered([ 1, 2, 1, 2, 1, 2, 1, 2, 1, 2 ]);
 layouts['65296'] = numbered([ 1, 1, 4, 1, 1, 1, 4, 1, 1, 12, 4, 25 ]);
+layouts['65296'][9][3] = 'vendor_serial';
 layouts['65297'] = numbered([ 1, 1, 2, 1, 1, 1, 1 ]);
 layouts['65305'] = numbered([ 1, 6 ]);
 layouts['65306'] = numbered([ 19 ]);
@@ -244,17 +294,21 @@ function number(data, offset, len) {
 	return n;
 }
 
+/* ASCII up to the NUL padding, or the hex and each byte's number if not text. */
 function text(data, offset, len) {
-	let out = '';
+	let out = '', numbers = [], printable = true, end = len;
 
-	for (let i = 0; i < len; i++) {
+	while (end > 0 && !byte(data, offset + end - 1))
+		end--;
+	for (let i = 0; i < end; i++) {
 		let c = byte(data, offset + i);
 
-		if (!c)
-			break;
-		out += (c >= 0x20 && c < 0x7f) ? chr(c) : '.';
+		printable = printable && c >= 0x20 && c < 0x7f;
+		out += chr(c);
+		push(numbers, c);
 	}
-	return trim(out);
+	return printable ? trim(out) :
+		`0x${substr(data, offset * 2, end * 2)} (${join('.', numbers)})`;
 }
 
 function field(data, spec) {
@@ -263,12 +317,20 @@ function field(data, spec) {
 	switch (format) {
 	case 'str':
 		return text(data, offset, len);
-	case 'ptr':
-		return sprintf(`0x%0${len * 2}x`, number(data, offset, len));
+	case 'alloc': {
+		let n = number(data, offset, len);
+		return n == 0xffff ? 'none' : n;
+	}
 	case 'raw':
-		return substr(data, offset * 2, len * 2);
-	case 'hex':
-		return sprintf('0x%02x', number(data, offset, len));
+		return text(data, offset, len);
+	case 'ptr':
+	case 'code':
+	case 'port':
+	case 'tci':
+		return sprintf(`0x%0${len * 2}x`, number(data, offset, len));
+	case 'vendor_serial':
+		return text(data, offset, 4) + ' ' + text(data, offset + 4, 4) +
+			uc(substr(data, (offset + 8) * 2, 8));
 	case 'mac': {
 		let bytes = [];
 
@@ -287,49 +349,190 @@ function field(data, spec) {
 	}
 }
 
-/* Priority 8 in a filter is "don't care", 14 is "default rule", 15 "no tag". */
-function tag(pbit, vid, tpid, treatment) {
-	if (pbit == 15)
-		return treatment ? 'no tag added' : 'no tag';
-	if (!treatment && pbit == 14)
-		return 'default';
+const td = 'traffic descriptor';
 
-	let p = (pbit == 8) ? (treatment ? 'copy inner' : 'any') :
-		(pbit == 9) ? 'copy outer' : (pbit == 10) ? 'from DSCP' : pbit;
-	let v = (vid == 4096) ? (treatment ? 'copy inner' : 'any') :
-		(vid == 4097) ? 'copy outer' : vid;
+/* What each pointer names: [ object, whether zero means no object ]. */
+const pointers = {
+	'5': { protection_profile: [ 'protection profile', true ] },
+	'47': {
+		bridge: [ 'MAC bridge service profile' ],
+		tp: [ (data) => tp_types[byte(data, 3)] ],
+		outbound_td: [ td, true ], inbound_td: [ td, true ]
+	},
+	'130': { tp: [ 'termination point', true ] },
+	'171': { associated_me: [ (data) => association_types[byte(data, 0)] ] },
+	'264': { non_omci_management: [ 'management object', true ] },
+	'266': {
+		gem_port: [ 'GEM port network CTP' ],
+		service_profile: [ (data) => interwork_options[byte(data, 2)] ],
+		interworking_tp: [ 'interworking TP', true ],
+		gal_profile: [ 'GAL Ethernet profile' ]
+	},
+	'268': {
+		tcont: [ 'T-CONT' ], upstream_tm: [ 'priority queue', true ],
+		upstream_td: [ td, true ], downstream_queue: [ 'priority queue', true ],
+		downstream_td: [ td, true ]
+	},
+	'277': { scheduler: [ 'traffic scheduler', true ] },
+	'278': { tcont: [ 'T-CONT' ], parent: [ 'traffic scheduler', true ] },
+	'281': {
+		gem_port: [ 'GEM port network CTP' ],
+		service_profile: [ 'service profile' ], gal_profile: [ 'GAL Ethernet profile' ]
+	},
+	'310': { multicast_operations_profile: [ 'multicast operations profile' ] },
+	'329': { tcp_udp: [ 'TCP/UDP config', true ] }
+};
 
-	return `vid ${v}, pbit ${p}, tpid ${tpid}`;
+for (let i = 0; i < 8; i++)
+	pointers['130'][`pbit${i}_iwtp`] = [ 'GEM interworking TP', true ];
+
+/* The plain explanation of a value kept in hex, or null. */
+function note(class_id, spec, data) {
+	let offset = spec[1], len = spec[2], format = spec[3], n = number(data, offset, len);
+
+	switch (format) {
+	case 'code':
+		return spec[4][n];
+	case 'port':
+		return sprintf('port %d, priority %d', number(data, offset, 2), number(data, offset + 2, 2));
+	case 'tci':
+		return sprintf('VLAN %d, priority %d', n & 0xfff, n >> 13);
+	case 'ptr': {
+		let target = pointers[class_id]?.[spec[0]];
+
+		if (n == 0xffff || (!n && target?.[1]))
+			return 'none';
+		let name = type(target?.[0]) == 'function' ? target[0](data) : target?.[0];
+		return name ? `${name} ${n}` : `${n}`;
+	}
+	}
+	return null;
 }
 
-function rule_text(r) {
-	return sprintf('filter outer [%s] inner [%s] ethertype %d -> remove %d, outer [%s] inner [%s]',
-		tag(r.filter_outer_pbit, r.filter_outer_vid, r.filter_outer_tpid_dei),
-		tag(r.filter_inner_pbit, r.filter_inner_vid, r.filter_inner_tpid_dei),
-		r.filter_ethertype, r.tags_to_remove,
-		tag(r.treat_outer_pbit, r.treat_outer_vid, r.treat_outer_tpid_dei, true),
-		tag(r.treat_inner_pbit, r.treat_inner_vid, r.treat_inner_tpid_dei, true));
+/* Priority 8 in a filter is "don't care", 14 is "default rule", 15 "no tag". */
+function filter_tag(pbit, vid, tpid) {
+	if (pbit == 15)
+		return 'no tag';
+	if (pbit == 14)
+		return 'default rule';
+
+	let out = sprintf('VLAN %s, priority %s', vid == 4096 ? 'any' : vid,
+			  pbit == 8 ? 'any' : pbit);
+	return filter_tpids[tpid] ? `${out}, ${filter_tpids[tpid]}` : out;
+}
+
+function treat_tag(pbit, vid, tpid) {
+	if (pbit == 15)
+		return 'none';
+
+	let p = (pbit == 8) ? 'from inner' : (pbit == 9) ? 'from outer' :
+		(pbit == 10) ? 'from DSCP' : pbit;
+	let v = (vid == 4096) ? 'from inner' : (vid == 4097) ? 'from outer' : vid;
+	let out = `VLAN ${v}, priority ${p}`;
+
+	return treat_tpids[tpid] ? `${out}, ${treat_tpids[tpid]}` : out;
+}
+
+function rule_summary(r) {
+	let remove = r.tags_to_remove;
+
+	return {
+		filter_outer: filter_tag(r.filter_outer_pbit, r.filter_outer_vid, r.filter_outer_tpid_dei),
+		filter_inner: filter_tag(r.filter_inner_pbit, r.filter_inner_vid, r.filter_inner_tpid_dei),
+		ethertype: r.filter_ethertype ? (ethertypes[r.filter_ethertype] ?? `${r.filter_ethertype}`) : 'any',
+		action: remove == 3 ? 'drop frame' : remove ? `remove ${remove} tag${remove > 1 ? 's' : ''}` : 'keep tags',
+		add_outer: treat_tag(r.treat_outer_pbit, r.treat_outer_vid, r.treat_outer_tpid_dei),
+		add_inner: treat_tag(r.treat_inner_pbit, r.treat_inner_vid, r.treat_inner_tpid_dei)
+	};
+}
+
+function rule_text(s) {
+	return sprintf('filter outer [%s] inner [%s] ethertype %s -> %s, add outer [%s] inner [%s]',
+		s.filter_outer, s.filter_inner, s.ethertype, s.action, s.add_outer, s.add_inner);
+}
+
+/* 64 code points of 3 bits each, most significant first. */
+function dscp_text(map) {
+	if (type(map) != 'string' || match(map, /^0*$/))
+		return 'all DSCP to priority 0';
+
+	let out = [];
+
+	for (let dscp = 0; dscp < 64; dscp++) {
+		let bit = dscp * 3, n = 0;
+
+		for (let i = 0; i < 3; i++, bit++)
+			n = n * 2 + ((byte(map, bit >> 3) >> (7 - (bit & 7))) & 1);
+		push(out, n);
+	}
+	return join(' ', out);
+}
+
+function ip_text(data, offset) {
+	return join('.', map([ 0, 1, 2, 3 ], (i) => number(data, offset + i, 1)));
+}
+
+function mcast_rows(item) {
+	let raw = item.mcast_tables, rows = [];
+
+	/* Each row: attribute number, length, then 24 bytes of the table row. */
+	for (let at = 0; at + 52 <= length(raw ?? ''); at += 52) {
+		let attr = number(raw, at / 2, 1), row = substr(raw, at + 4, 48);
+
+		if (item.class_id == 309 && (attr == 7 || attr == 8))
+			push(rows, `key ${number(row, 0, 2) & 0x3ff}: GEM ${number(row, 2, 2)}, VLAN ${number(row, 4, 2)}, source ${ip_text(row, 6)}, groups ${ip_text(row, 10)} to ${ip_text(row, 14)}, bandwidth ${number(row, 18, 4)}`);
+		else if (item.class_id == 310 && attr == 6)
+			push(rows, `key ${number(row, 0, 2) & 0x3ff}: VLAN ${number(row, 2, 2)}, max groups ${number(row, 4, 2)}, max bandwidth ${number(row, 6, 4)}, profile ${number(row, 10, 2)}`);
+		else if (item.class_id == 281 && attr == 9)
+			push(rows, `GEM ${number(row, 0, 2)}, key ${number(row, 2, 2)}, groups ${ip_text(row, 4)} to ${ip_text(row, 8)}`);
+	}
+	return rows;
 }
 
 export function decode(item) {
 	let layout = layouts[item.class_id];
 	let data = item.data;
-	let fields = {};
+	let fields = {}, notes = {};
 
 	if (!layout || type(data) != 'string')
 		return null;
-	for (let spec in layout)
+	for (let spec in layout) {
+		let explained = note(item.class_id, spec, data);
+
 		fields[spec[0]] = field(data, spec);
+		if (explained)
+			notes[spec[0]] = explained;
+	}
+	if (length(notes))
+		fields.notes = notes;
 
 	if (item.class_id == 84) {
 		fields.filters = [];
 		for (let i = 0; i < fields.entries && i < 12; i++) {
 			let tci = number(data, i * 2, 2);
 
-			push(fields.filters, `vid ${tci & 0xfff}, pbit ${tci >> 13}, dei ${(tci >> 12) & 1}`);
+			push(fields.filters, `VLAN ${tci & 0xfff}, priority ${tci >> 13}, DEI ${(tci >> 12) & 1}`);
 		}
 	}
-	else if (item.class_id == 171 && item.extended_vlan)
-		fields.rules = map(item.extended_vlan.rules || [], rule_text);
+	else if (item.class_id == 171 && item.extended_vlan) {
+		let vlan = item.extended_vlan;
+
+		if (vlan.max_table_size != null)
+			fields.max_table_size = vlan.max_table_size;
+		fields.dscp_to_priority = dscp_text(vlan.dscp_to_pbit);
+		fields.rules = [];
+		for (let r in vlan.rules ?? []) {
+			if (r.delete)
+				continue;
+			r.summary = rule_summary(r);
+			push(fields.rules, rule_text(r.summary));
+		}
+	}
+	if (item.class_id == 281 || item.class_id == 309 || item.class_id == 310) {
+		let rows = mcast_rows(item);
+
+		if (length(rows))
+			fields.table_rows = rows;
+	}
 	return fields;
 }

@@ -788,12 +788,17 @@ static int mib_reply(struct nlmsghdr *nlh, void *arg)
 	obj_add_u16(o, "entity_id", a[OMCI_ATTR_ENTITY_ID]);
 	obj_add_u16(o, "attr_mask", a[OMCI_ATTR_ATTR_MASK]);
 	obj_add_u8(o, "origin", a[OMCI_ATTR_ORIGIN]);
+	obj_add_u8(o, "olt_written", a[OMCI_ATTR_OLT_WRITTEN]);
 	obj_add_u32(o, "next_index", a[OMCI_ATTR_INDEX]);
 	obj_add_string(o, "name", a[OMCI_ATTR_NAME]);
 	if (a[OMCI_ATTR_ATTR_DATA])
 		ucv_object_add(o, "data",
 			hex_value(nla_data_ptr(a[OMCI_ATTR_ATTR_DATA]),
 				  nla_payload_len(a[OMCI_ATTR_ATTR_DATA])));
+	if (a[OMCI_ATTR_MCAST_TABLES])
+		ucv_object_add(o, "mcast_tables",
+			hex_value(nla_data_ptr(a[OMCI_ATTR_MCAST_TABLES]),
+				  nla_payload_len(a[OMCI_ATTR_MCAST_TABLES])));
 	nested = parse_olt_g(r->vm, a[OMCI_ATTR_OLT_G]);
 	if (nested)
 		ucv_object_add(o, "olt_g", nested);

@@ -98,6 +98,38 @@ int main(void)
 	CHECK(services > 0 && last_uni == 0x601);
 	omci_agent_cleanup(&odev);
 
+	/* An OLT Set marks an ONU-created object, and a MIB reset clears the mark. */
+	{
+		struct omci_mib_object object;
+		u8 frame[44] = { 0x80, 0x02, 0x48, 0x0a };
+
+		memset(&odev.agent, 0, sizeof(odev.agent));
+		odev.channel_up = false;
+		CHECK(!omci_agent_init(&odev));
+		CHECK(!omci_agent_config_set_source(&odev, OMCI_CONFIG_OLT_PROFILE_FORCE, &profile,
+						    1, OMCI_CONFIG_SOURCE_NETLINK));
+		odev.channel_up = true;
+		omci_agent_channel_changed(&odev, true);
+		put_unaligned_be16(OMCI_CLASS_VEIP, frame + 4);
+		put_unaligned_be16(0x0601, frame + 6);
+		frame[8] = 0x80;
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object));
+		CHECK(!object.olt_written);
+		CHECK(!omci_native_receive(&odev, frame, sizeof(frame)));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object));
+		CHECK(object.olt_written);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_TCONT, 0x8000, &object));
+		CHECK(!object.olt_written);
+		memset(frame + 4, 0, 40);
+		frame[1] = 3;
+		frame[2] = 0x4f;
+		put_unaligned_be16(OMCI_CLASS_ONU_DATA, frame + 4);
+		CHECK(!omci_native_receive(&odev, frame, sizeof(frame)));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object));
+		CHECK(!object.olt_written);
+		omci_agent_cleanup(&odev);
+	}
+
 	/* The same OLT profile must not invent services on another provider. */
 	realtek_resources = true;
 	services = 0;

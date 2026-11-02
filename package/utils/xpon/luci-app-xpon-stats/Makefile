@@ -3,7 +3,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_VERSION:=2.0.0
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 LUCI_TITLE:=GPON/EPON ONU status for the router behind an OpenWrt xPON ONU
 LUCI_PKGARCH:=all
 PKG_LICENSE:=GPL-2.0-only
