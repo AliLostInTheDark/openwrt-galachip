@@ -4,7 +4,7 @@ U-Boot **v2026.10** for the GC1601/FA626TE XZ000-G7 with 32 MiB DDR and
 4 MiB EN25QH32B NOR. **SPL and U-Boot proper ship as one boot-region image,
 `u-boot-with-spl.bin`, which `run upgrade_uboot` installs, also from the stock U-Boot,
 without a programmer ([INSTALLATION.md](INSTALLATION.md)). The replacement SPL passed 10 cold and
-20 reset boots, UART recovery and mask ROM UART recovery.** See [HARDWARE-TESTS.md](HARDWARE-TESTS.md).
+20 reset boots, UART recovery and mask ROM UART recovery.**
 The experimental `gc1601-loader` package is separate and unchanged.
 
 ## Scope
@@ -159,8 +159,7 @@ sequence wrap, line purge, timeout/cancellation, FIFO tails, SPI abort failures,
 bounds and TX ownership. They do not emulate PHY timing, actual DMA arbitration,
 NOR electrical behavior or DDR training.
 
-Read [AUDIT.md](AUDIT.md), [HARDWARE-TESTS.md](HARDWARE-TESTS.md),
-[INSTALLATION.md](INSTALLATION.md) and [HANDOFF.md](HANDOFF.md) before testing.
+Read [INSTALLATION.md](INSTALLATION.md) before installing.
 
 ## Source and authorship
 
