@@ -3,6 +3,7 @@
 #include <command.h>
 #include <dm.h>
 #include <env.h>
+#include <fdt_support.h>
 #include <spi_flash.h>
 #include <vsprintf.h>
 #include <asm/unaligned.h>
@@ -58,6 +59,27 @@ U_BOOT_CMD(zdtb, 2, 0, do_zdtb,
 	   "set fdt_addr to the DTB appended to a loaded zImage",
 	   "<addr>\n    - uses filesize as the loaded image length");
 
+/*
+ * Stock kernels boot from their appended vendor EVB DTB, whose command line
+ * has the wrong flash layout; the stock loader patched it through ATAGs.
+ * Write bootargs_stock into that DTB in place: nothing follows it in RAM.
+ */
+static int stock_bootargs(void *fdt)
+{
+	const char *args = env_get("bootargs_stock");
+	int node;
+
+	if (fdt_node_check_compatible(fdt, 0, "faraday,gc1601"))
+		return CMD_RET_SUCCESS;
+	if (!args || fdt_open_into(fdt, fdt, fdt_totalsize(fdt) + strlen(args) + 64))
+		return CMD_RET_FAILURE;
+	node = fdt_find_or_add_subnode(fdt, 0, "chosen");
+	if (node < 0 || fdt_setprop_string(fdt, node, "bootargs", args))
+		return CMD_RET_FAILURE;
+	puts("Stock firmware: using bootargs_stock\n");
+	return CMD_RET_SUCCESS;
+}
+
 static int do_fwload(struct cmd_tbl *cmd, int flag, int argc, char *const argv[])
 {
 	struct udevice *flash;
@@ -96,10 +118,7 @@ static int do_fwload(struct cmd_tbl *cmd, int flag, int argc, char *const argv[]
 	env_set_hex("filesize", length);
 	if (find_appended_dtb(addr, length))
 		return CMD_RET_FAILURE;
-	/* Stock kernels carry the vendor EVB DTB, whose command line has the wrong layout. */
-	if (!fdt_node_check_compatible((void *)env_get_hex("fdt_addr", 0), 0, "faraday,gc1601"))
-		return env_set("bootargs", env_get("bootargs_stock"));
-	return env_set("bootargs", NULL);
+	return stock_bootargs((void *)env_get_hex("fdt_addr", 0));
 }
 U_BOOT_CMD(fwload, 2, 0, do_fwload,
 	   "load the tagged OpenWrt kernel from NOR",
