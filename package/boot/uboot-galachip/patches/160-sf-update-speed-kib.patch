@@ -1,0 +1,30 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] cmd: sf: report update speed in KiB/s
+
+--- a/cmd/sf.c
++++ b/cmd/sf.c
+@@ -247,10 +247,10 @@
+ 			todo = min_t(size_t, end - buf,
+ 				     flash->sector_size - (offset % flash->sector_size));
+ 			if (get_timer(last_update) > 100) {
+-				printf("   \rUpdating, %zu%% %lu B/s",
++				printf("   \rUpdating, %zu%% %lu KiB/s",
+ 				       100 - (end - buf) / scale,
+ 					bytes_per_second(buf - start_buf,
+-							 start_time));
++							 start_time) / 1024);
+ 				last_update = get_timer(0);
+ 			}
+ 			err_oper = spi_flash_update_block(flash, offset, todo,
+@@ -269,8 +269,9 @@
+ 	delta = get_timer(start_time);
+ 	printf("%zu bytes written, %zu bytes skipped", len - skipped,
+ 	       skipped);
+-	printf(" in %ld.%lds, speed %ld B/s\n",
+-	       delta / 1000, delta % 1000, bytes_per_second(len, start_time));
++	printf(" in %ld.%03lds, speed %ld KiB/s\n",
++	       delta / 1000, delta % 1000,
++	       bytes_per_second(len, start_time) / 1024);
+ 
+ 	return 0;
+ }
