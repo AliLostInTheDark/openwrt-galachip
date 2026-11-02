@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * The Nokia (Airtel) profile seeds the whole HGU service graph as default
- * MIB objects; once the OMCC is up those seeds alone must yield services,
- * as the OLT only audits the MIB afterwards.
+ * An OLT profile seeds only its vendor MEs. Services, GEMs and VLANs come
+ * from the OLT alone, so nothing from one line shows on another OLT.
  */
 #include "native.h"
 
 static unsigned int checks, services;
-static bool realtek_resources, full_uni;
-static u16 last_uni;
+static bool realtek_resources;
 #define CHECK(v) do { assert(v); checks++; } while (0)
 
 static int tx(struct omci_device *odev, struct sk_buff *skb, u16 gem)
@@ -35,8 +33,7 @@ static int topology(struct omci_device *odev, struct omci_ani_topology *t)
 		.queue_config_option = 1, .scheduler_policy = 1,
 		.gem_port_count = 256, .qos_configuration = BIT(3) | BIT(4),
 		.downstream_queues_per_uni = 8,
-		.flags = OMCI_TOPOLOGY_F_PROFILE_SERVICES |
-		(full_uni ? OMCI_TOPOLOGY_F_FULL_UNI_ENTITY : 0) };
+		.flags = OMCI_TOPOLOGY_F_PROFILE_SERVICES };
 	return 0;
 }
 
@@ -48,7 +45,6 @@ static int gem(struct omci_device *odev, u16 entity, u16 port, u16 tcont_entity,
 static int service(struct omci_device *odev, const struct omci_service_config *s)
 {
 	services++;
-	last_uni = s->uni_entity_id;
 	return 0;
 }
 
@@ -74,28 +70,38 @@ int main(void)
 	odev.channel_up = true;
 	omci_agent_channel_changed(&odev, true);
 	{
-		struct omci_mib_object object;
+		static const u16 service_classes[] = {
+			OMCI_CLASS_GEM_PORT_CTP, OMCI_CLASS_GEM_IWTP, OMCI_CLASS_8021P_MAPPER,
+			OMCI_CLASS_MAC_BRIDGE_SERVICE_PROFILE, OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA,
+			OMCI_CLASS_VLAN_TAGGING_FILTER_DATA, OMCI_CLASS_EXTENDED_VLAN,
+		};
+		struct omci_mib_object object, *o;
+		unsigned long index;
+		unsigned int i;
 
 		/* Four UNIs take queues 0..31; the VEIP's eight moved with it to 0x601. */
 		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_PRIORITY_QUEUE, 0x20, &object));
 		CHECK(get_unaligned_be16(object.data + 9) == 0x0601);
-	}
-	CHECK(services > 0);
-	CHECK(last_uni == 1);
-	CHECK(odev.agent.operational);
-	omci_agent_cleanup(&odev);
 
-	/* Hardware port binding must distinguish VEIP 0x601 from PPTP 0x101. */
-	full_uni = true;
-	services = 0;
-	memset(&odev.agent, 0, sizeof(odev.agent));
-	odev.channel_up = false;
-	CHECK(!omci_agent_init(&odev));
-	CHECK(!omci_agent_config_set_source(&odev, OMCI_CONFIG_OLT_PROFILE_FORCE, &profile,
-					    1, OMCI_CONFIG_SOURCE_NETLINK));
-	odev.channel_up = true;
-	omci_agent_channel_changed(&odev, true);
-	CHECK(services > 0 && last_uni == 0x601);
+		/* Vendor MEs only: no service graph, VLANs or OLT identity. */
+		/* ANI-G 0x8001; PPTPs 0x0101..0x0104 on the Ethernet slot. */
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_NOKIA_OPTICAL_SUPERVISION,
+					  0x8001, &object));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_NOKIA_ONT_GENERIC_V2, 0, &object));
+		CHECK(!memcmp(object.data + 19, "TEST0001", 8));
+		for (i = 1; i <= 4; i++)
+			CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_NOKIA_UNI_SUPPLEMENTAL_V2,
+						  0x0100 | i, &object));
+		xa_for_each(&odev.agent.mib, index, o) {
+			for (i = 0; i < ARRAY_SIZE(service_classes); i++)
+				CHECK(o->class_id != service_classes[i]);
+			if (o->class_id == OMCI_CLASS_TCONT)
+				CHECK(get_unaligned_be16(o->data) == 0xffff);
+			if (o->class_id == OMCI_CLASS_OLT_G)
+				CHECK(memcmp(o->data, "ALCL", 4));
+		}
+	}
+	CHECK(!services && !odev.agent.services.count);
 	omci_agent_cleanup(&odev);
 
 	/* An OLT Set marks an ONU-created object, and a MIB reset clears the mark. */
@@ -158,6 +164,6 @@ int main(void)
 		CHECK(!get_unaligned_be16(object.data + 32));
 	}
 	omci_agent_cleanup(&odev);
-	printf("%u seeded-service checks passed\n", checks);
+	printf("%u profile seed checks passed\n", checks);
 	return 0;
 }

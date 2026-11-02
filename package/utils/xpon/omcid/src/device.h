@@ -193,7 +193,7 @@ struct omci_service_config {
 	bool default_service;
 };
 
-/* Permit deployment-specific default GEM/VLAN graphs for this provider. */
+/* Obsolete: profiles no longer seed GEMs or VLANs. Accepted and ignored. */
 #define OMCI_TOPOLOGY_F_PROFILE_SERVICES BIT(0)
 /* Preserve the UNI type encoded in the high byte for physical port binding. */
 #define OMCI_TOPOLOGY_F_FULL_UNI_ENTITY BIT(1)

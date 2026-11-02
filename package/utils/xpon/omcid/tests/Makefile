@@ -35,7 +35,7 @@ test: check-sync
 	ASAN_OPTIONS=detect_leaks=0 $(TEST_BIN)-client
 
 	$(CC) $(CFLAGS) $(WARN) -I../src -I$(LIB) -I$(LIB)/include \
-		-o $(TEST_BIN)-seed seed-service-test.c $(SOURCES) $(LIB_SOURCES)
+		-o $(TEST_BIN)-seed profile-seed-test.c $(SOURCES) $(LIB_SOURCES)
 	ASAN_OPTIONS=detect_leaks=0 $(TEST_BIN)-seed
 	$(CC) $(CFLAGS) $(WARN) -I../src -I$(LIB) -I$(LIB)/include \
 		-o $(TEST_BIN)-qos qos-compat-test.c $(SOURCES) $(LIB_SOURCES)

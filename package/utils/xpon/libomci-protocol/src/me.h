@@ -26,13 +26,6 @@ struct omci_mib_object;
 #define OMCI_CLASS_VLAN_TAGGING_FILTER_DATA	84
 #define OMCI_CLASS_8021P_MAPPER		130
 
-/*
- * 802.1p mapper instances seeded for the Nokia/ALCL profile. One per GEM
- * interworking termination point: mapper 1 fronts GEM 256 (management and
- * VoIP), mapper 2 fronts GEM 257 (high speed internet).
- */
-#define OMCI_NOKIA_MAPPER_MGMT		1
-#define OMCI_NOKIA_MAPPER_HSI		2
 #define OMCI_CLASS_OLT_G		131
 #define OMCI_CLASS_NETWORK_ADDRESS	137
 #define OMCI_CLASS_AUTH_METHOD		148

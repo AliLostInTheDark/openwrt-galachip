@@ -927,229 +927,6 @@ omci_agent_seed_nokia_locked(struct omci_device *odev, u8 profile)
 			return ret;
 	}
 
-	/*
-	 * Some deployments use a reference service graph without OMCI Create.
-	 * A provider must opt in; selecting an OLT profile alone does not grant
-	 * Alloc-IDs, GEM ports or VLANs on other hardware.
-	 */
-	if (agent->config.onu_type == OMCI_ONU_TYPE_HGU &&
-	    (agent->topology.flags & OMCI_TOPOLOGY_F_PROFILE_SERVICES)) {
-		u8 veip_slot = omci_agent_veip_slot(agent);
-
-		/* T-CONT 0x8000 -> Alloc-ID 256 */
-		memset(data, 0, sizeof(data));
-		put_unaligned_be16(256, data);
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_TCONT, 0x8000,
-				BIT(15), data, sizeof(data));
-		if (ret)
-			return ret;
-
-		/* GEM Port Network CTP 256 -> port 256, T-CONT 0x8000, bidir(3) */
-		memset(data, 0, sizeof(data));
-		put_unaligned_be16(256, data);
-		put_unaligned_be16(0x8000, data + 2);
-		data[4] = 3;
-		put_unaligned_be16(0x8000, data + 5);
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_GEM_PORT_CTP, 256,
-				GENMASK(15, 6), data, sizeof(data));
-		if (ret)
-			return ret;
-
-		/*
-		 * GEM IWTP 256 -> GEM CTP 256. Interworking option 5 is
-		 * "802.1p mapper", so the service profile pointer at offset 3
-		 * has to name a real class 130 instance; leaving it zero
-		 * advertises mapper interworking with no mapper behind it.
-		 */
-		memset(data, 0, sizeof(data));
-		put_unaligned_be16(256, data);
-		data[2] = 5;
-		put_unaligned_be16(OMCI_NOKIA_MAPPER_MGMT, data + 3);
-		put_unaligned_be16(OMCI_UNI_ENTITY_ID(veip_slot, 1),
-				   data + 5);
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_GEM_IWTP, 256,
-				GENMASK(15, 8), data, sizeof(data));
-		if (ret)
-			return ret;
-
-		/* T-CONT 0x8001 -> Alloc-ID 257 */
-		memset(data, 0, sizeof(data));
-		put_unaligned_be16(257, data);
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_TCONT, 0x8001,
-				BIT(15), data, sizeof(data));
-		if (ret)
-			return ret;
-
-		/* GEM Port Network CTP 257 -> port 257, T-CONT 0x8001, bidir(3) */
-		memset(data, 0, sizeof(data));
-		put_unaligned_be16(257, data);
-		put_unaligned_be16(0x8001, data + 2);
-		data[4] = 3;
-		put_unaligned_be16(0x8001, data + 5);
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_GEM_PORT_CTP, 257,
-				GENMASK(15, 6), data, sizeof(data));
-		if (ret)
-			return ret;
-
-		/* GEM IWTP 257 -> GEM CTP 257, via 802.1p mapper 2. */
-		memset(data, 0, sizeof(data));
-		put_unaligned_be16(257, data);
-		data[2] = 5;
-		put_unaligned_be16(OMCI_NOKIA_MAPPER_HSI, data + 3);
-		put_unaligned_be16(OMCI_UNI_ENTITY_ID(veip_slot, 1),
-				   data + 5);
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_GEM_IWTP, 257,
-				GENMASK(15, 8), data, sizeof(data));
-		if (ret)
-			return ret;
-
-		/*
-		 * 802.1p mappers, one per GEM interworking TP. A reference ONU
-		 * carrying service on this OLT points every P-bit at the same
-		 * interworking TP, so do the same rather than invent a
-		 * priority split the OLT never asked for.
-		 *
-		 * Layout (G.988 9.3.10): TP pointer at 0, then the eight P-bit
-		 * interworking TP pointers, unmarked frame option at 18, DSCP
-		 * map at 19, default P-bit marking at 43, TP type at 44.
-		 */
-		for (i = 0; i < 2; i++) {
-			u16 mapper = i ? OMCI_NOKIA_MAPPER_HSI :
-					 OMCI_NOKIA_MAPPER_MGMT;
-			u16 iwtp = i ? 257 : 256;
-			unsigned int pbit;
-
-			memset(data, 0, sizeof(data));
-			put_unaligned_be16(0xffff, data);
-			for (pbit = 0; pbit < 8; pbit++)
-				put_unaligned_be16(iwtp, data + 2 + pbit * 2);
-			ret = omci_mib_add_default_profile_mask(agent, profile,
-					OMCI_CLASS_8021P_MAPPER, mapper,
-					GENMASK(15, 3), data, sizeof(data));
-			if (ret)
-				return ret;
-		}
-
-		/* MAC Bridge Service Profile 1 */
-		memset(data, 0, sizeof(data));
-		data[0] = 1;
-		data[1] = 1;
-		data[2] = 1;
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_MAC_BRIDGE_SERVICE_PROFILE, 1,
-				GENMASK(15, 6), data, sizeof(data));
-		if (ret)
-			return ret;
-
-		/* MAC Bridge Port Config 1 -> VEIP (TP type 11) */
-		memset(data, 0, sizeof(data));
-		put_unaligned_be16(1, data);
-		data[2] = 1;
-		data[3] = 11;
-		put_unaligned_be16(OMCI_UNI_ENTITY_ID(veip_slot, 1),
-				   data + 4);
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA, 1,
-				GENMASK(15, 12), data, sizeof(data));
-		if (ret)
-			return ret;
-
-		/*
-		 * MAC Bridge Port 2 -> 802.1p mapper 2 (Internet / HSI).
-		 * TP type 3 is "802.1p mapper"; binding the port straight to
-		 * the GEM interworking TP with type 5 skips the mapper layer a
-		 * working reference ONU on this OLT uses.
-		 */
-		memset(data, 0, sizeof(data));
-		put_unaligned_be16(1, data);
-		data[2] = 2;
-		data[3] = 3;
-		put_unaligned_be16(OMCI_NOKIA_MAPPER_HSI, data + 4);
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA, 2,
-				GENMASK(15, 12), data, sizeof(data));
-		if (ret)
-			return ret;
-
-		/* MAC Bridge Port 3 -> 802.1p mapper 1 (management / VoIP). */
-		memset(data, 0, sizeof(data));
-		put_unaligned_be16(1, data);
-		data[2] = 3;
-		data[3] = 3;
-		put_unaligned_be16(OMCI_NOKIA_MAPPER_MGMT, data + 4);
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA, 3,
-				GENMASK(15, 12), data, sizeof(data));
-		if (ret)
-			return ret;
-
-		/*
-		 * Class 84 (VLAN tagging filter data), one per mapper: VID 100
-		 * for high speed internet and VID 660 for management and VoIP.
-		 * data[24] is the forward operation, data[25] the number of
-		 * valid entries in the filter list.
-		 */
-		memset(data, 0, sizeof(data));
-		put_unaligned_be16(100, data);
-		data[24] = 0x10;
-		data[25] = 1;
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_VLAN_TAGGING_FILTER_DATA,
-				OMCI_NOKIA_MAPPER_HSI,
-				GENMASK(15, 13), data, sizeof(data));
-		if (ret)
-			return ret;
-
-		memset(data, 0, sizeof(data));
-		put_unaligned_be16(660, data);
-		data[24] = 0x10;
-		data[25] = 1;
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_VLAN_TAGGING_FILTER_DATA,
-				OMCI_NOKIA_MAPPER_MGMT,
-				GENMASK(15, 13), data, sizeof(data));
-		if (ret)
-			return ret;
-
-		/*
-		 * Class 171 (extended VLAN tagging operation configuration
-		 * data) on the VEIP, association type 10 (VEIP).
-		 * G.988 9.3.13 layout: association type at 0, table size at 1,
-		 * input and output TPID at 3 and 5, downstream mode at 7 and
-		 * the associated ME pointer at 24.
-		 */
-		memset(data, 0, sizeof(data));
-		data[0] = 10;
-		put_unaligned_be16(OMCI_EXT_VLAN_MAX_RULES, data + 1);
-		put_unaligned_be16(ETH_P_8021Q, data + 3);
-		put_unaligned_be16(ETH_P_8021Q, data + 5);
-		data[7] = 0;
-		put_unaligned_be16(OMCI_UNI_ENTITY_ID(veip_slot, 1),
-				   data + 24);
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_EXTENDED_VLAN,
-				OMCI_UNI_ENTITY_ID(veip_slot, 1),
-				GENMASK(15, 10), data, sizeof(data));
-		if (ret)
-			return ret;
-
-		/* Class 131 (OLT-G): pre-seed the Nokia/ALCL OLT identity. */
-		memset(data, 0, sizeof(data));
-		memcpy(data, "ALCL", 4);
-		memcpy(data + 4, "ISAM                ", 20);
-		ret = omci_mib_add_default_profile_mask(agent, profile,
-				OMCI_CLASS_OLT_G, 0,
-				GENMASK(15, 14), data, sizeof(data));
-		if (ret)
-			return ret;
-	}
-
 	return 0;
 }
 
@@ -1700,10 +1477,6 @@ static int omci_agent_move_veip_default(struct omci_device *odev, u16 entity)
 					GENMASK(15, 12), data, sizeof(data));
 	if (ret)
 		return ret;
-	/* The Nokia seeds point at the VEIP. */
-	if (agent->profile_effective == OMCI_OLT_PROFILE_NOKIA_ALCL)
-		return omci_agent_seed_nokia_locked(odev, agent->profile_effective);
-
 	return 0;
 }
 
@@ -2857,13 +2630,8 @@ static int omci_agent_mib_reset_locked(struct omci_device *odev, bool all,
 
 	/*
 	 * omci_agent_clear_services_locked() above tore down every applied
-	 * service. The MIB objects it left in place (or just rebuilt) may
-	 * still describe a complete datapath - e.g. a profile's default-
-	 * seeded VEIP bridge, which a MIB Reset never touches since it only
-	 * erases OLT-origin objects. Without this, a MIB Reset (which every
-	 * OLT sends as a normal part of post-activation provisioning)
-	 * leaves the ONU in O5 with OMCI up and no datapath, indefinitely,
-	 * until some unrelated event happens to trigger reconcile again.
+	 * service; reconcile whatever datapath the remaining MIB describes so
+	 * the ONU does not sit in O5 without one until an unrelated event.
 	 */
 	if (!ret)
 		omci_agent_reconcile_services_locked(odev);
@@ -3194,19 +2962,6 @@ static bool omci_agent_service_vlan_valid(u16 vid)
 	return vid > 0 && vid < VLAN_VID_MASK;
 }
 
-static bool omci_agent_has_olt_gem_ctp_locked(struct omci_agent *agent)
-{
-	struct omci_mib_object *object;
-	unsigned long index;
-
-	xa_for_each(&agent->mib, index, object) {
-		if (object->class_id == OMCI_CLASS_GEM_PORT_CTP &&
-		    object->origin == OMCI_MIB_ORIGIN_OLT)
-			return true;
-	}
-	return false;
-}
-
 /*
  * G.988 9.2.3: with priority-controlled upstream traffic management (ONU-G
  * option 0), a GEM port's upstream traffic management pointer names the
@@ -3323,20 +3078,6 @@ omci_agent_stage_service_rule_locked(struct omci_device *odev,
 		return -ENOENT;
 	if (gem->data[4] == OMCI_GEM_PORT_DIRECTION_ANI_TO_UNI)
 		return 0;
-	/*
-	 * Skip the profile reference-seed GEMs (256/257, origin DEFAULT) when
-	 * the OLT provisions its own data GEMs (247/248, origin OLT) and assigns
-	 * the real Alloc-ID over PLOAM.  The seeded T-CONT 0x8000/0x8001
-	 * (Alloc-ID 256/257) otherwise become phantom hardware channels that
-	 * displace the real Alloc-ID's T-CONT, so GEM 247 binds to the wrong
-	 * (seed) channel.  The seed managed entities stay in the MIB, so an OLT
-	 * that really uses GEM 256/257 without OMCI Create (no origin-OLT GEM
-	 * CTP) is unaffected.
-	 */
-	if (gem->origin == OMCI_MIB_ORIGIN_DEFAULT && !gem->olt_written &&
-	    omci_agent_has_olt_gem_ctp_locked(agent))
-		return 0;
-
 	service.uni_entity_id = omci_agent_backend_uni(agent, uni_entity);
 	service.gem_ctp_entity_id = gem_ctp_entity;
 	service.gem_port_id = get_unaligned_be16(gem->data);
@@ -3895,17 +3636,6 @@ static int omci_agent_reconcile_resources_locked(struct omci_device *odev)
 			if (object->class_id != classes[i] ||
 			    (!omci_mib_object_active(agent, object) && !object->pending_delete))
 				continue;
-			/* Default GEM seeds are installed only by resolved services. */
-			if (classes[i] == OMCI_CLASS_GEM_PORT_CTP &&
-			    object->origin == OMCI_MIB_ORIGIN_DEFAULT && !object->olt_written) {
-				if (!omci_agent_has_olt_gem_ctp_locked(agent)) {
-					ret = omci_agent_gem_rate_locked(odev, object,
-									 object->pending_delete);
-					if (ret)
-						return ret;
-				}
-				continue;
-			}
 			ret = omci_agent_hw_update(odev, object, object->pending_delete ?
 						   OMCI_MSG_TYPE_DELETE : OMCI_MSG_TYPE_SET,
 						   object->data);
@@ -4112,10 +3842,7 @@ static u8 omci_agent_create_locked(struct omci_device *odev,
 		return OMCI_RESULT_UNKNOWN_ME;
 	if (!omci_me_action_allowed(agent, class_id, OMCI_MSG_TYPE_CREATE))
 		return OMCI_RESULT_NOT_SUPPORTED;
-	/*
-	 * A profile seed stands in for OLT provisioning, so the OLT's own
-	 * instance replaces it, e.g. Nokia's class 171 on the slot 6 VEIP.
-	 */
+	/* The OLT's own instance replaces an ONU-created one of the same ID. */
 	omci_agent_learn_veip_slot(odev, class_id, content, content_len);
 	object = omci_mib_lookup(agent, class_id, entity_id);
 	if (object && object->origin == OMCI_MIB_ORIGIN_DEFAULT) {
