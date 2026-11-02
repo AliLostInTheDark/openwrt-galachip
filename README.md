@@ -399,11 +399,13 @@ The build also publishes an upstream U-Boot 2026.10 for the G7, documented in
 | File | NOR | Installed with |
 | --- | --- | --- |
 | `openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-proper.img` | `0x2000`, 120 KiB | `run upgrade_uboot`, or an SPI programmer |
+| `openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-ram.bin` | none, runs from RAM | `tftpboot 41000000`, `go 41000000` |
 | `openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-spl.bin` | `0`, up to 8 KiB | SPI programmer only |
 
-Proper boots behind the stock SPL, so it can be installed on its own. The
-first install needs an SPI programmer and a verified full-chip backup; see
-[INSTALLATION.md](package/boot/uboot-galachip/INSTALLATION.md). Afterwards,
+Proper boots behind the stock SPL, so it installs without a programmer:
+start `openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-ram.bin` from the stock U-Boot (`tftpboot 41000000`,
+`go 41000000`) and run `run upgrade_uboot`; see
+[INSTALLATION.md](package/boot/uboot-galachip/INSTALLATION.md). Later updates,
 with the image in the TFTP root:
 
 ```text

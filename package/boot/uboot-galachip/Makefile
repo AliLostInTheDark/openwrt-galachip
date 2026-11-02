@@ -51,6 +51,8 @@ define Build/InstallDev
 		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot-proper.img
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/output/artifacts/xz000-g7-spl-rom.bin \
 		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot-spl.bin
+	$(INSTALL_DATA) $(PKG_BUILD_DIR)/output/artifacts/xz000-g7-uboot-ram.bin \
+		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot-ram.bin
 endef
 
 define Package/u-boot/install/default

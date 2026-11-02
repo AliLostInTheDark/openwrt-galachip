@@ -1,11 +1,34 @@
 # Installation and rollback gate
 
+## Without a programmer: proper from the stock U-Boot
+
+Proper runs behind the stock SPL, so it can be installed from a RAM-started
+U-Boot, whose driver erases only 4 KiB blocks in `0x2000`-`0x20000` and
+refuses the SPL. Tested on 2026-11-02 (`8696f5d345`). Serve the RAM U-Boot
+(`…-u-boot-ram.bin` in the OpenWrt image directory; `xz000-g7-uboot-ram.bin`
+here) and proper.img (named as `bootfile_uboot`) by TFTP,
+then at the stock `=>` prompt, one line at a time:
+
+```text
+setenv ipaddr 192.168.1.1
+setenv serverip 192.168.1.10
+mw.l 9080000c 0
+tftpboot 41000000 openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-ram.bin
+go 41000000
+```
+
+At the `G7>` prompt, `run upgrade_uboot`, require `Total of 122880 byte(s)
+were the same`, then `reset`. The stock SPL then starts the new U-Boot.
+Do not write the boot region with the stock U-Boot's `sf`: it erases 64 KiB
+blocks, and the first one holds the SPL. The SPL itself is only replaced with
+the programmer, below.
+
+## With a programmer
+
 **Recovery is by external SPI programmer.** On 2026-11-02 a CH341A clip
 gave three identical 4 MiB reads of this unit (SHA256 `8698f068...8335`), and a
 full-chip erase, write and verify restored that backup. Independent ROM UART
-recovery is still unproven and is no longer required for a proper trial. The
-package contains no bootloader installer; all boot-region writes use the
-programmer, not `sf` from U-Boot.
+recovery is still unproven and is no longer required for a proper trial. SPL writes use the programmer.
 
 Before each write:
 

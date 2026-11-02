@@ -49,6 +49,11 @@ define Build/gc1601-u-boot-proper
 	[ "$$(stat -c %s $@)" -eq 122880 ]
 endef
 
+# RAM U-Boot: tftpboot 41000000 and go 41000000 from the stock U-Boot.
+define Build/gc1601-u-boot-ram
+	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot-ram.bin >> $@
+endef
+
 # ROM-headed SPL for NOR 0-0x2000: install with an SPI programmer only.
 define Build/gc1601-u-boot-spl
 	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot-spl.bin >> $@
@@ -68,9 +73,10 @@ define Device/tplink_xz000-g7
   IMAGES := sysupgrade.bin
   IMAGE/sysupgrade.bin := append-kernel | pad-to $$(BLOCKSIZE) | \
     append-rootfs | pad-rootfs | check-size | append-metadata
-  ARTIFACTS := u-boot-proper.img u-boot-spl.bin
+  ARTIFACTS := u-boot-proper.img u-boot-spl.bin u-boot-ram.bin
   ARTIFACT/u-boot-proper.img := gc1601-u-boot-proper
   ARTIFACT/u-boot-spl.bin := gc1601-u-boot-spl
+  ARTIFACT/u-boot-ram.bin := gc1601-u-boot-ram
   DEVICE_PACKAGES := kmod-gc1601-gpon-diag kmod-gc1601-epon-diag xpon-report \
     omci-agent omcid luci-app-omci luci-app-onu-system luci-theme-slate uhttpd-mod-ucode \
     epon-oamd luci-app-epon \

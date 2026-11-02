@@ -2,7 +2,8 @@
 
 U-Boot **v2026.10** for the GC1601/FA626TE XZ000-G7 with 32 MiB DDR and
 4 MiB EN25QH32B NOR. **U-Boot proper runs from NOR behind the stock SPL and
-updates itself (`run upgrade_uboot`). The replacement SPL passed 10 cold and
+updates itself (`run upgrade_uboot`); it installs from the stock U-Boot
+without a programmer ([INSTALLATION.md](INSTALLATION.md)). The replacement SPL passed 10 cold and
 20 reset boots and UART recovery; ROM recovery is untested.** See [HARDWARE-TESTS.md](HARDWARE-TESTS.md).
 The experimental `gc1601-loader` package is separate and unchanged.
 
@@ -69,9 +70,10 @@ in both the OpenWrt recipe and standalone builder. Reusing an output directory
 with a different patch identity is rejected.
 
 In OpenWrt the package is built by default for `tplink_xz000-g7` and
-publishes two device artifacts: `…-u-boot-proper.img`, the default
-`bootfile_uboot` for `run upgrade_uboot`, and `…-u-boot-spl.bin`, the
-ROM-headed SPL for NOR `0`, written only with an SPI programmer. The full
+publishes three device artifacts: `…-u-boot-proper.img`, the default
+`bootfile_uboot` for `run upgrade_uboot`; `…-u-boot-ram.bin`, started from
+the stock U-Boot to install proper; and `…-u-boot-spl.bin`, the ROM-headed
+SPL for NOR `0`, written only with an SPI programmer. The full
 boot-region image stays in the package build directory. Sysupgrade never
 touches the bootloader.
 
