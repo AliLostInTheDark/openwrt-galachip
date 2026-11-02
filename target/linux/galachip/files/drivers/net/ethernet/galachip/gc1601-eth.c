@@ -3633,6 +3633,11 @@ static bool queue_cap;
 module_param(queue_cap, bool, 0644);
 MODULE_PARM_DESC(queue_cap, "Cap T-CONT and UNI queue limits inside the 512-buffer pool");
 
+/* The engine has only ever handed out buffer IDs 96-255: 160 usable buffers. */
+static unsigned int pool_warn = 120;
+module_param(pool_warn, uint, 0644);
+MODULE_PARM_DESC(pool_warn, "Queued buffers that trigger a pool-low warning and 20 ms sampling");
+
 static const u16 gc1601_diag_mac[] = {
 	0x714, 0x718, 0x724, 0x728, 0x72c, 0x730, 0x734, 0x738,
 	0x740, 0x744, 0x778, 0x780, 0x784, 0x78c, 0x790, 0x794,
@@ -3664,7 +3669,8 @@ static int gc1601_diag_queue_limits(struct gc1601_eth *priv, bool cap)
 }
 
 /* Non-zero OUTCNT/INCNT of T-CONTs 0-3, the UNI and the CPU queues. */
-static int gc1601_diag_queues(struct gc1601_eth *priv, char *buf, size_t size)
+static int gc1601_diag_queues(struct gc1601_eth *priv, char *buf, size_t size,
+			      u32 *queued)
 {
 	static const struct { u16 first, count; } ranges[] = {
 		{ 0, 32 }, { GC_CVRD_UNI0, GC_CVRD_UNI_QUEUES },
@@ -3681,6 +3687,7 @@ static int gc1601_diag_queues(struct gc1601_eth *priv, char *buf, size_t size)
 			    (i < GC_CVRD_CPU &&
 			     gc1601_queue_read(priv, GC_CVRD_INCNT, i, &in, 1)))
 				return len + scnprintf(buf + len, size - len, " QFAIL@%x", i);
+			*queued += (out & 0xffff) + (in & 0xffff);
 			if (out || in)
 				len += scnprintf(buf + len, size - len, " %x=%x/%x", i, out, in);
 		}
@@ -3695,7 +3702,8 @@ static void gc1601_diag_work(struct work_struct *work)
 	void __iomem *gmac = priv->base[GC1601_GMAC];
 	char mac[256], queues[512];
 	int mac_len = 0, q_len = 0;
-	unsigned int i;
+	unsigned int i, delay = diag_ms ?: 1000;
+	u32 queued = 0;
 
 	if (!diag_ms || !priv->running)
 		goto out;
@@ -3719,16 +3727,21 @@ static void gc1601_diag_work(struct work_struct *work)
 			priv->queue_capped = queue_cap;
 		}
 		if (!priv->queue_read_failed)
-			q_len = gc1601_diag_queues(priv, queues, sizeof(queues));
+			q_len = gc1601_diag_queues(priv, queues, sizeof(queues),
+						   &queued);
 		rtnl_unlock();
 	}
 
 	if (mac_len || q_len || priv->tx_pending)
-		dev_info(priv->dev, "diag %u: txp=%u busy=%llu allocf=%u cap=%d q[%s ] mac[%s ]\n",
-			 priv->diag_seq++, priv->tx_pending, priv->tx_busy_events,
+		dev_info(priv->dev, "diag %u: queued=%u txp=%u busy=%llu allocf=%u cap=%d q[%s ] mac[%s ]\n",
+			 priv->diag_seq++, queued, priv->tx_pending, priv->tx_busy_events,
 			 priv->rx_alloc_failures, priv->queue_capped, queues, mac);
+	if (pool_warn && queued >= pool_warn) {
+		dev_warn(priv->dev, "diag: pool low, %u buffers queued\n", queued);
+		delay = 20;
+	}
 out:
-	schedule_delayed_work(&priv->diag_work, msecs_to_jiffies(diag_ms ?: 1000));
+	schedule_delayed_work(&priv->diag_work, msecs_to_jiffies(delay));
 }
 
 static int gc1601_eth_open(struct net_device *netdev)
