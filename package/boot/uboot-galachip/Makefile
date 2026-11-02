@@ -14,11 +14,11 @@ PKG_LICENSE:=GPL-2.0-only GPL-2.0-or-later LZMA-SDK-9.22
 PKG_LICENSE_FILES:=Licenses/README lib/lzma/LzmaDec.c
 
 define U-Boot/xz000_g7
-  NAME:=TP-Link XZ000-G7 (RAM-only development)
+  NAME:=TP-Link XZ000-G7
   BUILD_TARGET:=galachip
   BUILD_SUBTARGET:=gc1601
-  DEFAULT:=n
-  UBOOT_IMAGE:=output/artifacts/*
+  BUILD_DEVICES:=tplink_xz000-g7
+  UBOOT_IMAGE:=output/artifacts/xz000-g7-uboot-proper.img
 endef
 
 UBOOT_TARGETS:=xz000_g7
@@ -42,10 +42,16 @@ define Build/Compile
 		--localversion "-OpenWrt-$(REVISION)"
 endef
 
-# Binary build artifacts only. No image recipe, sysupgrade hook or flash command.
-define Package/u-boot/install
-	$(INSTALL_DIR) $(1)
-	$(CP) $(PKG_BUILD_DIR)/output/artifacts/. $(1)/
+# Only U-Boot proper is published, as a device artifact. The SPL and the
+# full boot region stay in the build directory until the SPL passes a
+# cold-boot trial.
+define Build/InstallDev
+	$(INSTALL_DIR) $(STAGING_DIR_IMAGE)
+	$(INSTALL_DATA) $(PKG_BUILD_DIR)/$(UBOOT_IMAGE) \
+		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot-proper.img
+endef
+
+define Package/u-boot/install/default
 endef
 
 $(eval $(call BuildPackage/U-Boot))

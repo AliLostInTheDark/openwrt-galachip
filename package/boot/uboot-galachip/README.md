@@ -1,8 +1,9 @@
 # XZ000-G7 U-Boot development port
 
 U-Boot **v2026.10** for the GC1601/FA626TE XZ000-G7 with 32 MiB DDR and
-4 MiB EN25QH32B NOR. **RAM-only: the RAM image and wrapper have run on hardware; SPL, ROM recovery
-and flash installation have not.** See [HARDWARE-TESTS.md](HARDWARE-TESTS.md).
+4 MiB EN25QH32B NOR. **U-Boot proper runs from NOR behind the stock SPL and
+updates itself (`run upgrade_uboot`); the replacement SPL and ROM recovery are
+untested.** See [HARDWARE-TESTS.md](HARDWARE-TESTS.md).
 The experimental `gc1601-loader` package is separate and unchanged.
 
 ## Scope
@@ -66,11 +67,12 @@ the normal upstream U-Boot host build dependencies. The archive hash is pinned
 in both the OpenWrt recipe and standalone builder. Reusing an output directory
 with a different patch identity is rejected.
 
-OpenWrt integration is an optional binary package, default **off**:
-`CONFIG_PACKAGE_u-boot-xz000_g7=y`, then
-`make package/boot/uboot-galachip/compile V=s`.
-It generates bootloader artifacts only and has no firmware-image installation
-hook. The user remains responsible for complete OpenWrt image builds.
+In OpenWrt the package is built by default for `tplink_xz000-g7` and
+publishes one device artifact,
+`openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-proper.img`, which is the
+default `ubootfile` for `run upgrade_uboot`. The SPL and full boot-region
+images stay in the package build directory until the SPL passes a cold-boot
+trial. Sysupgrade never touches the bootloader.
 
 ## Artifacts and formats
 

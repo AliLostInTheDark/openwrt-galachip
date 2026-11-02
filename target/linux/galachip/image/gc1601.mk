@@ -43,6 +43,12 @@ define Image/Prepare
 	find $(TARGET_DIR) ! -type l -perm /022 ! -perm -1000 -exec chmod go-w {} +
 endef
 
+# U-Boot proper for NOR 0x2000-0x20000: install with run upgrade_uboot.
+define Build/gc1601-u-boot-proper
+	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot-proper.img >> $@
+	[ "$$(stat -c %s $@)" -eq 122880 ]
+endef
+
 define Device/tplink_xz000-g7
   DEVICE_VENDOR := TP-Link
   DEVICE_MODEL := XZ000-G7
@@ -56,6 +62,8 @@ define Device/tplink_xz000-g7
   IMAGES := sysupgrade.bin
   IMAGE/sysupgrade.bin := append-kernel | pad-to $$(BLOCKSIZE) | \
     append-rootfs | pad-rootfs | check-size | append-metadata
+  ARTIFACTS := u-boot-proper.img
+  ARTIFACT/u-boot-proper.img := gc1601-u-boot-proper
   DEVICE_PACKAGES := kmod-gc1601-gpon-diag kmod-gc1601-epon-diag xpon-report \
     omci-agent omcid luci-app-omci luci-app-onu-system luci-theme-slate uhttpd-mod-ucode \
     epon-oamd luci-app-epon \
