@@ -31,8 +31,9 @@ and firewalling. OLT provisioning and authentication requirements vary by ISP.
   soon as the ONU ranges again.
 - ONU identity cloning (serial, vendor ID, versions, equipment ID, SLID/LOID)
   with the field limits the OMCI and CTC formats allow.
-- LuCI with the Slate theme (light, dark or automatic), served by uhttpd's
-  ucode plugin, which compiles LuCI once instead of on every request.
+- LuCI with the stock Bootstrap theme, showing the PON as a fiber optic port
+  with its optical line rate, served by uhttpd's ucode plugin, which
+  compiles LuCI once instead of on every request.
 - GPON and EPON status pages with receive and transmit power against the
   optical class window, the activation stages in words, what the OLT
   provisioned, and the line state in the header of every page. Settings show
