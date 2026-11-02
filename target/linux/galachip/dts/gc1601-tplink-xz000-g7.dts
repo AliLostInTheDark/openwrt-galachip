@@ -35,6 +35,19 @@
 		loader_dma: dma@40800000 {
 			reg = <0x40800000 0x00112000>;
 		};
+
+		/*
+		 * Crash logs that survive a watchdog reset: above U-Boot's initial
+		 * stack top (0x40f00000) and below its load address (0x41000000).
+		 */
+		ramoops@40f80000 {
+			compatible = "ramoops";
+			reg = <0x40f80000 0x40000>;
+			no-map;
+			record-size = <0x8000>;
+			console-size = <0x20000>;
+			pmsg-size = <0x8000>;
+		};
 	};
 
 	leds {

@@ -1,0 +1,14 @@
+#!/bin/sh /etc/rc.common
+# Keep the system log in pstore's pmsg buffer so it survives a crash:
+# read it back from /sys/fs/pstore/pmsg-ramoops-0 after the reboot.
+
+START=13
+USE_PROCD=1
+
+start_service() {
+	[ -c /dev/pmsg0 ] || return 0
+	procd_open_instance
+	procd_set_param command /bin/sh -c 'exec logread -f > /dev/pmsg0'
+	procd_set_param respawn
+	procd_close_instance
+}
