@@ -126,25 +126,16 @@ U_BOOT_CMD(fwload, 2, 0, do_fwload,
 
 /* proper.img: wrapper, padding, then a 32-byte footer of CRC32-checked words. */
 #define PROPER_SIZE 0x1e000U
+/* u-boot.bin: the SPL with its ROM header, 0xff padding, proper.img at 0x2000. */
+#define BOOTLOADER_SIZE 0x20000U
+#define PROPER_OFFSET 0x2000U
+#define SPL_MAX 0x1c00U
 
-static int do_ubcheck(struct cmd_tbl *cmd, int flag, int argc, char *const argv[])
+static bool proper_ok(const u8 *image)
 {
-	ulong addr, size;
-	const u8 *image;
-	const u32 *footer;
-	u32 length;
+	const u32 *footer = (void *)(image + PROPER_SIZE - 32);
+	u32 length = get_unaligned_le32(&footer[2]);
 
-	if (argc != 3)
-		return CMD_RET_USAGE;
-	addr = hextoul(argv[1], NULL);
-	size = hextoul(argv[2], NULL);
-	if (size != PROPER_SIZE || !gc1601_load_range(addr, size)) {
-		printf("proper.img must be 0x%x bytes\n", PROPER_SIZE);
-		return CMD_RET_FAILURE;
-	}
-	image = (void *)addr;
-	footer = (void *)(image + PROPER_SIZE - 32);
-	length = get_unaligned_le32(&footer[2]);
 	if (crc32(0, (void *)footer, 28) != get_unaligned_le32(&footer[7]) ||
 	    get_unaligned_le32(&footer[0]) != 0x31503747 ||
 	    get_unaligned_le32(&footer[1]) != 1 ||
@@ -152,12 +143,55 @@ static int do_ubcheck(struct cmd_tbl *cmd, int flag, int argc, char *const argv[
 	    length < 64 || length > PROPER_SIZE - 32 ||
 	    crc32(0, image, length) != get_unaligned_le32(&footer[4])) {
 		puts("Not a valid XZ000-G7 proper.img\n");
-		return CMD_RET_FAILURE;
+		return false;
 	}
 	printf("proper.img OK: wrapper %u bytes, CRC32 %08x\n", length,
 	       get_unaligned_le32(&footer[4]));
-	return CMD_RET_SUCCESS;
+	return true;
+}
+
+/* The mask ROM's own checks: magic, size, and the payload's 32-bit word sum. */
+static bool spl_ok(const u8 *image)
+{
+	u32 size = get_unaligned_le32(image + 4);
+	u32 sum = 0, i;
+
+	if (get_unaligned_le32(image) != 0x03020100 || !size ||
+	    size > SPL_MAX - 16 || size % 4) {
+		puts("Not a valid XZ000-G7 SPL header\n");
+		return false;
+	}
+	for (i = 0; i < size; i += 4)
+		sum += get_unaligned_le32(image + 16 + i);
+	if (sum != get_unaligned_le32(image + 12)) {
+		puts("SPL checksum mismatch\n");
+		return false;
+	}
+	printf("SPL OK: %u bytes, checksum %08x\n", size, sum);
+	return true;
+}
+
+static int do_ubcheck(struct cmd_tbl *cmd, int flag, int argc, char *const argv[])
+{
+	ulong addr, size;
+	const u8 *image;
+
+	if (argc != 3)
+		return CMD_RET_USAGE;
+	addr = hextoul(argv[1], NULL);
+	size = hextoul(argv[2], NULL);
+	if ((size != PROPER_SIZE && size != BOOTLOADER_SIZE) ||
+	    !gc1601_load_range(addr, size)) {
+		printf("expected proper.img (0x%x) or u-boot.bin (0x%x)\n",
+		       PROPER_SIZE, BOOTLOADER_SIZE);
+		return CMD_RET_FAILURE;
+	}
+	image = (void *)addr;
+	if (size == PROPER_SIZE)
+		return proper_ok(image) ? CMD_RET_SUCCESS : CMD_RET_FAILURE;
+	return spl_ok(image) && proper_ok(image + PROPER_OFFSET) ?
+	       CMD_RET_SUCCESS : CMD_RET_FAILURE;
 }
 U_BOOT_CMD(ubcheck, 3, 0, do_ubcheck,
-	   "check a loaded XZ000-G7 proper.img",
+	   "check a loaded XZ000-G7 proper.img or u-boot.bin",
 	   "<addr> <size>");

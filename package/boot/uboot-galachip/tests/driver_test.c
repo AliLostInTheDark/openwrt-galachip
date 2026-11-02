@@ -201,9 +201,10 @@ static void spi_tests(void)
 		assert(!gc_spi_exec(&slave, &w));
 		assert(spi_opcode == 2 && spi_written == 6 && !spi_left);
 		assert(raw(0xa0000008) == 11 && (raw(0xa000000c) & BIT(1)));
+		/* The boot region is writable: the ROM UART menu recovers a bad SPL. */
 		w.addr.val = 0x1ff8;
-		assert(gc_spi_exec(&slave, &w) == -EROFS);
-		w.addr.val = 0x2000;
+		assert(!gc_spi_exec(&slave, &w));
+		w.addr.val = 0;
 		assert(!gc_spi_exec(&slave, &w));
 		w.addr.val = 0x3cfff8;
 		assert(gc_spi_exec(&slave, &w) == -EROFS);
@@ -211,37 +212,30 @@ static void spi_tests(void)
 		e.addr.val = 0x3d0000;
 		assert(gc_spi_exec(&slave, &e) == -EROFS);
 		e.addr.val = 0;
-		assert(gc_spi_exec(&slave, &e) == -EROFS);
+		assert(!gc_spi_exec(&slave, &e));
 		e.addr.val = 0x12000;
 		assert(gc_spi_exec(&slave, &e) == -EINVAL);
 		e.cmd.opcode = 0x20;
 		e.addr.val = 0x1000;
-		assert(gc_spi_exec(&slave, &e) == -EROFS);
+		assert(!gc_spi_exec(&slave, &e));
 		e.addr.val = 0x2800;
 		assert(gc_spi_exec(&slave, &e) == -EINVAL);
-		e.addr.val = 0x2000;
-		assert(!gc_spi_exec(&slave, &e));
 		e.addr.val = 0x3cf000;
 		assert(!gc_spi_exec(&slave, &e));
-		/* Nothing may erase or program the SPL block at 0-0x2000. */
+		e.addr.val = 0x3f0000;
+		assert(gc_spi_exec(&slave, &e) == -EROFS);
+		/* Whole-chip erases and status writes stay refused everywhere. */
 		{
-			static const u8 erases[] = { 0x20, 0x52, 0xd8, 0x60, 0xc7, 0x01 };
+			static const u8 refused[] = { 0x52, 0x60, 0xc7, 0x01 };
 			unsigned int k;
-			u32 a;
 
-			for (k = 0; k < ARRAY_SIZE(erases); k++) {
-				e.cmd.opcode = erases[k];
-				for (a = 0; a < 0x2000; a += 0x200) {
-					e.addr.nbytes = 3;
-					e.addr.val = a;
-					assert(gc_spi_exec(&slave, &e));
-				}
+			for (k = 0; k < ARRAY_SIZE(refused); k++) {
+				e.cmd.opcode = refused[k];
+				e.addr.nbytes = 3;
+				e.addr.val = 0x20000;
+				assert(gc_spi_exec(&slave, &e));
 				e.addr.nbytes = 0;
 				assert(gc_spi_exec(&slave, &e));
-			}
-			for (a = 0; a < 0x2000; a += 4) {
-				w.addr.val = a;
-				assert(gc_spi_exec(&slave, &w));
 			}
 		}
 	}

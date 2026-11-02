@@ -42,11 +42,12 @@ define Build/Compile
 		--localversion="-OpenWrt-$(REVISION)"
 endef
 
-# Only U-Boot proper is published, as a device artifact. The SPL and the
-# full boot region stay in the build directory until the SPL passes a
-# cold-boot trial.
+# u-boot.bin is the whole boot region (SPL + proper) for upgrade_uboot;
+# proper.img installs from the stock U-Boot, which keeps the stock SPL.
 define Build/InstallDev
 	$(INSTALL_DIR) $(STAGING_DIR_IMAGE)
+	$(INSTALL_DATA) $(PKG_BUILD_DIR)/output/artifacts/xz000-g7-bootregion.bin \
+		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot.bin
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/$(UBOOT_IMAGE) \
 		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot-proper.img
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/output/artifacts/xz000-g7-spl-rom.bin \

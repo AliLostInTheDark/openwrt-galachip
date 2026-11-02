@@ -1,12 +1,12 @@
 # Installation and rollback gate
 
-## Without a programmer: proper from the stock U-Boot
+## Without a programmer: the bootloader from the stock U-Boot
 
-Proper runs behind the stock SPL, so it can be installed from a RAM-started
-U-Boot, whose driver erases only 4 KiB blocks in `0x2000`-`0x20000` and
-refuses the SPL. Tested on 2026-11-02 (`8696f5d345`). Serve the RAM U-Boot
-(`…-u-boot-ram.bin` in the OpenWrt image directory; `xz000-g7-uboot-ram.bin`
-here) and proper.img (named as `bootfile_uboot`) by TFTP,
+The RAM-started U-Boot installs the whole boot region, SPL and proper, with
+4 KiB erases; a broken SPL recovers over the mask ROM's UART menu (below).
+Serve the RAM U-Boot (`…-u-boot-ram.bin` in the OpenWrt image directory;
+`xz000-g7-uboot-ram.bin` here) and `…-u-boot.bin` (named as
+`bootfile_uboot`) by TFTP,
 then at the stock `=>` prompt, one line at a time:
 
 ```text
@@ -17,17 +17,17 @@ tftpboot 41000000 openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-ram.bin
 go 41000000
 ```
 
-At the `G7>` prompt, `run upgrade_uboot`, require `Total of 122880 byte(s)
-were the same`, then `reset`. The stock SPL then starts the new U-Boot.
+At the `G7>` prompt, `run upgrade_uboot`: `ubcheck` must report both `SPL OK`
+and `proper.img OK`, and the compare `Total of 131072 byte(s) were the same`.
+Then `reset`. Later updates are the same `run upgrade_uboot` from flash.
 Do not write the boot region with the stock U-Boot's `sf`: it erases 64 KiB
-blocks, and the first one holds the SPL. The SPL itself is only replaced with
-the programmer, below.
+blocks.
 
 ## With a programmer
 
 **Recovery is by external SPI programmer.** On 2026-11-02 a CH341A clip
 gave three identical 4 MiB reads of this unit (SHA256 `8698f068...8335`), and a
-full-chip erase, write and verify restored that backup. SPL writes use the programmer.
+full-chip erase, write and verify restored that backup.
 
 **A broken SPL also recovers over UART alone** (verified 2026-11-03): the mask
 ROM shows its menu; answer `2` and Enter, then send the SPL without its
@@ -61,7 +61,6 @@ Record complete UART logs for every trial.
 Rollback uses this unit's own verified backup. Never restore a different
 unit's factory or calibration areas.
 
-U-Boot may write U-Boot proper (`run upgrade_uboot`, after a programmer
-trial of the same build) and the firmware partition (`run upgrade_tftp`).
-The SPI driver refuses any erase or program of the SPL, `misc` and
-`hwconfig`; the SPL is replaced only with the programmer. No `saveenv` or ROM strap manipulation.
+U-Boot may write the boot region (`run upgrade_uboot`) and the firmware
+partition (`run upgrade_tftp`). The SPI driver refuses any erase or program
+of `misc` and `hwconfig`. No `saveenv` or ROM strap manipulation.

@@ -1,8 +1,8 @@
 # XZ000-G7 U-Boot development port
 
 U-Boot **v2026.10** for the GC1601/FA626TE XZ000-G7 with 32 MiB DDR and
-4 MiB EN25QH32B NOR. **U-Boot proper runs from NOR behind the stock SPL and
-updates itself (`run upgrade_uboot`); it installs from the stock U-Boot
+4 MiB EN25QH32B NOR. **SPL and U-Boot proper ship as one boot-region image,
+`u-boot.bin`, which `run upgrade_uboot` installs, also from the stock U-Boot,
 without a programmer ([INSTALLATION.md](INSTALLATION.md)). The replacement SPL passed 10 cold and
 20 reset boots, UART recovery and mask ROM UART recovery.** See [HARDWARE-TESTS.md](HARDWARE-TESTS.md).
 The experimental `gc1601-loader` package is separate and unchanged.
@@ -22,12 +22,12 @@ MAC requires a runtime `setenv ethaddr`. No random/shared fallback address.
 
 NOR runs single-lane, mode 0, at up to 50 MHz with 256-byte PIO bursts, as
 the Linux driver does. The SPI driver accepts program and erase only for
-U-Boot proper and the firmware partition (`0x2000`-`0x3d0000`), with erases
+the boot region and the firmware partition (`0`-`0x3d0000`), with erases
 aligned to their own block size. Everything else is refused below every
-command and script: chip erase, status-register writes, any erase or program
-touching the SPL (`0`-`0x2000`), `misc` and `hwconfig`. NOR uses 4 KiB
-erases, so updating proper never erases the SPL block. The SPL can only be
-replaced with the SPI programmer. Probe does not unlock the chip.
+command and script: chip erase, status-register writes, `misc` and
+`hwconfig`. NOR uses 4 KiB erases and `sf update` skips identical blocks, so
+an unchanged SPL is never rewritten; a broken one recovers over the mask
+ROM's UART menu. Probe does not unlock the chip.
 There is no persistent environment, HTTP recovery, mtest or optical
 calibration operation.
 
@@ -39,8 +39,8 @@ calibration operation.
 | `run boot_tftp` | `tftpboot ${bootfile}` (the OpenWrt initramfs zImage), `zdtb`, `bootz`. |
 | `run backup_flash` | Read the whole 4 MiB NOR and `tftpput` it as `xz000-g7-flash.bin`. |
 | `run restore_stock` | `tftpboot ${bootfile_stock}` (this unit's raw `firmware` backup, exactly `0x3b0000` bytes), check tag and size, `sf update` at `0x20000`, read back and compare. U-Boot stays; stock firmware boots with `boot_flash`. |
-| `run upgrade_uboot` | `tftpboot ${bootfile_uboot}` (proper.img), `ubcheck`, `sf update` at `0x2000`, read back and compare. |
-| `ubcheck <addr> <size>` | Check a loaded proper.img: size, footer and wrapper CRC32s, entry. |
+| `run upgrade_uboot` | `tftpboot ${bootfile_uboot}` (u-boot.bin), `ubcheck`, `sf update` of `0`-`0x20000`, read back and compare. |
+| `ubcheck <addr> <size>` | Check a loaded u-boot.bin (SPL header, size and word sum as the ROM checks them, then proper) or proper.img (footer and wrapper CRC32s, entry). |
 | `run upgrade_tftp` | `tftpboot ${bootfile_upg}` (sysupgrade.bin), check tag and size, `sf update` at `0x20000`. |
 | `fwload <addr>` | Load the tagged kernel; sets `filesize` and `fdt_addr`. |
 | `zdtb <addr>` | Set `fdt_addr` to the DTB appended to a loaded zImage. |
@@ -70,11 +70,11 @@ in both the OpenWrt recipe and standalone builder. Reusing an output directory
 with a different patch identity is rejected.
 
 In OpenWrt the package is built by default for `tplink_xz000-g7` and
-publishes three device artifacts: `…-u-boot-proper.img`, the default
-`bootfile_uboot` for `run upgrade_uboot`; `…-u-boot-ram.bin`, started from
-the stock U-Boot to install proper; and `…-u-boot-spl.bin`, the ROM-headed
-SPL for NOR `0`, written only with an SPI programmer. The full
-boot-region image stays in the package build directory. Sysupgrade never
+publishes four device artifacts: `…-u-boot.bin`, the whole boot region and
+the default `bootfile_uboot` for `run upgrade_uboot`; `…-u-boot-ram.bin`,
+started from the stock U-Boot to run that install; `…-u-boot-proper.img`;
+and `…-u-boot-spl.bin`, the ROM-headed SPL for a programmer (its payload
+without the 16-byte header goes over the ROM's UART menu). Sysupgrade never
 touches the bootloader.
 
 ## Artifacts and formats
@@ -84,7 +84,7 @@ touches the bootloader.
 | `xz000-g7-uboot-ram.bin` | Raw warm-entry U-Boot, load and enter at `0x41000000`. |
 | `xz000-g7-uboot-proper.img` | Exactly `0x1e000` bytes: raw executable wrapper, checked LZMA payload and integrity footer, compatible with the installed SPL's raw entry. |
 | `xz000-g7-spl-rom.bin` | 16-byte ROM header followed by at most `0x1c00` bytes of SRAM first-stage code. |
-| `xz000-g7-bootregion.bin` | Exactly `0x20000` bytes: ROM/SPL, erased padding, then proper.img. **Not an installation authorization.** |
+| `xz000-g7-bootregion.bin` | Exactly `0x20000` bytes: ROM/SPL, erased padding, then proper.img. Published as `…-u-boot.bin`. |
 | `xz000-g7-uboot-uart.pkg` | Checked RAM U-Boot package for the wrapper's XMODEM failure path. |
 | `manifest.json` | Revision, configuration hashes, artifact sizes/hashes, entries and limits. |
 | `host-inspection.json` | ISA, relocation, command, stack and SRAM assertions. |

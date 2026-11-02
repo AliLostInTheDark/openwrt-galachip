@@ -52,7 +52,7 @@ define Image/Prepare
 	find $(TARGET_DIR) ! -type l -perm /022 ! -perm -1000 -exec chmod go-w {} +
 endef
 
-# U-Boot proper for NOR 0x2000-0x20000: install with run upgrade_uboot.
+# U-Boot proper for NOR 0x2000-0x20000: install from the stock U-Boot.
 define Build/gc1601-u-boot-proper
 	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot-proper.img >> $@
 	[ "$$(stat -c %s $@)" -eq 122880 ]
@@ -63,7 +63,13 @@ define Build/gc1601-u-boot-ram
 	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot-ram.bin >> $@
 endef
 
-# ROM-headed SPL for NOR 0-0x2000: install with an SPI programmer only.
+# Whole boot region, SPL + proper, NOR 0-0x20000: install with run upgrade_uboot.
+define Build/gc1601-u-boot
+	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot.bin >> $@
+	[ "$$(stat -c %s $@)" -eq 131072 ]
+endef
+
+# ROM-headed SPL for NOR 0-0x2000, for a programmer or the ROM UART menu.
 define Build/gc1601-u-boot-spl
 	cat $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-u-boot-spl.bin >> $@
 	[ "$$(stat -c %s $@)" -le 8192 ]
@@ -82,7 +88,8 @@ define Device/tplink_xz000-g7
   IMAGES := sysupgrade.bin
   IMAGE/sysupgrade.bin := append-kernel | pad-to $$(BLOCKSIZE) | \
     append-rootfs | pad-rootfs | check-size | append-metadata
-  ARTIFACTS := u-boot-proper.img u-boot-spl.bin u-boot-ram.bin
+  ARTIFACTS := u-boot.bin u-boot-proper.img u-boot-spl.bin u-boot-ram.bin
+  ARTIFACT/u-boot.bin := gc1601-u-boot
   ARTIFACT/u-boot-proper.img := gc1601-u-boot-proper
   ARTIFACT/u-boot-spl.bin := gc1601-u-boot-spl
   ARTIFACT/u-boot-ram.bin := gc1601-u-boot-ram

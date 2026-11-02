@@ -17,7 +17,8 @@
 
 /* PIO burst per FIFO-ready wait, as CR2 selects and the Linux driver uses. */
 #define XFR_SIZE 256U
-#define WRITABLE_START 0x2000U
+/* The boot region is writable: a broken SPL recovers over the ROM UART menu. */
+#define WRITABLE_START 0x0U
 #define WRITABLE_END 0x3d0000U
 
 struct gc_spi { void *base; ulong input_rate; bool failed; };
