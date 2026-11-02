@@ -1,0 +1,112 @@
+Indent "Working FDT set to" like the other boot-time FDT lines.
+
+diff -ru a/cmd/fdt.c b/cmd/fdt.c
+--- a/cmd/fdt.c	2026-11-03 01:52:10.385831042 +0530
++++ b/cmd/fdt.c	2026-11-03 01:52:10.389121077 +0530
+@@ -47,7 +47,7 @@
+ 
+ void set_working_fdt_addr(ulong addr)
+ {
+-	printf("Working FDT set to %lx\n", addr);
++	printf("   Working FDT set to %lx\n", addr);
+ 	set_working_fdt_addr_quiet(addr);
+ }
+ 
+diff -ru a/test/cmd/fdt.c b/test/cmd/fdt.c
+--- a/test/cmd/fdt.c	2026-11-03 01:52:10.386590108 +0530
++++ b/test/cmd/fdt.c	2026-11-03 01:52:10.390174348 +0530
+@@ -50,7 +50,7 @@
+ 
+ 	addr = map_to_sysmem(fdt);
+ 	set_working_fdt_addr(addr);
+-	ut_assert_nextline("Working FDT set to %lx", addr);
++	ut_assert_nextline("   Working FDT set to %lx", addr);
+ 	*addrp = addr;
+ 
+ 	return 0;
+@@ -155,7 +155,7 @@
+ 
+ 	addr = map_to_sysmem(fdt);
+ 	set_working_fdt_addr(addr);
+-	ut_assert_nextline("Working FDT set to %lx", addr);
++	ut_assert_nextline("   Working FDT set to %lx", addr);
+ 	*addrp = addr;
+ 
+ 	return 0;
+@@ -176,7 +176,7 @@
+ 
+ 	/* The working fdt is not set, so this should fail */
+ 	set_working_fdt_addr(0);
+-	ut_assert_nextline("Working FDT set to 0");
++	ut_assert_nextline("   Working FDT set to 0");
+ 	ut_asserteq(CMD_RET_FAILURE, run_command("fdt addr", 0));
+ 
+ 	/*
+@@ -195,13 +195,13 @@
+ 
+ 	/* Set the working FDT */
+ 	set_working_fdt_addr(0);
+-	ut_assert_nextline("Working FDT set to 0");
++	ut_assert_nextline("   Working FDT set to 0");
+ 	ut_assertok(run_commandf("fdt addr %08lx", addr));
+-	ut_assert_nextline("Working FDT set to %lx", addr);
++	ut_assert_nextline("   Working FDT set to %lx", addr);
+ 	ut_asserteq(addr, map_to_sysmem(working_fdt));
+ 	ut_assert_console_end();
+ 	set_working_fdt_addr(0);
+-	ut_assert_nextline("Working FDT set to 0");
++	ut_assert_nextline("   Working FDT set to 0");
+ 
+ 	/* Set the control FDT */
+ 	fdt_blob = gd->fdt_blob;
+@@ -222,7 +222,7 @@
+ 	/* Test detecting an invalid FDT */
+ 	fdt[0] = 123;
+ 	set_working_fdt_addr(addr);
+-	ut_assert_nextline("Working FDT set to %lx", addr);
++	ut_assert_nextline("   Working FDT set to %lx", addr);
+ 	ut_asserteq(1, run_commandf("fdt addr"));
+ 	ut_assert_nextline("libfdt fdt_check_header(): FDT_ERR_BADMAGIC");
+ 	ut_assert_console_end();
+@@ -242,12 +242,12 @@
+ 
+ 	/* Test setting and resizing the working FDT to a larger size */
+ 	ut_assertok(run_commandf("fdt addr %08lx %x", addr, newsize));
+-	ut_assert_nextline("Working FDT set to %lx", addr);
++	ut_assert_nextline("   Working FDT set to %lx", addr);
+ 	ut_assert_console_end();
+ 
+ 	/* Try shrinking it */
+ 	ut_assertok(run_commandf("fdt addr %08lx %zx", addr, sizeof(fdt) / 4));
+-	ut_assert_nextline("Working FDT set to %lx", addr);
++	ut_assert_nextline("   Working FDT set to %lx", addr);
+ 	ut_assert_nextline("New length %d < existing length %d, ignoring",
+ 			   (int)sizeof(fdt) / 4, newsize);
+ 	ut_assert_console_end();
+@@ -282,7 +282,7 @@
+ 
+ 	/* Test moving the working FDT to a new location */
+ 	ut_assertok(run_commandf("fdt move %08lx %08lx %x", addr, newaddr, ts));
+-	ut_assert_nextline("Working FDT set to %lx", newaddr);
++	ut_assert_nextline("   Working FDT set to %lx", newaddr);
+ 	ut_assert_console_end();
+ 
+ 	/* Compare the source and destination DTs */
+@@ -1171,7 +1171,7 @@
+ 	fdt_shrink_to_minimum(fdt, 4096);	/* Resize with 4096 extra bytes */
+ 	addr = map_to_sysmem(fdt);
+ 	set_working_fdt_addr(addr);
+-	ut_assert_nextline("Working FDT set to %lx", addr);
++	ut_assert_nextline("   Working FDT set to %lx", addr);
+ 
+ 	/* Test updating the memory node */
+ 	ut_assertok(run_commandf("fdt memory 0x%s 0x%s", seta, sets));
+@@ -1358,7 +1358,7 @@
+ 	fdt_shrink_to_minimum(fdt, 4096);	/* Resize with 4096 extra bytes */
+ 	addr = map_to_sysmem(fdt);
+ 	set_working_fdt_addr(addr);
+-	ut_assert_nextline("Working FDT set to %lx", addr);
++	ut_assert_nextline("   Working FDT set to %lx", addr);
+ 
+ 	/* Create DTO which adds single property to root node / */
+ 	ut_assertok(fdt_create(fdto, sizeof(fdto)));
