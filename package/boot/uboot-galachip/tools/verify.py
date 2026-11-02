@@ -72,7 +72,7 @@ def inspect_build(build, cross):
                 "DM_SPI", "DM_SPI_FLASH", "SYS_NS16550_MEM32", "DM_MDIO", "DM_ETH",
                 "DM_ETH_PHY",
                 "CMD_LOADB", "CMD_BOOTZ", "CMD_CRC32", "CMD_SLEEP",
-                "HAS_CUSTOM_SYS_INIT_SP_ADDR", "LMB"]
+                "HAS_CUSTOM_SYS_INIT_SP_ADDR", "LMB", "SPI_FLASH_USE_4K_SECTORS"]
     absent = ["CMD_SAVEENV", "CMD_MEMTEST", "ENV_IS_IN_SPI_FLASH", "SPI_FLASH_UNLOCK_ALL",
               "SPI_FLASH_SOFT_RESET", "SPI_FLASH_SFDP_SUPPORT", "NET_RANDOM_ETHADDR"]
     commands = ["bootz", "fwload", "zdtb", "ubcheck", "ethdiag", "tftpput", "loadx", "loady", "crc32", "sleep", "sf",
