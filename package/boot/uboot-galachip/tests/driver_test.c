@@ -144,6 +144,18 @@ static void spi_tests(void)
 	assert(bytes[0] == 0xaa && bytes[260] == 0xaa);
 	for (i = 0; i < 259; i++)
 		assert(bytes[i + 1] == (i & 255));
+	{
+		/* Aligned destination: whole words, then the 3-byte tail. */
+		static u32 aligned[66];
+
+		memset(aligned, 0xaa, sizeof(aligned));
+		op.data.buf.in = aligned;
+		assert(!gc_spi_exec(&slave, &op));
+		for (i = 0; i < 259; i++)
+			assert(((u8 *)aligned)[i] == (i & 255));
+		assert(((u8 *)aligned)[259] == 0xaa);
+		op.data.buf.in = bytes + 1;
+	}
 	assert(gc_spi_speed(&bus, 24999999) == -ERANGE);
 	assert(!gc_spi_speed(&bus, 25000000));
 	assert((raw(0xa0000010) & 3) == 3);

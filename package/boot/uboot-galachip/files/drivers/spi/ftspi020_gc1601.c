@@ -130,6 +130,17 @@ static int gc_spi_exec(struct spi_slave *slave, const struct spi_mem_op *op)
 			goto fail;
 		chunk = min(left, XFR_SIZE);
 		left -= chunk;
+		/*
+		 * With the D-cache off, a memcpy per word dominates the transfer;
+		 * move whole words directly while the buffer is aligned.
+		 */
+		if (out && !((uintptr_t)src & 3)) {
+			for (; chunk >= 4; chunk -= 4, src += 4)
+				writel(*(const u32 *)src, p->base + 0x100);
+		} else if (!out && !((uintptr_t)dst & 3)) {
+			for (; chunk >= 4; chunk -= 4, dst += 4)
+				*(u32 *)dst = readl(p->base + 0x100);
+		}
 		/* The data port is word-wide; a partial last word carries the tail. */
 		while (chunk) {
 			n = min(chunk, 4U);
