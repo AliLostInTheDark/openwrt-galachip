@@ -1,0 +1,180 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] cmd: sf: progress bar for erase, write and update
+
+Erase and write ran as one call with no feedback, and update redrew
+its percentage with a leading "   \r" that made the cursor jump. Erase
+and write now run in 64 KiB steps; all three draw one fixed-width line
+ending in a bar, then report time and speed.
+
+--- a/cmd/sf.c	2026-11-03 01:55:26.968649213 +0530
++++ b/cmd/sf.c	2026-11-03 01:55:39.476241813 +0530
+@@ -214,6 +214,57 @@
+ 	return NULL;
+ }
+ 
++#define SF_PROGRESS_STEP	0x10000
++#define SF_PROGRESS_WIDTH	20
++
++/* One fixed-width line, redrawn in place: "<what>, 45% 123 KiB/s [#####   ]" */
++static void sf_progress(const char *what, size_t done, size_t total,
++			ulong start_time)
++{
++	char bar[SF_PROGRESS_WIDTH + 1];
++	size_t fill = done * SF_PROGRESS_WIDTH / total;
++
++	memset(bar, '#', fill);
++	memset(bar + fill, ' ', SF_PROGRESS_WIDTH - fill);
++	bar[SF_PROGRESS_WIDTH] = '\0';
++	printf("\r%s, %3zu%% %5lu KiB/s [%s]", what, done * 100 / total,
++	       bytes_per_second(done, start_time) / 1024, bar);
++}
++
++/* Erase or write in 64 KiB steps so a long operation shows progress. */
++static int sf_erase_write(struct spi_flash *flash, u32 offset, size_t len,
++			  const void *buf, ulong start_time)
++{
++	const char *what = buf ? "Writing" : "Erasing";
++	size_t done = 0;
++	int ret = 0;
++
++	while (done < len && !ret) {
++		size_t todo = min_t(size_t, len - done,
++				    SF_PROGRESS_STEP - (offset + done) % SF_PROGRESS_STEP);
++
++		if (buf)
++			ret = spi_flash_write(flash, offset + done, todo,
++					      buf + done);
++		else
++			ret = spi_flash_erase(flash, offset + done, todo);
++		done += todo;
++		if (len > SF_PROGRESS_STEP)
++			sf_progress(what, done, len, start_time);
++	}
++	if (len > SF_PROGRESS_STEP)
++		putc('\n');
++	return ret;
++}
++
++static void sf_print_time(size_t len, ulong start_time)
++{
++	ulong delta = get_timer(start_time);
++
++	printf(" in %ld.%03lds, speed %ld KiB/s", delta / 1000, delta % 1000,
++	       bytes_per_second(len, start_time) / 1024);
++}
++
+ /**
+  * Update an area of SPI flash by erasing and writing any blocks which need
+  * to change. Existing blocks with the correct data are left unchanged.
+@@ -233,12 +284,8 @@
+ 	size_t todo;		/* number of bytes to do in this pass */
+ 	size_t skipped = 0;	/* statistics */
+ 	const ulong start_time = get_timer(0);
+-	size_t scale = 1;
+ 	const char *start_buf = buf;
+-	ulong delta;
+ 
+-	if (end - buf >= 200)
+-		scale = (end - buf) / 100;
+ 	cmp_buf = memalign(ARCH_DMA_MINALIGN, flash->sector_size);
+ 	if (cmp_buf) {
+ 		ulong last_update = get_timer(0);
+@@ -247,31 +294,29 @@
+ 			todo = min_t(size_t, end - buf,
+ 				     flash->sector_size - (offset % flash->sector_size));
+ 			if (get_timer(last_update) > 100) {
+-				printf("   \rUpdating, %zu%% %lu KiB/s",
+-				       100 - (end - buf) / scale,
+-					bytes_per_second(buf - start_buf,
+-							 start_time) / 1024);
++				sf_progress("Updating", buf - start_buf, len,
++					    start_time);
+ 				last_update = get_timer(0);
+ 			}
+ 			err_oper = spi_flash_update_block(flash, offset, todo,
+ 					buf, cmp_buf, &skipped);
+ 		}
++		if (!err_oper)
++			sf_progress("Updating", len, len, start_time);
+ 	} else {
+ 		err_oper = "malloc";
+ 	}
+ 	free(cmp_buf);
+-	putc('\r');
++	putc('\n');
+ 	if (err_oper) {
+ 		printf("SPI flash failed in %s step\n", err_oper);
+ 		return 1;
+ 	}
+ 
+-	delta = get_timer(start_time);
+ 	printf("%zu bytes written, %zu bytes skipped", len - skipped,
+ 	       skipped);
+-	printf(" in %ld.%03lds, speed %ld KiB/s\n",
+-	       delta / 1000, delta % 1000,
+-	       bytes_per_second(len, start_time) / 1024);
++	sf_print_time(len, start_time);
++	putc('\n');
+ 
+ 	return 0;
+ }
+@@ -335,18 +380,24 @@
+ 			}
+ 		}
+ 
++		ulong start_time = get_timer(0);
++
+ 		read = strncmp(argv[0], "read", 4) == 0;
+ 		if (read)
+ 			ret = spi_flash_read(flash, offset, len, buf);
+ 		else
+-			ret = spi_flash_write(flash, offset, len, buf);
++			ret = sf_erase_write(flash, offset, len, buf, start_time);
+ 
+ 		printf("SF: %zu bytes @ %#x %s: ", (size_t)len, (u32)offset,
+ 		       read ? "Read" : "Written");
+-		if (ret)
++		if (ret) {
+ 			printf("ERROR %d\n", ret);
+-		else
+-			printf("OK\n");
++		} else {
++			printf("OK");
++			if (!read && len > SF_PROGRESS_STEP)
++				sf_print_time(len, start_time);
++			putc('\n');
++		}
+ 	}
+ 
+ 	unmap_physmem(buf, len);
+@@ -359,7 +410,7 @@
+ 	int ret;
+ 	int dev = 0;
+ 	loff_t offset, len, maxsize;
+-	ulong size;
++	ulong size, start_time;
+ 
+ 	if (argc < 3)
+ 		return CMD_RET_USAGE;
+@@ -390,12 +441,17 @@
+ 		return CMD_RET_FAILURE;
+ 	}
+ 
+-	ret = spi_flash_erase(flash, offset, size);
++	start_time = get_timer(0);
++	ret = sf_erase_write(flash, offset, size, NULL, start_time);
+ 	printf("SF: %zu bytes @ %#x Erased: ", (size_t)size, (u32)offset);
+-	if (ret)
++	if (ret) {
+ 		printf("ERROR %d\n", ret);
+-	else
+-		printf("OK\n");
++	} else {
++		printf("OK");
++		if (size > SF_PROGRESS_STEP)
++			sf_print_time(size, start_time);
++		putc('\n');
++	}
+ 
+ 	return ret ? CMD_RET_FAILURE : CMD_RET_SUCCESS;
+ }
