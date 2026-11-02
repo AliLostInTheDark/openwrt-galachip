@@ -1,0 +1,5 @@
+# Failsafe is disabled in this build: skip the key wait, which otherwise
+# still holds every boot for at least a second.
+[ "$pi_preinit_no_failsafe" = "y" ] && failsafe_wait() {
+	FAILSAFE=
+}

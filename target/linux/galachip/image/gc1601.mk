@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
 define Image/Prepare
+	# The PON as a fiber optic port, with its icon and optical line rate
+	$(SHELL) $(TOPDIR)/target/linux/galachip/gc1601/luci/install.sh \
+		$(TARGET_DIR) $(TOPDIR)/feeds/luci $(STAGING_DIR_HOSTPKG)/bin/jsmin
 	# LuCI views, icons and menus that do not apply to a 4 MiB bridge
 	rm -f $(TARGET_DIR)/www/luci-static/resources/view/network/wireless.js \
 	      $(TARGET_DIR)/www/luci-static/resources/view/network/dhcp.js \
@@ -37,6 +40,20 @@ define Image/Prepare
 	# Menus without the entries whose views are removed above
 	if [ -d $(TARGET_DIR)/usr/share/luci/menu.d ]; then \
 		$(CP) $(TOPDIR)/target/linux/galachip/gc1601/menu.d/* $(TARGET_DIR)/usr/share/luci/menu.d/; \
+	fi
+	# No package manager in the image; sysupgrade only reads lib/apk/packages.
+	rm -rf $(TARGET_DIR)/lib/apk/db
+	# Nothing left calls these: ucode's debugger, the removed graphs' collector,
+	# RPS tuning on a single core, GPIO switches this board does not have.
+	rm -f $(TARGET_DIR)/usr/bin/udbg $(TARGET_DIR)/usr/bin/luci-bwc \
+		$(TARGET_DIR)/etc/init.d/packet_steering $(TARGET_DIR)/etc/rc.d/*packet_steering \
+		$(TARGET_DIR)/etc/init.d/gpio_switch $(TARGET_DIR)/etc/rc.d/*gpio_switch
+	# omci-management needs these of kmod-sched-core; the rest would only load
+	# at boot and hold RAM.
+	if [ -f $(TARGET_DIR)/etc/modules.d/70-sched-core ]; then \
+		cd $(TARGET_DIR)/lib/modules/$(LINUX_VERSION) && rm -f act_skbedit.ko cls_basic.ko \
+			cls_flow.ko cls_fw.ko cls_route.ko cls_u32.ko em_u32.ko sch_hfsc.ko sch_htb.ko sch_tbf.ko; \
+		printf '%s\n' act_gact act_mirred cls_matchall sch_ingress > $(TARGET_DIR)/etc/modules.d/70-sched-core; \
 	fi
 	# A source tree checked out with umask 002 gives group-writable
 	# directories, and dropbear refuses public keys below one of them
@@ -78,11 +95,11 @@ define Device/tplink_xz000-g7
   ARTIFACT/u-boot-spl.bin := gc1601-u-boot-spl
   ARTIFACT/u-boot-ram.bin := gc1601-u-boot-ram
   DEVICE_PACKAGES := kmod-gc1601-gpon-diag kmod-gc1601-epon-diag xpon-report \
-    omci-agent omcid luci-app-omci luci-app-onu-system luci-theme-slate uhttpd-mod-ucode \
+    omci-agent omcid luci-app-omci luci-app-onu-system luci-theme-bootstrap uhttpd-mod-ucode \
     epon-oamd luci-app-epon \
     -uclient-fetch -urandom-seed -urngd -ca-bundle \
     -libustream-mbedtls -rpcd-mod-iwinfo -libiwinfo-data -libiwinfo \
     -luci-lib-uqr -odhcpd -odhcpd-ipv6only -odhcp6c -dnsmasq \
-    -firewall4 -nftables -ppp -ppp-mod-pppoe
+    -firewall4 -nftables -ppp -ppp-mod-pppoe -procd-ujail
 endef
 TARGET_DEVICES += tplink_xz000-g7

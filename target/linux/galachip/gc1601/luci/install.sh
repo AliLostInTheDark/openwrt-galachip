@@ -1,0 +1,29 @@
+#!/bin/sh
+# Apply board presentation changes to fresh LuCI sources, then retain minification.
+set -eu
+root=$1
+feed=$2
+jsmin=$3
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+resources=$root/www/luci-static/resources
+[ -d "$resources" ] || exit 0
+[ -x "$jsmin" ] || { echo "install.sh: no jsmin at $jsmin" >&2; exit 1; }
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+mkdir -p "$work/view/network" "$work/view/status/include"
+cp "$feed/modules/luci-mod-network/htdocs/luci-static/resources/view/network/interfaces.js" "$work/view/network/"
+cp "$feed/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/29_ports.js" "$work/view/status/include/"
+patch --batch --fuzz=0 -d "$work" -p1 < "$here/link-display.patch"
+mkdir -p "$resources/gc1601"
+cp "$here/pon_up.svg" "$here/pon_down.svg" "$resources/gc1601/"
+cp "$here/link.js" "$work/link.js"
+for file in view/network/interfaces.js view/status/include/29_ports.js link.js; do
+	if [ "$file" = link.js ]; then
+		dest=$resources/gc1601/link.js
+	else
+		dest=$resources/$file
+		[ -f "$dest" ] || continue
+	fi
+	"$jsmin" < "$work/$file" > "$work/min.js"
+	cp "$work/min.js" "$dest"
+done
