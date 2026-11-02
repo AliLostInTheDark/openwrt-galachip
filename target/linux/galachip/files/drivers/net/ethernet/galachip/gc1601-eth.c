@@ -569,11 +569,14 @@ static void gc1601_cold_finish(struct gc1601_eth *priv)
 static int gc1601_cvrd_write(struct gc1601_eth *priv, u32 index, u32 data);
 
 /*
- * T-CONT queue input depth in buffers. Stock's 128 is ~5 ms at 300 Mbit/s:
+ * T-CONT queue limits in buffers. Stock's 128 input is ~5 ms at 300 Mbit/s:
  * a single TCP upload overruns it and backs off (205 Mbit/s against 246
- * at 256 on Airtel); several flows do not.
+ * at 256 on Airtel); several flows do not. Queue 0's output stage carries
+ * that rate only with 256: at 128 it stays empty and upload falls to ~118.
+ * Together they stay inside the 512-buffer pool (peak seen: 451).
  */
 static unsigned int tcont_depth = 256;
+static unsigned int tcont_out = 256;
 
 static int gc1601_descriptor_setup(struct gc1601_eth *priv)
 {
@@ -647,13 +650,9 @@ static int gc1601_tcont_queue_setup(struct gc1601_eth *priv)
 		bool q0 = !(i % 8);
 
 		ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | i, 32 | (tcont_depth << 11));
-		/*
-		 * Input plus output of queue 0 stays at 384, leaving 128 of
-		 * the 512 buffers for pon0, the CPU and the UNI.
-		 */
 		if (!ret)
 			ret = gc1601_cvrd_write(priv, GC_CVRD_OUTMAX | i,
-						32 | ((q0 ? 128 : 64) << 11));
+						32 | ((q0 ? tcont_out : 64) << 11));
 		if (!ret)
 			ret = gc1601_cvrd_write(priv, GC_CVRD_ALLCFG | i, q0 ? 0x4f8 : 0x390);
 		if (ret)
@@ -867,37 +866,48 @@ module_param_cb(sfu_queue_zero, &sfu_flow_param_ops, &sfu_queue_zero, 0644);
 MODULE_PARM_DESC(sfu_queue_zero, "force SFU upstream flows to T-CONT hardware queue 0");
 module_param_cb(sfu_pcp_class5, &sfu_flow_param_ops, &sfu_pcp_class5, 0644);
 
-static int tcont_depth_set(const char *val, const struct kernel_param *kp)
+/* Both limits reprogram every T-CONT queue live; together they fit the pool. */
+static int tcont_limit_set(const char *val, const struct kernel_param *kp)
 {
+	unsigned int *limit = kp->arg, value, depth, out, i;
 	struct net_device *netdev;
 	struct gc1601_eth *priv;
-	unsigned int depth, i;
 	int ret;
 
-	ret = kstrtouint(val, 0, &depth);
+	ret = kstrtouint(val, 0, &value);
 	if (ret)
 		return ret;
-	if (depth < 32 || depth > 256)	/* with the 128 output limit, inside the pool */
-		return -ERANGE;
 
 	rtnl_lock();
-	tcont_depth = depth;
+	depth = limit == &tcont_depth ? value : tcont_depth;
+	out = limit == &tcont_out ? value : tcont_out;
+	if (value < 32 || value > 256 || depth + out > GC1601_BUFFER_COUNT) {
+		rtnl_unlock();
+		return -ERANGE;
+	}
+	*limit = value;
 	netdev = READ_ONCE(gc1601_pe_netdev);
 	if (netdev) {
 		priv = netdev_priv(netdev);
-		for (i = 0; i < GC_CVRD_TCONT_QUEUES && !ret; i++)
+		for (i = 0; i < GC_CVRD_TCONT_QUEUES && !ret; i++) {
 			ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | i,
 						32 | (depth << 11));
+			if (!ret && !(i % 8))
+				ret = gc1601_cvrd_write(priv, GC_CVRD_OUTMAX | i,
+							32 | (out << 11));
+		}
 	}
 	rtnl_unlock();
 	return ret;
 }
 
-static const struct kernel_param_ops tcont_depth_ops = {
-	.set = tcont_depth_set,
+static const struct kernel_param_ops tcont_limit_ops = {
+	.set = tcont_limit_set,
 	.get = param_get_uint,
 };
-module_param_cb(tcont_depth, &tcont_depth_ops, &tcont_depth, 0644);
+module_param_cb(tcont_depth, &tcont_limit_ops, &tcont_depth, 0644);
+module_param_cb(tcont_out, &tcont_limit_ops, &tcont_out, 0644);
+MODULE_PARM_DESC(tcont_out, "T-CONT queue 0 output limit in buffers (32-256)");
 MODULE_PARM_DESC(tcont_depth, "T-CONT queue input depth in buffers (32-256)");
 MODULE_PARM_DESC(sfu_pcp_class5, "set match class 5 on upstream P-bit SFU flows");
 
@@ -2637,7 +2647,7 @@ static int gc1601_qos_encode(const struct gc1601_tcont_qos *qos,
 	for (q = 0; q < 8; q++) {
 		tables->fill[q] = sp ? BIT(16) : qos->weight[q] * scale;
 		tables->inmax[q] = 32 | (tcont_depth << 11);
-		tables->outmax[q] = 32 | ((sp ? (q ? 64 : 128) : 128) << 11);
+		tables->outmax[q] = 32 | ((sp ? (q ? 64 : tcont_out) : 128) << 11);
 		tables->cfg[q][0] = sp ? (q ? 0x390 : 0x4f8) : 0x140;
 	}
 	return 0;
