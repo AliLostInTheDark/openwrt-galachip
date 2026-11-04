@@ -30,7 +30,7 @@
 #include <linux/soc/galachip/gc1601.h>
 #include <linux/unaligned.h>
 
-#define GC1601_BUFFER_COUNT	1440	/* PMU_container_init; the loader sets up 512 */
+#define GC1601_BUFFER_COUNT	512	/* stock's 1440 left the CPU allocator empty */
 #define GC1601_BUFFER_SIZE	2048
 #define GC1601_JUMBO_COUNT	32	/* secondary pool, frames over the 2000-byte MTU */
 #define GC1601_JUMBO_SIZE	0x3000
@@ -57,10 +57,10 @@
  * (0x40a00000..0x40d31fff). A free-list base other than ours at probe
  * means the loader's 512-buffer pool, so the cold init takes this one.
  */
-#define GC1601_PKT_POOL_PHYS	0x40a00000
-#define GC1601_FREE_LIST_PHYS	(GC1601_PKT_POOL_PHYS + 0x2d0000)
-#define GC1601_JUMBO_POOL_PHYS	(GC1601_PKT_POOL_PHYS + 0x2d1000)
-#define GC1601_JUMBO_LIST_PHYS	(GC1601_PKT_POOL_PHYS + 0x331000)
+#define GC1601_FREE_LIST_PHYS	0x40800000
+#define GC1601_PKT_POOL_PHYS	0x40801000
+#define GC1601_JUMBO_POOL_PHYS	0x40a00000
+#define GC1601_JUMBO_LIST_PHYS	0x40a60000
 /* The loader's rings (0x40800000..0x40911fff), drained once at setup. */
 #define GC1601_RX_RING_PHYS	0x40901000	/* 16 containers, 4 KiB apart */
 #define GC1601_TX_RING_PHYS	0x40911000
@@ -595,12 +595,11 @@ static int gc1601_cvrd_write(struct gc1601_eth *priv, u32 index, u32 data);
 /*
  * T-CONT queue limits in buffers. Stock's 128 input is ~5 ms at 300 Mbit/s:
  * a single TCP upload overruns it and backs off (205 Mbit/s); several flows
- * do not. Input 192 plus stock's 1080/720 output limits match ALLCFG 0x4f8
- * (1272) for queue 0 and 0x390 (912) for queues 1-7 inside the 1440-buffer
- * pool.
+ * do not. Queue 0's output stage carries the rate only with 256; input 192
+ * caps the queue at 448 of the 512 buffers.
  */
 static unsigned int tcont_depth = 192;
-static unsigned int tcont_out = 1080;
+static unsigned int tcont_out = 256;
 
 static int gc1601_descriptor_setup(struct gc1601_eth *priv)
 {
@@ -610,15 +609,15 @@ static int gc1601_descriptor_setup(struct gc1601_eth *priv)
 	writel(readl(base + GC_DESC_CTRL) | 0x14, base + GC_DESC_CTRL);
 
 	/*
-	 * PMU_buffer_init's 1080/720 output limits match the 1440-buffer pool:
-	 * queue 0 may hold 1080 buffers, queues 1-7 720, while the loader's 32
+	 * PMU_buffer_init's 1080/720 assume stock's 1440-buffer pool; with our
+	 * 512 queue 0 may hold 256 buffers, queues 1-7 64. The loader's 32
 	 * overflow when the 2.5G PON bursts into the 1G UNI.
 	 */
 	for (i = 0; i < GC_CVRD_UNI_QUEUES; i++) {
 		u32 index = GC_CVRD_UNI0 + i;
 		int ret;
 
-		priv->cvrd_uni_outmax[i] = 32 | ((i ? 720 : 1080) << 11);
+		priv->cvrd_uni_outmax[i] = 32 | ((i ? 64 : 256) << 11);
 		priv->cvrd_uni_allcfg[i] = i ? 0x390 : 0x4f8;
 		ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | index, 0x00040020);
 		if (!ret)
@@ -675,7 +674,7 @@ static int gc1601_tcont_queue_setup(struct gc1601_eth *priv)
 		ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | i, 32 | (tcont_depth << 11));
 		if (!ret)
 			ret = gc1601_cvrd_write(priv, GC_CVRD_OUTMAX | i,
-						32 | ((q0 ? tcont_out : 720) << 11));
+						32 | ((q0 ? tcont_out : 64) << 11));
 		if (!ret)
 			ret = gc1601_cvrd_write(priv, GC_CVRD_ALLCFG | i, q0 ? 0x4f8 : 0x390);
 		if (ret)
@@ -909,7 +908,7 @@ static int tcont_limit_set(const char *val, const struct kernel_param *kp)
 	rtnl_lock();
 	depth = limit == &tcont_depth ? value : tcont_depth;
 	out = limit == &tcont_out ? value : tcont_out;
-	if (value < 32 || value > 1080 || depth + out > GC1601_BUFFER_COUNT) {
+	if (value < 32 || value > 256 || depth + out > GC1601_BUFFER_COUNT) {
 		rtnl_unlock();
 		return -ERANGE;
 	}
@@ -935,8 +934,8 @@ static const struct kernel_param_ops tcont_limit_ops = {
 };
 module_param_cb(tcont_depth, &tcont_limit_ops, &tcont_depth, 0644);
 module_param_cb(tcont_out, &tcont_limit_ops, &tcont_out, 0644);
-MODULE_PARM_DESC(tcont_out, "T-CONT queue 0 output limit in buffers (32-1080)");
-MODULE_PARM_DESC(tcont_depth, "T-CONT queue input depth in buffers (32-1080)");
+MODULE_PARM_DESC(tcont_out, "T-CONT queue 0 output limit in buffers (32-256)");
+MODULE_PARM_DESC(tcont_depth, "T-CONT queue input depth in buffers (32-256)");
 MODULE_PARM_DESC(sfu_pcp_class5, "set match class 5 on upstream P-bit SFU flows");
 
 /* Indirect L3 table write: index, then the data words, last word first. */
@@ -1849,12 +1848,6 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 		dma_sync_single_for_device(priv->dev, GC1601_FREE_LIST_PHYS,
 					   GC1601_BUFFER_COUNT * sizeof(__be16),
 					   DMA_TO_DEVICE);
-		free_list = phys_to_virt(GC1601_JUMBO_LIST_PHYS);
-		for (j = 0; j < GC1601_JUMBO_COUNT; j++)
-			free_list[j] = cpu_to_be16(j);
-		dma_sync_single_for_device(priv->dev, GC1601_JUMBO_LIST_PHYS,
-					   GC1601_JUMBO_COUNT * sizeof(__be16),
-					   DMA_TO_DEVICE);
 	}
 
 	writel(mode | GC_BUF_READ_CLEAR_EN,
@@ -1949,14 +1942,11 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 
 	writel(GC1601_FREE_LIST_PHYS, priv->base[GC1601_BUFFERS] + GC_BUF_FREE_LIST_BASE);
 	writel(GC1601_PKT_POOL_PHYS, priv->base[GC1601_BUFFERS] + GC_BUF_PKT_POOL_BASE);
-	writel(GC1601_JUMBO_LIST_PHYS, priv->base[GC1601_BUFFERS] + GC_BUF_JUMBO_LIST_BASE);
-	writel(GC1601_JUMBO_POOL_PHYS, priv->base[GC1601_BUFFERS] + GC_BUF_JUMBO_POOL_BASE);
 	writel(priv->rx_ring_dma, priv->base[GC1601_BUFFERS] + GC_BUF_RX_RING_BASE);
 	writel(priv->tx_ring_dma, priv->base[GC1601_TX_RING] + GC_TX_RING_BASE);
 
 	writel(0x30000800, priv->base[GC1601_BUFFERS] + GC_BUF_POOL_CFG);
 	writel(GC1601_BUFFER_COUNT << 16, priv->base[GC1601_RX] + GC_RX_PARTITION);
-	writel(GC1601_JUMBO_COUNT << 16, priv->base[GC1601_RX] + GC_RX_JUMBO_COUNT);
 	writel(GC_RX_CTRL_VAL, priv->base[GC1601_RX] + GC_RX_CTRL);
 	writel(2000, priv->base[GC1601_RX] + GC_RX_MTU);
 
@@ -2812,7 +2802,7 @@ static int gc1601_qos_encode(const struct gc1601_tcont_qos *qos,
 	for (q = 0; q < 8; q++) {
 		tables->fill[q] = sp ? BIT(16) : qos->weight[q] * scale;
 		tables->inmax[q] = 32 | (tcont_depth << 11);
-		tables->outmax[q] = 32 | ((sp ? (q ? 720 : tcont_out) : 128) << 11);
+		tables->outmax[q] = 32 | ((sp ? (q ? 64 : tcont_out) : 128) << 11);
 		tables->cfg[q][0] = sp ? (q ? 0x390 : 0x4f8) : 0x140;
 	}
 	return 0;
