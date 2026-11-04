@@ -87,7 +87,7 @@ void gc1601_epon_hw_init(struct gc1601_pon *pon)
 	writel(0x13, emac + EMAC_CFG134);
 	writel(0, emac + EMAC_SHAPER);		/* chipset_epon_shp_fill: disable upstream shaper */
 	/* chipset_epon_wan_mtu_set(2000) from PMU_init; reset value is 1536 */
-	writel((readl(emac + EMAC_MTU) & ~GENMASK(26, 16)) | 2000 << 16, emac + EMAC_MTU);
+	writel((readl(emac + EMAC_MTU) & ~GENMASK(26, 16)) | (2000 << 16) | 0x40, emac + EMAC_MTU);
 	/* Stock leaves +0x10 and +0x16c at reset (0x01900000, 1) until the OLT sets one. */
 	if (pon->epon.holdover_ms)
 		gc1601_epon_set_holdover(pon);

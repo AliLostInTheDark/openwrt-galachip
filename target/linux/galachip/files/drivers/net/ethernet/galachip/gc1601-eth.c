@@ -30,8 +30,10 @@
 #include <linux/soc/galachip/gc1601.h>
 #include <linux/unaligned.h>
 
-#define GC1601_BUFFER_COUNT	512
+#define GC1601_BUFFER_COUNT	1440	/* PMU_container_init; the loader sets up 512 */
 #define GC1601_BUFFER_SIZE	2048
+#define GC1601_JUMBO_COUNT	32	/* secondary pool, frames over the 2000-byte MTU */
+#define GC1601_JUMBO_SIZE	0x3000
 #define GC1601_RING_SIZE	256
 #define GC1601_IRQ_RETRY_MS	200	/* polling after an IRQ storm, then retry */
 #define GC1601_IRQ_RETRY_MAX_MS	10000
@@ -46,14 +48,21 @@
 #define GC1601_GEM_METERS	32
 #define GC1601_SLOT_PROBE_SIZE	320
 #define GC1601_SLOT_PROBE_COUNT	4
-#define GC1601_SLOT_PROBE_RETRIES	3
+#define GC1601_SLOT_PROBE_RETRIES	10
 /* GMAC TX octets count the FCS beyond the descriptor length (iperf: +4.0/frame). */
 #define GC1601_PROBE_OCTET_EXTRA	4
 
-/* Physical bases in loader-reserved memory (0x40800000..0x40911fff) */
-#define GC1601_FREE_LIST_PHYS	0x40800000
-#define GC1601_PKT_POOL_PHYS	0x40801000
-#define GC1601_RX_RING_PHYS	0x40901000	/* the loader's: 16 containers, 4 KiB apart */
+/*
+ * PMU_container_init's arena layout, in our own reserved memory
+ * (0x40a00000..0x40d31fff). A free-list base other than ours at probe
+ * means the loader's 512-buffer pool, so the cold init takes this one.
+ */
+#define GC1601_PKT_POOL_PHYS	0x40a00000
+#define GC1601_FREE_LIST_PHYS	(GC1601_PKT_POOL_PHYS + 0x2d0000)
+#define GC1601_JUMBO_POOL_PHYS	(GC1601_PKT_POOL_PHYS + 0x2d1000)
+#define GC1601_JUMBO_LIST_PHYS	(GC1601_PKT_POOL_PHYS + 0x331000)
+/* The loader's rings (0x40800000..0x40911fff), drained once at setup. */
+#define GC1601_RX_RING_PHYS	0x40901000	/* 16 containers, 4 KiB apart */
 #define GC1601_TX_RING_PHYS	0x40911000
 
 /* PMU_register_edev: one RX ring per container, container 15 carries OMCI. */
@@ -109,6 +118,8 @@ static const char * const gc1601_reg_names[GC1601_NUM_WINDOWS] = {
 #define GC_GMAC_CFG_FULL_DUPLEX	BIT(13)
 #define GC_GMAC_ERCR		0xe0
 #define GC_GMAC_ACIR		0xe4
+#define GC_GMAC_PAUSE_SA_HI	0x300
+#define GC_GMAC_PAUSE_SA_LO	0x304
 #define GC_GMAC_TX_OCTETS	0x714
 
 /* Buffer manager registers (0x90dc0000) */
@@ -120,8 +131,10 @@ static const char * const gc1601_reg_names[GC1601_NUM_WINDOWS] = {
 #define GC_BUF_READ_CLEAR_EN	BIT(1)
 #define GC_BUF_CTRL		0x24
 #define GC_BUF_FREE_LIST_BASE	0x28
+#define GC_BUF_JUMBO_LIST_BASE	0x2c
 #define GC_BUF_RX_RING_BASE	0x30
 #define GC_BUF_PKT_POOL_BASE	0x34
+#define GC_BUF_JUMBO_POOL_BASE	0x38
 #define GC_BUF_POOL_CFG		0x3c
 #define GC_BUF_INTR_MASK	0x04
 #define GC_BUF_INTR_STATUS	0x40
@@ -164,9 +177,11 @@ static const char * const gc1601_reg_names[GC1601_NUM_WINDOWS] = {
 #define GC_RX_ALLOC_RESP	0x0c
 #define GC_RX_RELEASE_BUF	0x10
 #define GC_RX_ALLOC_REQ		0x14
-#define GC_RX_PARTITION		0x18
+#define GC_RX_PARTITION		0x18	/* pool size in bits 31:16; reads back other state */
+#define GC_RX_JUMBO_COUNT	0x1c	/* secondary pool size in bits 31:16 */
 #define GC_RX_CTRL		0x20
-#define GC_RX_CTRL_VAL		0x0f	/* as U-Boot */
+#define GC_RX_CTRL_VAL		0x2c	/* stock runtime xpon_sdk */
+#define GC_RX_MTU		0x28	/* chipset_pktrx_mtu_set */
 #define GC_RX_PUBLISH_TX	0x38
 
 /* TX ring registers (0x90ddc040) */
@@ -343,6 +358,12 @@ struct gc1601_eth {
 	u32 cvrd_cpu_outmax;
 	u32 cvrd_mismatches;
 
+	/* Peak queue depths and watermarks for throughput/drop diagnostics */
+	u16 peak_in[0x200];
+	u16 peak_out[0x200];
+	u16 peak_all[0x200];
+	u16 min_left_iptr;
+
 	/* Buffer IDs handed out by hardware since probe, for free-list analysis. */
 	DECLARE_BITMAP(rx_id_seen, GC1601_BUFFER_COUNT);
 	DECLARE_BITMAP(tx_id_seen, GC1601_BUFFER_COUNT);
@@ -405,10 +426,13 @@ static void gc1601_adjust_link(struct net_device *netdev)
 		spin_lock_irqsave(&priv->tx_lock, flags);
 		priv->link = phydev->link;
 		status_change = true;
-		/* Measure the TX handoff now rather than on the stack's first frames. */
-		if (priv->link && !priv->tx_stopping && !priv->tx_probe_failed &&
-		    !priv->tx_probe_aligned && !priv->tx_pending)
-			schedule_work(&priv->tx_probe_work);
+		/* Reset probe failure on link restore so cable replug retries handoff */
+		if (priv->link && !priv->tx_probe_aligned) {
+			priv->tx_probe_failed = false;
+			priv->tx_probe_retries = 0;
+			if (!priv->tx_stopping && !priv->tx_pending)
+				schedule_work(&priv->tx_probe_work);
+		}
 		spin_unlock_irqrestore(&priv->tx_lock, flags);
 	}
 
@@ -502,8 +526,9 @@ static int gc1601_cvrd_verify(struct gc1601_eth *priv)
 /*
  * gala_eth_initialize from U-Boot: SCU 0x90a00810 bit 13 enables the PHY block
  * clock/reset, followed by the 5-step PHY SerDes sequence at 0x91400000.
- * Cold boots from flash never run U-Boot networking, leaving the PHY at
- * 0x09e000b1 instead of 0x09e400b3.
+ * SCU 0x90a00810 resets to 0x00003900 with bit 13 already set, and cold boots
+ * from flash never run U-Boot networking, leaving the PHY SerDes at 0x09e000b1
+ * instead of 0x09e400b3 unless the sequence runs unconditionally here.
  */
 static void gc1601_cold_phy_init(struct gc1601_eth *priv)
 {
@@ -511,21 +536,19 @@ static void gc1601_cold_phy_init(struct gc1601_eth *priv)
 	void __iomem *phy_serdes = ioremap(0x91400000, 4);
 
 	if (scu810 && phy_serdes) {
-		if (!(readl(scu810) & BIT(13))) {
-			writel(readl(scu810) | BIT(13), scu810);
-			usleep_range(50000, 51000);
-			writel(0x4000, phy_serdes);
-			usleep_range(10000, 11000);
-			writel(0x20000, phy_serdes);
-			usleep_range(10000, 11000);
-			writel(0x00020002, phy_serdes);
-			usleep_range(10000, 11000);
-			writel(0x00020003, phy_serdes);
-			usleep_range(10000, 11000);
-			writel(0x3, phy_serdes);
-			usleep_range(100000, 101000);
-			dev_info(priv->dev, "cold init: PHY SerDes initialized\n");
-		}
+		writel(readl(scu810) | BIT(13), scu810);
+		usleep_range(50000, 51000);
+		writel(0x4000, phy_serdes);
+		usleep_range(10000, 11000);
+		writel(0x20000, phy_serdes);
+		usleep_range(10000, 11000);
+		writel(0x00020002, phy_serdes);
+		usleep_range(10000, 11000);
+		writel(0x00020003, phy_serdes);
+		usleep_range(10000, 11000);
+		writel(0x3, phy_serdes);
+		usleep_range(100000, 101000);
+		dev_info(priv->dev, "cold init: PHY SerDes initialized\n");
 	}
 	if (scu810)
 		iounmap(scu810);
@@ -562,7 +585,7 @@ static void gc1601_cold_finish(struct gc1601_eth *priv)
 {
 	writel(0x10, priv->base[GC1601_TX_CONFIG] + 0x14);
 	writel(0, priv->queue_base + 0x0c);
-	writel(0x02000000, priv->base[GC1601_RX] + GC_RX_PARTITION);
+	writel(GC1601_BUFFER_COUNT << 16, priv->base[GC1601_RX] + GC_RX_PARTITION);
 	writel(0x51555555, priv->switch_base + 0x4198);
 }
 
@@ -571,13 +594,12 @@ static int gc1601_cvrd_write(struct gc1601_eth *priv, u32 index, u32 data);
 /*
  * T-CONT queue limits in buffers. Stock's 128 input is ~5 ms at 300 Mbit/s:
  * a single TCP upload overruns it and backs off (205 Mbit/s); several flows
- * do not. Queue 0's output stage carries the rate only with 256: at 128 it
- * stays empty and upload falls to ~118. Input 192 matches 256 on Airtel
- * (215-245 against 199-229 single-server) and caps the queue at 448 of the
- * 512 buffers; 256 + 256 peaked at 450.
+ * do not. Input 192 plus stock's 1080/720 output limits match ALLCFG 0x4f8
+ * (1272) for queue 0 and 0x390 (912) for queues 1-7 inside the 1440-buffer
+ * pool.
  */
 static unsigned int tcont_depth = 192;
-static unsigned int tcont_out = 256;
+static unsigned int tcont_out = 1080;
 
 static int gc1601_descriptor_setup(struct gc1601_eth *priv)
 {
@@ -587,16 +609,15 @@ static int gc1601_descriptor_setup(struct gc1601_eth *priv)
 	writel(readl(base + GC_DESC_CTRL) | 0x14, base + GC_DESC_CTRL);
 
 	/*
-	 * PMU_buffer_init's 1080/720 assume stock's larger pool: with ours a
-	 * single fast flow drains it and the engine hangs the bus. Queue 0
-	 * may hold 256 buffers, queues 1-7 64; the loader's 32 overflow when
-	 * the 2.5G PON bursts into the 1G UNI.
+	 * PMU_buffer_init's 1080/720 output limits match the 1440-buffer pool:
+	 * queue 0 may hold 1080 buffers, queues 1-7 720, while the loader's 32
+	 * overflow when the 2.5G PON bursts into the 1G UNI.
 	 */
 	for (i = 0; i < GC_CVRD_UNI_QUEUES; i++) {
 		u32 index = GC_CVRD_UNI0 + i;
 		int ret;
 
-		priv->cvrd_uni_outmax[i] = 32 | ((i ? 64 : 256) << 11);
+		priv->cvrd_uni_outmax[i] = 32 | ((i ? 720 : 1080) << 11);
 		priv->cvrd_uni_allcfg[i] = i ? 0x390 : 0x4f8;
 		ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | index, 0x00040020);
 		if (!ret)
@@ -653,7 +674,7 @@ static int gc1601_tcont_queue_setup(struct gc1601_eth *priv)
 		ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | i, 32 | (tcont_depth << 11));
 		if (!ret)
 			ret = gc1601_cvrd_write(priv, GC_CVRD_OUTMAX | i,
-						32 | ((q0 ? tcont_out : 64) << 11));
+						32 | ((q0 ? tcont_out : 720) << 11));
 		if (!ret)
 			ret = gc1601_cvrd_write(priv, GC_CVRD_ALLCFG | i, q0 ? 0x4f8 : 0x390);
 		if (ret)
@@ -698,6 +719,8 @@ static void gc1601_sr_update(struct gc1601_eth *priv, u32 off, u32 clear, u32 se
  */
 static int gc1601_uni_attrs_apply(struct gc1601_eth *priv);
 static int gc1601_qos_replay(struct gc1601_eth *priv);
+static int gc1601_sr_default_configs_apply(struct gc1601_eth *priv);
+static void gc1601_gmac_pause_addr_apply(struct gc1601_eth *priv);
 
 /*
  * The 2024-12 stock image ends S03sdk with "w e4002 bd" on dbg_reg, setting
@@ -761,6 +784,9 @@ static int gc1601_sr_hw_init(struct gc1601_eth *priv)
 	writel(0x367e * 300, sw + GC_SR_SRC + 0x58);
 	/* SR_default_configs: L2+0x70 bits 2:0 */
 	gc1601_sr_update(priv, GC_SR_L2 + 0x70, 0x7, 0x6);
+	ret = gc1601_sr_default_configs_apply(priv);
+	if (ret)
+		return ret;
 
 	gc1601_sr_update(priv, GC_SR_HA + 0x2c, ~0xffffe328, 9000);
 	gc1601_sr_update(priv, GC_SR_HA + 0x2c, 0x8000, 0x4000);
@@ -882,7 +908,7 @@ static int tcont_limit_set(const char *val, const struct kernel_param *kp)
 	rtnl_lock();
 	depth = limit == &tcont_depth ? value : tcont_depth;
 	out = limit == &tcont_out ? value : tcont_out;
-	if (value < 32 || value > 256 || depth + out > GC1601_BUFFER_COUNT) {
+	if (value < 32 || value > 1080 || depth + out > GC1601_BUFFER_COUNT) {
 		rtnl_unlock();
 		return -ERANGE;
 	}
@@ -908,8 +934,8 @@ static const struct kernel_param_ops tcont_limit_ops = {
 };
 module_param_cb(tcont_depth, &tcont_limit_ops, &tcont_depth, 0644);
 module_param_cb(tcont_out, &tcont_limit_ops, &tcont_out, 0644);
-MODULE_PARM_DESC(tcont_out, "T-CONT queue 0 output limit in buffers (32-256)");
-MODULE_PARM_DESC(tcont_depth, "T-CONT queue input depth in buffers (32-256)");
+MODULE_PARM_DESC(tcont_out, "T-CONT queue 0 output limit in buffers (32-1080)");
+MODULE_PARM_DESC(tcont_depth, "T-CONT queue input depth in buffers (32-1080)");
 MODULE_PARM_DESC(sfu_pcp_class5, "set match class 5 on upstream P-bit SFU flows");
 
 /* Indirect L3 table write: index, then the data words, last word first. */
@@ -1004,8 +1030,133 @@ static int gc1601_hm_write(struct gc1601_eth *priv, u32 table, u32 index,
 #define GC_HM_VLANDAT		0x800000
 #define GC_HM_CMDDAT		0xc00000
 #define GC_HM_SUBDAT		0x1800000
+#define GC_HM_TRAPRSNQID	0x3000000
 #define GC_HM_CMD_END		BIT(25)
 #define GC_HM_CMD_BASE		80	/* first 4-step cmddat list */
+
+/*
+ * chipset_set_pause_addr (xpon_sdk_complete.c:56564): GMAC pause-frame
+ * source MAC at +0x300 (bytes 4..5 in bits 15:0) and +0x304 (bytes 0..3).
+ */
+static bool gmac_pause_addr = true;
+
+static void gc1601_gmac_pause_addr_apply(struct gc1601_eth *priv)
+{
+	void __iomem *gmac = priv->base[GC1601_GMAC];
+	const u8 *mac = priv->netdev->dev_addr;
+	u32 hi = readl(gmac + GC_GMAC_PAUSE_SA_HI) & 0xffff0000;
+
+	if (gmac_pause_addr) {
+		writel(hi | get_unaligned_le16(mac + 4), gmac + GC_GMAC_PAUSE_SA_HI);
+		writel(get_unaligned_le32(mac), gmac + GC_GMAC_PAUSE_SA_LO);
+	} else {
+		writel(hi | 0xffff, gmac + GC_GMAC_PAUSE_SA_HI);
+		writel(U32_MAX, gmac + GC_GMAC_PAUSE_SA_LO);
+	}
+}
+
+static int gmac_pause_addr_set(const char *val, const struct kernel_param *kp)
+{
+	struct net_device *netdev;
+	struct gc1601_eth *priv;
+	int ret;
+
+	rtnl_lock();
+	ret = param_set_bool(val, kp);
+	netdev = READ_ONCE(gc1601_pe_netdev);
+	if (!ret && netdev) {
+		priv = netdev_priv(netdev);
+		if (priv->running)
+			gc1601_gmac_pause_addr_apply(priv);
+	}
+	rtnl_unlock();
+	return ret;
+}
+
+static const struct kernel_param_ops gmac_pause_addr_ops = {
+	.set = gmac_pause_addr_set,
+	.get = param_get_bool,
+};
+module_param_cb(gmac_pause_addr, &gmac_pause_addr_ops, &gmac_pause_addr, 0644);
+MODULE_PARM_DESC(gmac_pause_addr, "program netdev MAC into GMAC pause source address (+0x300/+0x304)");
+
+/*
+ * Remaining SR_default_configs (xpon_sdk_complete.c:44460) entries that
+ * differ from our live switch setup: L3 DSCP->QID table 6 (dscp >> 3),
+ * HM trap-reason->QID table 12 (chipset_trap_cfg, DAT_00057ce8), and
+ * SRC+0x00 bit 20 (FUN_0003dd30). L2+0x70, L2+0x180..0x19c, L3+0x0c and
+ * SRC+0x04 already match stock.
+ */
+static bool sr_default_configs;
+
+static const struct {
+	u8 reason;
+	u8 qid;
+} gc1601_sr_trap_qids[] = {
+	{ 0x54, 1 }, { 0x60, 1 },
+	{ 0x4a, 2 },
+	{ 0x11, 3 }, { 0x12, 3 }, { 0x1e, 3 }, { 0x21, 3 },
+	{ 0x1f, 4 }, { 0x55, 4 }, { 0x53, 4 }, { 0x5b, 4 }, { 0x5a, 4 },
+	{ 0x14, 4 }, { 0x2c, 4 }, { 0x1d, 4 }, { 0x20, 4 },
+	{ 0x13, 5 }, { 0x23, 5 },
+	{ 0x16, 6 }, { 0x02, 6 }, { 0x01, 6 }, { 0x00, 6 },
+};
+
+static int gc1601_sr_default_configs_apply(struct gc1601_eth *priv)
+{
+	unsigned int dscp, i, port;
+	u32 val;
+	int ret;
+
+	/* Off leaves the tables at their reset values; clearing needs a reboot. */
+	if (!sr_default_configs) {
+		gc1601_sr_update(priv, GC_SR_SRC, BIT(20), 0);
+		return 0;
+	}
+	for (dscp = 0; dscp < 64; dscp++) {
+		val = dscp >> 3;
+		ret = gc1601_sr_tbl_write(priv, 6, dscp, &val, 1);
+		if (ret)
+			return ret;
+	}
+	for (i = 0; i < ARRAY_SIZE(gc1601_sr_trap_qids); i++) {
+		val = gc1601_sr_trap_qids[i].qid;
+		for (port = 0; port < 2; port++) {
+			ret = gc1601_hm_write(priv, GC_HM_TRAPRSNQID,
+					      (port << 7) | gc1601_sr_trap_qids[i].reason,
+					      &val, 1);
+			if (ret)
+				return ret;
+		}
+	}
+	gc1601_sr_update(priv, GC_SR_SRC, BIT(20), BIT(20));
+	return 0;
+}
+
+static int sr_default_configs_set(const char *val, const struct kernel_param *kp)
+{
+	struct net_device *netdev;
+	struct gc1601_eth *priv;
+	int ret;
+
+	rtnl_lock();
+	ret = param_set_bool(val, kp);
+	netdev = READ_ONCE(gc1601_pe_netdev);
+	if (!ret && netdev) {
+		priv = netdev_priv(netdev);
+		if (priv->sr_ready)
+			ret = gc1601_sr_default_configs_apply(priv);
+	}
+	rtnl_unlock();
+	return ret;
+}
+
+static const struct kernel_param_ops sr_default_configs_ops = {
+	.set = sr_default_configs_set,
+	.get = param_get_bool,
+};
+module_param_cb(sr_default_configs, &sr_default_configs_ops, &sr_default_configs, 0644);
+MODULE_PARM_DESC(sr_default_configs, "apply vendor SR_default_configs (DSCP QID, trap QID, SRC bit 20)");
 
 enum gc1601_hm_op {
 	GC_HM_PUSH,		/* insert the vlandat tag, priority 0 */
@@ -1572,7 +1723,8 @@ static void gc1601_rx_ack_phantom(struct gc1601_eth *priv, int c)
 	}
 }
 
-static void gc1601_rx_drain_inherited(struct gc1601_eth *priv)
+/* A fresh free list already holds every ID, so release only into a live one. */
+static void gc1601_rx_drain_inherited(struct gc1601_eth *priv, bool release)
 {
 	struct gc1601_desc *live = priv->rx_ring;
 	unsigned int c, s, drained = 0;
@@ -1600,7 +1752,7 @@ static void gc1601_rx_drain_inherited(struct gc1601_eth *priv)
 			writel((c & 7) | (strobe << 3) | 0x10 | ((word1 & BIT(12)) << 2),
 			       priv->base[GC1601_DESCRIPTORS] + GC_DESC_ACK_STATUS);
 			writel(1, priv->base[GC1601_DESCRIPTORS] + GC_DESC_ACK_COUNT);
-			if (buf_id < GC1601_BUFFER_COUNT)
+			if (release && buf_id < GC1601_BUFFER_COUNT)
 				writel(buf_id, priv->base[GC1601_RX] + GC_RX_RELEASE_BUF);
 			pending--;
 			drained++;
@@ -1696,6 +1848,12 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 		dma_sync_single_for_device(priv->dev, GC1601_FREE_LIST_PHYS,
 					   GC1601_BUFFER_COUNT * sizeof(__be16),
 					   DMA_TO_DEVICE);
+		free_list = phys_to_virt(GC1601_JUMBO_LIST_PHYS);
+		for (j = 0; j < GC1601_JUMBO_COUNT; j++)
+			free_list[j] = cpu_to_be16(j);
+		dma_sync_single_for_device(priv->dev, GC1601_JUMBO_LIST_PHYS,
+					   GC1601_JUMBO_COUNT * sizeof(__be16),
+					   DMA_TO_DEVICE);
 	}
 
 	writel(mode | GC_BUF_READ_CLEAR_EN,
@@ -1709,7 +1867,7 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 	priv->tx_completion_drained = readl(priv->base[GC1601_TX_RING] +
 					 GC_TX_COMPLETIONS) & 0xffff;
 
-	gc1601_rx_drain_inherited(priv);
+	gc1601_rx_drain_inherited(priv, !cold);
 	memset(priv->rx_ring, 0, GC1601_RX_CONTAINERS * GC1601_RX_RING_STRIDE);
 
 	/* Invalidate entire packet pool cache at bringup so no stale lines linger */
@@ -1790,15 +1948,19 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 
 	writel(GC1601_FREE_LIST_PHYS, priv->base[GC1601_BUFFERS] + GC_BUF_FREE_LIST_BASE);
 	writel(GC1601_PKT_POOL_PHYS, priv->base[GC1601_BUFFERS] + GC_BUF_PKT_POOL_BASE);
+	writel(GC1601_JUMBO_LIST_PHYS, priv->base[GC1601_BUFFERS] + GC_BUF_JUMBO_LIST_BASE);
+	writel(GC1601_JUMBO_POOL_PHYS, priv->base[GC1601_BUFFERS] + GC_BUF_JUMBO_POOL_BASE);
 	writel(priv->rx_ring_dma, priv->base[GC1601_BUFFERS] + GC_BUF_RX_RING_BASE);
 	writel(priv->tx_ring_dma, priv->base[GC1601_TX_RING] + GC_TX_RING_BASE);
 
 	writel(0x30000800, priv->base[GC1601_BUFFERS] + GC_BUF_POOL_CFG);
-	writel(0x60, priv->base[GC1601_RX] + GC_RX_PARTITION);
+	writel(GC1601_BUFFER_COUNT << 16, priv->base[GC1601_RX] + GC_RX_PARTITION);
+	writel(GC1601_JUMBO_COUNT << 16, priv->base[GC1601_RX] + GC_RX_JUMBO_COUNT);
 	writel(GC_RX_CTRL_VAL, priv->base[GC1601_RX] + GC_RX_CTRL);
+	writel(2000, priv->base[GC1601_RX] + GC_RX_MTU);
 
 	dev_dbg(priv->dev, "RX setup: partition=%08x (readback %08x), rx_ctrl=%08x (readback %08x)\n",
-		0x60, readl(priv->base[GC1601_RX] + GC_RX_PARTITION),
+		GC1601_BUFFER_COUNT << 16, readl(priv->base[GC1601_RX] + GC_RX_PARTITION),
 		GC_RX_CTRL_VAL,
 		readl(priv->base[GC1601_RX] + GC_RX_CTRL));
 
@@ -1842,8 +2004,8 @@ static void gc1601_hw_start(struct gc1601_eth *priv)
 	gc1601_irq_mask(priv, true);
 	spin_unlock_irqrestore(&priv->irq_lock, flags);
 
-	/* Enable RX gate */
-	writel(1, priv->base[GC1601_RX] + GC_RX_ENABLE);
+	/* Enable RX gate with 2000 MTU in bits 29:16 (chipset_pktrx_mtu_set) */
+	writel((2000 << 16) | 1, priv->base[GC1601_RX] + GC_RX_ENABLE);
 
 	/* Set GMAC configuration (1000M full duplex default) */
 	spin_lock_irqsave(&priv->irq_lock, flags);
@@ -1864,6 +2026,7 @@ static void gc1601_hw_start(struct gc1601_eth *priv)
 	if (ret)
 		dev_dbg(priv->dev, "GMAC ACIR bit 2 not set (acir=%08x)\n", acir);
 	writel(0x80000001, priv->base[GC1601_GMAC] + GC_GMAC_MACCR);
+	gc1601_gmac_pause_addr_apply(priv);
 
 	dev_dbg(priv->dev, "GMAC started: cfg=%08x ier=%08x ercr=%08x acir=%08x maccr=%08x\n",
 		readl(priv->base[GC1601_GMAC] + GC_GMAC_CFG),
@@ -2648,7 +2811,7 @@ static int gc1601_qos_encode(const struct gc1601_tcont_qos *qos,
 	for (q = 0; q < 8; q++) {
 		tables->fill[q] = sp ? BIT(16) : qos->weight[q] * scale;
 		tables->inmax[q] = 32 | (tcont_depth << 11);
-		tables->outmax[q] = 32 | ((sp ? (q ? 64 : tcont_out) : 128) << 11);
+		tables->outmax[q] = 32 | ((sp ? (q ? 720 : tcont_out) : 128) << 11);
 		tables->cfg[q][0] = sp ? (q ? 0x390 : 0x4f8) : 0x140;
 	}
 	return 0;
@@ -3882,6 +4045,8 @@ static int gc1601_set_mac_address(struct net_device *netdev, void *p)
 	/* Frames to the new address must keep reaching the CPU. */
 	if (priv->sfu_rules)
 		gc1601_sfu_cpu_mac(priv);
+	if (priv->running)
+		gc1601_gmac_pause_addr_apply(priv);
 	return 0;
 }
 
@@ -4074,7 +4239,7 @@ static int gc1601_tx_resume(struct gc1601_eth *priv, unsigned int slot)
 out:
 	spin_unlock_irqrestore(&priv->tx_lock, flags);
 	if (!ret) {
-		dev_dbg(priv->dev, "Sequential TX resumed at slot %u\n", slot);
+		dev_info(priv->dev, "Sequential TX resumed at slot %u\n", slot);
 		netif_wake_queue(netdev);
 		pon_dev = READ_ONCE(gc1601_pon_dev);
 		if (pon_dev && netif_running(pon_dev))
@@ -4114,6 +4279,23 @@ static void gc1601_tx_probe_work(struct work_struct *work)
 	int i, ret;
 
 	for (i = 0; i < GC1601_SLOT_PROBE_COUNT; i++) {
+		unsigned long timeout = jiffies + msecs_to_jiffies(100);
+
+		/* Wait for prior transmission to complete */
+		while (READ_ONCE(priv->tx_pending) > 0) {
+			if (time_after(jiffies, timeout))
+				break;
+			spin_lock_irqsave(&priv->tx_lock, flags);
+			gc1601_tx_complete_locked(priv);
+			spin_unlock_irqrestore(&priv->tx_lock, flags);
+			if (READ_ONCE(priv->tx_pending) == 0)
+				break;
+			usleep_range(500, 1000);
+		}
+
+		if (READ_ONCE(priv->tx_pending) > 0)
+			break;
+
 		skb = netdev_alloc_skb(netdev, ETH_ZLEN);
 		if (!skb)
 			break;
@@ -4135,13 +4317,28 @@ static void gc1601_tx_probe_work(struct work_struct *work)
 			break;
 		}
 	}
+
+	/* Wait for the final probe to finish transmitting before scheduling auto work */
+	{
+		unsigned long timeout = jiffies + msecs_to_jiffies(100);
+
+		while (READ_ONCE(priv->tx_pending) > 0 && time_before(jiffies, timeout)) {
+			spin_lock_irqsave(&priv->tx_lock, flags);
+			gc1601_tx_complete_locked(priv);
+			spin_unlock_irqrestore(&priv->tx_lock, flags);
+			if (READ_ONCE(priv->tx_pending) == 0)
+				break;
+			usleep_range(500, 1000);
+		}
+	}
+
 	spin_lock_irqsave(&priv->tx_lock, flags);
 	gc1601_tx_probe_schedule_locked(priv);
 	spin_unlock_irqrestore(&priv->tx_lock, flags);
 }
 
 /* Retry only a drained software ring; never reset or guess the hardware head. */
-static int gc1601_tx_probe_retry_locked(struct gc1601_eth *priv, bool restart)
+static int gc1601_tx_probe_retry_locked(struct gc1601_eth *priv)
 {
 	unsigned int i;
 
@@ -4153,15 +4350,13 @@ static int gc1601_tx_probe_retry_locked(struct gc1601_eth *priv, bool restart)
 			return -EBUSY;
 	if (readl(priv->base[GC1601_TX_RING] + GC_TX_RING_BASE) != priv->tx_ring_dma)
 		return -EBUSY;
-	if (priv->tx_probe_retries == GC1601_SLOT_PROBE_RETRIES)
+	if (priv->tx_probe_retries >= GC1601_SLOT_PROBE_RETRIES)
 		return -ETIMEDOUT;
 	priv->tx_probe_retries++;
-	if (restart) {
-		priv->tx_probe_sent = 0;
-		priv->tx_probe_completed_base = priv->tx_completed_total;
-		priv->tx_probe_excess_base = priv->tx_completion_excess;
-		memset(priv->tx_probe_octets, 0, sizeof(priv->tx_probe_octets));
-	}
+	priv->tx_probe_sent = 0;
+	priv->tx_probe_completed_base = priv->tx_completed_total;
+	priv->tx_probe_excess_base = priv->tx_completion_excess;
+	memset(priv->tx_probe_octets, 0, sizeof(priv->tx_probe_octets));
 	schedule_work(&priv->tx_probe_work);
 	return 0;
 }
@@ -4184,8 +4379,16 @@ static void gc1601_tx_auto_work(struct work_struct *work)
 	spin_lock_irqsave(&priv->tx_lock, flags);
 	priv->tx_auto_scheduled = false;
 	if (priv->tx_stopping || priv->tx_probe_failed || !priv->running || !priv->link ||
-	    !netif_running(priv->netdev) || priv->tx_probe_aligned || priv->tx_pending)
+	    !netif_running(priv->netdev) || priv->tx_probe_aligned)
 		goto out;
+	if (priv->tx_pending) {
+		gc1601_tx_complete_locked(priv);
+		if (priv->tx_pending) {
+			priv->tx_auto_scheduled = true;
+			schedule_delayed_work(&priv->tx_auto_work, msecs_to_jiffies(20));
+			goto out;
+		}
+	}
 	if (priv->tx_probe_sent != GC1601_SLOT_PROBE_COUNT)
 		goto retry;
 	priv->tx_probe_octets[GC1601_SLOT_PROBE_COUNT] =
@@ -4193,7 +4396,7 @@ static void gc1601_tx_auto_work(struct work_struct *work)
 	slot = gc1601_tx_probe_slot(priv);
 	spin_unlock_irqrestore(&priv->tx_lock, flags);
 
-	dev_printk(slot < 0 ? KERN_WARNING : KERN_DEBUG, priv->dev,
+	dev_printk(slot < 0 ? KERN_WARNING : KERN_INFO, priv->dev,
 		   "TX probe byte deltas %u %u %u %u: next slot %d\n",
 		   priv->tx_probe_octets[1] - priv->tx_probe_octets[0],
 		   priv->tx_probe_octets[2] - priv->tx_probe_octets[1],
@@ -4207,9 +4410,11 @@ static void gc1601_tx_auto_work(struct work_struct *work)
 retry:
 	if (!priv->link)
 		goto out;
-	ret = gc1601_tx_probe_retry_locked(priv,
-					   priv->tx_probe_sent == GC1601_SLOT_PROBE_COUNT);
-	if (ret) {
+	ret = gc1601_tx_probe_retry_locked(priv);
+	if (ret == -EBUSY) {
+		priv->tx_auto_scheduled = true;
+		schedule_delayed_work(&priv->tx_auto_work, msecs_to_jiffies(20));
+	} else if (ret) {
 		priv->tx_probe_failed = true;
 		dev_err(priv->dev,
 			"TX probe recovery stopped (%d), retries=%u; reopen interface to retry\n",
@@ -4327,10 +4532,12 @@ static DEVICE_ATTR_RO(rx_snapshot);
 static ssize_t queue_snapshot_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
-	static const u16 queue_bases[] = { 0x140, 0x180, 0x188 };
+	static const u16 queue_bases[] = { 0x000, 0x008, 0x010, 0x018, 0x140, 0x180, 0x188 };
 	struct gc1601_eth *priv = netdev_priv(dev_get_drvdata(dev));
 	u32 outmax, outcnt, inmax, incnt, cfg[3], allcnt;
 	unsigned int bank, queue, index;
+	u16 cur_out, cur_in, cur_all;
+	u32 credit, iptr;
 	ssize_t len = 0;
 	int ret;
 
@@ -4345,7 +4552,15 @@ static ssize_t queue_snapshot_show(struct device *dev,
 		len = sysfs_emit(buf, "blocked_after_timeout=1; reboot before retry\n");
 		goto out;
 	}
-	len = sysfs_emit(buf, "setup_mismatches=%u\n", priv->cvrd_mismatches);
+
+	credit = readl(priv->base[GC1601_TX_SPACE]);
+	iptr = credit & 0x3ff;
+	if (iptr < priv->min_left_iptr)
+		priv->min_left_iptr = iptr;
+
+	len = sysfs_emit(buf, "setup_mismatches=%u left_iptr=%u min_left_iptr=%u\n",
+			 priv->cvrd_mismatches, iptr, priv->min_left_iptr);
+
 	for (bank = 0; bank < ARRAY_SIZE(queue_bases); bank++) {
 		for (queue = 0; queue < 8; queue++) {
 			index = queue_bases[bank] + queue;
@@ -4355,7 +4570,12 @@ static ssize_t queue_snapshot_show(struct device *dev,
 			ret = gc1601_queue_read(priv, GC_CVRD_OUTCNT, index, &outcnt, 1);
 			if (ret)
 				goto failed;
-			if (!bank) {
+
+			cur_out = GC_CVRD_HI(outcnt);
+			if (cur_out > priv->peak_out[index])
+				priv->peak_out[index] = cur_out;
+
+			if (index < GC_CVRD_CPU) {
 				ret = gc1601_queue_read(priv, GC_CVRD_INMAX, index, &inmax, 1);
 				if (ret)
 					goto failed;
@@ -4368,21 +4588,26 @@ static ssize_t queue_snapshot_show(struct device *dev,
 				ret = gc1601_queue_read(priv, GC_CVRD_ALLCNT, index, &allcnt, 1);
 				if (ret)
 					goto failed;
+
+				cur_in = GC_CVRD_HI(incnt);
+				if (cur_in > priv->peak_in[index])
+					priv->peak_in[index] = cur_in;
+
+				cur_all = allcnt & 0xffff;
+				if (cur_all > priv->peak_all[index])
+					priv->peak_all[index] = cur_all;
+
 				len += sysfs_emit_at(buf, len,
-					"index=%03x inmax=%08x incnt=%08x outmax=%08x outcnt=%08x cfg=%08x,%08x,%08x allcnt=%08x | out %u/%u(%u/%u) in %u/%u(%u/%u) all %u(%u)\n",
-					index, inmax, incnt, outmax, outcnt,
-					cfg[0], cfg[1], cfg[2], allcnt,
-					GC_CVRD_LO(outmax), GC_CVRD_HI(outmax),
-					GC_CVRD_LO(outcnt), GC_CVRD_HI(outcnt),
-					GC_CVRD_LO(inmax), GC_CVRD_HI(inmax),
-					GC_CVRD_LO(incnt), GC_CVRD_HI(incnt),
-					cfg[0] & 0xffff, allcnt & 0xffff);
+					"q=%03x out %u/%u(cur %u,pk %u) in %u/%u(cur %u,pk %u) all %u(cur %u,pk %u)\n",
+					index,
+					GC_CVRD_LO(outmax), GC_CVRD_HI(outmax), cur_out, priv->peak_out[index],
+					GC_CVRD_LO(inmax), GC_CVRD_HI(inmax), cur_in, priv->peak_in[index],
+					cfg[0] & 0xffff, cur_all, priv->peak_all[index]);
 			} else {
 				len += sysfs_emit_at(buf, len,
-					"index=%03x outmax=%08x outcnt=%08x | out %u/%u(%u/%u)\n",
-					index, outmax, outcnt,
-					GC_CVRD_LO(outmax), GC_CVRD_HI(outmax),
-					GC_CVRD_LO(outcnt), GC_CVRD_HI(outcnt));
+					"q=%03x out %u/%u(cur %u,pk %u)\n",
+					index,
+					GC_CVRD_LO(outmax), GC_CVRD_HI(outmax), cur_out, priv->peak_out[index]);
 			}
 		}
 	}
@@ -4394,7 +4619,20 @@ out:
 	rtnl_unlock();
 	return len;
 }
-static DEVICE_ATTR_RO(queue_snapshot);
+
+static ssize_t queue_snapshot_store(struct device *dev,
+				    struct device_attribute *attr,
+				    const char *buf, size_t count)
+{
+	struct gc1601_eth *priv = netdev_priv(dev_get_drvdata(dev));
+
+	memset(priv->peak_in, 0, sizeof(priv->peak_in));
+	memset(priv->peak_out, 0, sizeof(priv->peak_out));
+	memset(priv->peak_all, 0, sizeof(priv->peak_all));
+	priv->min_left_iptr = 0x3ff;
+	return count;
+}
+static DEVICE_ATTR_RW(queue_snapshot);
 
 static ssize_t gc1601_emit_id_ranges(char *buf, ssize_t len, const char *name,
 				     const unsigned long *map)
@@ -4430,7 +4668,8 @@ static ssize_t free_list_show(struct device *dev,
 
 	dma_sync_single_for_cpu(priv->dev, GC1601_FREE_LIST_PHYS,
 				GC1601_BUFFER_COUNT * sizeof(__be16), DMA_FROM_DEVICE);
-	for (i = 0; i < GC1601_BUFFER_COUNT; i++)
+	/* All 1440 entries overflow a page; the head shows whether it is intact. */
+	for (i = 0; i < 768; i++)
 		len += sysfs_emit_at(buf, len, "%s%04x",
 				     i % 16 ? " " : (i ? "\n" : ""),
 				     be16_to_cpu(list[i]));
@@ -4443,7 +4682,7 @@ static ssize_t ingress_snapshot_show(struct device *dev,
 {
 	struct gc1601_eth *priv = netdev_priv(dev_get_drvdata(dev));
 	void __iomem *base = priv->base[GC1601_STATISTICS];
-	u32 credit, done;
+	u32 credit, done, iptr;
 	unsigned int index, word;
 	ssize_t len;
 	int ret;
@@ -4455,8 +4694,12 @@ static ssize_t ingress_snapshot_show(struct device *dev,
 		goto out;
 	}
 	credit = readl(priv->base[GC1601_TX_SPACE]);
-	len = sysfs_emit(buf, "left_iptr_raw=%08x left_iptr=%u read_clear=%u\n",
-			 credit, credit & 0x2ff,
+	iptr = credit & 0x3ff;
+	if (iptr < priv->min_left_iptr)
+		priv->min_left_iptr = iptr;
+
+	len = sysfs_emit(buf, "left_iptr_raw=%08x left_iptr=%u min_left_iptr=%u read_clear=%u\n",
+			 credit, iptr, priv->min_left_iptr,
 			 !!(readl(priv->base[GC1601_BUFFERS] + GC_BUF_READ_CLEAR) &
 			    GC_BUF_READ_CLEAR_EN));
 	if (priv->ingress_read_failed) {
@@ -4465,6 +4708,9 @@ static ssize_t ingress_snapshot_show(struct device *dev,
 	}
 	/* Vendor STT_tbl_dr_get: 16 rows, 12 raw words; reads may clear counters. */
 	for (index = 0; index < 16; index++) {
+		u32 words[12];
+		bool has_drops = false;
+
 		writel(0, base + GC_DESC_TABLE_DONE);
 		writel(GC_DESC_TABLE_READ | BIT(22) | index,
 		       base + GC_DESC_TABLE_INDEX);
@@ -4476,11 +4722,17 @@ static ssize_t ingress_snapshot_show(struct device *dev,
 				"dr=%u error=%d; further reads blocked\n", index, ret);
 			goto out;
 		}
-		len += sysfs_emit_at(buf, len, "dr=%u words=", index);
+		for (word = 0; word < 12; word++) {
+			words[word] = readl(base + GC_DESC_TABLE_DATA0 + word * sizeof(u32));
+			if (words[word])
+				has_drops = true;
+		}
+		len += sysfs_emit_at(buf, len, "dr=%02u %s words=", index,
+				     has_drops ? "[DROPS]" : "       ");
 		for (word = 0; word < 12; word++)
 			len += sysfs_emit_at(buf, len, "%08x%s",
-				readl(base + GC_DESC_TABLE_DATA0 + word * sizeof(u32)),
-				word == 11 ? "\n" : ",");
+					     words[word],
+					     word == 11 ? "\n" : ",");
 	}
 out:
 	rtnl_unlock();
@@ -4777,8 +5029,10 @@ static int gc1601_eth_probe(struct platform_device *pdev)
 	netdev->netdev_ops = &gc1601_netdev_ops;
 	netdev->ethtool_ops = &gc1601_ethtool_ops;
 	netdev->min_mtu = ETH_MIN_MTU;
-	/* The default stays 1500; the limit leaves room for QinQ in 1966 bytes. */
+	/* RFC 4638 PPPoE baby jumbo frames: default to 1508 */
+	netdev->mtu = 1508;
 	netdev->max_mtu = GC1601_MAX_MTU;
+	priv->min_left_iptr = 0x3ff;
 
 	netif_napi_add(netdev, &priv->napi, gc1601_rx_poll);
 

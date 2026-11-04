@@ -55,8 +55,6 @@ static int gc_mdio_probe(struct udevice *dev)
 
 	if (!dev_read_addr_ptr(dev))
 		return -EINVAL;
-	if (readl(scu) & BIT(13))
-		return 0;
 	setbits_le32(scu, BIT(13));
 	mdelay(50);
 	for (i = 0; i < ARRAY_SIZE(sequence); i++) {

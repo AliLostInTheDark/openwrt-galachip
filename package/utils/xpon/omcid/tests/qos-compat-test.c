@@ -3,6 +3,7 @@
  * QoS the hardware cannot do must not fail the OLT's write: the backend gets
  * what it can apply, and the service stays up.
  */
+#include <unistd.h>
 #include "native.h"
 
 static unsigned int checks, qos_calls;
@@ -74,6 +75,9 @@ int main(void)
 	struct omci_device odev = { .parent = &parent, .ops = &ops, .started = true,
 		.channel_up = true };
 	u8 ctp[15] = { 0x01, 0x00, 0x80, 0x00, 3 }, td[20] = { 0 }, ts[6] = { 0x80, 0x00 };
+	u8 pq[24] = { 0 };
+	char err_buf[256] = { 0 };
+	int saved_stderr, pfd[2];
 
 	CHECK(!omci_agent_init(&odev));
 
@@ -95,9 +99,33 @@ int main(void)
 	CHECK(!set(&odev, OMCI_CLASS_TRAFFIC_DESCRIPTOR, 5, td, sizeof(td)));
 	CHECK(up_rate == 250000);
 
-	/* A supported scheduler reaches the backend. */
+	/*
+	 * Airtel/Nokia: GEM pointed straight at priority queue 0x8007 with
+	 * scheduler pointer 0 and T-CONT policy null (0) uses one queue quietly.
+	 */
+	CHECK(!pipe(pfd));
+	fflush(stderr);
+	saved_stderr = dup(STDERR_FILENO);
+	CHECK(saved_stderr >= 0);
+	CHECK(dup2(pfd[1], STDERR_FILENO) >= 0);
+	close(pfd[1]);
+	put_unaligned_be16(0x8007, ctp + 5);
+	CHECK(!set(&odev, OMCI_CLASS_GEM_PORT_CTP, 256, ctp, sizeof(ctp)));
+	put_unaligned_be32(0x80000000, pq + 9);
+	pq[15] = 1;
+	CHECK(!set(&odev, OMCI_CLASS_PRIORITY_QUEUE, 0x8007, pq, sizeof(pq)));
+	fflush(stderr);
+	CHECK(dup2(saved_stderr, STDERR_FILENO) >= 0);
+	close(saved_stderr);
+	CHECK(read(pfd[0], err_buf, sizeof(err_buf) - 1) == 0);
+	close(pfd[0]);
+	CHECK(qos_calls && !last_qos.enabled);
+
+	/* Restore scheduler pointer on 0x8007 so a supported scheduler reaches the backend. */
 	ts[4] = 2;
 	CHECK(!set(&odev, OMCI_CLASS_TRAFFIC_SCHEDULER, 0x8000, ts, sizeof(ts)));
+	put_unaligned_be16(0x8000, pq + 13);
+	CHECK(!set(&odev, OMCI_CLASS_PRIORITY_QUEUE, 0x8007, pq, sizeof(pq)));
 	CHECK(qos_calls && last_qos.enabled && last_qos.policy == 2);
 
 	/* One the hardware lacks falls back to no scheduling, without an error. */

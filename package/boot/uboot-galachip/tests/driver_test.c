@@ -379,6 +379,9 @@ static void mdio_tests(void)
 {
 	struct udevice dev = { .address = (void *)0x90100000 };
 
+	/* Hardware reset value of 0x90a00810 is 0x3900 (BIT(13) already set). */
+	set(0x90a00810, 0x3900);
+	set(0x91400000, 0);
 	assert(!gc_mdio_probe(&dev));
 	assert(raw(0x90a00810) & BIT(13));
 	assert(raw(0x91400000) == 3);

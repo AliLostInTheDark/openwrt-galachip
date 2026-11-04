@@ -411,6 +411,11 @@ void gc1601_pon_gmac_init(struct gc1601_pon *pon)
 	val = readl(tx + PON_OPT_TX_DELAY) & ~GENMASK(8, 0);
 	writel(val | (16 << 4) | 2, tx + PON_OPT_TX_DELAY);
 
+	/* Match stock 0x90c8013c = 0x07d00040 (2000 MTU, 64-byte min frame) */
+	if (pon->emac)
+		writel((readl(pon->emac + EMAC_MTU) & ~GENMASK(26, 16)) | (2000 << 16) | 0x40,
+		       pon->emac + EMAC_MTU);
+
 	/* sdk_set_gpon_rx_en: receive path only */
 	writel(readl(rx) | PON_OPT_RX_EN, rx);
 }

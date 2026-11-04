@@ -3540,6 +3540,50 @@ static int omci_agent_apply_uni_attrs_locked(struct omci_device *odev)
 	return err;
 }
 
+static bool omci_agent_tcont_direct_queues_locked(struct omci_agent *agent,
+						  const struct omci_mib_object *tcont)
+{
+	struct omci_mib_object *gem, *pq, *ts;
+	unsigned long index;
+	bool used = false;
+
+	if (tcont->data[3])
+		return false;
+	xa_for_each(&agent->mib, index, ts) {
+		if (omci_mib_object_active(agent, ts) &&
+		    ts->class_id == OMCI_CLASS_TRAFFIC_SCHEDULER &&
+		    get_unaligned_be16(ts->data) == tcont->entity_id &&
+		    ts->qos_configured)
+			return false;
+	}
+	xa_for_each(&agent->mib, index, pq) {
+		if (!omci_mib_object_active(agent, pq) ||
+		    pq->class_id != OMCI_CLASS_PRIORITY_QUEUE ||
+		    get_unaligned_be16(pq->data + 9) != tcont->entity_id ||
+		    !pq->qos_configured)
+			continue;
+		if (get_unaligned_be16(pq->data + 13))
+			return false;
+		used = true;
+	}
+	xa_for_each(&agent->mib, index, gem) {
+		if (!omci_mib_object_active(agent, gem) ||
+		    gem->class_id != OMCI_CLASS_GEM_PORT_CTP ||
+		    gem->data_len < 7 ||
+		    get_unaligned_be16(gem->data + 2) != tcont->entity_id ||
+		    !get_unaligned_be16(gem->data + 5))
+			continue;
+		pq = omci_mib_lookup(agent, OMCI_CLASS_PRIORITY_QUEUE,
+				     get_unaligned_be16(gem->data + 5));
+		if (!pq || !omci_mib_object_active(agent, pq) ||
+		    get_unaligned_be16(pq->data + 9) != tcont->entity_id ||
+		    get_unaligned_be16(pq->data + 13))
+			return false;
+		used = true;
+	}
+	return used;
+}
+
 static int omci_agent_tcont_qos_locked(struct omci_device *odev,
 				       const struct omci_mib_object *tcont)
 {
@@ -3573,6 +3617,10 @@ static int omci_agent_tcont_qos_locked(struct omci_device *odev,
 	}
 	if (!qos.enabled || tcont->pending_delete)
 		goto apply;
+	if (omci_agent_tcont_direct_queues_locked(agent, tcont)) {
+		memset(&qos, 0, sizeof(qos));
+		goto apply;
+	}
 	xa_for_each(&agent->mib, index, pq) {
 		if (!omci_mib_object_active(agent, pq) ||
 		    pq->class_id != OMCI_CLASS_PRIORITY_QUEUE ||
