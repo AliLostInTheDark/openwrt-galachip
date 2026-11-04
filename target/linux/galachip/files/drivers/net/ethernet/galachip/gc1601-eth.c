@@ -1946,12 +1946,11 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 	writel(priv->tx_ring_dma, priv->base[GC1601_TX_RING] + GC_TX_RING_BASE);
 
 	writel(0x30000800, priv->base[GC1601_BUFFERS] + GC_BUF_POOL_CFG);
-	writel(GC1601_BUFFER_COUNT << 16, priv->base[GC1601_RX] + GC_RX_PARTITION);
+	writel(0x60, priv->base[GC1601_RX] + GC_RX_PARTITION);
 	writel(GC_RX_CTRL_VAL, priv->base[GC1601_RX] + GC_RX_CTRL);
-	writel(2000, priv->base[GC1601_RX] + GC_RX_MTU);
 
 	dev_dbg(priv->dev, "RX setup: partition=%08x (readback %08x), rx_ctrl=%08x (readback %08x)\n",
-		GC1601_BUFFER_COUNT << 16, readl(priv->base[GC1601_RX] + GC_RX_PARTITION),
+		0x60, readl(priv->base[GC1601_RX] + GC_RX_PARTITION),
 		GC_RX_CTRL_VAL,
 		readl(priv->base[GC1601_RX] + GC_RX_CTRL));
 
@@ -1996,7 +1995,7 @@ static void gc1601_hw_start(struct gc1601_eth *priv)
 	spin_unlock_irqrestore(&priv->irq_lock, flags);
 
 	/* Enable RX gate with 2000 MTU in bits 29:16 (chipset_pktrx_mtu_set) */
-	writel((2000 << 16) | 1, priv->base[GC1601_RX] + GC_RX_ENABLE);
+	writel(1, priv->base[GC1601_RX] + GC_RX_ENABLE);
 
 	/* Set GMAC configuration (1000M full duplex default) */
 	spin_lock_irqsave(&priv->irq_lock, flags);
