@@ -302,6 +302,7 @@ struct gc1601_eth {
 	bool tx_auto_scheduled;
 	bool tx_stopping;
 	bool tx_probe_failed;
+	bool tx_probe_running;
 	u8 tx_probe_retries;
 	u32 tx_probe_completed_base;
 	u32 tx_probe_excess_base;
@@ -2077,7 +2078,7 @@ static void gc1601_tx_probe_schedule_locked(struct gc1601_eth *priv)
 	lockdep_assert_held(&priv->tx_lock);
 	if (!priv->tx_stopping && !priv->tx_probe_failed && priv->running && priv->link &&
 	    netif_running(priv->netdev) && !priv->tx_probe_aligned &&
-	    !priv->tx_pending && !priv->tx_auto_scheduled) {
+	    !priv->tx_pending && !priv->tx_auto_scheduled && !priv->tx_probe_running) {
 		priv->tx_auto_scheduled = true;
 		schedule_delayed_work(&priv->tx_auto_work, msecs_to_jiffies(20));
 	}
@@ -4276,7 +4277,11 @@ static void gc1601_tx_probe_work(struct work_struct *work)
 	struct net_device *netdev = priv->netdev;
 	struct sk_buff *skb;
 	unsigned long flags;
-	int i, ret;
+	int i, ret = 0;
+
+	spin_lock_irqsave(&priv->tx_lock, flags);
+	priv->tx_probe_running = true;
+	spin_unlock_irqrestore(&priv->tx_lock, flags);
 
 	for (i = 0; i < GC1601_SLOT_PROBE_COUNT; i++) {
 		unsigned long timeout = jiffies + msecs_to_jiffies(100);
@@ -4293,12 +4298,16 @@ static void gc1601_tx_probe_work(struct work_struct *work)
 			usleep_range(500, 1000);
 		}
 
-		if (READ_ONCE(priv->tx_pending) > 0)
+		if (READ_ONCE(priv->tx_pending) > 0) {
+			ret = -ETIMEDOUT;
 			break;
+		}
 
 		skb = netdev_alloc_skb(netdev, ETH_ZLEN);
-		if (!skb)
+		if (!skb) {
+			ret = -ENOMEM;
 			break;
+		}
 		skb_put_zero(skb, ETH_ZLEN);
 
 		netif_tx_lock_bh(netdev);
@@ -4317,6 +4326,11 @@ static void gc1601_tx_probe_work(struct work_struct *work)
 			break;
 		}
 	}
+	if (ret)
+		dev_warn_ratelimited(priv->dev,
+				     "TX probe %d/%d stopped (%d), pending %u buf_wait %d\n",
+				     i + 1, GC1601_SLOT_PROBE_COUNT, ret,
+				     READ_ONCE(priv->tx_pending), READ_ONCE(priv->tx_buf_wait));
 
 	/* Wait for the final probe to finish transmitting before scheduling auto work */
 	{
@@ -4333,6 +4347,7 @@ static void gc1601_tx_probe_work(struct work_struct *work)
 	}
 
 	spin_lock_irqsave(&priv->tx_lock, flags);
+	priv->tx_probe_running = false;
 	gc1601_tx_probe_schedule_locked(priv);
 	spin_unlock_irqrestore(&priv->tx_lock, flags);
 }
@@ -4380,6 +4395,9 @@ static void gc1601_tx_auto_work(struct work_struct *work)
 	priv->tx_auto_scheduled = false;
 	if (priv->tx_stopping || priv->tx_probe_failed || !priv->running || !priv->link ||
 	    !netif_running(priv->netdev) || priv->tx_probe_aligned)
+		goto out;
+	/* The probe worker reschedules us when its run is finished. */
+	if (priv->tx_probe_running)
 		goto out;
 	if (priv->tx_pending) {
 		gc1601_tx_complete_locked(priv);
