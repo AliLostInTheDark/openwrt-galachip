@@ -180,7 +180,7 @@ static const char * const gc1601_reg_names[GC1601_NUM_WINDOWS] = {
 #define GC_RX_PARTITION		0x18	/* pool size in bits 31:16; reads back other state */
 #define GC_RX_JUMBO_COUNT	0x1c	/* secondary pool size in bits 31:16 */
 #define GC_RX_CTRL		0x20
-#define GC_RX_CTRL_VAL		0x2c	/* stock runtime xpon_sdk */
+#define GC_RX_CTRL_VAL		0x0f	/* as U-Boot; 0x2c clears bit 1 and the CPU allocator returns no buffer */
 #define GC_RX_MTU		0x28	/* chipset_pktrx_mtu_set */
 #define GC_RX_PUBLISH_TX	0x38
 
