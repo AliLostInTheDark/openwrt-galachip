@@ -30,10 +30,8 @@
 #include <linux/soc/galachip/gc1601.h>
 #include <linux/unaligned.h>
 
-#define GC1601_BUFFER_COUNT	512	/* stock's 1440 left the CPU allocator empty */
+#define GC1601_BUFFER_COUNT	512
 #define GC1601_BUFFER_SIZE	2048
-#define GC1601_JUMBO_COUNT	32	/* secondary pool, frames over the 2000-byte MTU */
-#define GC1601_JUMBO_SIZE	0x3000
 #define GC1601_RING_SIZE	256
 #define GC1601_IRQ_RETRY_MS	200	/* polling after an IRQ storm, then retry */
 #define GC1601_IRQ_RETRY_MAX_MS	10000
@@ -52,17 +50,10 @@
 /* GMAC TX octets count the FCS beyond the descriptor length (iperf: +4.0/frame). */
 #define GC1601_PROBE_OCTET_EXTRA	4
 
-/*
- * PMU_container_init's arena layout, in our own reserved memory
- * (0x40a00000..0x40d31fff). A free-list base other than ours at probe
- * means the loader's 512-buffer pool, so the cold init takes this one.
- */
+/* Physical bases in loader-reserved memory (0x40800000..0x40911fff) */
 #define GC1601_FREE_LIST_PHYS	0x40800000
 #define GC1601_PKT_POOL_PHYS	0x40801000
-#define GC1601_JUMBO_POOL_PHYS	0x40a00000
-#define GC1601_JUMBO_LIST_PHYS	0x40a60000
-/* The loader's rings (0x40800000..0x40911fff), drained once at setup. */
-#define GC1601_RX_RING_PHYS	0x40901000	/* 16 containers, 4 KiB apart */
+#define GC1601_RX_RING_PHYS	0x40901000	/* the loader's: 16 containers, 4 KiB apart */
 #define GC1601_TX_RING_PHYS	0x40911000
 
 /* PMU_register_edev: one RX ring per container, container 15 carries OMCI. */
@@ -131,10 +122,8 @@ static const char * const gc1601_reg_names[GC1601_NUM_WINDOWS] = {
 #define GC_BUF_READ_CLEAR_EN	BIT(1)
 #define GC_BUF_CTRL		0x24
 #define GC_BUF_FREE_LIST_BASE	0x28
-#define GC_BUF_JUMBO_LIST_BASE	0x2c
 #define GC_BUF_RX_RING_BASE	0x30
 #define GC_BUF_PKT_POOL_BASE	0x34
-#define GC_BUF_JUMBO_POOL_BASE	0x38
 #define GC_BUF_POOL_CFG		0x3c
 #define GC_BUF_INTR_MASK	0x04
 #define GC_BUF_INTR_STATUS	0x40
@@ -178,10 +167,8 @@ static const char * const gc1601_reg_names[GC1601_NUM_WINDOWS] = {
 #define GC_RX_RELEASE_BUF	0x10
 #define GC_RX_ALLOC_REQ		0x14
 #define GC_RX_PARTITION		0x18	/* pool size in bits 31:16; reads back other state */
-#define GC_RX_JUMBO_COUNT	0x1c	/* secondary pool size in bits 31:16 */
 #define GC_RX_CTRL		0x20
 #define GC_RX_CTRL_VAL		0x0f	/* as U-Boot; 0x2c clears bit 1 and the CPU allocator returns no buffer */
-#define GC_RX_MTU		0x28	/* chipset_pktrx_mtu_set */
 #define GC_RX_PUBLISH_TX	0x38
 
 /* TX ring registers (0x90ddc040) */
@@ -4675,8 +4662,7 @@ static ssize_t free_list_show(struct device *dev,
 
 	dma_sync_single_for_cpu(priv->dev, GC1601_FREE_LIST_PHYS,
 				GC1601_BUFFER_COUNT * sizeof(__be16), DMA_FROM_DEVICE);
-	/* All 1440 entries overflow a page; the head shows whether it is intact. */
-	for (i = 0; i < 768; i++)
+	for (i = 0; i < GC1601_BUFFER_COUNT; i++)
 		len += sysfs_emit_at(buf, len, "%s%04x",
 				     i % 16 ? " " : (i ? "\n" : ""),
 				     be16_to_cpu(list[i]));

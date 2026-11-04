@@ -36,11 +36,6 @@
 			reg = <0x40800000 0x00112000>;
 		};
 
-		/* Stock's 1440-buffer pool, its free list and the 32-slot jumbo pool. */
-		pe_pool: dma@40a00000 {
-			reg = <0x40a00000 0x00332000>;
-		};
-
 		/*
 		 * Crash logs that survive a watchdog reset: above U-Boot's initial
 		 * stack top (0x40f00000) and below its load address (0x41000000).
