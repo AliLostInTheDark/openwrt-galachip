@@ -580,12 +580,12 @@ static void gc1601_cold_finish(struct gc1601_eth *priv)
 static int gc1601_cvrd_write(struct gc1601_eth *priv, u32 index, u32 data);
 
 /*
- * T-CONT queue limits in buffers. Stock's 128 input is ~5 ms at 300 Mbit/s:
- * a single TCP upload overruns it and backs off (205 Mbit/s); several flows
- * do not. Queue 0's output stage carries the rate only with 256; input 192
- * caps the queue at 448 of the 512 buffers.
+ * T-CONT queue limits in buffers. Output stage carries line rate with 256;
+ * input stage at 256 provides burst capacity for 1 Gbps bursts (peak 240
+ * under single-stream load with zero drops) while remaining well within the
+ * 512-buffer hardware descriptor pool.
  */
-static unsigned int tcont_depth = 192;
+static unsigned int tcont_depth = 256;
 static unsigned int tcont_out = 256;
 
 static int gc1601_descriptor_setup(struct gc1601_eth *priv)

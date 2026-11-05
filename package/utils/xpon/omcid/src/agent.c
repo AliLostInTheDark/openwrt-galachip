@@ -1859,7 +1859,7 @@ int omci_agent_init(struct omci_device *odev)
 	agent->config.uni_count = 4;
 	agent->config.onu_type = OMCI_ONU_TYPE_HGU;
 	agent->config.onu_type_source = OMCI_CONFIG_SOURCE_DEFAULT;
-	agent->config.traffic_mgmt_option = 0;
+	agent->config.traffic_mgmt_option = 2;
 	agent->config.dba_status_reporting = 1;
 	agent->config.olt_profile = OMCI_OLT_PROFILE_AUTO;
 	agent->config.olt_profile_force = OMCI_OLT_PROFILE_UNSPEC;
