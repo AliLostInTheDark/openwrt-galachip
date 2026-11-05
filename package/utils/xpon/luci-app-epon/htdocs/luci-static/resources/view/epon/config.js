@@ -270,27 +270,27 @@ return view.extend({
 					E('h4', {}, _('Live OLT Challenge (Read-Only)')),
 					E('table', { 'class': 'table', 'style': 'margin:0' }, [
 						E('tr', { 'class': 'tr' }, [
-							E('td', { 'class': 'td left', 'style': 'width:40%' }, _('Board PON MAC:')),
+							E('td', { 'class': 'td left', 'style': 'width:40%' }, _('Board PON MAC (ONU/ONT):')),
 							E('td', { 'class': 'td left' }, [
 								E('strong', {}, ponMac || '-'),
-								macHex12 ? E('span', { 'class': 'cbi-value-helpicon', 'style': 'margin-left:6px;font-family:monospace' }, ' [' + macHex12 + ']') : ''
+								macHex12 ? E('span', { 'class': 'cbi-value-helpicon', 'style': 'margin-left:6px' }, ' [' + macHex12 + ']') : ''
 							])
 						]),
 						E('tr', { 'class': 'tr' }, [
-							E('td', { 'class': 'td left' }, _('Challenge status:')),
+							E('td', { 'class': 'td left' }, _('OLT Challenge Status:')),
 							E('td', { 'class': 'td left' }, [ statePill ? E('span', { 'innerHTML': statePill }) : '-' ])
 						]),
 						E('tr', { 'class': 'tr' }, [
-							E('td', { 'class': 'td left' }, _('OLT key received (0x2040):')),
+							E('td', { 'class': 'td left' }, _('OLT Key Received (0x2040):')),
 							E('td', { 'class': 'td left' }, [
-								liveOltKey ? E('code', { 'style': 'font-size:12px;word-break:break-all' }, liveOltKey) :
+								liveOltKey ? E('code', { 'style': 'word-break:break-all' }, liveOltKey) :
 								             E('em', { 'style': 'color:var(--text-3, #888)' }, _('Waiting for OLT Set_Request on 0x2040…'))
 							])
 						]),
 						E('tr', { 'class': 'tr' }, [
-							E('td', { 'class': 'td left' }, _('ONU response key served:')),
+							E('td', { 'class': 'td left' }, _('ONU/ONT Response Key Served:')),
 							E('td', { 'class': 'td left' }, [
-								liveOnuKey ? E('code', { 'style': 'font-size:12px;word-break:break-all' }, liveOnuKey) :
+								liveOnuKey ? E('code', { 'style': 'word-break:break-all' }, liveOnuKey) :
 								             E('em', { 'style': 'color:var(--text-3, #888)' }, _('None (secret not set or not queried)'))
 							])
 						])
@@ -299,37 +299,41 @@ return view.extend({
 
 				/* Right Card: Editable ONU Calculator & Verifier Side */
 				E('div', { 'class': 'xpon-panel' }, [
-					E('h4', {}, _('ONU Key Calculator & Verifier')),
+					E('h4', {}, _('ONU/ONT Key Calculator & Verifier')),
 					E('div', { 'style': 'display:flex;flex-direction:column;gap:10px' }, [
 						E('div', {}, [
-							E('label', { 'style': 'display:block;font-size:12px;font-weight:600;margin-bottom:4px' }, _('Candidate shared secret:')),
+							E('label', { 'style': 'display:block;font-size:12px;font-weight:600;margin-bottom:4px' }, _('Candidate Shared Secret (ONU/ONT):')),
 							E('input', {
 								'type': 'text',
 								'id': 'vsol-calc-secret',
 								'class': 'cbi-input-text',
-								'style': 'width:100%;font-family:monospace',
-								'placeholder': _('Enter secret to calculate or test…'),
+								'style': 'width:100%',
+								'placeholder': '9637c5151',
 								'value': uci.get('epon', 'main', 'interauth_secret') || ''
 							})
 						]),
 						E('div', {}, [
-							E('label', { 'style': 'display:block;font-size:12px;font-weight:600;margin-bottom:4px' }, _('Optional target key override (pasted from ISP ONT capture):')),
+							E('label', { 'style': 'display:block;font-size:12px;font-weight:600;margin-bottom:4px' }, _('Optional Target Key Override (pasted from ISP ONT capture):')),
 							E('input', {
 								'type': 'text',
 								'id': 'vsol-calc-target',
 								'class': 'cbi-input-text',
-								'style': 'width:100%;font-family:monospace',
-								'placeholder': liveOltKey || _('32-character hexadecimal key…')
+								'style': 'width:100%',
+								'placeholder': liveOltKey || 'e40b0cc7dd151e106e422c39bb5c7a8e'
 							})
 						]),
-						E('div', { 'style': 'display:grid;grid-template-columns:1fr;gap:6px;background:var(--surface-2, #f6f7f9);padding:10px;border-radius:8px' }, [
-							E('div', {}, [
-								E('span', { 'style': 'font-size:11px;font-weight:600;color:var(--text-2, #555)' }, _('Calculated OLT Key (Role "Olt"):')),
-								E('div', { 'id': 'vsol-calc-olt-result', 'style': 'font-family:monospace;font-size:12px;word-break:break-all;color:var(--text, #111)' }, '-')
+						E('table', { 'class': 'table', 'style': 'margin:0' }, [
+							E('tr', { 'class': 'tr' }, [
+								E('td', { 'class': 'td left', 'style': 'width:45%' }, _('Calculated OLT Key (Role "Olt"):')),
+								E('td', { 'class': 'td left' }, [
+									E('code', { 'id': 'vsol-calc-olt-result', 'style': 'word-break:break-all' }, '-')
+								])
 							]),
-							E('div', {}, [
-								E('span', { 'style': 'font-size:11px;font-weight:600;color:var(--text-2, #555)' }, _('Calculated ONU Key (Role "Onu"):')),
-								E('div', { 'id': 'vsol-calc-onu-result', 'style': 'font-family:monospace;font-size:12px;word-break:break-all;color:var(--text, #111)' }, '-')
+							E('tr', { 'class': 'tr' }, [
+								E('td', { 'class': 'td left' }, _('Calculated ONU/ONT Key (Role "Onu"):')),
+								E('td', { 'class': 'td left' }, [
+									E('code', { 'id': 'vsol-calc-onu-result', 'style': 'word-break:break-all' }, '-')
+								])
 							])
 						]),
 						E('div', { 'id': 'vsol-calc-badge', 'style': 'min-height:24px' }),
@@ -386,6 +390,9 @@ return view.extend({
 				if (formSecretInput && secretInput && document.activeElement === secretInput)
 					formSecretInput.value = sec;
 
+				if (sec && secretInput)
+					secretInput.classList.remove('cbi-input-invalid');
+
 				if (!sec || !macHex12) {
 					if (calcOltEl) calcOltEl.textContent = '-';
 					if (calcOnuEl) calcOnuEl.textContent = '-';
@@ -406,7 +413,7 @@ return view.extend({
 							_('Match — candidate secret generates the exact OLT challenge key on 0x2040.') + '</span>';
 					} else if (onuHash === tgt) {
 						badgeEl.innerHTML = '<span class="xpon-pill xpon-ok">' +
-							_('Match — candidate secret generates the exact ONU response key on 0x2040.') + '</span>';
+							_('Match — candidate secret generates the exact ONU/ONT response key on 0x2040.') + '</span>';
 					} else {
 						badgeEl.innerHTML = '<span class="xpon-pill xpon-bad">' +
 							_('Mismatch — calculated OLT key does not match target key.') + '</span>';
@@ -432,6 +439,18 @@ return view.extend({
 			if (btnCheck) {
 				btnCheck.addEventListener('click', function(ev) {
 					ev.preventDefault();
+					var sec = secretInput ? secretInput.value.trim() : '';
+					if (!sec) {
+						if (secretInput) {
+							secretInput.classList.add('cbi-input-invalid');
+							secretInput.focus();
+						}
+						if (badgeEl) {
+							badgeEl.innerHTML = '<span class="xpon-pill xpon-bad">' +
+								_('Please enter a shared secret first') + '</span>';
+						}
+						return;
+					}
 					updateCalc();
 				});
 			}
@@ -439,6 +458,17 @@ return view.extend({
 				btnApply.addEventListener('click', function(ev) {
 					ev.preventDefault();
 					var sec = secretInput ? secretInput.value.trim() : '';
+					if (!sec) {
+						if (secretInput) {
+							secretInput.classList.add('cbi-input-invalid');
+							secretInput.focus();
+						}
+						if (badgeEl) {
+							badgeEl.innerHTML = '<span class="xpon-pill xpon-bad">' +
+								_('Please enter a shared secret first') + '</span>';
+						}
+						return;
+					}
 					if (formSecretInput)
 						formSecretInput.value = sec;
 					uci.set('epon', 'main', 'interauth_secret', sec);
