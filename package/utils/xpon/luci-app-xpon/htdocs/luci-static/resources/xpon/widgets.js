@@ -56,7 +56,8 @@ var CSS = [
 	'body:is([data-page^="admin-network-omci"],[data-page^="admin-network-xpon"],[data-page^="admin-network-epon"]) #maincontent :is(a[href],button,select,summary,label[for],.cbi-button,.btn){cursor:pointer}',
 	/* Stage names need about 80px each; below that the sentence says where it stands. */
 	'@container (max-width:420px){.xpon-stage span{display:none}.xpon-stage{padding:8px 2px}}',
-	'@media (max-width:600px){.xpon-panel{padding:14px}.xpon-gauge-value{font-size:28px}}'
+	'@media (max-width:600px){.xpon-panel{padding:14px}.xpon-gauge-value{font-size:28px}}',
+	'.cbi-value-field>.cbi-dropdown:not(.btn):not(.cbi-button){min-width:min(280px,100%);max-width:100%;width:auto}'
 ].join('');
 
 var costs = {

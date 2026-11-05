@@ -1309,9 +1309,9 @@ label.btn.alert-message {
 }
 
 .cbi-dropdown:not(.btn):not(.cbi-button) {
-	min-width: 0;
-	max-width: min(440px, 100%);
-	width: 280px;
+	min-width: min(280px, 100%);
+	max-width: 100%;
+	width: auto;
 }
 
 .cbi-dropdown img {
