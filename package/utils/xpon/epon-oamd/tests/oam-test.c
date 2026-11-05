@@ -599,6 +599,11 @@ static void test_vsol(void)
 
 	memcpy(oam.mac, mac, ETH_ALEN);
 	oam.auth_secret[0] = 0;
+	oam.interauth = 0;
+	oam.interauth_olt[0] = 0;
+	assert(set_attr(BR_EXT_ATTR, 0x2040, (const uint8_t *)"E40B0CC7DD151E106E422C39BB5C7A8E", 32) == VAR_BAD);
+	assert(oam.interauth == -2);
+	assert(!strcmp(oam.interauth_olt, "e40b0cc7dd151e106e422c39bb5c7a8e"));
 	get_attr(&o, BR_EXT_ATTR, 0x2040);
 	assert(frame[3] == 0x86);		/* off without a secret: not supported */
 	o.len = 0;
@@ -606,10 +611,13 @@ static void test_vsol(void)
 	get_attr(&o, BR_EXT_ATTR, 0x2040);
 	assert(frame[3] == 64 && !memcmp(frame + 4, "4b7bbed0724fb2a03ccb36af9b34a5e4", 32));
 	assert(frame[4 + 32] == 0 && frame[4 + 63] == 0);
+	assert(!strcmp(oam.interauth_onu, "4b7bbed0724fb2a03ccb36af9b34a5e4"));
 	assert(set_attr(BR_EXT_ATTR, 0x2040, (const uint8_t *)"e40b0cc7dd151e106e422c39bb5c7a8e", 32) ==
 	       VAR_SET_OK && oam.interauth == 1);
+	assert(!strcmp(oam.interauth_olt, "e40b0cc7dd151e106e422c39bb5c7a8e"));
 	assert(set_attr(BR_EXT_ATTR, 0x2040, (const uint8_t *)"00000000000000000000000000000000", 32) ==
 	       VAR_SET_OK && oam.interauth == -1);
+	assert(!strcmp(oam.interauth_olt, "00000000000000000000000000000000"));
 	oam.auth_secret[0] = 0;
 
 	/* ONU SN: 38 bytes before CTC 3.0, 54 with the extended model after. */

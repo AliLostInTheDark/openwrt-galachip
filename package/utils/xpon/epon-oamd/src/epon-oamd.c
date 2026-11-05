@@ -110,7 +110,9 @@ static struct {
 	char vendor[5], model[5], hw[9], sw[17], ext_model[17];
 	char auth_secret[65];		/* VSOL inter-authentication, empty: off */
 	uint32_t peer_oui;		/* OUI the OLT used, answered on */
-	int interauth;			/* 0 not asked, 1 OLT key ok, -1 mismatch */
+	int interauth;			/* 0 not asked, 1 OLT key ok, -1 mismatch, -2 asked without secret */
+	char interauth_olt[33];		/* 32 hex chars sent by OLT in Set 0x2040 */
+	char interauth_onu[33];		/* 32 hex chars derived for Get 0x2040 */
 
 	/* VLAN override: "olt" applies the OLT's Port VLAN */
 	char vlan_override[16];
@@ -548,6 +550,8 @@ static void link_down(const char *why)
 	oam.auth = AUTH_NONE;
 	oam.auth_fail_reason = 0;
 	oam.interauth = 0;
+	oam.interauth_olt[0] = 0;
+	oam.interauth_onu[0] = 0;
 	oam.have_olt_local = false;
 	memset(oam.olt_local, 0, sizeof(oam.olt_local));
 	memset(oam.olt_mac, 0, sizeof(oam.olt_mac));
@@ -980,11 +984,19 @@ static void get_attr(struct out *o, uint8_t branch, uint16_t leaf)
 			n = port_vlan_value(v, sizeof(v));
 			break;
 		case 0x2040:		/* VSOL inter-authentication: our key */
-			if (!oam.auth_secret[0])
+			if (!oam.auth_secret[0]) {
+				if (!oam.interauth) {
+					oam.interauth = -2;
+					oam.status_dirty = true;
+				}
+				logmsg(0, "VSOL inter-authentication requested by OLT (Get 0x2040), but no secret is configured");
 				break;
-			interauth_key("Onu", (char *)v);
+			}
+			interauth_key("Onu", oam.interauth_onu);
+			memcpy(v, oam.interauth_onu, 32);
 			v[32] = 0;
 			n = INTERAUTH_FIELD;
+			oam.status_dirty = true;
 			break;
 		case 0x0008:		/* holdover: state, time in ms */
 			put32(v, oam.holdover_state);
@@ -1226,20 +1238,43 @@ static uint8_t set_tx_power(const uint8_t *v, size_t n)
  * on a mismatch; we only log it, since a wrong secret here would otherwise
  * be a boot loop.
  */
+static void capture_interauth_olt(const uint8_t *v, size_t n)
+{
+	size_t i, len = n < 32 ? n : 32;
+
+	for (i = 0; i < len; i++) {
+		uint8_t c = v[i];
+
+		if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
+			oam.interauth_olt[i] = c;
+		else if (c >= 'A' && c <= 'F')
+			oam.interauth_olt[i] = c + ('a' - 'A');
+		else
+			oam.interauth_olt[i] = '?';
+	}
+	oam.interauth_olt[len] = 0;
+}
+
 static uint8_t set_interauth(const uint8_t *v, size_t n)
 {
 	char want[33];
 
-	if (!oam.auth_secret[0])
-		return VAR_BAD;
-	interauth_key("Olt", want);
-	oam.interauth = n >= 32 && !memcmp(v, want, 32) ? 1 : -1;
-	if (oam.interauth > 0)
-		logmsg(0, "VSOL inter-authentication: OLT key accepted");
-	else
-		logmsg(0, "VSOL inter-authentication: OLT key mismatch (%zu bytes), expected %s",
-		       n, want);
+	capture_interauth_olt(v, n);
 	oam.status_dirty = true;
+	if (!oam.auth_secret[0]) {
+		oam.interauth = -2;
+		logmsg(0, "VSOL inter-authentication: OLT sent key %s (%zu bytes), but no secret is configured",
+		       oam.interauth_olt, n);
+		return VAR_BAD;
+	}
+	interauth_key("Olt", want);
+	interauth_key("Onu", oam.interauth_onu);
+	oam.interauth = n >= 32 && !memcmp(oam.interauth_olt, want, 32) ? 1 : -1;
+	if (oam.interauth > 0)
+		logmsg(0, "VSOL inter-authentication: OLT key accepted (%s)", oam.interauth_olt);
+	else
+		logmsg(0, "VSOL inter-authentication: OLT key mismatch (got %s, expected %s)",
+		       oam.interauth_olt, want);
 	return VAR_SET_OK;
 }
 
@@ -1661,7 +1696,8 @@ static void write_status_json(FILE *fp)
 		"\"acked_unapplied\":%lu,\"unknown_ouis\":%lu,\"unknown_opcodes\":%lu,"
 		"\"last_unknown_oui\":%u,\"last_unknown_opcode\":%u,"
 		"\"last_unknown_branch\":%u,\"last_unknown_leaf\":%u,\"peer_oui\":%u,"
-		"\"interauth\":\"%s\",\"flags\":\"%#06x\",\"olt_flags\":\"%#06x\"}\n",
+		"\"interauth\":\"%s\",\"interauth_olt\":\"%s\",\"interauth_onu\":\"%s\","
+		"\"flags\":\"%#06x\",\"olt_flags\":\"%#06x\"}\n",
 		generation, oam.registered ? "true" : "false",
 		disc_names[oam.disc], ctc_names[oam.ctc],
 		oam.ctc_version, auth_names[oam.auth], oam.auth_fail_reason, oam.loid,
@@ -1674,8 +1710,10 @@ static void write_status_json(FILE *fp)
 		oam.acked_unapplied, oam.unknown_ouis, oam.unknown_opcodes,
 		oam.last_unknown_oui, oam.last_unknown_opcode,
 		oam.last_unknown_branch, oam.last_unknown_leaf, oam.peer_oui,
-		!oam.auth_secret[0] ? "off" : !oam.interauth ? "not-asked" :
-		oam.interauth > 0 ? "ok" : "mismatch", oam.flags, oam.olt_flags);
+		!oam.auth_secret[0] ? (oam.interauth == -2 ? "asked" : "off") :
+		!oam.interauth ? "not-asked" :
+		oam.interauth > 0 ? "ok" : "mismatch",
+		oam.interauth_olt, oam.interauth_onu, oam.flags, oam.olt_flags);
 }
 
 static void write_status(void)

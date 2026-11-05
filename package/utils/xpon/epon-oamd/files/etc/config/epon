@@ -3,9 +3,6 @@ config epon 'main'
 	# Start OAM discovery instead of waiting for the OLT (802.3ah active
 	# mode). Only for OLTs that never send the first Information PDU.
 	option active_discovery '0'
-	# ONU MAC the OLT registers (and often authorises); empty keeps the
-	# board's own. Takes effect on the next registration.
-	option onu_mac ''
 	# CTC LOID authentication, as provisioned on the OLT
 	option loid ''
 	option loid_password ''
