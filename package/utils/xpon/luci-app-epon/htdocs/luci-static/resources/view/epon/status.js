@@ -89,6 +89,10 @@ function stage(s, hw) {
 		return [ 3, true, _('The OLT rejected the LOID: %s.').format(authReasons[s.auth_fail_reason] || _('unknown reason')) ];
 	if (s.auth == 'sent')
 		return [ 3, false, _('Waiting for the OLT to accept the LOID.') ];
+	if (s.interauth == 'asked')
+		return [ 3, true, _('The OLT requested VSOL inter-authentication on leaf 0x2040; set the shared secret under EPON Configuration.') ];
+	if (s.interauth == 'mismatch')
+		return [ 3, true, _('VSOL inter-authentication key mismatch; check the shared secret under EPON Configuration.') ];
 	return [ 4, false, _('OAM link up with OLT %s; the service is up.').format(text(s.olt_mac)) ];
 }
 
@@ -178,9 +182,13 @@ return view.extend({
 			row(_('CTC extended OAM'), s.ctc == 'ok' ? _('Version 0x%02x').format(s.ctc_version) : text(s.ctc)),
 			row(_('LOID authentication'), authText(s)),
 			row(_('VSOL inter-authentication'), {
-				'off': _('Off'), 'not-asked': _('Not requested by the OLT'),
-				'ok': _('OLT key accepted'), 'mismatch': _('OLT key mismatch: check the secret and ONU MAC')
+				'off': _('Off (not requested by the OLT)'),
+				'not-asked': _('Armed, not requested by the OLT'),
+				'asked': _('Requested by the OLT on 0x2040 — configure the shared secret under EPON Configuration'),
+				'ok': _('OLT key accepted'),
+				'mismatch': _('OLT key mismatch — verify the shared secret in the EPON Configuration calculator')
 			}[s.interauth] || '-'),
+			s.interauth_olt ? row(_('VSOL OLT key (0x2040)'), E('code', {}, s.interauth_olt)) : '',
 			row(_('OLT MAC address'), s.oam == 'send_any' ? text(s.olt_mac) : '-'),
 			row(_('ONU MAC address'), text(s.onu_mac || hw.mac)),
 			row(_('LAN VLAN'), vlanText(s)),

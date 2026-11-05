@@ -410,6 +410,7 @@ function epon(pub) {
 			[ _('LOID authentication'), authText(s) ],
 			[ _('VSOL inter-authentication'), {
 				'off': _('Off'), 'not-asked': _('Not requested by the OLT'),
+				'asked': _('Requested by OLT (secret not set)'),
 				'ok': _('OLT key accepted'), 'mismatch': _('OLT key mismatch')
 			}[s.interauth] || '-' ],
 			[ _('OLT MAC address'), s.oam == 'send_any' ? text(s.olt_mac) : '-' ],
