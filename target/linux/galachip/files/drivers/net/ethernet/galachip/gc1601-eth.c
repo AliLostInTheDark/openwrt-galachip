@@ -580,12 +580,12 @@ static void gc1601_cold_finish(struct gc1601_eth *priv)
 static int gc1601_cvrd_write(struct gc1601_eth *priv, u32 index, u32 data);
 
 /*
- * T-CONT queue limits in buffers. Output stage carries line rate with 256;
- * input stage at 256 provides burst capacity for 1 Gbps bursts (peak 240
- * under single-stream load with zero drops) while remaining well within the
- * 512-buffer hardware descriptor pool.
+ * T-CONT queue limits in buffers. Queue 0's output stage carries the rate
+ * only with 256 (at 128 it stays empty and upload falls to ~118). Input 192
+ * matches 256 on Airtel and keeps the queue at 448 of the 512 buffers;
+ * 256 + 256 peaked at 450.
  */
-static unsigned int tcont_depth = 256;
+static unsigned int tcont_depth = 192;
 static unsigned int tcont_out = 256;
 
 static int gc1601_descriptor_setup(struct gc1601_eth *priv)
@@ -1025,7 +1025,7 @@ static int gc1601_hm_write(struct gc1601_eth *priv, u32 table, u32 index,
  * chipset_set_pause_addr (xpon_sdk_complete.c:56564): GMAC pause-frame
  * source MAC at +0x300 (bytes 4..5 in bits 15:0) and +0x304 (bytes 0..3).
  */
-static bool gmac_pause_addr = true;
+static bool gmac_pause_addr = false;
 
 static void gc1601_gmac_pause_addr_apply(struct gc1601_eth *priv)
 {
@@ -1981,7 +1981,7 @@ static void gc1601_hw_start(struct gc1601_eth *priv)
 	gc1601_irq_mask(priv, true);
 	spin_unlock_irqrestore(&priv->irq_lock, flags);
 
-	/* Enable RX gate with 2000 MTU in bits 29:16 (chipset_pktrx_mtu_set) */
+	/* Enable RX gate */
 	writel(1, priv->base[GC1601_RX] + GC_RX_ENABLE);
 
 	/* Set GMAC configuration (1000M full duplex default) */
@@ -4246,6 +4246,25 @@ static int gc1601_tx_probe_slot(struct gc1601_eth *priv)
 }
 
 /* Send the slot probes ourselves so no stack frame is turned into one. */
+/* Reap TX completions until the ring is idle; false if it still is after 100 ms. */
+static bool gc1601_tx_wait_idle(struct gc1601_eth *priv)
+{
+	unsigned long timeout = jiffies + msecs_to_jiffies(100);
+	unsigned long flags;
+
+	while (READ_ONCE(priv->tx_pending) > 0) {
+		if (time_after(jiffies, timeout))
+			return false;
+		spin_lock_irqsave(&priv->tx_lock, flags);
+		gc1601_tx_complete_locked(priv);
+		spin_unlock_irqrestore(&priv->tx_lock, flags);
+		if (!READ_ONCE(priv->tx_pending))
+			break;
+		usleep_range(500, 1000);
+	}
+	return true;
+}
+
 static void gc1601_tx_probe_work(struct work_struct *work)
 {
 	struct gc1601_eth *priv = container_of(work, struct gc1601_eth,
@@ -4260,21 +4279,7 @@ static void gc1601_tx_probe_work(struct work_struct *work)
 	spin_unlock_irqrestore(&priv->tx_lock, flags);
 
 	for (i = 0; i < GC1601_SLOT_PROBE_COUNT; i++) {
-		unsigned long timeout = jiffies + msecs_to_jiffies(100);
-
-		/* Wait for prior transmission to complete */
-		while (READ_ONCE(priv->tx_pending) > 0) {
-			if (time_after(jiffies, timeout))
-				break;
-			spin_lock_irqsave(&priv->tx_lock, flags);
-			gc1601_tx_complete_locked(priv);
-			spin_unlock_irqrestore(&priv->tx_lock, flags);
-			if (READ_ONCE(priv->tx_pending) == 0)
-				break;
-			usleep_range(500, 1000);
-		}
-
-		if (READ_ONCE(priv->tx_pending) > 0) {
+		if (!gc1601_tx_wait_idle(priv)) {
 			ret = -ETIMEDOUT;
 			break;
 		}
@@ -4308,19 +4313,8 @@ static void gc1601_tx_probe_work(struct work_struct *work)
 				     i + 1, GC1601_SLOT_PROBE_COUNT, ret,
 				     READ_ONCE(priv->tx_pending), READ_ONCE(priv->tx_buf_wait));
 
-	/* Wait for the final probe to finish transmitting before scheduling auto work */
-	{
-		unsigned long timeout = jiffies + msecs_to_jiffies(100);
-
-		while (READ_ONCE(priv->tx_pending) > 0 && time_before(jiffies, timeout)) {
-			spin_lock_irqsave(&priv->tx_lock, flags);
-			gc1601_tx_complete_locked(priv);
-			spin_unlock_irqrestore(&priv->tx_lock, flags);
-			if (READ_ONCE(priv->tx_pending) == 0)
-				break;
-			usleep_range(500, 1000);
-		}
-	}
+	/* The last probe must finish before the auto work looks at the ring. */
+	gc1601_tx_wait_idle(priv);
 
 	spin_lock_irqsave(&priv->tx_lock, flags);
 	priv->tx_probe_running = false;
@@ -5022,8 +5016,7 @@ static int gc1601_eth_probe(struct platform_device *pdev)
 	netdev->netdev_ops = &gc1601_netdev_ops;
 	netdev->ethtool_ops = &gc1601_ethtool_ops;
 	netdev->min_mtu = ETH_MIN_MTU;
-	/* RFC 4638 PPPoE baby jumbo frames: default to 1508 */
-	netdev->mtu = 1508;
+	/* The default stays 1500; the limit leaves room for QinQ in 1966 bytes. */
 	netdev->max_mtu = GC1601_MAX_MTU;
 	priv->min_left_iptr = 0x3ff;
 

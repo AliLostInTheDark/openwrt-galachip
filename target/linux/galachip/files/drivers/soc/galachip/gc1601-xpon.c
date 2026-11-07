@@ -1745,8 +1745,6 @@ static int gc1601_pon0_register(struct gc1601_pon *pon)
 	/* pon0's xmit takes eth0's TX lock: give it lock classes of its own. */
 	netdev_lockdep_set_classes(dev);
 	dev->min_mtu = ETH_MIN_MTU;
-	/* RFC 4638 PPPoE baby jumbo frames: default to 1508 */
-	dev->mtu = 1508;
 	dev->max_mtu = GC1601_MAX_MTU;
 	SET_NETDEV_DEV(dev, pon->dev);
 	eth_hw_addr_random(dev);
