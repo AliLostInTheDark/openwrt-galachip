@@ -3,7 +3,6 @@
 'require form';
 'require fs';
 'require uci';
-'require ui';
 'require xpon.widgets as widgets';
 
 /* Field limits follow epon-oamd's buffers (src/epon-oamd.c, struct oam). */
@@ -37,18 +36,6 @@ function hexField(o, digits) {
 		return !value || new RegExp('^[0-9a-fA-F]{' + digits + '}$').test(value) ||
 			_('%d hexadecimal digits').format(digits);
 	};
-}
-
-/* Parse key=value pairs from epon_state */
-function parseState(raw) {
-	var state = {};
-
-	String(raw || '').split(/\s+/).forEach(function(word) {
-		var i = word.indexOf('=');
-		if (i > 0)
-			state[word.substring(0, i)] = word.substring(i + 1);
-	});
-	return state;
 }
 
 /* RFC 1321 MD5 in pure JavaScript, matching epon-oamd.c byte-for-byte */
@@ -144,6 +131,54 @@ function interauthKey(macHex12, secret, role) {
 	return md5Hex(macHex12.toUpperCase() + secret + role);
 }
 
+
+/* Check a candidate secret against the key the OLT sent (leaf 0x2040). */
+function calculator(oam, fallbackMac, onSet) {
+	var mac = String(oam.onu_mac || fallbackMac || '').replace(/[^0-9a-fA-F]/g, '').toUpperCase();
+	var input = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'style': 'width:100%' });
+	var olt = E('code'), onu = E('code'), verdict = E('div');
+	var use = E('button', { 'class': 'btn cbi-button', 'click': function(ev) {
+		ev.preventDefault();
+		onSet(input.value);
+	} }, _('Use this secret'));
+
+	function pill(cls, msg) {
+		return E('span', { 'class': 'xpon-pill ' + cls }, msg);
+	}
+
+	function update() {
+		var secret = input.value, want = String(oam.interauth_olt || '');
+
+		olt.textContent = secret && mac ? md5Hex(mac + secret + 'Olt') : '-';
+		onu.textContent = secret && mac ? md5Hex(mac + secret + 'Onu') : '-';
+		use.disabled = !secret;
+		verdict.textContent = '';
+		if (!secret || !want)
+			return;
+		verdict.appendChild(olt.textContent == want ?
+			pill('xpon-ok', _('Match: this secret produces the key the OLT sent.')) :
+			pill('xpon-bad', _('No match: the OLT sent a different key.')));
+	}
+
+	input.addEventListener('input', update);
+	update();
+	return E('div', { 'class': 'cbi-section' }, [
+		E('h3', _('Secret check')),
+		E('div', { 'class': 'cbi-section-descr' },
+			mac ? _('Key the OLT sent on 0x2040: %s. Type a candidate secret to see whether it produces it (MD5 of the ONU MAC %s, the secret and "Olt").')
+				.format(oam.interauth_olt || _('none yet'), mac) :
+			_('The ONU MAC is not known yet; start the EPON link first.')),
+		E('div', { 'class': 'cbi-value' }, [ E('label', { 'class': 'cbi-value-title' }, _('Candidate secret')),
+			E('div', { 'class': 'cbi-value-field' }, [ input ]) ]),
+		E('div', { 'class': 'cbi-value' }, [ E('label', { 'class': 'cbi-value-title' }, _('"Olt" key')),
+			E('div', { 'class': 'cbi-value-field' }, [ olt ]) ]),
+		E('div', { 'class': 'cbi-value' }, [ E('label', { 'class': 'cbi-value-title' }, _('"Onu" key')),
+			E('div', { 'class': 'cbi-value-field' }, [ onu ]) ]),
+		verdict,
+		E('div', { 'class': 'cbi-page-actions' }, [ use ])
+	]);
+}
+
 return view.extend({
 	load: function() {
 		return Promise.all([
@@ -154,217 +189,78 @@ return view.extend({
 	},
 
 	render: function(data) {
-		var m, s, o;
-		var oamJson = {};
-		try { oamJson = JSON.parse(data[1] || '{}'); } catch (e) { oamJson = {}; }
-		var hwState = parseState(data[2]);
+		var m, s, o, secretField;
+		var oam = {};
 
-		var ponMac = oamJson.onu_mac || hwState.mac || '';
-		var macHex12 = ponMac.replace(/[^0-9a-fA-F]/g, '').toUpperCase();
-		var liveOltKey = oamJson.interauth_olt || '';
-		var liveOnuKey = oamJson.interauth_onu || '';
+		try { oam = JSON.parse(data[1] || '{}'); } catch (e) { oam = {}; }
+		var hwMac = (String(data[2] || '').match(/\bmac=(\S+)/) || [])[1];
 
 		m = new form.Map('epon', _('EPON configuration'),
-			_('Configuration for the IEEE 802.3ah / China Telecom (CTC) EPON OAM daemon (epon-oamd). Each setting indicates when a saved change takes effect on the optical link. Empty identity fields preserve the built-in device defaults.'));
-
-		s = m.section(form.NamedSection, 'main', 'epon', _('OAM & LOID authentication'));
-		o = s.option(form.Flag, 'enabled', _('Enable EPON OAM daemon'),
-			_('Respond to IEEE 802.3ah Clause 57 OAM discovery and China Telecom (CTC) extended OAM provisioning on pon0. Without OAM, the hardware completes MPCP registration (LLID 0) but the OLT will not enable subscriber traffic.'));
+			_('Each setting shows when a saved change reaches the OLT.'));
+		s = m.section(form.NamedSection, 'main', 'epon', _('Authentication'));
+		o = s.option(form.Flag, 'enabled', _('Answer the OLT\'s OAM'),
+			_('Without OAM the OLT registers the ONU but does not bring the service up.'));
 		o.default = '1';
-
-		o = s.option(form.Flag, 'active_discovery', _('Active 802.3ah OAM discovery'),
-			_('Initiate IEEE 802.3ah Clause 57 OAM discovery from the ONU instead of waiting for the OLT\'s first Information OAMPDU. Leave disabled unless the EPON Status page shows MPCP registered while the OAM link remains stuck waiting for the OLT.'));
+		o = s.option(form.Flag, 'active_discovery', _('Active OAM discovery'),
+			_('Start 802.3ah discovery instead of waiting for the OLT. Leave off unless the status page shows the OAM link stuck waiting while MPCP is registered.'));
 		o.default = '0';
-
-		o = s.option(form.Value, 'loid', _('LOID (Logical ONU ID)'),
-			_('Subscriber Logical ONU ID sent in CTC extended opcode 0x03 (Auth_Response, auth type 0x01). Up to 24 printable ASCII characters.'));
+		o = s.option(form.Value, 'loid', _('LOID'),
+			_('Logical ONU ID provisioned on the OLT. Up to 24 characters.'));
 		asciiField(o, 24);
-
 		o = s.option(form.Value, 'loid_password', _('LOID password'),
-			_('Password paired with the LOID in CTC extended opcode 0x03. Leave empty if the OLT authenticates by LOID alone. Up to 12 printable ASCII characters.'));
+			_('Up to 12 characters.'));
 		o.password = true;
 		asciiField(o, 12);
 
-		s = m.section(form.NamedSection, 'main', 'epon', _('Subscriber LAN VLAN'),
-			_('Controls how subscriber Ethernet frames are tagged between the LAN bridge and the PON interface. By default, the ONU applies the CTC Port VLAN rules (branch 0xC7, leaf 0x0021) provisioned by the OLT.'));
-		o = s.option(form.ListValue, 'vlan_mode', _('VLAN operating mode'));
-		o.value('olt', _('Provisioned by the OLT — apply the CTC Port VLAN mode (transparent, tag, 1:1 translation, N:1 aggregation, or trunk) sent by the OLT'));
-		o.value('transparent', _('Transparent override — pass all Ethernet frames unchanged so the downstream router handles VLAN tagging'));
-		o.value('tag', _('Tagged override — tag untagged LAN frames with the VLAN ID below upstream and strip the tag downstream'));
+		s = m.section(form.NamedSection, 'main', 'epon', _('LAN VLAN'));
+		o = s.option(form.ListValue, 'vlan_mode', _('VLAN mode'));
+		o.value('olt', _('Set by the OLT (applies the CTC Port VLAN mode the OLT sends)'));
+		o.value('transparent', _('Transparent (frames pass unchanged; the router tags the VLAN)'));
+		o.value('tag', _('Tagged (adds the VLAN below upstream, removes it towards the LAN)'));
 		o.default = 'olt';
-
-		o = s.option(form.Value, 'vlan_id', _('Override VLAN ID'),
-			_('IEEE 802.1Q VLAN ID (1–4094) applied when VLAN operating mode is set to Tagged override.'));
+		o = s.option(form.Value, 'vlan_id', _('VLAN ID'));
 		o.datatype = 'range(1,4094)';
 		o.depends('vlan_mode', 'tag');
 
-		s = m.section(form.NamedSection, 'main', 'epon', _('Advertised ONU identity (CTC ONU SN)'),
-			_('Reported to the OLT in CTC Extended Attribute leaf 0x0001 (ONU SN). Some OLTs restrict provisioning to known equipment vendors or firmware strings. Empty fields report the built-in defaults.'));
-		o = s.option(form.Value, 'vendor_id', _('Vendor ID'),
-			_('4-character ASCII vendor code (bytes 0–3 of CTC ONU SN). Default: <code>TPLG</code>.'));
+		s = m.section(form.NamedSection, 'main', 'epon', _('ONU identity'),
+			_('Reported to the OLT as the ONU serial number (CTC). Some OLTs accept only known vendors. Empty fields send the built-in defaults.'));
+		o = s.option(form.Value, 'vendor_id', _('Vendor ID'), _('Up to 4 characters.'));
 		asciiField(o, 4);
-
-		o = s.option(form.Value, 'model', _('Model'),
-			_('4-character ASCII equipment model code (bytes 4–7 of CTC ONU SN; bytes 8–13 carry the board\'s 6-byte PON MAC address). Default: <code>XZG7</code>.'));
+		o = s.option(form.Value, 'model', _('Model'), _('Up to 4 characters.'));
 		asciiField(o, 4);
-
-		o = s.option(form.Value, 'hardware_version', _('Hardware version'),
-			_('Hardware revision string reported in bytes 14–21 of CTC ONU SN. Up to 8 printable ASCII characters. Default: <code>V1.0</code>.'));
+		o = s.option(form.Value, 'hardware_version', _('Hardware version'), _('Up to 8 characters.'));
 		asciiField(o, 8);
-
-		o = s.option(form.Value, 'software_version', _('Software version'),
-			_('Software revision string reported in bytes 22–37 of CTC ONU SN. Up to 16 printable ASCII characters. Default: <code>OpenWrt</code>.'));
+		o = s.option(form.Value, 'software_version', _('Software version'), _('Up to 16 characters.'));
 		asciiField(o, 16);
-
 		o = s.option(form.Value, 'extended_model', _('Extended model'),
-			_('Extended equipment model string appended in bytes 38–53 of CTC ONU SN on CTC 3.0 (0x30) links. Up to 16 printable ASCII characters. Default: <code>XZ000-G7</code>.'));
+			_('Sent with the serial number on CTC 3.0 links. Up to 16 characters.'));
 		asciiField(o, 16);
 
-		s = m.section(form.NamedSection, 'main', 'epon', _('Cloned OAM & chipset identity'),
-			_('For OLTs that fingerprint the ONU beyond the CTC serial number during discovery. Copy these hexadecimal values from an OAM packet capture or status dump of the ISP ONT being replaced. Leave empty to report this ONU\'s native Galachip GC1601 identity.'));
-		o = s.option(form.Value, 'oam_oui', _('802.3ah Information TLV OUI'),
-			_('3-byte IEEE OUI advertised in the Local Information OAMPDU TLV. 6 hexadecimal digits without separators (for example, <code>b48618</code> or <code>0011f5</code>).'));
+		s = m.section(form.NamedSection, 'main', 'epon', _('Replaced ONU identity'),
+			_('For OLTs that check more than the serial number: copy these from the ONU this one replaces (its OAM capture or status). Empty keeps this ONU\'s own. This changes what the OLT sees, not what the device is.'));
+		o = s.option(form.Value, 'oam_oui', _('OAM OUI'), _('6 hexadecimal digits, e.g. b48618.'));
 		hexField(o, 6);
-
-		o = s.option(form.Value, 'oam_vendor_info', _('802.3ah vendor-specific info'),
-			_('4-byte vendor-specific field in the Local Information OAMPDU TLV. 8 hexadecimal digits.'));
+		o = s.option(form.Value, 'oam_vendor_info', _('OAM vendor specific'), _('8 hexadecimal digits.'));
 		hexField(o, 8);
-
-		o = s.option(form.Value, 'chipset_id', _('CTC chipset ID (leaf 0x0003)'),
-			_('8-byte PON chipset identifier reported in CTC Extended Attribute leaf 0x0003 (2-byte vendor ID, 2-byte chip model, 1-byte revision, 3-byte manufacturing date). 16 hexadecimal digits; empty reports <code>474316010f140614</code> (Galachip GC1601).'));
+		o = s.option(form.Value, 'chipset_id', _('CTC chipset ID'), _('16 hexadecimal digits.'));
 		hexField(o, 16);
 
-		s = m.section(form.NamedSection, 'main', 'epon', _('VSOL / Excitel OLT inter-authentication (leaf 0x2040)'),
-			_('VSOL EPON OLTs (such as the V1600D series deployed by Excitel) perform a mutual challenge-response on CTC extended attribute 0xC7 / 0x2040 before provisioning subscriber VLANs. Both sides derive a 32-character hexadecimal MD5 hash from the ONU PON MAC (12 uppercase hex characters), the shared secret, and the role ("Olt" or "Onu"). Extract the secret from the replaced ONT\'s /bin/eponoamd binary or use the built-in verifier below to test candidate secrets against the OLT\'s challenge key.'));
-		o = s.option(form.Value, 'interauth_secret', _('Shared secret'),
-			_('ASCII shared secret (up to 64 characters). Empty disables inter-authentication responses.'));
+		s = m.section(form.NamedSection, 'main', 'epon', _('VSOL inter-authentication'),
+			_('VSOL OLTs (for example Excitel\'s V1600D) exchange a key derived from the ONU MAC and a shared secret before provisioning. Leave empty unless your OLT asks for it; the Status page shows whether it did.'));
+		o = s.option(form.Value, 'interauth_secret', _('Shared secret'), _('Up to 64 characters.'));
+		secretField = o;
 		o.password = true;
 		asciiField(o, 64);
 
-		/* Built-in Two-Sided Calculator & Verifier Widget */
-		o = s.option(form.DummyValue, '_interauth_calc', _('Inter-authentication calculator & verifier'));
-		o.rawhtml = true;
-		o.cfgvalue = function() {
-			var statePill = '';
-			switch (oamJson.interauth) {
-			case 'ok':
-				statePill = '<span class="xpon-pill xpon-ok">' + _('Accepted by OLT') + '</span>';
-				break;
-			case 'asked':
-				statePill = '<span class="xpon-pill xpon-warn">' + _('Requested by OLT — secret required') + '</span>';
-				break;
-			case 'mismatch':
-				statePill = '<span class="xpon-pill xpon-bad">' + _('Key mismatch') + '</span>';
-				break;
-			case 'not-asked':
-				statePill = '<span class="xpon-pill">' + _('Armed, not requested by OLT') + '</span>';
-				break;
-			default:
-				statePill = '<span class="xpon-pill">' + _('Off (not requested)') + '</span>';
-				break;
-			}
+		s = m.section(form.NamedSection, 'main', 'epon', _('Logging'));
+		o = s.option(form.ListValue, 'debug', _('Log level'));
+		o.value('0', _('0 (Normal: state changes and errors, also in the kernel log)'));
+		o.value('1', _('1 (Debug: also unsupported or ignored OLT requests, key changes and VLAN updates)'));
 
-			return E('div', { 'class': 'xpon-grid', 'style': 'margin-top:12px' }, [
-				/* Left Card: Read-Only OLT Side */
-				E('div', { 'class': 'xpon-panel' }, [
-					E('h4', {}, _('Live OLT Challenge (Read-Only)')),
-					E('table', { 'class': 'table', 'style': 'margin:0' }, [
-						E('tr', { 'class': 'tr' }, [
-							E('td', { 'class': 'td left', 'style': 'width:40%' }, _('Board PON MAC (ONU/ONT):')),
-							E('td', { 'class': 'td left' }, [
-								E('strong', {}, ponMac || '-'),
-								macHex12 ? E('span', { 'class': 'cbi-value-helpicon', 'style': 'margin-left:6px' }, ' [' + macHex12 + ']') : ''
-							])
-						]),
-						E('tr', { 'class': 'tr' }, [
-							E('td', { 'class': 'td left' }, _('OLT Challenge Status:')),
-							E('td', { 'class': 'td left' }, [ statePill ? E('span', { 'innerHTML': statePill }) : '-' ])
-						]),
-						E('tr', { 'class': 'tr' }, [
-							E('td', { 'class': 'td left' }, _('OLT Key Received (0x2040):')),
-							E('td', { 'class': 'td left' }, [
-								liveOltKey ? E('code', { 'style': 'word-break:break-all' }, liveOltKey) :
-								             E('em', { 'style': 'color:var(--text-3, #888)' }, _('Waiting for OLT Set_Request on 0x2040…'))
-							])
-						]),
-						E('tr', { 'class': 'tr' }, [
-							E('td', { 'class': 'td left' }, _('ONU/ONT Response Key Served:')),
-							E('td', { 'class': 'td left' }, [
-								liveOnuKey ? E('code', { 'style': 'word-break:break-all' }, liveOnuKey) :
-								             E('em', { 'style': 'color:var(--text-3, #888)' }, _('None (secret not set or not queried)'))
-							])
-						])
-					])
-				]),
-
-				/* Right Card: Editable ONU Calculator & Verifier Side */
-				E('div', { 'class': 'xpon-panel' }, [
-					E('h4', {}, _('ONU/ONT Key Calculator & Verifier')),
-					E('div', { 'style': 'display:flex;flex-direction:column;gap:10px' }, [
-						E('div', {}, [
-							E('label', { 'style': 'display:block;font-size:12px;font-weight:600;margin-bottom:4px' }, _('Candidate Shared Secret (ONU/ONT):')),
-							E('input', {
-								'type': 'text',
-								'id': 'vsol-calc-secret',
-								'class': 'cbi-input-text',
-								'style': 'width:100%',
-								'placeholder': '9637c5151',
-								'value': uci.get('epon', 'main', 'interauth_secret') || ''
-							})
-						]),
-						E('div', {}, [
-							E('label', { 'style': 'display:block;font-size:12px;font-weight:600;margin-bottom:4px' }, _('Optional Target Key Override (pasted from ISP ONT capture):')),
-							E('input', {
-								'type': 'text',
-								'id': 'vsol-calc-target',
-								'class': 'cbi-input-text',
-								'style': 'width:100%',
-								'placeholder': liveOltKey || 'e40b0cc7dd151e106e422c39bb5c7a8e'
-							})
-						]),
-						E('table', { 'class': 'table', 'style': 'margin:0' }, [
-							E('tr', { 'class': 'tr' }, [
-								E('td', { 'class': 'td left', 'style': 'width:45%' }, _('Calculated OLT Key (Role "Olt"):')),
-								E('td', { 'class': 'td left' }, [
-									E('code', { 'id': 'vsol-calc-olt-result', 'style': 'word-break:break-all' }, '-')
-								])
-							]),
-							E('tr', { 'class': 'tr' }, [
-								E('td', { 'class': 'td left' }, _('Calculated ONU/ONT Key (Role "Onu"):')),
-								E('td', { 'class': 'td left' }, [
-									E('code', { 'id': 'vsol-calc-onu-result', 'style': 'word-break:break-all' }, '-')
-								])
-							])
-						]),
-						E('div', { 'id': 'vsol-calc-badge', 'style': 'min-height:24px' }),
-						E('div', { 'style': 'display:flex;gap:8px;flex-wrap:wrap;margin-top:4px' }, [
-							E('button', {
-								'type': 'button',
-								'class': 'btn cbi-button cbi-button-action',
-								'id': 'vsol-btn-check'
-							}, _('Check Key')),
-							E('button', {
-								'type': 'button',
-								'class': 'btn cbi-button cbi-button-save',
-								'id': 'vsol-btn-apply'
-							}, _('Save & Apply (Re-register)'))
-						])
-					])
-				])
-			]);
-		};
-
-		s = m.section(form.NamedSection, 'main', 'epon', _('Diagnostics & logging'));
-		o = s.option(form.ListValue, 'debug', _('OAM log verbosity'));
-		o.value('0', _('0 — Normal (link transitions, authentication results, and errors in system and kernel logs)'));
-		o.value('1', _('1 — Verbose (also log unsupported OLT attributes, churning key rotations, and VLAN updates)'));
-		o.default = '0';
-
-		/* Annotate all options: procd restarts epon-oamd on configuration changes */
+		/* procd restarts epon-oamd when its command line changes. */
 		m.children.forEach(function(section) {
 			section.children.forEach(function(option) {
-				if (option.option !== '_interauth_calc')
-					widgets.annotate(option, 'drop');
+				widgets.annotate(option, 'drop');
 			});
 		});
 
@@ -375,119 +271,16 @@ return view.extend({
 			node.insertBefore(widgets.legend([ 'drop' ]),
 					  descr ? descr.nextSibling : node.firstChild);
 
-			/* Wire up interactive calculator events */
-			var secretInput = node.querySelector('#vsol-calc-secret');
-			var targetInput = node.querySelector('#vsol-calc-target');
-			var calcOltEl = node.querySelector('#vsol-calc-olt-result');
-			var calcOnuEl = node.querySelector('#vsol-calc-onu-result');
-			var badgeEl = node.querySelector('#vsol-calc-badge');
-			var btnCheck = node.querySelector('#vsol-btn-check');
-			var btnApply = node.querySelector('#vsol-btn-apply');
-			var formSecretInput = node.querySelector('input[name="cbid.epon.main.interauth_secret"]');
+			/* The check fills the normal field; saving goes through the usual Save & Apply. */
+			node.appendChild(calculator(oam, hwMac, function(secret) {
+				var field = node.querySelector('input[name="' + secretField.cbid('main') + '"]');
 
-			function updateCalc() {
-				var sec = secretInput ? secretInput.value.trim() : '';
-				if (formSecretInput && secretInput && document.activeElement === secretInput)
-					formSecretInput.value = sec;
-
-				if (sec && secretInput)
-					secretInput.classList.remove('cbi-input-invalid');
-
-				if (!sec || !macHex12) {
-					if (calcOltEl) calcOltEl.textContent = '-';
-					if (calcOnuEl) calcOnuEl.textContent = '-';
-					if (badgeEl) badgeEl.innerHTML = '';
+				if (!field)
 					return;
-				}
-
-				var oltHash = interauthKey(macHex12, sec, 'Olt');
-				var onuHash = interauthKey(macHex12, sec, 'Onu');
-				if (calcOltEl) calcOltEl.textContent = oltHash;
-				if (calcOnuEl) calcOnuEl.textContent = onuHash;
-
-				var compareTarget = (targetInput && targetInput.value.trim()) || liveOltKey;
-				if (compareTarget && badgeEl) {
-					var tgt = compareTarget.toLowerCase();
-					if (oltHash === tgt) {
-						badgeEl.innerHTML = '<span class="xpon-pill xpon-ok">' +
-							_('Match — candidate secret generates the exact OLT challenge key on 0x2040.') + '</span>';
-					} else if (onuHash === tgt) {
-						badgeEl.innerHTML = '<span class="xpon-pill xpon-ok">' +
-							_('Match — candidate secret generates the exact ONU/ONT response key on 0x2040.') + '</span>';
-					} else {
-						badgeEl.innerHTML = '<span class="xpon-pill xpon-bad">' +
-							_('Mismatch — calculated OLT key does not match target key.') + '</span>';
-					}
-				} else if (badgeEl) {
-					badgeEl.innerHTML = '<span class="xpon-pill">' +
-						_('Keys calculated from board PON MAC [%s]').format(macHex12) + '</span>';
-				}
-			}
-
-			if (secretInput) {
-				secretInput.addEventListener('input', updateCalc);
-			}
-			if (targetInput) {
-				targetInput.addEventListener('input', updateCalc);
-			}
-			if (formSecretInput && secretInput) {
-				formSecretInput.addEventListener('input', function() {
-					secretInput.value = formSecretInput.value;
-					updateCalc();
-				});
-			}
-			if (btnCheck) {
-				btnCheck.addEventListener('click', function(ev) {
-					ev.preventDefault();
-					var sec = secretInput ? secretInput.value.trim() : '';
-					if (!sec) {
-						if (secretInput) {
-							secretInput.classList.add('cbi-input-invalid');
-							secretInput.focus();
-						}
-						if (badgeEl) {
-							badgeEl.innerHTML = '<span class="xpon-pill xpon-bad">' +
-								_('Please enter a shared secret first') + '</span>';
-						}
-						return;
-					}
-					updateCalc();
-				});
-			}
-			if (btnApply) {
-				btnApply.addEventListener('click', function(ev) {
-					ev.preventDefault();
-					var sec = secretInput ? secretInput.value.trim() : '';
-					if (!sec) {
-						if (secretInput) {
-							secretInput.classList.add('cbi-input-invalid');
-							secretInput.focus();
-						}
-						if (badgeEl) {
-							badgeEl.innerHTML = '<span class="xpon-pill xpon-bad">' +
-								_('Please enter a shared secret first') + '</span>';
-						}
-						return;
-					}
-					if (formSecretInput)
-						formSecretInput.value = sec;
-					uci.set('epon', 'main', 'interauth_secret', sec);
-					ui.showIndicator('saving', _('Saving and applying EPON inter-authentication…'));
-					return uci.save().then(function() {
-						return ui.changes.apply(true);
-					}).then(function() {
-						ui.hideIndicator('saving');
-						ui.addNotification(null, E('p', _('Shared secret saved and epon-oamd restarted for re-registration.')), 'info');
-					}).catch(function(e) {
-						ui.hideIndicator('saving');
-						ui.addNotification(null, E('p', _('Failed to apply configuration: %s').format(e.message || e)), 'error');
-					});
-				});
-			}
-
-			/* Initial run if secret or target already present */
-			updateCalc();
-
+				field.value = secret;
+				field.dispatchEvent(new Event('input', { bubbles: true }));
+				field.dispatchEvent(new Event('change', { bubbles: true }));
+			}));
 			return node;
 		});
 	}
