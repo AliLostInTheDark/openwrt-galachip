@@ -226,7 +226,7 @@ function verifier(oam, fallbackMac, onUse) {
 	return E('div', { 'class': 'cbi-section', 'id': 'epon-interauth-verifier' }, [
 		E('h3', _('Inter-Authentication Verifier')),
 		E('div', { 'class': 'cbi-section-descr' },
-			_('The shared secret is usually stored in the configuration of the ISP ONU being replaced, or built into its EPON OAM software. Enter a candidate secret to test it against the key sent by the OLT, or paste the key captured from the ISP ONU to confirm that both produce the same result. "Use This Secret" copies the candidate into the Shared secret field above; save it with Save & Apply.'))),
+			_('The shared secret is usually stored in the configuration of the ISP ONU being replaced, or built into its EPON OAM software. Enter a candidate secret to test it against the key sent by the OLT, or paste the key captured from the ISP ONU to confirm that both produce the same result. "Use This Secret" copies the candidate into the Shared secret field above; save it with Save & Apply.')),
 		E('div', { 'class': 'xpon-grid' }, [
 			E('div', { 'class': 'xpon-panel' }, [
 				E('h4', _('OLT Challenge (Read-Only)')),
