@@ -39,6 +39,13 @@ hold_tx() {
 	[ -w "$PON/tx_hold" ] && echo "$1" > "$PON/tx_hold"
 }
 
+# A mode switch clears allow_tx and omci.agent only sets it once, at rpcd
+# start, so without this the laser stays off in the new mode.
+allow_tx() {
+	[ "$(uci -q get omci.main.transmit)" = 0 ] && return
+	[ -w "$PON/allow_tx" ] && echo 1 > "$PON/allow_tx"
+}
+
 wait_omcid() {
 	local i=0
 
@@ -73,6 +80,7 @@ if [ "$(current)" != "$want" ]; then
 	/etc/init.d/pon-mode reload
 	start_daemons
 	hold_tx 0
+	allow_tx
 	exit 1
 fi
 
@@ -82,4 +90,5 @@ if [ "$want" = gpon ]; then
 	ubus -t 5 call omci.agent apply '{}' >/dev/null 2>&1
 fi
 hold_tx 0
+allow_tx
 log "now in $want mode"
