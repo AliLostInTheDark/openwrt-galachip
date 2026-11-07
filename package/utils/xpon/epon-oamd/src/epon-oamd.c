@@ -828,7 +828,7 @@ static size_t port_vlan_value(uint8_t *v, size_t size)
  * role "Olt" for the value the OLT sends and "Onu" for ours; the digest
  * goes on the wire as 32 lowercase hex characters in a 64-byte field.
  * Recovered by the xx530v EPON work from the Genexis RTL9607C eponoamd and
- * checked against a live Excitel/VSOL session. The shared secret is not
+ * checked against a live VSOL session. The shared secret is not
  * shipped: set it in /etc/config/epon (interauth_secret) for such OLTs.
  */
 #define INTERAUTH_FIELD		64

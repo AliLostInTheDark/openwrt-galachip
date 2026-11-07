@@ -328,7 +328,7 @@ return view.extend({
 		hexField(o, 16);
 
 		s = m.section(form.NamedSection, 'main', 'epon', _('VSOL inter-authentication'),
-			_('VSOL OLTs, such as the V1600D series deployed by Excitel, perform a mutual challenge-response exchange on CTC extended attribute 0xC7, leaf 0x2040, before provisioning subscriber VLANs. Both sides compute an MD5 digest over the ONU MAC address (12 uppercase hexadecimal digits without separators), the shared secret and a fixed identifier for the sender, the OLT or the ONU. Leave the secret empty unless the OLT requests inter-authentication; the EPON Status page shows whether it did.'));
+			_('VSOL OLTs perform a mutual challenge-response exchange on CTC extended attribute 0xC7, leaf 0x2040, before provisioning subscriber VLANs. Both sides compute an MD5 digest over the ONU MAC address (12 uppercase hexadecimal digits without separators), the shared secret and a fixed identifier for the sender, the OLT or the ONU. Leave the secret empty unless the OLT requests inter-authentication; the EPON Status page shows whether it did.'));
 		o = s.option(form.Value, 'interauth_secret', _('Shared secret'), _('Up to 64 characters.'));
 		secretField = o;
 		o.password = true;
