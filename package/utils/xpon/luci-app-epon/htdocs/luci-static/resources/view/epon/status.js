@@ -190,7 +190,7 @@ return view.extend({
 			}[s.interauth] || '-'),
 			s.interauth_olt ? row(_('VSOL OLT key (0x2040)'), E('code', {}, s.interauth_olt)) : '',
 			row(_('OLT MAC address'), s.oam == 'send_any' ? text(s.olt_mac) : '-'),
-			row(_('ONU/ONT MAC address'), text(s.onu_mac || hw.mac)),
+			row(_('ONU MAC address'), text(s.onu_mac || hw.mac)),
 			row(_('LAN VLAN'), vlanText(s)),
 			row(_('OAM frames received / sent'), '%s / %s'.format(text(s.rx_pdus), text(s.tx_pdus))),
 			row(_('Unsupported attributes requested'), text(s.unknown_leaves))
