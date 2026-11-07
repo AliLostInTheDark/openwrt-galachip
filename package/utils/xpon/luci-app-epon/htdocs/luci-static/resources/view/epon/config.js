@@ -239,14 +239,15 @@ function verifier(oam, fallbackMac, onUse) {
 			]),
 			E('div', { 'class': 'xpon-panel' }, [
 				E('h4', _('Key Calculator')),
-				E('div', { 'class': 'cbi-value', 'style': 'margin:0 0 10px' }, [
-					E('label', { 'class': 'cbi-value-title', 'style': 'width:auto;float:none' }, _('Candidate Shared Secret')),
+				E('div', { 'style': 'margin:0 0 12px' }, [
+					E('div', { 'style': 'font-weight:600;margin-bottom:4px' }, _('Candidate Shared Secret')),
 					secret
 				]),
-				E('div', { 'class': 'cbi-value', 'style': 'margin:0 0 10px' }, [
-					E('label', { 'class': 'cbi-value-title', 'style': 'width:auto;float:none' },
-						_('Key Captured from the ISP ONU (Optional, 32 Hexadecimal Digits)')),
-					isp
+				E('div', { 'style': 'margin:0 0 12px' }, [
+					E('div', { 'style': 'font-weight:600;margin-bottom:4px' }, _('ISP ONU Key (Optional)')),
+					isp,
+					E('div', { 'style': 'margin-top:4px;font-size:12px;opacity:.7' },
+						_('The 32 hexadecimal digits captured from the ISP ONU being replaced.'))
 				]),
 				E('table', { 'class': 'table', 'style': 'margin:0 0 10px' }, [
 					row(_('Calculated OLT Key'), calcOlt),
@@ -293,10 +294,11 @@ return view.extend({
 		asciiField(o, 12);
 
 		s = m.section(form.NamedSection, 'main', 'epon', _('LAN VLAN'));
-		o = s.option(form.ListValue, 'vlan_mode', _('VLAN mode'));
-		o.value('olt', _('Set by the OLT (applies the CTC Port VLAN mode the OLT sends)'));
-		o.value('transparent', _('Transparent (frames pass unchanged; the router tags the VLAN)'));
-		o.value('tag', _('Tagged (adds the VLAN below upstream, removes it towards the LAN)'));
+		o = s.option(form.ListValue, 'vlan_mode', _('VLAN mode'),
+			_('Set by the OLT applies the CTC Port VLAN mode that the OLT sends. Transparent passes frames unchanged and leaves VLAN tagging to the router. Tagged adds the VLAN below to upstream frames and removes it towards the LAN.'));
+		o.value('olt', _('Set by the OLT'));
+		o.value('transparent', _('Transparent'));
+		o.value('tag', _('Tagged'));
 		o.default = 'olt';
 		o = s.option(form.Value, 'vlan_id', _('VLAN ID'));
 		o.datatype = 'range(1,4094)';
@@ -333,9 +335,10 @@ return view.extend({
 		asciiField(o, 64);
 
 		s = m.section(form.NamedSection, 'main', 'epon', _('Logging'));
-		o = s.option(form.ListValue, 'debug', _('Log level'));
-		o.value('0', _('0 (Normal: state changes and errors)'));
-		o.value('1', _('1 (Debug: also ignored OLT requests and key changes)'));
+		o = s.option(form.ListValue, 'debug', _('Log level'),
+			_('Normal logs state changes and errors, also in the kernel log. Debug additionally logs unsupported or ignored OLT requests, key changes and VLAN updates.'));
+		o.value('0', _('0 (Normal)'));
+		o.value('1', _('1 (Debug)'));
 
 		/* procd restarts epon-oamd when its command line changes. */
 		m.children.forEach(function(section) {
