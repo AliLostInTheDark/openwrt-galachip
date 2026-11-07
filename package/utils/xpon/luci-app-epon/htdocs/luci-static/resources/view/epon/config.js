@@ -132,50 +132,130 @@ function interauthKey(macHex12, secret, role) {
 }
 
 
-/* Check a candidate secret against the key the OLT sent (leaf 0x2040). */
-function calculator(oam, fallbackMac, onSet) {
+/*
+ * Verifier for the VSOL inter-authentication key (leaf 0x2040). The OLT sends
+ * MD5(ONU MAC + secret + "Olt") in a Set Request, so a candidate secret can be
+ * checked against the live OLT, or against a key captured from the ISP ONU.
+ */
+function verifier(oam, fallbackMac, onUse) {
 	var mac = String(oam.onu_mac || fallbackMac || '').replace(/[^0-9a-fA-F]/g, '').toUpperCase();
-	var input = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'style': 'width:100%' });
-	var olt = E('code'), onu = E('code'), verdict = E('div');
-	var use = E('button', { 'class': 'btn cbi-button', 'click': function(ev) {
-		ev.preventDefault();
-		onSet(input.value);
-	} }, _('Use this secret'));
+	var oltKey = String(oam.interauth_olt || '').toLowerCase();
+	var onuKey = String(oam.interauth_onu || '').toLowerCase();
+	var states = {
+		'ok': [ 'xpon-ok', _('Accepted by the OLT') ],
+		'asked': [ 'xpon-warn', _('Requested by the OLT; a shared secret is required') ],
+		'mismatch': [ 'xpon-bad', _('Key mismatch') ],
+		'not-asked': [ '', _('Armed; not requested by the OLT') ]
+	};
+	var state = states[oam.interauth] || [ '', _('Off; not requested by the OLT') ];
+	var secret = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'style': 'width:100%',
+		'autocomplete': 'off', 'spellcheck': 'false' });
+	var isp = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'style': 'width:100%',
+		'autocomplete': 'off', 'spellcheck': 'false', 'maxlength': 32 });
+	var calcOlt = E('code'), calcOnu = E('code'), result = E('div', { 'style': 'min-height:28px' });
+	var use = E('button', { 'class': 'btn cbi-button cbi-button-action', 'type': 'button' },
+		_('Use This Secret'));
+	var check = E('button', { 'class': 'btn cbi-button', 'type': 'button' }, _('Check Key'));
 
-	function pill(cls, msg) {
-		return E('span', { 'class': 'xpon-pill ' + cls }, msg);
+	function pill(cls, text) {
+		return E('div', { 'style': 'margin-bottom:6px' }, E('span', { 'class': 'xpon-pill ' + cls }, text));
 	}
 
-	function update() {
-		var secret = input.value, want = String(oam.interauth_olt || '');
+	function row(label, value) {
+		return E('tr', { 'class': 'tr' }, [
+			E('td', { 'class': 'td left', 'style': 'width:42%' }, label),
+			E('td', { 'class': 'td left', 'style': 'word-break:break-all' }, value)
+		]);
+	}
 
-		olt.textContent = secret && mac ? md5Hex(mac + secret + 'Olt') : '-';
-		onu.textContent = secret && mac ? md5Hex(mac + secret + 'Onu') : '-';
-		use.disabled = !secret;
-		verdict.textContent = '';
-		if (!secret || !want)
+	function code(text, empty) {
+		return text ? E('code', text) : E('em', empty);
+	}
+
+	function evaluate() {
+		var sec = secret.value, target = isp.value.trim().toLowerCase();
+		var olt = sec && mac ? md5Hex(mac + sec + 'Olt') : '';
+		var onu = sec && mac ? md5Hex(mac + sec + 'Onu') : '';
+
+		calcOlt.textContent = olt || '-';
+		calcOnu.textContent = onu || '-';
+		use.disabled = !sec;
+		result.textContent = '';
+		if (!sec)
 			return;
-		verdict.appendChild(olt.textContent == want ?
-			pill('xpon-ok', _('Match: this secret produces the key the OLT sent.')) :
-			pill('xpon-bad', _('No match: the OLT sent a different key.')));
+		if (!mac) {
+			result.appendChild(pill('xpon-warn', _('The ONU MAC address is not known yet.')));
+			return;
+		}
+		if (oltKey)
+			result.appendChild(olt == oltKey ?
+				pill('xpon-ok', _('Match: this secret produces the key sent by the OLT.')) :
+				pill('xpon-bad', _('Mismatch: this secret does not produce the key sent by the OLT.')));
+		else
+			result.appendChild(pill('', _('No OLT key has been received yet.')));
+		if (target) {
+			if (!/^[0-9a-f]{32}$/.test(target))
+				result.appendChild(pill('xpon-bad', _('The ISP ONU key must be 32 hexadecimal digits.')));
+			else if (target == onu)
+				result.appendChild(pill('xpon-ok', _('Match: this secret produces the ISP ONU response key.')));
+			else if (target == olt)
+				result.appendChild(pill('xpon-ok', _('Match: this secret produces the OLT key from the ISP capture.')));
+			else
+				result.appendChild(pill('xpon-bad', _('Mismatch: this secret does not produce the ISP key.')));
+		}
 	}
 
-	input.addEventListener('input', update);
-	update();
-	return E('div', { 'class': 'cbi-section' }, [
-		E('h3', _('Secret check')),
+	secret.addEventListener('input', evaluate);
+	isp.addEventListener('input', evaluate);
+	check.addEventListener('click', function(ev) {
+		ev.preventDefault();
+		if (!secret.value) {
+			secret.classList.add('cbi-input-invalid');
+			secret.focus();
+			return;
+		}
+		secret.classList.remove('cbi-input-invalid');
+		evaluate();
+	});
+	use.addEventListener('click', function(ev) {
+		ev.preventDefault();
+		onUse(secret.value);
+	});
+	evaluate();
+
+	return E('div', { 'class': 'cbi-section', 'id': 'epon-interauth-verifier' }, [
+		E('h3', _('Inter-Authentication Verifier')),
 		E('div', { 'class': 'cbi-section-descr' },
-			mac ? _('Key the OLT sent on 0x2040: %s. Type a candidate secret to see whether it produces it (MD5 of the ONU MAC %s, the secret and "Olt").')
-				.format(oam.interauth_olt || _('none yet'), mac) :
-			_('The ONU MAC is not known yet; start the EPON link first.')),
-		E('div', { 'class': 'cbi-value' }, [ E('label', { 'class': 'cbi-value-title' }, _('Candidate secret')),
-			E('div', { 'class': 'cbi-value-field' }, [ input ]) ]),
-		E('div', { 'class': 'cbi-value' }, [ E('label', { 'class': 'cbi-value-title' }, _('"Olt" key')),
-			E('div', { 'class': 'cbi-value-field' }, [ olt ]) ]),
-		E('div', { 'class': 'cbi-value' }, [ E('label', { 'class': 'cbi-value-title' }, _('"Onu" key')),
-			E('div', { 'class': 'cbi-value-field' }, [ onu ]) ]),
-		verdict,
-		E('div', { 'class': 'cbi-page-actions' }, [ use ])
+			_('The secret is usually stored in the configuration of the ISP ONU being replaced, or compiled into its EPON OAM daemon next to the strings "Olt" and "Onu". Enter a candidate to test it against the key sent by the OLT, or paste the key captured from the ISP ONU to confirm that both produce the same result. "Use This Secret" copies it into the Shared secret field above; save it with Save & Apply.')),
+		E('div', { 'class': 'xpon-grid' }, [
+			E('div', { 'class': 'xpon-panel' }, [
+				E('h4', _('OLT Challenge (Read-Only)')),
+				E('table', { 'class': 'table', 'style': 'margin:0' }, [
+					row(_('ONU MAC Address'), code(mac && mac.replace(/(..)(?=.)/g, '$1:'), _('Unknown'))),
+					row(_('Challenge Status'), E('span', { 'class': 'xpon-pill ' + state[0] }, state[1])),
+					row(_('OLT Key Received (0x2040)'), code(oltKey, _('Waiting for the OLT'))),
+					row(_('ONU Key Sent to the OLT'), code(onuKey, _('None (no secret set, or not queried)')))
+				])
+			]),
+			E('div', { 'class': 'xpon-panel' }, [
+				E('h4', _('Key Calculator')),
+				E('div', { 'class': 'cbi-value', 'style': 'margin:0 0 10px' }, [
+					E('label', { 'class': 'cbi-value-title', 'style': 'width:auto;float:none' }, _('Candidate Shared Secret')),
+					secret
+				]),
+				E('div', { 'class': 'cbi-value', 'style': 'margin:0 0 10px' }, [
+					E('label', { 'class': 'cbi-value-title', 'style': 'width:auto;float:none' },
+						_('Key Captured from the ISP ONU (Optional, 32 Hexadecimal Digits)')),
+					isp
+				]),
+				E('table', { 'class': 'table', 'style': 'margin:0 0 10px' }, [
+					row(_('Calculated OLT Key'), calcOlt),
+					row(_('Calculated ONU Key'), calcOnu)
+				]),
+				result,
+				E('div', { 'style': 'display:flex;gap:8px;flex-wrap:wrap' }, [ check, use ])
+			])
+		])
 	]);
 }
 
@@ -246,7 +326,7 @@ return view.extend({
 		hexField(o, 16);
 
 		s = m.section(form.NamedSection, 'main', 'epon', _('VSOL inter-authentication'),
-			_('VSOL OLTs (for example Excitel\'s V1600D) exchange a key derived from the ONU MAC and a shared secret before provisioning. Leave empty unless your OLT asks for it; the Status page shows whether it did.'));
+			_('VSOL OLTs, such as the V1600D series deployed by Excitel, perform a mutual challenge-response exchange on CTC extended attribute 0xC7, leaf 0x2040, before provisioning subscriber VLANs. Both sides compute an MD5 digest over the ONU MAC address (12 uppercase hexadecimal digits without separators), the shared secret and a role string ("Olt" or "Onu"). Leave the secret empty unless the OLT requests inter-authentication; the EPON Status page shows whether it did.'));
 		o = s.option(form.Value, 'interauth_secret', _('Shared secret'), _('Up to 64 characters.'));
 		secretField = o;
 		o.password = true;
@@ -254,8 +334,8 @@ return view.extend({
 
 		s = m.section(form.NamedSection, 'main', 'epon', _('Logging'));
 		o = s.option(form.ListValue, 'debug', _('Log level'));
-		o.value('0', _('0 (Normal: state changes and errors, also in the kernel log)'));
-		o.value('1', _('1 (Debug: also unsupported or ignored OLT requests, key changes and VLAN updates)'));
+		o.value('0', _('0 (Normal: state changes and errors)'));
+		o.value('1', _('1 (Debug: also ignored OLT requests and key changes)'));
 
 		/* procd restarts epon-oamd when its command line changes. */
 		m.children.forEach(function(section) {
@@ -271,16 +351,19 @@ return view.extend({
 			node.insertBefore(widgets.legend([ 'drop' ]),
 					  descr ? descr.nextSibling : node.firstChild);
 
-			/* The check fills the normal field; saving goes through the usual Save & Apply. */
-			node.appendChild(calculator(oam, hwMac, function(secret) {
-				var field = node.querySelector('input[name="' + secretField.cbid('main') + '"]');
-
-				if (!field)
-					return;
+			/* Placed below the VSOL fields. "Use This Secret" fills the normal field; saving is the usual Save & Apply. */
+			var field = node.querySelector('input[name="' + secretField.cbid('main') + '"]');
+			var section = field ? field.closest('.cbi-section') : null;
+			var panel = verifier(oam, hwMac, function(secret) {
 				field.value = secret;
 				field.dispatchEvent(new Event('input', { bubbles: true }));
 				field.dispatchEvent(new Event('change', { bubbles: true }));
-			}));
+			});
+
+			if (section)
+				section.parentNode.insertBefore(panel, section.nextSibling);
+			else
+				node.appendChild(panel);
 			return node;
 		});
 	}
