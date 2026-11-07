@@ -20,6 +20,8 @@ typedef unsigned long long u64;
 #define CNT_UP_BYTES 0
 #define DBRU_FREE_MIN 0x2fc
 #define DBRU_LEVEL_DROP 900
+#define DBRU_BACKOFF_MAX 64
+#define min(a, b) ((a) < (b) ? (a) : (b))
 #define TX_DBRU_TCONT 0x6c
 #define TX_DBRU_LEVEL 0x70
 #define TX_DBRU_LOAD 0x74
@@ -28,12 +30,13 @@ typedef unsigned long long u64;
 #define TX_QUEUE_LEVEL(n) (0x200 + 4 * (n))
 #define spin_lock_irq(p) ((void)(p))
 #define spin_unlock_irq(p) ((void)(p))
-#define dev_info(...) ((void)0)
+#define dev_dbg(...) ((void)0)
 ${stats}
 struct gc1601_gpon {
  struct gc1601_dbru_stats dbru_stats;
  u64 counter[1], dbru_bytes;
  unsigned long dbru_last;
+ unsigned int dbru_wait, dbru_backoff;
  int lock;
 };
 struct gc1601_pon { struct gc1601_gpon gpon; };
@@ -60,8 +63,6 @@ static int gc1601_pe_qmu_aful(int value)
 { (void)value; qmu_calls++; return qmu_error ? -19 : 2; }
 static unsigned int jiffies_to_msecs(unsigned long value) { return value; }
 static u64 div_u64(u64 value, unsigned int divisor) { return value / divisor; }
-static u64 div_u64_rem(u64 value, unsigned int divisor, u32 *rem)
-{ *rem = value % divisor; return value / divisor; }
 ${check}
 static void reset(struct gc1601_pon *p, u32 flags, u32 after)
 {
@@ -125,6 +126,28 @@ int main(void)
  gc1601_gpon_dbru_check(&p);
  assert(p.gpon.dbru_stats.qmu_errors == 2);
  assert(p.gpon.dbru_stats.rewrites == 1 && writes == 5);
+ /* A recovery that leaves the flag set doubles the pause, up to the cap. */
+ reset(&p, BIT(1), BIT(1));
+ gc1601_gpon_dbru_check(&p);
+ assert(p.gpon.dbru_wait == 1 && p.gpon.dbru_backoff == 1);
+ for (int round = 0; round < 8; round++) {
+  unsigned int pause = p.gpon.dbru_wait, expect = p.gpon.dbru_backoff * 2;
+  unsigned int before = p.gpon.dbru_stats.passes;
+  while (pause--) {
+   error_reads = 0; jiffies += 1000;
+   gc1601_gpon_dbru_check(&p);
+   assert(p.gpon.dbru_stats.passes == before);
+  }
+  error_reads = 0; jiffies += 1000;
+  gc1601_gpon_dbru_check(&p);
+  assert(p.gpon.dbru_stats.passes == before + 1);
+  assert(p.gpon.dbru_backoff == (expect > DBRU_BACKOFF_MAX ? DBRU_BACKOFF_MAX : expect));
+ }
+ assert(p.gpon.dbru_backoff == DBRU_BACKOFF_MAX);
+ /* A clear flag restarts the schedule. */
+ registers[TX_DBRU_ERR / 4] = 0; error_reads = 0; jiffies += 1000;
+ gc1601_gpon_dbru_check(&p);
+ assert(!p.gpon.dbru_wait && !p.gpon.dbru_backoff);
  puts("GC1601 DBRu diagnostics: passed");
 }
 `);

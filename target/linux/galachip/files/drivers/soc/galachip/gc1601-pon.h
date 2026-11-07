@@ -233,6 +233,8 @@ struct gc1601_gpon {
 	u64 mac_mismatches;		/* AES +0x9c/+0xac disagree on entering O1 */
 	struct gc1601_dbru_stats dbru_stats;	/* published under g->lock */
 	unsigned long dbru_last;	/* jiffies of the previous DBRu sample */
+	unsigned int dbru_wait;		/* checks left to skip after a recovery that did not clear the flag */
+	unsigned int dbru_backoff;	/* length of that pause, doubled per failed recovery */
 	struct gc1601_ploam last;	/* last PLOAM acted on */
 };
 

@@ -41,6 +41,7 @@
 #define GPON_RECOVERY_MS	15000
 #define DBRU_FREE_MIN		0x2fc	/* free packet buffers needed to act */
 #define DBRU_LEVEL_DROP		900	/* taken off a stuck queue's reported level */
+#define DBRU_BACKOFF_MAX	64	/* longest pause between recovery passes, in seconds */
 #define COUNTER_UP_BYTES	0x164	/* clear-on-read upstream data count */
 
 static bool gpon_watchdog = true;
@@ -636,6 +637,8 @@ static void gc1601_gpon_enter(struct gc1601_pon *pon, int state)
 		gc1601_gpon_timer_stop(g);
 		g->ranged = true;
 		g->dbru_last = 0;
+		g->dbru_wait = 0;
+		g->dbru_backoff = 0;
 		if (g->ber_interval_frames)
 			mod_delayed_work(system_wq, &g->rei,
 					 gc1601_gpon_rei_delay(g->ber_interval_frames));
@@ -1181,9 +1184,10 @@ static void gc1601_gpon_work(struct work_struct *w)
  * chipset_GMAC_dbru_chk: a T-CONT whose upstream report is stuck while no
  * data goes up gets its reported queue level lowered and the report
  * reloaded, with the queue manager's almost-full level raised meanwhile.
- * Only an idle upstream qualifies. Log the first recovery pass and every
- * 100th after, without claiming that clearing a flag restored traffic. Called with
- * pon->lock held, once a second in O5.
+ * Only an idle upstream qualifies. The flag often stays set after the
+ * rewrite, so a pass that did not clear it doubles the pause before the next
+ * one (up to DBRU_BACKOFF_MAX seconds). Called with pon->lock held, once a
+ * second in O5.
  */
 static void gc1601_gpon_dbru_check(struct gc1601_pon *pon)
 {
@@ -1192,16 +1196,23 @@ static void gc1601_gpon_dbru_check(struct gc1601_pon *pon)
 	u32 stuck = readl(tx_reg(pon, TX_DBRU_ERR));
 	unsigned long now = jiffies;
 	unsigned int t, ms;
-	u32 bytes, rate, rem;
+	u32 bytes, rate;
 
 	/* The watchdog sampled the counters just before. */
 	bytes = g->counter[CNT_UP_BYTES] - g->dbru_bytes;
 	g->dbru_bytes = g->counter[CNT_UP_BYTES];
 	if (!stuck) {
 		g->dbru_last = now;
+		g->dbru_wait = 0;
+		g->dbru_backoff = 0;
 		return;
 	}
 	stats.detected++;
+	if (g->dbru_wait) {
+		g->dbru_wait--;
+		g->dbru_last = now;
+		goto out;
+	}
 	if (!g->dbru_last) {
 		g->dbru_last = now;
 		goto out;
@@ -1245,14 +1256,17 @@ static void gc1601_gpon_dbru_check(struct gc1601_pon *pon)
 	writel(1, tx_reg(pon, TX_DBRU_CLEAR));
 	writel(0, tx_reg(pon, TX_DBRU_CLEAR));
 	stats.after = readl(tx_reg(pon, TX_DBRU_ERR));
-	if (stats.after & stuck)
+	if (stats.after & stuck) {
 		stats.flag_persists++;
-	else
+		g->dbru_backoff = min(g->dbru_backoff ? g->dbru_backoff * 2 : 1, DBRU_BACKOFF_MAX);
+		g->dbru_wait = g->dbru_backoff;
+	} else {
 		stats.flag_clears++;
-	div_u64_rem(stats.passes++, 100, &rem);
-	if (!rem)
-		dev_info(pon->dev, "GPON DBRu: flagged=%08x rewritten=%08x skipped=%08x after=%08x, %llu passes\n",
-			 stuck, stats.rewritten, stats.skipped, stats.after, stats.passes);
+		g->dbru_backoff = 0;
+	}
+	stats.passes++;
+	dev_dbg(pon->dev, "GPON DBRu: flagged=%08x rewritten=%08x skipped=%08x after=%08x, %llu passes, next in %u s\n",
+		stuck, stats.rewritten, stats.skipped, stats.after, stats.passes, g->dbru_wait);
 out:
 	spin_lock_irq(&g->lock);
 	g->dbru_stats = stats;
