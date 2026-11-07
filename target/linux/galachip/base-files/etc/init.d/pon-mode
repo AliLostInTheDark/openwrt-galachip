@@ -1,12 +1,13 @@
 #!/bin/sh /etc/rc.common
 # Select the GPON or EPON MAC (xpon.main.mode) and start it, before the
-# network starts. The kernel starts no MAC by itself until then.
+# network starts. The kernel starts no MAC by itself until then. A running
+# switch goes through xpon-mode-switch, which orders the daemons around this.
 
 START=15
 USE_PROCD=1
 
 pon_mode_apply() {
-	local want dev cur up onu_mac
+	local want dev cur up
 
 	config_load xpon
 	config_get want main mode gpon
@@ -36,8 +37,11 @@ pon_mode_apply() {
 		up=0
 		ip link show "$(basename "$dev")" 2>/dev/null | grep -q '[<,]UP[,>]' && up=1
 		[ "$up" = 1 ] && ip link set "$(basename "$dev")" down
-		echo "$want" > "$dev/mode_current" &&
+		if echo "$want" > "$dev/mode_current" 2>/dev/null; then
 			logger -t pon-mode "$(basename "$dev"): $cur -> $want"
+		else
+			logger -t pon-mode "$(basename "$dev"): switching to $want failed"
+		fi
 		[ "$up" = 1 ] && ip link set "$(basename "$dev")" up
 	done
 
@@ -62,8 +66,4 @@ start_service() {
 
 reload_service() {
 	pon_mode_apply
-}
-
-service_triggers() {
-	procd_add_reload_trigger xpon
 }

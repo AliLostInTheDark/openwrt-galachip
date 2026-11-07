@@ -1,0 +1,85 @@
+#!/bin/sh
+# Switch the running PON port between GPON and EPON: xpon-mode-switch gpon|epon
+#
+# The daemons are stopped before the MAC changes and started after it, one
+# after the other. Letting procd reload them all at once starts omcid against
+# a PON that is still in EPON; it fails five times and procd stops respawning
+# it, so the switch back never recovered.
+
+want=$1
+LOCK=/var/run/xpon-mode-switch.lock
+PON=/sys/class/net/pon0/device
+
+case "$want" in
+gpon|epon) ;;
+*) echo "usage: ${0##*/} gpon|epon" >&2; exit 1 ;;
+esac
+
+mkdir "$LOCK" 2>/dev/null || { echo "a mode switch is already running" >&2; exit 1; }
+trap 'rmdir "$LOCK"' EXIT
+
+log() { logger -t xpon-mode-switch "$*"; }
+current() { cat /sys/class/xpon/pon0/mode_current 2>/dev/null; }
+
+# Daemons for the mode the PON is in at the moment of the call.
+stop_daemons() {
+	/etc/init.d/epon-oamd stop
+	/etc/init.d/omcid stop
+}
+
+start_daemons() {
+	/etc/init.d/omcid start
+	/etc/init.d/epon-oamd start
+}
+
+# Stay silent on the fibre until the new mode's daemon is up, unless an OLT
+# disabled the transmitter for good (pon-mode keeps that hold).
+hold_tx() {
+	[ -f /etc/xpon-rogue ] && return
+	[ -w "$PON/tx_hold" ] && echo "$1" > "$PON/tx_hold"
+}
+
+wait_omcid() {
+	local i=0
+
+	while [ $i -lt 15 ] && [ ! -S /var/run/omcid.sock ]; do
+		sleep 1
+		i=$((i + 1))
+	done
+}
+
+prev=$(uci -q get xpon.main.mode)
+[ "$prev" = epon ] || prev=gpon
+
+if [ "$(current)" = "$want" ] && [ "$prev" = "$want" ]; then
+	exit 0
+fi
+
+log "switching to $want"
+uci -q set xpon.main=xpon
+uci -q set xpon.main.mode="$want"
+uci commit xpon
+
+hold_tx 1
+stop_daemons
+/etc/init.d/pon-mode reload
+start_daemons
+
+if [ "$(current)" != "$want" ]; then
+	log "switch to $want failed (PON is in $(current)); restoring $prev"
+	uci -q set xpon.main.mode="$prev"
+	uci commit xpon
+	stop_daemons
+	/etc/init.d/pon-mode reload
+	start_daemons
+	hold_tx 0
+	exit 1
+fi
+
+# omcid forgets what omci.agent applied: apply the UCI identity again.
+if [ "$want" = gpon ]; then
+	wait_omcid
+	ubus -t 5 call omci.agent apply '{}' >/dev/null 2>&1
+fi
+hold_tx 0
+log "now in $want mode"
