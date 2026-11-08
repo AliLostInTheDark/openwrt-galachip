@@ -113,6 +113,7 @@ static struct {
 	int interauth;			/* 0 not asked, 1 OLT key ok, -1 mismatch, -2 asked without secret */
 	char interauth_olt[33];		/* 32 hex chars sent by OLT in Set 0x2040 */
 	char interauth_onu[33];		/* 32 hex chars derived for Get 0x2040 */
+	char auth_onu_key[33];		/* verbatim Get 0x2040 reply (cloned-ONU key)*/
 
 	/* VLAN override: "olt" applies the OLT's Port VLAN */
 	char vlan_override[16];
@@ -484,7 +485,7 @@ static uint16_t local_pdu_size(void)
 
 static size_t put_local_tlv(uint8_t *p)
 {
-	uint8_t state = oam.disc == DISC_SEND_ANY ? 0x00 : 0x06;	/* mux + parser discard */
+	uint8_t state = 0x00;	/* stock forwards during discovery; 0x06 (discard) stalls the Excitel OLT */
 
 	p[0] = TLV_LOCAL;
 	p[1] = 16;
@@ -984,6 +985,14 @@ static void get_attr(struct out *o, uint8_t branch, uint16_t leaf)
 			n = port_vlan_value(v, sizeof(v));
 			break;
 		case 0x2040:		/* VSOL inter-authentication: our key */
+			if (oam.auth_onu_key[0]) {	/* verbatim replay (cloned ONU) */
+				memcpy(v, oam.auth_onu_key, 32);
+				v[32] = 0;
+				n = INTERAUTH_FIELD;
+				oam.interauth = 1;
+				oam.status_dirty = true;
+				break;
+			}
 			if (!oam.auth_secret[0]) {
 				if (!oam.interauth) {
 					oam.interauth = -2;
@@ -1262,6 +1271,11 @@ static uint8_t set_interauth(const uint8_t *v, size_t n)
 	capture_interauth_olt(v, n);
 	oam.status_dirty = true;
 	if (!oam.auth_secret[0]) {
+		if (oam.auth_onu_key[0]) {	/* replay: accept OLT key, our Get reply carries the cloned key */
+			oam.interauth = 1;
+			logmsg(1, "VSOL inter-authentication: OLT key %s accepted (replay mode)", oam.interauth_olt);
+			return VAR_SET_OK;
+		}
 		oam.interauth = -2;
 		logmsg(0, "VSOL inter-authentication: OLT sent key %s (%zu bytes), but no secret is configured",
 		       oam.interauth_olt, n);
@@ -1847,7 +1861,7 @@ int main(int argc, char **argv)
 	uint64_t last_poll = 0, last_status = 0;
 	int opt;
 
-	while ((opt = getopt(argc, argv, "i:L:P:V:M:H:S:E:A:aO:I:C:v:d:")) != -1) {
+	while ((opt = getopt(argc, argv, "i:L:P:V:M:H:S:E:A:aO:I:C:K:v:d:")) != -1) {
 		switch (opt) {
 		case 'i': oam.ifname = optarg; break;
 		case 'L': snprintf(oam.loid, sizeof(oam.loid), "%s", optarg); break;
@@ -1877,6 +1891,7 @@ int main(int argc, char **argv)
 			oam.chipset_id_set = true;
 			break;
 		case 'A': snprintf(oam.auth_secret, sizeof(oam.auth_secret), "%s", optarg); break;
+		case 'K': snprintf(oam.auth_onu_key, sizeof(oam.auth_onu_key), "%s", optarg); break;
 		case 'v':
 			if (!strncmp(optarg, "tag:", 4)) {
 				snprintf(oam.vlan_override, sizeof(oam.vlan_override), "tag");
