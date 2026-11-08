@@ -46,6 +46,15 @@ allow_tx() {
 	[ -w "$PON/allow_tx" ] && echo 1 > "$PON/allow_tx"
 }
 
+# LuCI caches the menu with the uci "depends" results (the EPON entries show
+# only in EPON mode) and only rebuilds it when the menu files change.
+set_mode() {
+	uci -q set xpon.main=xpon
+	uci -q set xpon.main.mode="$1"
+	uci commit xpon
+	rm -f /tmp/luci-indexcache.*.json
+}
+
 wait_omcid() {
 	local i=0
 
@@ -63,9 +72,7 @@ if [ "$(current)" = "$want" ] && [ "$prev" = "$want" ]; then
 fi
 
 log "switching to $want"
-uci -q set xpon.main=xpon
-uci -q set xpon.main.mode="$want"
-uci commit xpon
+set_mode "$want"
 
 hold_tx 1
 stop_daemons
@@ -74,8 +81,7 @@ start_daemons
 
 if [ "$(current)" != "$want" ]; then
 	log "switch to $want failed (PON is in $(current)); restoring $prev"
-	uci -q set xpon.main.mode="$prev"
-	uci commit xpon
+	set_mode "$prev"
 	stop_daemons
 	/etc/init.d/pon-mode reload
 	start_daemons
