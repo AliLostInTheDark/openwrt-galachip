@@ -44,7 +44,8 @@ return baseclass.extend({
 		return fs.exec('/usr/sbin/xpon-mode-switch', [ mode ]).then(function(res) {
 			if (res.code)
 				throw new Error((res.stderr || '').trim() || _('exit code %d').format(res.code));
-			window.location.reload();
+			/* The page we are on may be the inactive mode's stub, which no longer exists. */
+			window.location.href = L.url('admin', 'network', mode == 'epon' ? 'epon' : 'omci', 'status');
 		}).catch(function(e) {
 			ui.hideModal();
 			ui.addNotification(null, E('p', _('Switching to %s failed: %s').format(names[mode], e.message)), 'error');
