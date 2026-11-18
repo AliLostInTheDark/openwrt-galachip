@@ -268,11 +268,11 @@ const menu = JSON.parse(read(path.join(pkg, 'root/usr/share/luci/menu.d/luci-app
 const mibRoot = 'admin/network/omci/mib';
 assert.equal(menu[mibRoot].action.type, 'firstchild');
 assert.deepEqual(Object.keys(menu).filter(k => k.startsWith(mibRoot + '/')),
-  ['read', 'inventory', 'gpon', 'bridge', 'multicast', 'voice', 'performance', 'other'].map(group => mibRoot + '/' + group));
+  ['read', 'inventory', 'gpon', 'bridge', 'multicast', 'voice', 'performance', 'other', 'nokia', 'huawei', 'zte', 'fiberhome', 'ctc'].map(group => mibRoot + '/' + group));
 assert(!/\bpoll\b/.test(read(path.join(resource, 'omci/mib-editor.js'))));
 assert(!/\bpoll\b/.test(read(path.join(resource, 'view/omci/mib/read.js'))));
 assert.equal(menu[mibRoot + '/read'].action.path, 'omci/mib/read');
-for (const group of ['inventory', 'gpon', 'bridge', 'multicast', 'voice', 'performance', 'other']) {
+for (const group of ['inventory', 'gpon', 'bridge', 'multicast', 'voice', 'performance', 'other', 'nokia', 'huawei', 'zte', 'fiberhome', 'ctc']) {
   const route = menu[mibRoot + '/' + group].action.path;
   assert.equal(route, 'omci/mib/' + group);
   assert(read(path.join(resource, 'view', route + '.js')).includes('require omci.mib-editor as mib'));

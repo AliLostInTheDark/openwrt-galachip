@@ -6,15 +6,29 @@
 'require omci.mib-view as mibView';
 'require xpon.widgets as widgets';
 
+var vendorSections = {
+	vendor_nokia: true,
+	vendor_huawei: true,
+	vendor_zte: true,
+	vendor_fiberhome: true,
+	vendor_ctc: true
+};
+
 var groups = {
 	inventory: function(c) { return c.category_name === 'equipment' || c.category_name === 'management'; },
 	gpon: function(c) { return c.category_name === 'ani'; },
-	bridge: function(c) { return c.category_name === 'uni' || c.category_name === 'layer2' || !!(c.flags & (1 << 6)); },
-	multicast: function(c) { return c.category_name === 'multicast'; },
+	bridge: function(c) { return c.category_name === 'uni' || c.category_name === 'layer2' || (!vendorSections[mibView.classifySection(c)] && !!(c.flags & (1 << 6))); },
+	multicast: function(c) { return c.category_name === 'multicast' && !vendorSections[mibView.classifySection(c)]; },
 	voice: function(c) { return c.category_name === 'voice'; },
 	performance: function(c) { return c.category_name === 'performance'; },
+	nokia: function(c) { return mibView.classifySection(c) === 'vendor_nokia'; },
+	huawei: function(c) { return mibView.classifySection(c) === 'vendor_huawei'; },
+	zte: function(c) { return mibView.classifySection(c) === 'vendor_zte'; },
+	fiberhome: function(c) { return mibView.classifySection(c) === 'vendor_fiberhome'; },
+	ctc: function(c) { return mibView.classifySection(c) === 'vendor_ctc'; },
 	other: function(c) {
-		return c.category_name !== 'equipment' && c.category_name !== 'management' &&
+		return !vendorSections[mibView.classifySection(c)] &&
+		       c.category_name !== 'equipment' && c.category_name !== 'management' &&
 		       c.category_name !== 'ani' && c.category_name !== 'uni' &&
 		       c.category_name !== 'layer2' && c.category_name !== 'multicast' &&
 		       c.category_name !== 'voice' && c.category_name !== 'performance' &&
