@@ -36,7 +36,7 @@ function parseUint(value) {
 
 function normalizeHex(value) {
 	value = String(value || '').replace(/\s/g, '').replace(/^0[xX]/, '');
-	return /^(?:[0-9a-fA-F]{2})*$/.test(value) && value.length <= 128 ? value.toLowerCase() : null;
+	return /^(?:[0-9a-fA-F]{2})*$/.test(value) && value.length <= 768 ? value.toLowerCase() : null;
 }
 
 /* Grouped bytes, without the zero padding after the last used one. */

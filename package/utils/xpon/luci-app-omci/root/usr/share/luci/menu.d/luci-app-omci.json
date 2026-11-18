@@ -49,7 +49,7 @@
 		}
 	},
 	"admin/network/omci/mib/read": {
-		"title": "Decoded",
+		"title": "Browser",
 		"order": 5,
 		"action": {
 			"type": "view",
