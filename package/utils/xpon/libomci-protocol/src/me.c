@@ -549,6 +549,21 @@ static const struct omci_attr_desc omci_huawei_350_attrs[] = {
 	OMCI_ATTR(7, 30, 6, OMCI_RW),
 };
 
+static const struct omci_attr_desc omci_huawei_351_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),
+	OMCI_ATTR(14, 1, 1, OMCI_RW),
+	OMCI_ATTR(13, 2, 1, OMCI_RW),
+	OMCI_ATTR(12, 3, 1, OMCI_RW),
+	OMCI_ATTR(11, 4, 1, OMCI_RW),
+	OMCI_ATTR(10, 5, 1, OMCI_RW),
+	OMCI_ATTR(9, 6, 1, OMCI_RW),
+	OMCI_ATTR(8, 7, 1, OMCI_RW),
+	OMCI_ATTR(7, 8, 1, OMCI_RW),
+	OMCI_ATTR(6, 9, 1, OMCI_RW),
+	OMCI_ATTR(5, 10, 1, OMCI_RW),
+	OMCI_ATTR(4, 11, 1, OMCI_RW),
+};
+
 static const struct omci_attr_desc omci_huawei_352_attrs[] = {
 	OMCI_ATTR(15, 0, 2, OMCI_RW_SC),
 	OMCI_ATTR(14, 2, 2, OMCI_RW_SC),
@@ -572,6 +587,527 @@ static const struct omci_attr_desc omci_huawei_multicast_attrs[] = {
 	OMCI_ATTR(13, 3, 2, OMCI_RW),
 	OMCI_ATTR(12, 5, 2, OMCI_RW),
 	OMCI_ATTR(11, 7, 4, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_huawei_370_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW),
+	OMCI_ATTR(14, 2, 4, OMCI_RW),
+	OMCI_ATTR(13, 6, 4, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_huawei_373_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),
+	OMCI_ATTR(14, 1, 1, OMCI_RW),
+	OMCI_ATTR(13, 2, 1, OMCI_RW),
+	OMCI_ATTR(12, 3, 1, OMCI_RW),
+	OMCI_ATTR(11, 4, 1, OMCI_RW),
+	OMCI_ATTR(10, 5, 1, OMCI_RW),
+	OMCI_ATTR(9, 6, 1, OMCI_RW),
+	OMCI_ATTR(8, 7, 1, OMCI_RW),
+	OMCI_ATTR(7, 8, 2, OMCI_RW),
+	OMCI_ATTR(6, 10, 2, OMCI_RW),
+	OMCI_ATTR(5, 12, 2, OMCI_RW),
+	OMCI_ATTR(4, 14, 2, OMCI_RW),
+	OMCI_ATTR(3, 16, 1, OMCI_RW),
+	OMCI_ATTR(2, 17, 1, OMCI_RW),
+	OMCI_ATTR(1, 18, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_huawei_65398_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),
+	OMCI_ATTR(14, 1, 1, OMCI_RW),
+	OMCI_ATTR(13, 2, 1, OMCI_RW),
+	OMCI_ATTR(12, 3, 1, OMCI_RW),
+	OMCI_ATTR(11, 4, 1, OMCI_RW),
+	OMCI_ATTR(10, 5, 1, OMCI_RW),
+	OMCI_ATTR(9, 6, 1, OMCI_RW),
+	OMCI_ATTR(8, 7, 2, OMCI_RW),
+	OMCI_ATTR(7, 9, 2, OMCI_RW),
+	OMCI_ATTR(6, 11, 2, OMCI_RW),
+	OMCI_ATTR(5, 13, 1, OMCI_RW),
+	OMCI_ATTR(4, 14, 1, OMCI_RW),
+	OMCI_ATTR(3, 15, 1, OMCI_RW),
+	OMCI_ATTR(2, 16, 25, OMCI_RW),
+	OMCI_ATTR(1, 41, 1, OMCI_RW),
+	OMCI_ATTR(0, 42, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_huawei_65414_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),
+	OMCI_ATTR(14, 1, 1, OMCI_R),
+	OMCI_ATTR(13, 2, 1, OMCI_R),
+	OMCI_ATTR(12, 3, 1, OMCI_R),
+	OMCI_ATTR(11, 4, 1, OMCI_R),
+	OMCI_ATTR(10, 5, 16, OMCI_R),
+	OMCI_ATTR(9, 21, 2, OMCI_R),
+	OMCI_ATTR(8, 23, 2, OMCI_R),
+	OMCI_ATTR(7, 25, 4, OMCI_R),
+	OMCI_ATTR(6, 29, 4, OMCI_R),
+	OMCI_ATTR(5, 33, 2, OMCI_R),
+	OMCI_ATTR(4, 35, 2, OMCI_R),
+	OMCI_ATTR(3, 37, 8, OMCI_R),
+};
+
+static const struct omci_attr_desc omci_huawei_65415_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),
+	OMCI_ATTR(14, 1, 1, OMCI_RW),
+	OMCI_ATTR(13, 2, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_huawei_65417_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 25, OMCI_RW_SC),
+	OMCI_ATTR(13, 26, 25, OMCI_RW),
+	OMCI_ATTR(12, 51, 25, OMCI_RW),
+	OMCI_ATTR(11, 76, 25, OMCI_RW_SC),
+	OMCI_ATTR(10, 101, 25, OMCI_RW),
+	OMCI_ATTR(9, 126, 25, OMCI_RW),
+	OMCI_ATTR(8, 151, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_huawei_65423_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),
+	OMCI_ATTR(14, 1, 1, OMCI_R),
+	OMCI_ATTR(13, 2, 1, OMCI_R),
+	OMCI_ATTR(12, 3, 1, OMCI_R),
+	OMCI_ATTR(11, 4, 4, OMCI_R),
+	OMCI_ATTR(10, 8, 8, OMCI_R),
+	OMCI_ATTR(9, 16, 1, OMCI_R),
+	OMCI_ATTR(8, 17, 25, OMCI_R),
+	OMCI_ATTR(7, 42, 6, OMCI_R),
+	OMCI_ATTR(6, 48, 4, OMCI_R),
+	OMCI_ATTR(5, 52, 1, OMCI_R),
+	OMCI_ATTR(4, 53, 1, OMCI_R),
+	OMCI_ATTR(3, 54, 1, OMCI_R),
+	OMCI_ATTR(2, 55, 1, OMCI_R),
+	OMCI_ATTR(1, 56, 1, OMCI_R),
+	OMCI_ATTR(0, 57, 2, OMCI_R),
+};
+
+static const struct omci_attr_desc omci_huawei_65425_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),
+	OMCI_ATTR(14, 1, 4, OMCI_RW),
+	OMCI_ATTR(13, 5, 4, OMCI_RW),
+	OMCI_ATTR(12, 9, 4, OMCI_RW),
+	OMCI_ATTR(11, 13, 4, OMCI_RW),
+	OMCI_ATTR(10, 17, 2, OMCI_RW),
+	OMCI_ATTR(9, 19, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_huawei_65426_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW),
+	OMCI_ATTR(14, 2, 2, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_huawei_65427_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_R),
+	OMCI_ATTR(14, 2, 16, OMCI_R),
+	OMCI_ATTR(13, 18, 16, OMCI_R),
+	OMCI_ATTR(12, 34, 16, OMCI_R),
+};
+
+static const struct omci_attr_desc omci_huawei_65430_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),
+	OMCI_ATTR(14, 1, 1, OMCI_R),
+	OMCI_ATTR(13, 2, 1, OMCI_R),
+	OMCI_ATTR(12, 3, 1, OMCI_R),
+	OMCI_ATTR(11, 4, 1, OMCI_R),
+	OMCI_ATTR(10, 5, 1, OMCI_R),
+	OMCI_ATTR(9, 6, 1, OMCI_R),
+	OMCI_ATTR(8, 7, 1, OMCI_R),
+	OMCI_ATTR(7, 8, 1, OMCI_R),
+	OMCI_ATTR(6, 9, 1, OMCI_R),
+	OMCI_ATTR(5, 10, 1, OMCI_R),
+	OMCI_ATTR(4, 11, 1, OMCI_R),
+	OMCI_ATTR(3, 12, 1, OMCI_R),
+	OMCI_ATTR(2, 13, 1, OMCI_R),
+	OMCI_ATTR(1, 14, 1, OMCI_R),
+	OMCI_ATTR(0, 15, 1, OMCI_R),
+};
+
+static const struct omci_attr_desc omci_huawei_65431_attrs[] = {
+	OMCI_ATTR(15, 0, 4, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_huawei_65444_attrs[] = {
+	OMCI_ATTR(15, 0, 8, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_huawei_65447_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_huawei_65450_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),
+	OMCI_ATTR(14, 1, 1, OMCI_RW),
+	OMCI_ATTR(13, 2, 1, OMCI_RW),
+	OMCI_ATTR(12, 3, 1, OMCI_RW),
+	OMCI_ATTR(11, 4, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_huawei_65451_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 1, OMCI_RW_SC),
+	OMCI_ATTR(13, 2, 2, OMCI_RW_SC),
+};
+
+static const struct omci_attr_desc omci_huawei_65453_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 1, OMCI_RW_SC),
+	OMCI_ATTR(13, 2, 12, OMCI_RW_SC),
+};
+
+static const struct omci_attr_desc omci_huawei_65454_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW),
+	OMCI_ATTR(14, 2, 2, OMCI_RW),
+	OMCI_ATTR(13, 4, 2, OMCI_RW),
+	OMCI_ATTR(12, 6, 4, OMCI_RW),
+	OMCI_ATTR(11, 10, 8, OMCI_RW),
+	OMCI_ATTR(10, 18, 6, OMCI_RW),
+	OMCI_ATTR(9, 24, 6, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_zte_242_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),
+};
+
+static const struct omci_attr_desc omci_zte_243_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 8, OMCI_RW_SC),
+	OMCI_ATTR(13, 9, 8, OMCI_RW_SC),
+};
+
+static const struct omci_attr_desc omci_zte_247_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW),
+	OMCI_ATTR(14, 2, 2, OMCI_RW),
+	OMCI_ATTR(13, 4, 14, OMCI_R),
+	OMCI_ATTR(12, 18, 2, OMCI_RW),
+	OMCI_ATTR(11, 20, 2, OMCI_RW),
+	OMCI_ATTR(10, 22, 2, OMCI_RW),
+	OMCI_ATTR(9, 24, 2, OMCI_RW),
+	OMCI_ATTR(8, 26, 2, OMCI_RW),
+	OMCI_ATTR(7, 28, 2, OMCI_RW),
+	OMCI_ATTR(6, 30, 2, OMCI_RW),
+	OMCI_ATTR(5, 32, 2, OMCI_RW),
+	OMCI_ATTR(4, 34, 2, OMCI_RW),
+	OMCI_ATTR(3, 36, 2, OMCI_RW),
+	OMCI_ATTR(2, 38, 2, OMCI_RW),
+	OMCI_ATTR(1, 40, 2, OMCI_RW),
+	OMCI_ATTR(0, 42, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_zte_65294_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW),
+	OMCI_ATTR(14, 2, 4, OMCI_RW),
+	OMCI_ATTR(13, 6, 4, OMCI_RW),
+	OMCI_ATTR(12, 10, 4, OMCI_RW),
+	OMCI_ATTR(11, 14, 1, OMCI_RW),
+	OMCI_ATTR(10, 15, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_zte_65305_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 1, OMCI_RW_SC),
+	OMCI_ATTR(13, 2, 1, OMCI_RW_SC),
+	OMCI_ATTR(12, 3, 2, OMCI_RW_SC),
+	OMCI_ATTR(11, 5, 2, OMCI_RW_SC),
+	OMCI_ATTR(10, 7, 4, OMCI_RW_SC),
+	OMCI_ATTR(9, 11, 4, OMCI_RW_SC),
+};
+
+static const struct omci_attr_desc omci_zte_65314_attrs[] = {
+	OMCI_ATTR(15, 0, 6, OMCI_R),
+	OMCI_ATTR(14, 6, 2, OMCI_RW),
+	OMCI_ATTR(13, 8, 1, OMCI_RW),
+	OMCI_ATTR(12, 9, 1, OMCI_RW),
+	OMCI_ATTR(11, 10, 2, OMCI_RW),
+	OMCI_ATTR(10, 12, 2, OMCI_R),
+	OMCI_ATTR(9, 14, 16, OMCI_RW),
+	OMCI_ATTR(8, 30, 16, OMCI_R),
+};
+
+static const struct omci_attr_desc omci_zte_65315_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),
+	OMCI_ATTR(14, 1, 1, OMCI_RW),
+	OMCI_ATTR(13, 2, 1, OMCI_RW),
+	OMCI_ATTR(12, 3, 2, OMCI_RW),
+	OMCI_ATTR(11, 5, 2, OMCI_RW),
+	OMCI_ATTR(10, 7, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_fh_65321_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_R),
+	OMCI_ATTR(14, 2, 2, OMCI_R),
+};
+
+static const struct omci_attr_desc omci_fh_65322_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 16, OMCI_RW_SC),
+	OMCI_ATTR(13, 17, 16, OMCI_RW),
+	OMCI_ATTR(12, 33, 16, OMCI_RW),
+	OMCI_ATTR(11, 49, 16, OMCI_RW),
+	OMCI_ATTR(10, 65, 1, OMCI_RW_SC),
+	OMCI_ATTR(9, 66, 1, OMCI_RW_SC),
+	OMCI_ATTR(8, 67, 2, OMCI_RW_SC),
+	OMCI_ATTR(7, 69, 2, OMCI_RW_SC),
+	OMCI_ATTR(6, 71, 1, OMCI_RW_SC),
+	OMCI_ATTR(5, 72, 1, OMCI_RW_SC),
+	OMCI_ATTR(4, 73, 1, OMCI_RW),
+	OMCI_ATTR(3, 74, 1, OMCI_R),
+	OMCI_ATTR(2, 75, 2, OMCI_RW_SC),
+	OMCI_ATTR(1, 77, 10, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_fh_65323_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 16, OMCI_RW_SC),
+	OMCI_ATTR(13, 17, 16, OMCI_RW),
+	OMCI_ATTR(12, 33, 16, OMCI_RW_SC),
+	OMCI_ATTR(11, 49, 16, OMCI_RW),
+	OMCI_ATTR(10, 65, 16, OMCI_RW),
+	OMCI_ATTR(9, 81, 16, OMCI_RW),
+	OMCI_ATTR(8, 97, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_fh_65324_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 1, OMCI_RW_SC),
+};
+
+static const struct omci_attr_desc omci_fh_65326_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),
+	OMCI_ATTR(14, 1, 1, OMCI_RW),
+	OMCI_ATTR(13, 2, 1, OMCI_RW),
+	OMCI_ATTR(12, 3, 1, OMCI_RW),
+	OMCI_ATTR(11, 4, 1, OMCI_RW),
+	OMCI_ATTR(10, 5, 16, OMCI_RW),
+	OMCI_ATTR(9, 21, 16, OMCI_RW),
+	OMCI_ATTR(8, 37, 16, OMCI_RW),
+	OMCI_ATTR(7, 53, 16, OMCI_RW),
+	OMCI_ATTR(6, 69, 4, OMCI_RW),
+	OMCI_ATTR(5, 73, 2, OMCI_RW),
+	OMCI_ATTR(4, 75, 16, OMCI_RW),
+	OMCI_ATTR(3, 91, 16, OMCI_RW),
+	OMCI_ATTR(2, 107, 1, OMCI_RW),
+	OMCI_ATTR(1, 108, 2, OMCI_R),
+};
+
+static const struct omci_attr_desc omci_fh_65327_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),
+	OMCI_ATTR(14, 1, 16, OMCI_RW),
+	OMCI_ATTR(13, 17, 16, OMCI_RW),
+	OMCI_ATTR(12, 33, 16, OMCI_RW),
+	OMCI_ATTR(11, 49, 16, OMCI_RW),
+	OMCI_ATTR(10, 65, 16, OMCI_RW),
+	OMCI_ATTR(9, 81, 16, OMCI_RW),
+	OMCI_ATTR(8, 97, 16, OMCI_RW),
+	OMCI_ATTR(7, 113, 16, OMCI_RW),
+	OMCI_ATTR(6, 129, 1, OMCI_RW),
+	OMCI_ATTR(5, 130, 1, OMCI_RW),
+	OMCI_ATTR(4, 131, 1, OMCI_RW),
+	OMCI_ATTR(3, 132, 1, OMCI_RW),
+	OMCI_ATTR(2, 133, 2, OMCI_RW),
+	OMCI_ATTR(1, 135, 2, OMCI_R),
+	OMCI_ATTR(0, 137, 2, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_fh_65328_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW),
+	OMCI_ATTR(14, 2, 16, OMCI_RW),
+	OMCI_ATTR(13, 18, 16, OMCI_RW),
+	OMCI_ATTR(12, 34, 16, OMCI_RW),
+	OMCI_ATTR(11, 50, 16, OMCI_RW),
+	OMCI_ATTR(10, 66, 16, OMCI_RW),
+	OMCI_ATTR(9, 82, 16, OMCI_RW),
+	OMCI_ATTR(8, 98, 16, OMCI_RW),
+	OMCI_ATTR(7, 114, 16, OMCI_RW),
+	OMCI_ATTR(6, 130, 2, OMCI_RW),
+	OMCI_ATTR(5, 132, 16, OMCI_RW),
+	OMCI_ATTR(4, 148, 16, OMCI_RW),
+	OMCI_ATTR(3, 164, 4, OMCI_RW),
+	OMCI_ATTR(2, 168, 2, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_fh_65329_attrs[] = {
+	OMCI_ATTR(15, 0, 4, OMCI_RW_SC),
+	OMCI_ATTR(14, 4, 4, OMCI_RW_SC),
+	OMCI_ATTR(13, 8, 4, OMCI_RW_SC),
+	OMCI_ATTR(12, 12, 4, OMCI_RW_SC),
+	OMCI_ATTR(11, 16, 4, OMCI_RW_SC),
+	OMCI_ATTR(10, 20, 19, OMCI_RW),
+	OMCI_ATTR(9, 39, 19, OMCI_RW),
+	OMCI_ATTR(8, 58, 19, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_fh_65333_attrs[] = {
+	OMCI_ATTR(15, 0, 4, OMCI_RW),
+	OMCI_ATTR(14, 4, 4, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_fh_65338_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 1, OMCI_RW_SC),
+	OMCI_ATTR(13, 2, 2, OMCI_RW_SC),
+	OMCI_ATTR(12, 4, 2, OMCI_RW_SC),
+	OMCI_ATTR(11, 6, 1, OMCI_RW),
+	OMCI_ATTR(10, 7, 2, OMCI_RW),
+	OMCI_ATTR(9, 9, 2, OMCI_RW),
+	OMCI_ATTR(8, 11, 2, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_fh_65363_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),
+	OMCI_ATTR(14, 1, 12, OMCI_R),
+	OMCI_ATTR(13, 13, 2, OMCI_R),
+	OMCI_ATTR(12, 15, 2, OMCI_R),
+	OMCI_ATTR(11, 17, 2, OMCI_R),
+};
+
+static const struct omci_attr_desc omci_fh_65411_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_R),
+	OMCI_ATTR(14, 2, 1, OMCI_R),
+	OMCI_ATTR(13, 3, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_ctc_250_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 1, OMCI_RW_SC),
+	OMCI_ATTR(13, 2, 1, OMCI_RW_SC),
+	OMCI_ATTR(12, 3, 2, OMCI_RW_SC),
+	OMCI_ATTR(11, 5, 25, OMCI_RW),
+	OMCI_ATTR(10, 30, 25, OMCI_RW),
+	OMCI_ATTR(9, 55, 1, OMCI_R),
+	OMCI_ATTR(8, 56, 4, OMCI_R),
+	OMCI_ATTR(7, 60, 2, OMCI_RW),
+	OMCI_ATTR(6, 62, 2, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_ctc_65282_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 1, OMCI_RW_SC),
+	OMCI_ATTR(13, 2, 24, OMCI_RW_SC),
+};
+
+static const struct omci_attr_desc omci_ctc_65320_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),
+	OMCI_ATTR(14, 1, 16, OMCI_R),
+	OMCI_ATTR(13, 17, 3, OMCI_R),
+	OMCI_ATTR(12, 20, 16, OMCI_R),
+	OMCI_ATTR(11, 36, 4, OMCI_R),
+	OMCI_ATTR(10, 40, 16, OMCI_R),
+	OMCI_ATTR(9, 56, 8, OMCI_R),
+	OMCI_ATTR(8, 64, 1, OMCI_R),
+};
+
+static const struct omci_attr_desc omci_ctc_65321_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),
+	OMCI_ATTR(13, 3, 2, OMCI_RW_SC),
+	OMCI_ATTR(12, 5, 2, OMCI_RW),
+	OMCI_ATTR(11, 7, 2, OMCI_RW_SC),
+	OMCI_ATTR(10, 9, 2, OMCI_RW_SC),
+};
+
+static const struct omci_attr_desc omci_ctc_65380_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 1, OMCI_RW_SC),
+	OMCI_ATTR(13, 2, 2, OMCI_RW_SC),
+	OMCI_ATTR(12, 4, 1, OMCI_RW_SC),
+	OMCI_ATTR(11, 5, 1, OMCI_RW_SC),
+	OMCI_ATTR(10, 6, 1, OMCI_RW_SC),
+	OMCI_ATTR(9, 7, 2, OMCI_RW_SC),
+};
+
+static const struct omci_attr_desc omci_ctc_65381_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 24, OMCI_RW_SC),
+	OMCI_ATTR(13, 25, 24, OMCI_RW_SC),
+	OMCI_ATTR(12, 49, 1, OMCI_RW_SC),
+	OMCI_ATTR(11, 50, 1, OMCI_RW_SC),
+	OMCI_ATTR(10, 51, 1, OMCI_RW_SC),
+	OMCI_ATTR(9, 52, 4, OMCI_RW_SC),
+	OMCI_ATTR(8, 56, 4, OMCI_RW_SC),
+	OMCI_ATTR(7, 60, 4, OMCI_RW_SC),
+	OMCI_ATTR(6, 64, 4, OMCI_RW_SC),
+	OMCI_ATTR(5, 68, 4, OMCI_RW_SC),
+	OMCI_ATTR(4, 72, 1, OMCI_RW_SC),
+	OMCI_ATTR(3, 73, 1, OMCI_RW_SC),
+};
+
+static const struct omci_attr_desc omci_ctc_65385_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 1, OMCI_RW_SC),
+	OMCI_ATTR(13, 2, 24, OMCI_RW_SC),
+	OMCI_ATTR(12, 26, 1, OMCI_RW_SC),
+	OMCI_ATTR(11, 27, 1, OMCI_RW_SC),
+	OMCI_ATTR(10, 28, 2, OMCI_RW_SC),
+	OMCI_ATTR(9, 30, 2, OMCI_RW_SC),
+	OMCI_ATTR(8, 32, 2, OMCI_RW_SC),
+	OMCI_ATTR(7, 34, 1, OMCI_RW_SC),
+	OMCI_ATTR(6, 35, 1, OMCI_RW_SC),
+	OMCI_ATTR(5, 36, 1, OMCI_RW_SC),
+	OMCI_ATTR(4, 37, 1, OMCI_RW_SC),
+};
+
+static const struct omci_attr_desc omci_ctc_65386_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 24, OMCI_RW_SC),
+	OMCI_ATTR(13, 25, 1, OMCI_RW_SC),
+	OMCI_ATTR(12, 26, 1, OMCI_RW_SC),
+	OMCI_ATTR(11, 27, 1, OMCI_RW_SC),
+	OMCI_ATTR(10, 28, 26, OMCI_RW_SC),
+	OMCI_ATTR(9, 54, 26, OMCI_RW_SC),
+	OMCI_ATTR(8, 80, 26, OMCI_RW_SC),
+	OMCI_ATTR(7, 106, 26, OMCI_RW_SC),
+	OMCI_ATTR(6, 132, 1, OMCI_RW_SC),
+};
+
+static const struct omci_attr_desc omci_ctc_65523_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),
+	OMCI_ATTR(14, 1, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_ctc_65528_attrs[] = {
+	OMCI_ATTR(15, 0, 4, OMCI_R),
+	OMCI_ATTR(14, 4, 2, OMCI_RW),
+	OMCI_ATTR(13, 6, 2, OMCI_RW),
+	OMCI_ATTR(12, 8, 2, OMCI_RW),
+	OMCI_ATTR(11, 10, 2, OMCI_RW),
+	OMCI_ATTR(10, 12, 0, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_ctc_65529_attrs[] = {
+	OMCI_ATTR(15, 0, 4, OMCI_R),
+	OMCI_ATTR(14, 4, 1, OMCI_R),
+	OMCI_ATTR(13, 5, 1, OMCI_R),
+	OMCI_ATTR(12, 6, 1, OMCI_R),
+};
+
+static const struct omci_attr_desc omci_ctc_65530_attrs[] = {
+	OMCI_ATTR(15, 0, 4, OMCI_R),
+	OMCI_ATTR(14, 4, 24, OMCI_R),
+	OMCI_ATTR(13, 28, 12, OMCI_R),
+	OMCI_ATTR(12, 40, 1, OMCI_RW),
+};
+
+static const struct omci_attr_desc omci_ctc_65531_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),
+	OMCI_ATTR(14, 1, 1, OMCI_RW_SC),
+	OMCI_ATTR(13, 2, 1, OMCI_RW_SC),
+	OMCI_ATTR(12, 3, 2, OMCI_RW_SC),
+	OMCI_ATTR(11, 5, 1, OMCI_RW_SC),
+	OMCI_ATTR(10, 6, 4, OMCI_RW_SC),
+	OMCI_ATTR(9, 10, 0, OMCI_RW),
+	OMCI_ATTR(8, 10, 0, OMCI_RW),
+	OMCI_ATTR(7, 10, 0, OMCI_R),
+	OMCI_ATTR(6, 10, 1, OMCI_RW_SC),
+	OMCI_ATTR(5, 11, 16, OMCI_RW),
+	OMCI_ATTR(4, 27, 4, OMCI_RW_SC),
+	OMCI_ATTR(3, 31, 4, OMCI_RW_SC),
+	OMCI_ATTR(2, 35, 4, OMCI_RW),
+	OMCI_ATTR(1, 39, 1, OMCI_RW),
+	OMCI_ATTR(0, 40, 3, OMCI_RW_SC),
 };
 
 static const struct omci_attr_desc omci_nokia_65295_attrs[] = {
@@ -1195,6 +1731,14 @@ static const struct omci_attr_desc omci_ethernet_frame_ext_pm_64_attrs[] = {
 	  .mib_upload_mask = (_upload), .data_len = (_len), \
 	  .category = (_category), .support = (_support), \
 	  .attrs = (_attrs), .num_attrs = OMCI_ARRAY_SIZE(_attrs) }
+#define VENDOR_MASK_DESC(_class, _name, _pmask, _actions, _flags, _mask, \
+			 _upload, _len, _category, _support, _attrs) \
+	{ .class_id = (_class), .name = (_name), \
+	  .profile_mask = (_pmask), .actions = (_actions), \
+	  .flags = (_flags) | OMCI_ME_F_VENDOR, .valid_attr_mask = (_mask), \
+	  .mib_upload_mask = (_upload), .data_len = (_len), \
+	  .category = (_category), .support = (_support), \
+	  .attrs = (_attrs), .num_attrs = OMCI_ARRAY_SIZE(_attrs) }
 
 static const struct omci_me_desc omci_me_descs[] = {
 	STANDARD_DESC(OMCI_CLASS_SOFTWARE_IMAGE, "Software image",
@@ -1509,36 +2053,342 @@ static const struct omci_me_desc omci_me_descs[] = {
 		    OMCI_GENMASK(15, 7), OMCI_GENMASK(15, 7), 36,
 		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_NATIVE,
 		    omci_huawei_350_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_351,
+		    "Huawei extended configuration 351", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 4), OMCI_GENMASK(15, 4), 12,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_351_attrs),
 	VENDOR_DESC(OMCI_CLASS_HUAWEI_VLAN_MAPPING,
 		    "Huawei VLAN mapping configuration", OMCI_OLT_PROFILE_HUAWEI,
 		    OLT_CREATED_ACTIONS, OMCI_ME_F_NO_MIB_UPLOAD | OMCI_ME_F_DATAPATH,
 		    OMCI_GENMASK(15, 10), 0, 15, OMCI_CLASS_CATEGORY_VENDOR,
 		    OMCI_CLASS_SUPPORT_SHADOW, omci_huawei_352_attrs),
 	VENDOR_DESC(OMCI_CLASS_HUAWEI_SW_IMAGE_EXT,
-		    "Huawei software image extension", OMCI_OLT_PROFILE_HUAWEI,
+		    "Huawei VoIP/software image extension", OMCI_OLT_PROFILE_HUAWEI,
 		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
 		    OMCI_GENMASK(15, 11), OMCI_GENMASK(15, 11), 21,
 		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_NATIVE,
 		    omci_huawei_353_attrs),
-#define HUAWEI_MULTICAST_DESC(_class, _name) \
-	VENDOR_DESC((_class), (_name), OMCI_OLT_PROFILE_HUAWEI, STANDARD_ACTIONS, \
-		    OMCI_ME_F_ONU_CREATED | OMCI_ME_F_DATAPATH, OMCI_GENMASK(15, 11), \
-		    OMCI_GENMASK(15, 11), 11, \
-		    OMCI_CLASS_CATEGORY_MULTICAST, OMCI_CLASS_SUPPORT_SHADOW, \
-		    omci_huawei_multicast_attrs)
-	HUAWEI_MULTICAST_DESC(OMCI_CLASS_HUAWEI_MULTICAST_367,
-			      "Huawei multicast configuration 367"),
-	HUAWEI_MULTICAST_DESC(OMCI_CLASS_HUAWEI_MULTICAST_370,
-			      "Huawei multicast configuration 370"),
-	HUAWEI_MULTICAST_DESC(OMCI_CLASS_HUAWEI_MULTICAST_373,
-			      "Huawei multicast configuration 373"),
-	HUAWEI_MULTICAST_DESC(OMCI_CLASS_HUAWEI_MULTICAST_65408,
-			      "Huawei multicast configuration 65408"),
-	HUAWEI_MULTICAST_DESC(OMCI_CLASS_HUAWEI_MULTICAST_65414,
-			      "Huawei multicast configuration 65414"),
-	HUAWEI_MULTICAST_DESC(OMCI_CLASS_HUAWEI_MULTICAST_65425,
-			      "Huawei multicast configuration 65425"),
-#undef HUAWEI_MULTICAST_DESC
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_MULTICAST_367,
+		    "Huawei multicast configuration 367", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED | OMCI_ME_F_DATAPATH,
+		    OMCI_GENMASK(15, 11), OMCI_GENMASK(15, 11), 11,
+		    OMCI_CLASS_CATEGORY_MULTICAST, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_multicast_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_MULTICAST_370,
+		    "Huawei UNI egress queue weight", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED | OMCI_ME_F_DATAPATH,
+		    OMCI_GENMASK(15, 13), OMCI_GENMASK(15, 13), 10,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_370_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_MULTICAST_373,
+		    "Huawei T-CONT queue configuration", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED | OMCI_ME_F_DATAPATH,
+		    OMCI_GENMASK(15, 1), OMCI_GENMASK(15, 1), 19,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_373_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_EXT_ONT_G2,
+		    "Huawei extended ONT-G2", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 0), OMCI_GENMASK(15, 0), 43,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65398_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_MULTICAST_65408,
+		    "Huawei multicast configuration 65408", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED | OMCI_ME_F_DATAPATH,
+		    OMCI_GENMASK(15, 11), OMCI_GENMASK(15, 11), 11,
+		    OMCI_CLASS_CATEGORY_MULTICAST, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_multicast_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_MULTICAST_65414,
+		    "Huawei optical data", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 3), OMCI_GENMASK(15, 3), 45,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65414_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_EXT_WAN_INFO,
+		    "Huawei extended WAN info", OMCI_OLT_PROFILE_HUAWEI,
+		    OLT_CREATED_ACTIONS, 0,
+		    OMCI_GENMASK(15, 13), OMCI_GENMASK(15, 13), 3,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65415_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_EXT_PPP,
+		    "Huawei extended PPP", OMCI_OLT_PROFILE_HUAWEI,
+		    OLT_CREATED_ACTIONS, 0,
+		    OMCI_GENMASK(15, 8), OMCI_GENMASK(15, 8), 152,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65417_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_EXT_ONT3_ABILITY,
+		    "Huawei extended ONT3 ability", OMCI_OLT_PROFILE_HUAWEI,
+		    OMCI_ME_ACTION_GET, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 0), OMCI_GENMASK(15, 0), 59,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65423_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_MULTICAST_65425,
+		    "Huawei extended CPU", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 9), OMCI_GENMASK(15, 9), 20,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65425_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_MAINTENANCE,
+		    "Huawei maintenance", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 14), OMCI_GENMASK(15, 14), 4,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65426_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_CAPABILITY,
+		    "Huawei capability descriptor", OMCI_OLT_PROFILE_HUAWEI,
+		    OMCI_ME_ACTION_GET, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 12), OMCI_GENMASK(15, 12), 50,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65427_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_EXT_TYPE,
+		    "Huawei extended type", OMCI_OLT_PROFILE_HUAWEI,
+		    OMCI_ME_ACTION_GET, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 0), OMCI_GENMASK(15, 0), 16,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65430_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_EXT_OLT,
+		    "Huawei extended OLT", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_BIT(15), OMCI_BIT(15), 4,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65431_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_EXT_80211,
+		    "Huawei extended 802.11", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_BIT(15), OMCI_BIT(15), 8,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65444_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_EXT_MAC,
+		    "Huawei extended MAC", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_BIT(15), OMCI_BIT(15), 1,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65447_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_EXT_80211_IF,
+		    "Huawei extended 802.11 interface", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 11), OMCI_GENMASK(15, 11), 5,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65450_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_EXT_WAN_CFG,
+		    "Huawei extended WAN config", OMCI_OLT_PROFILE_HUAWEI,
+		    OLT_CREATED_ACTIONS, 0,
+		    OMCI_GENMASK(15, 13), OMCI_GENMASK(15, 13), 4,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65451_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_EXT_WAN_DATA3,
+		    "Huawei extended WAN data 3", OMCI_OLT_PROFILE_HUAWEI,
+		    OLT_CREATED_ACTIONS, 0,
+		    OMCI_GENMASK(15, 13), OMCI_GENMASK(15, 13), 14,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65453_attrs),
+	VENDOR_DESC(OMCI_CLASS_HUAWEI_EXT_80211_MGMT,
+		    "Huawei extended 802.11 management", OMCI_OLT_PROFILE_HUAWEI,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 9), OMCI_GENMASK(15, 9), 30,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_huawei_65454_attrs),
+
+	VENDOR_DESC(OMCI_CLASS_ZTE_PPTP_SCHED,
+		    "ZTE PPTP schedule pointer", OMCI_OLT_PROFILE_ZTE,
+		    OLT_CREATED_ACTIONS, 0,
+		    OMCI_GENMASK(15, 14), OMCI_GENMASK(15, 14), 3,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_zte_242_attrs),
+	VENDOR_DESC(OMCI_CLASS_ZTE_UNI_SCHED,
+		    "ZTE UNI schedule configuration", OMCI_OLT_PROFILE_ZTE,
+		    OLT_CREATED_ACTIONS, 0,
+		    OMCI_GENMASK(15, 13), OMCI_GENMASK(15, 13), 17,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_zte_243_attrs),
+	VENDOR_DESC(OMCI_CLASS_ZTE_EXT_ONU_G,
+		    "ZTE extended ONU-G", OMCI_OLT_PROFILE_ZTE,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 0), OMCI_GENMASK(15, 0), 43,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_zte_247_attrs),
+	VENDOR_DESC(OMCI_CLASS_ZTE_SNTP,
+		    "ZTE SNTP configuration", OMCI_OLT_PROFILE_ZTE,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 10), OMCI_GENMASK(15, 10), 16,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_zte_65294_attrs),
+	VENDOR_DESC(OMCI_CLASS_ZTE_IP_FILTER,
+		    "ZTE IP flow filter", OMCI_OLT_PROFILE_ZTE,
+		    OLT_CREATED_ACTIONS, 0,
+		    OMCI_GENMASK(15, 9), OMCI_GENMASK(15, 9), 15,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_zte_65305_attrs),
+	VENDOR_DESC(OMCI_CLASS_ZTE_SSID_CONTROL,
+		    "ZTE SSID control", OMCI_OLT_PROFILE_ZTE,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 8), OMCI_GENMASK(15, 8), 46,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_zte_65314_attrs),
+	VENDOR_DESC(OMCI_CLASS_ZTE_SSID_AUTH,
+		    "ZTE SSID authentication and encryption", OMCI_OLT_PROFILE_ZTE,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 10), OMCI_GENMASK(15, 10), 8,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_zte_65315_attrs),
+
+	VENDOR_DESC(OMCI_CLASS_FH_WAN_PROFILE,
+		    "FiberHome WAN profile", OMCI_OLT_PROFILE_FIBERHOME,
+		    OMCI_ME_ACTION_GET, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 14), OMCI_GENMASK(15, 14), 4,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_fh_65321_attrs),
+	VENDOR_DESC(OMCI_CLASS_FH_WAN_CONFIG,
+		    "FiberHome WAN configuration", OMCI_OLT_PROFILE_FIBERHOME,
+		    OLT_CREATED_ACTIONS, 0,
+		    OMCI_GENMASK(15, 1), OMCI_GENMASK(15, 1), 87,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_fh_65322_attrs),
+	VENDOR_DESC(OMCI_CLASS_FH_PPPOE_CONFIG,
+		    "FiberHome PPPoE configuration", OMCI_OLT_PROFILE_FIBERHOME,
+		    OLT_CREATED_ACTIONS, 0,
+		    OMCI_GENMASK(15, 8), OMCI_GENMASK(15, 8), 98,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_fh_65323_attrs),
+	VENDOR_DESC(OMCI_CLASS_FH_WAN_PORT_BIND,
+		    "FiberHome WAN port binding", OMCI_OLT_PROFILE_FIBERHOME,
+		    OLT_CREATED_ACTIONS, 0,
+		    OMCI_GENMASK(15, 14), OMCI_GENMASK(15, 14), 2,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_fh_65324_attrs),
+	VENDOR_DESC(OMCI_CLASS_FH_WIFI_STA_1,
+		    "FiberHome WiFi station management 1", OMCI_OLT_PROFILE_FIBERHOME,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 1), OMCI_GENMASK(15, 1), 110,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_fh_65326_attrs),
+	VENDOR_DESC(OMCI_CLASS_FH_WIFI_STA_2,
+		    "FiberHome WiFi station management 2", OMCI_OLT_PROFILE_FIBERHOME,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 0), OMCI_GENMASK(15, 0), 139,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_fh_65327_attrs),
+	VENDOR_DESC(OMCI_CLASS_FH_WIFI_STA_3,
+		    "FiberHome WiFi station management 3", OMCI_OLT_PROFILE_FIBERHOME,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 2), OMCI_GENMASK(15, 2), 170,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_fh_65328_attrs),
+	VENDOR_DESC(OMCI_CLASS_FH_WAN_IP_HOST,
+		    "FiberHome WAN IP host configuration", OMCI_OLT_PROFILE_FIBERHOME,
+		    OLT_CREATED_ACTIONS, 0,
+		    OMCI_GENMASK(15, 8), OMCI_GENMASK(15, 8), 77,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_fh_65329_attrs),
+	VENDOR_DESC(OMCI_CLASS_FH_PON_SWITCHPORT,
+		    "FiberHome PON switchport rate limit", OMCI_OLT_PROFILE_FIBERHOME,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 14), OMCI_GENMASK(15, 14), 8,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_fh_65333_attrs),
+	VENDOR_DESC(OMCI_CLASS_FH_WAN_EXT_VLAN,
+		    "FiberHome WAN extended VLAN", OMCI_OLT_PROFILE_FIBERHOME,
+		    OLT_CREATED_ACTIONS, 0,
+		    OMCI_GENMASK(15, 8), OMCI_GENMASK(15, 8), 13,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_fh_65338_attrs),
+	VENDOR_DESC(OMCI_CLASS_FH_OMCI_MODE,
+		    "FiberHome OMCI mode", OMCI_OLT_PROFILE_FIBERHOME,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 11), OMCI_GENMASK(15, 11), 19,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_fh_65363_attrs),
+	VENDOR_DESC(OMCI_CLASS_FH_WIFI_STATUS,
+		    "FiberHome WiFi status", OMCI_OLT_PROFILE_FIBERHOME,
+		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		    OMCI_GENMASK(15, 13), OMCI_GENMASK(15, 13), 4,
+		    OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+		    omci_fh_65411_attrs),
+
+	VENDOR_MASK_DESC(OMCI_CLASS_CTC_PPPOE_WAN,
+			 "CTC PPPoE WAN configuration", OMCI_PROFILE_STANDARD_MASK,
+			 OLT_CREATED_ACTIONS, 0,
+			 OMCI_GENMASK(15, 6), OMCI_GENMASK(15, 6), 64,
+			 OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+			 omci_ctc_250_attrs),
+	VENDOR_MASK_DESC(OMCI_CLASS_CTC_VLAN_TRANS,
+			 "CTC extended VLAN translation", OMCI_PROFILE_STANDARD_MASK,
+			 OLT_CREATED_ACTIONS | OMCI_ME_ACTION_GET_NEXT, 0,
+			 OMCI_GENMASK(15, 13), OMCI_GENMASK(15, 13), 26,
+			 OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+			 omci_ctc_65282_attrs),
+	VENDOR_MASK_DESC(OMCI_CLASS_CTC_OPTICAL_INFO,
+			 "CTC optical transceiver info", OMCI_PROFILE_STANDARD_MASK,
+			 OMCI_ME_ACTION_GET, OMCI_ME_F_ONU_CREATED,
+			 OMCI_GENMASK(15, 8), OMCI_GENMASK(15, 8), 65,
+			 OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+			 omci_ctc_65320_attrs),
+	VENDOR_MASK_DESC(OMCI_CLASS_CTC_WAN_SERVICE,
+			 "CTC WAN service binding",
+			 OMCI_PROFILE_STANDARD_MASK & ~OMCI_PROFILE_BIT(OMCI_OLT_PROFILE_FIBERHOME),
+			 OLT_CREATED_ACTIONS, 0,
+			 OMCI_GENMASK(15, 10), OMCI_GENMASK(15, 10), 11,
+			 OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+			 omci_ctc_65321_attrs),
+	VENDOR_MASK_DESC(OMCI_CLASS_CTC_WAN_CONN,
+			 "CTC WAN connection configuration", OMCI_PROFILE_STANDARD_MASK,
+			 OLT_CREATED_ACTIONS, 0,
+			 OMCI_GENMASK(15, 9), OMCI_GENMASK(15, 9), 9,
+			 OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+			 omci_ctc_65380_attrs),
+	VENDOR_MASK_DESC(OMCI_CLASS_CTC_WAN_PROFILE,
+			 "CTC WAN IP/PPPoE profile", OMCI_PROFILE_STANDARD_MASK,
+			 OLT_CREATED_ACTIONS, 0,
+			 OMCI_GENMASK(15, 3), OMCI_GENMASK(15, 3), 74,
+			 OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+			 omci_ctc_65381_attrs),
+	VENDOR_MASK_DESC(OMCI_CLASS_CTC_WIFI_CFG,
+			 "CTC WiFi interface configuration", OMCI_PROFILE_STANDARD_MASK,
+			 OLT_CREATED_ACTIONS, 0,
+			 OMCI_GENMASK(15, 4), OMCI_GENMASK(15, 4), 38,
+			 OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+			 omci_ctc_65385_attrs),
+	VENDOR_MASK_DESC(OMCI_CLASS_CTC_WIFI_SEC,
+			 "CTC WiFi security configuration", OMCI_PROFILE_STANDARD_MASK,
+			 OLT_CREATED_ACTIONS, 0,
+			 OMCI_GENMASK(15, 6), OMCI_GENMASK(15, 6), 133,
+			 OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+			 omci_ctc_65386_attrs),
+	VENDOR_MASK_DESC(OMCI_CLASS_CTC_LOOP_CTRL,
+			 "CTC loop detection control", OMCI_PROFILE_STANDARD_MASK,
+			 STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+			 OMCI_GENMASK(15, 14), OMCI_GENMASK(15, 14), 2,
+			 OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+			 omci_ctc_65523_attrs),
+	VENDOR_MASK_DESC(OMCI_CLASS_CTC_LOOP_DETECT,
+			 "CTC loop detection", OMCI_PROFILE_STANDARD_MASK,
+			 STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+			 OMCI_GENMASK(15, 10), OMCI_GENMASK(15, 11), 12,
+			 OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+			 omci_ctc_65528_attrs),
+	VENDOR_MASK_DESC(OMCI_CLASS_CTC_ONU_CAP,
+			 "CTC ONU capability", OMCI_PROFILE_STANDARD_MASK,
+			 STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+			 OMCI_GENMASK(15, 12), OMCI_GENMASK(15, 12), 7,
+			 OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+			 omci_ctc_65529_attrs),
+	VENDOR_MASK_DESC(OMCI_CLASS_CTC_LOID_AUTH,
+			 "CTC LOID authentication", OMCI_PROFILE_STANDARD_MASK,
+			 STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+			 OMCI_GENMASK(15, 12), OMCI_GENMASK(15, 12), 41,
+			 OMCI_CLASS_CATEGORY_VENDOR, OMCI_CLASS_SUPPORT_SHADOW,
+			 omci_ctc_65530_attrs),
+	VENDOR_MASK_DESC(OMCI_CLASS_CTC_EXT_MCAST,
+			 "CTC extended multicast operations profile",
+			 OMCI_PROFILE_STANDARD_MASK,
+			 OLT_CREATED_ACTIONS | OMCI_ME_ACTION_GET_NEXT |
+			 OMCI_ME_ACTION_SET_TABLE, 0,
+			 OMCI_GENMASK(15, 0),
+			 OMCI_GENMASK(15, 10) | OMCI_GENMASK(6, 0), 43,
+			 OMCI_CLASS_CATEGORY_MULTICAST, OMCI_CLASS_SUPPORT_SHADOW,
+			 omci_ctc_65531_attrs),
 
 	VENDOR_DESC(OMCI_CLASS_NOKIA_OPTICAL_SUPERVISION,
 		    "Nokia ONT optical supervision status",
@@ -1999,7 +2849,7 @@ int omci_me_class_next_profile(__u8 profile, __u32 index,
 				catalogued = true;
 				break;
 			}
-		if (catalogued || !omci_me_lookup_profile(profile, class_id))
+		if (catalogued || omci_me_lookup_profile(profile, class_id) != &omci_me_descs[i])
 			continue;
 		if (position++ < index)
 			continue;

@@ -53,12 +53,14 @@ static const struct omci_profile_desc omci_profiles[] = {
 	}, {
 		.profile = OMCI_OLT_PROFILE_FIBERHOME,
 		.quirks = OMCI_OLT_QUIRK_ALLOW_SET_CREATE |
-			  OMCI_OLT_QUIRK_FULL_UNI_ENTITY_ID,
+			  OMCI_OLT_QUIRK_FULL_UNI_ENTITY_ID |
+			  OMCI_OLT_QUIRK_VENDOR_SPECIFIC_MES,
 		.name = "fiberhome",
 	}, {
 		.profile = OMCI_OLT_PROFILE_ZTE,
 		.quirks = OMCI_OLT_QUIRK_ALLOW_SET_CREATE |
-			  OMCI_OLT_QUIRK_ZTE_VLAN_TAG_MODE,
+			  OMCI_OLT_QUIRK_ZTE_VLAN_TAG_MODE |
+			  OMCI_OLT_QUIRK_VENDOR_SPECIFIC_MES,
 		.name = "zte",
 	},
 };

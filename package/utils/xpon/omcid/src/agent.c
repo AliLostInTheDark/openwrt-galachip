@@ -868,17 +868,22 @@ omci_agent_seed_huawei_locked(struct omci_device *odev, u8 profile)
 
 	memset(data, 0, sizeof(data));
 	ret = omci_mib_add_default_profile_mask(agent, profile,
+			OMCI_CLASS_HUAWEI_351, 0, GENMASK(15, 4),
+			data, sizeof(data));
+	if (ret)
+		return ret;
+	ret = omci_mib_add_default_profile_mask(agent, profile,
 			OMCI_CLASS_HUAWEI_MULTICAST_367, 0, GENMASK(15, 11),
 			data, sizeof(data));
 	if (ret)
 		return ret;
 	ret = omci_mib_add_default_profile_mask(agent, profile,
 			OMCI_CLASS_HUAWEI_MULTICAST_370, 0x0101,
-			GENMASK(15, 11), data, sizeof(data));
+			GENMASK(15, 13), data, sizeof(data));
 	if (ret)
 		return ret;
 	ret = omci_mib_add_default_profile_mask(agent, profile,
-			OMCI_CLASS_HUAWEI_MULTICAST_373, 0, GENMASK(15, 11),
+			OMCI_CLASS_HUAWEI_MULTICAST_373, 0, GENMASK(15, 1),
 			data, sizeof(data));
 	if (ret)
 		return ret;
@@ -888,13 +893,13 @@ omci_agent_seed_huawei_locked(struct omci_device *odev, u8 profile)
 	if (ret)
 		return ret;
 	ret = omci_mib_add_default_profile_mask(agent, profile,
-			OMCI_CLASS_HUAWEI_MULTICAST_65414, 0, GENMASK(15, 11),
+			OMCI_CLASS_HUAWEI_MULTICAST_65414, 0, GENMASK(15, 3),
 			data, sizeof(data));
 	if (ret)
 		return ret;
 
 	return omci_mib_add_default_profile_mask(agent, profile,
-			OMCI_CLASS_HUAWEI_MULTICAST_65425, 0, GENMASK(15, 11),
+			OMCI_CLASS_HUAWEI_MULTICAST_65425, 0, GENMASK(15, 9),
 			data, sizeof(data));
 }
 
