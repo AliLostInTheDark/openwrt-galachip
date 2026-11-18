@@ -145,7 +145,7 @@
 		}
 	},
 	"admin/network/omci/mib/ctc": {
-		"title": "CTC / Stock G7",
+		"title": "CTC",
 		"order": 64,
 		"action": {
 			"type": "view",

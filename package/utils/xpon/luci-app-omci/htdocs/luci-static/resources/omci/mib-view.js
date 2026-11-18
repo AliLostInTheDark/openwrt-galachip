@@ -183,7 +183,7 @@ var sectionLabels = {
 	vendor_huawei: _('Vendor — Huawei'),
 	vendor_zte: _('Vendor — ZTE'),
 	vendor_fiberhome: _('Vendor — FiberHome'),
-	vendor_ctc: _('Vendor — CTC / Stock G7'),
+	vendor_ctc: _('Vendor — CTC'),
 	vendor_other: _('Vendor — Other')
 };
 
