@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
+#include <linux/bits.h>
 #include <linux/io.h>
 #include <linux/reboot.h>
 #include <linux/sizes.h>
@@ -9,10 +10,22 @@
 #define GC1601_WDT_RESTART	0x08
 #define GC1601_WDT_CR		0x0c
 
+#define GC1601_SCU_DDR_DRV	0x90a0083c
+#define GC1601_SCU_DDR_DRV_MASK	GENMASK(20, 15)
+
 static void __iomem *gc1601_wdt;
 
 static void __init gc1601_init_machine(void)
 {
+	void __iomem *scu_ddr;
+
+	/* Match Faraday GC1601 BSP board-dt.c: clear SCU 0x83c DDR drive bits 20:15. */
+	scu_ddr = ioremap(GC1601_SCU_DDR_DRV, 4);
+	if (scu_ddr) {
+		writel(readl(scu_ddr) & ~GC1601_SCU_DDR_DRV_MASK, scu_ddr);
+		iounmap(scu_ddr);
+	}
+
 	gc1601_wdt = ioremap(GC1601_WDT_BASE, SZ_4K);
 }
 
