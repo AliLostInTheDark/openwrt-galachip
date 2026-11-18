@@ -59,7 +59,7 @@ typedef unsigned long phys_addr_t;
 #define min(a,b) ((a)<(b)?(a):(b))
 #define container_of(p,t,m) ((t *)((char *)(p) - __builtin_offsetof(t,m)))
 #define timer_container_of(var,t,m) container_of(t,struct gc1601_eth,m)
-struct sk_buff { unsigned int len; bool freed; };
+struct sk_buff { unsigned int len; u32 priority; bool freed; };
 struct gc1601_desc { u32 word[4]; };
 struct timer_list { unsigned long expires; };
 struct net_device { struct gc1601_eth *priv; bool stopped; struct { unsigned int tx_dropped,tx_bytes,tx_packets; } stats; };

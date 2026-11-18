@@ -581,11 +581,11 @@ static int gc1601_cvrd_write(struct gc1601_eth *priv, u32 index, u32 data);
 
 /*
  * T-CONT queue limits in buffers. Queue 0's output stage carries the rate
- * only with 256 (at 128 it stays empty and upload falls to ~118). Input 192
- * matches 256 on Airtel and keeps the queue at 448 of the 512 buffers;
- * 256 + 256 peaked at 450.
+ * only with 256 (at 128 it stays empty and upload falls to ~118). Input 256
+ * gives burst capacity for 1 Gbps LAN bursts (peak 240/256 with zero drops
+ * versus 192/192 saturation at 192) inside the 512-buffer pool.
  */
-static unsigned int tcont_depth = 192;
+static unsigned int tcont_depth = 256;
 static unsigned int tcont_out = 256;
 
 static int gc1601_descriptor_setup(struct gc1601_eth *priv)
@@ -1991,9 +1991,9 @@ static void gc1601_hw_start(struct gc1601_eth *priv)
 	       priv->base[GC1601_GMAC] + GC_GMAC_CFG);
 	spin_unlock_irqrestore(&priv->irq_lock, flags);
 
-	/* Align GMAC auxiliary control registers matching vendor & U-Boot */
+	/* Align GMAC auxiliary control registers matching stock SMAC_init */
 	writel(0x0000fffe, priv->base[GC1601_GMAC] + GC_GMAC_IER);
-	writel(0x00140001, priv->base[GC1601_GMAC] + GC_GMAC_ERCR);
+	writel(0x00014001, priv->base[GC1601_GMAC] + GC_GMAC_ERCR);
 	/*
 	 * The loader polls ACIR bit 2 for 4096 reads and ignores the result.
 	 * On the G7 ERCR reads back 0 and ACIR never sets, so keep it short.
@@ -2255,7 +2255,7 @@ static int gc1601_xmit(struct sk_buff *skb, struct net_device *netdev,
 				   DMA_TO_DEVICE);
 
 	desc.word[0] = cpu_to_le32(skb->len);
-	desc.word[1] = cpu_to_le32(0x1200);
+	desc.word[1] = cpu_to_le32(0x1200 | (skb->priority & 7));
 	desc.word[2] = cpu_to_le32((buf_id << 17) | 0x4000);
 	desc.word[3] = cpu_to_le32(BIT(31));
 	if (pon) {
