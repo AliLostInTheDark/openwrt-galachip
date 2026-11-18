@@ -8,17 +8,28 @@
  * link up again.
  */
 
+#include <linux/io.h>
 #include <linux/module.h>
 #include <linux/phy.h>
 
 #define GC1601_PHY_ID		0x16010000
 #define GC1601_PAGE_SEL		0x1f
 
+/* SCU 0x90a00800 bit 7: gc1601_phy_caboff() (set when cable is unplugged). */
+#define GC1601_SCU_STRAP	0x90a00800
+#define GC1601_SCU_CABOFF	BIT(7)
+
+/* PHY SerDes debug status 0x91400008 bit 11: checked on 100M link-up in Dec-2024 SDK. */
+#define GC1601_PHY_DBG_REG	0x91400008
+#define GC1601_PHY_DBG_100M_OK	BIT(11)
+
 /* Link-down polls before a reset, and resets before giving up until link. */
 #define GC1601_DOWN_POLLS	10
 #define GC1601_RESETS		10
 
 struct gc1601_phy_priv {
+	void __iomem *scu_strap;
+	void __iomem *serdes_dbg;
 	unsigned int down_polls;
 	unsigned int resets_left;
 };
@@ -40,13 +51,16 @@ static int gc1601_phy_tune(struct phy_device *phydev)
 	ret = phy_modify_paged(phydev, 2, 0x14, 0x0fff, 0x492);
 	if (ret)
 		return ret;
+	ret = phy_write_paged(phydev, 1, 0x11, 0x1ce7);
+	if (ret)
+		return ret;
 	ret = phy_modify_paged(phydev, 1, 0x1e, 0, BIT(14));
 	if (ret)
 		return ret;
 	ret = phy_modify_paged(phydev, 0, 0x10, 0, 0x300);
 	if (ret)
 		return ret;
-	return phy_modify_paged(phydev, 0, 0x12, 0, BIT(11));
+	return phy_modify_paged(phydev, 0, 0x12, ~0x07ff, 0x5000);
 }
 
 static int gc1601_phy_probe(struct phy_device *phydev)
@@ -56,6 +70,8 @@ static int gc1601_phy_probe(struct phy_device *phydev)
 	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
+	priv->scu_strap = devm_ioremap(&phydev->mdio.dev, GC1601_SCU_STRAP, 4);
+	priv->serdes_dbg = devm_ioremap(&phydev->mdio.dev, GC1601_PHY_DBG_REG, 4);
 	priv->resets_left = GC1601_RESETS;
 	phydev->priv = priv;
 	return 0;
@@ -78,8 +94,18 @@ static int gc1601_phy_read_status(struct phy_device *phydev)
 	if (phydev->link) {
 		priv->down_polls = 0;
 		priv->resets_left = GC1601_RESETS;
+		if (phydev->speed == SPEED_100 && priv->serdes_dbg &&
+		    !(readl(priv->serdes_dbg) & GC1601_PHY_DBG_100M_OK)) {
+			phydev_dbg(phydev, "100M link without SerDes bit 11: resetting the PHY\n");
+			ret = phy_set_bits(phydev, MII_BMCR, BMCR_RESET);
+			if (ret)
+				return ret;
+			return gc1601_phy_tune(phydev);
+		}
 		return 0;
 	}
+	if (priv->scu_strap && (readl(priv->scu_strap) & GC1601_SCU_CABOFF))
+		return 0;
 	if (phydev->autoneg != AUTONEG_ENABLE || !priv->resets_left ||
 	    ++priv->down_polls <= GC1601_DOWN_POLLS)
 		return 0;
