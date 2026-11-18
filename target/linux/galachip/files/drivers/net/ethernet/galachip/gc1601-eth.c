@@ -108,6 +108,8 @@ static const char * const gc1601_reg_names[GC1601_NUM_WINDOWS] = {
 #define GC_GMAC_CFG_SPEED_10	0xc000
 #define GC_GMAC_CFG_SPEED_MASK	0xc000
 #define GC_GMAC_CFG_FULL_DUPLEX	BIT(13)
+#define GC_GMAC_PAUSE_TX	0x70	/* quanta << 16 | send pause << 1 */
+#define GC_GMAC_PAUSE_RX	0x90	/* honour received pause frames */
 #define GC_GMAC_ERCR		0xe0
 #define GC_GMAC_ACIR		0xe4
 #define GC_GMAC_PAUSE_SA_HI	0x300
@@ -217,6 +219,9 @@ struct gc1601_eth {
 	int speed;
 	int duplex;
 	int link;
+	bool pause_autoneg;
+	bool rx_pause;
+	bool tx_pause;
 
 	struct napi_struct napi;
 	struct timer_list poll_timer;
@@ -364,6 +369,8 @@ struct gc1601_eth {
 /* In-flight TX descriptors once the probe handoff has measured the ring. */
 #define GC1601_TX_DEPTH	16
 
+static void gc1601_flow_ctrl_apply(struct gc1601_eth *priv);
+
 static void gc1601_adjust_link(struct net_device *netdev)
 {
 	struct gc1601_eth *priv = netdev_priv(netdev);
@@ -405,10 +412,12 @@ static void gc1601_adjust_link(struct net_device *netdev)
 		writel(0x0000fffe, priv->base[GC1601_GMAC] + GC_GMAC_IER);
 		writel(0x80000001, priv->base[GC1601_GMAC] + GC_GMAC_MACCR);
 		spin_unlock_irqrestore(&priv->irq_lock, flags);
+		gc1601_flow_ctrl_apply(priv);
 	} else if (priv->link) {
 		spin_lock_irqsave(&priv->irq_lock, flags);
 		writel(GC_GMAC_CFG_BASE, priv->base[GC1601_GMAC] + GC_GMAC_CFG);
 		spin_unlock_irqrestore(&priv->irq_lock, flags);
+		gc1601_flow_ctrl_apply(priv);
 	}
 
 	if (phydev->link != priv->link) {
@@ -1055,7 +1064,7 @@ static int gc1601_hm_write(struct gc1601_eth *priv, u32 table, u32 index,
  * chipset_set_pause_addr (xpon_sdk_complete.c:56564): GMAC pause-frame
  * source MAC at +0x300 (bytes 4..5 in bits 15:0) and +0x304 (bytes 0..3).
  */
-static bool gmac_pause_addr = false;
+static bool gmac_pause_addr = true;
 
 static void gc1601_gmac_pause_addr_apply(struct gc1601_eth *priv)
 {
@@ -2556,10 +2565,44 @@ EXPORT_SYMBOL_GPL(gc1601_pe_set_uni);
  */
 static bool uni_omci_attrs;
 
-#define GC_GMAC_PAUSE_RX	0x90	/* honour received pause frames */
-#define GC_GMAC_PAUSE_TX	0x70	/* quanta << 16 | send pause << 1 */
 #define GC_SR_AGE_UNIT		0x367e	/* chipset_set_aging_time: register per second */
 #define GC_SR_LEARN_UNI		BIT(9)	/* chipset_mactbl_limit port 1 */
+
+/*
+ * chipset_flow_ctrl_set / smac_flow_ctrl_set (xpon_sdk_complete.c:41995, 56012):
+ * program GMAC RX pause (+0x90), GMAC TX pause (+0x70, quanta << 16 | BIT(1)),
+ * and switch CAR B +0x2c bit 1. When uni_omci_attrs is enabled and the OLT
+ * specified a non-zero pause_quanta, honour it; otherwise apply ethtool/phylib
+ * pause settings with stock's default 0xffff quanta (sdk_set_flow_ctrl).
+ */
+static void gc1601_flow_ctrl_apply(struct gc1601_eth *priv)
+{
+	struct phy_device *phydev = priv->netdev->phydev;
+	void __iomem *gmac = priv->base[GC1601_GMAC];
+	bool rx_en = false, tx_en = false;
+	u16 quanta = 0xffff;
+
+	if (uni_omci_attrs && priv->uni_attrs.pause_quanta) {
+		quanta = priv->uni_attrs.pause_quanta;
+		rx_en = true;
+		tx_en = true;
+	} else if (phydev && phydev->link && phydev->duplex == DUPLEX_FULL) {
+		if (priv->pause_autoneg) {
+			phy_get_pause(phydev, &tx_en, &rx_en);
+		} else {
+			rx_en = priv->rx_pause;
+			tx_en = priv->tx_pause;
+		}
+	} else if (!phydev) {
+		rx_en = priv->rx_pause;
+		tx_en = priv->tx_pause;
+	}
+
+	writel(rx_en ? 1 : 0, gmac + GC_GMAC_PAUSE_RX);
+	writel(tx_en ? ((u32)quanta << 16 | BIT(1)) : 0, gmac + GC_GMAC_PAUSE_TX);
+	if (priv->switch_base)
+		gc1601_sr_update(priv, GC_SR_CAR + 0x2c, BIT(1), tx_en ? BIT(1) : 0);
+}
 
 /* Indirect table write: index at +0x14, data from +0x1c, +0x18 reads 1 when done. */
 static int gc1601_tbl_write(void __iomem *base, u32 index, const u32 *w, unsigned int n)
@@ -3148,10 +3191,13 @@ static int gc1601_uni_attrs_write(struct gc1601_eth *priv, const struct gc1601_u
 	if (ret)
 		return ret;
 
-	writel(!!a->pause_quanta, gmac + GC_GMAC_PAUSE_RX);
-	writel((u32)a->pause_quanta << 16 | (a->pause_quanta ? BIT(1) : 0),
-	       gmac + GC_GMAC_PAUSE_TX);
-	gc1601_sr_update(priv, GC_SR_CAR + 0x2c, BIT(1), a->pause_quanta ? BIT(1) : 0);
+	if (a->pause_quanta) {
+		writel(1, gmac + GC_GMAC_PAUSE_RX);
+		writel((u32)a->pause_quanta << 16 | BIT(1), gmac + GC_GMAC_PAUSE_TX);
+		gc1601_sr_update(priv, GC_SR_CAR + 0x2c, BIT(1), BIT(1));
+	} else {
+		gc1601_flow_ctrl_apply(priv);
+	}
 
 	ageing = min(ageing, U32_MAX / GC_SR_AGE_UNIT);
 	gc1601_sr_update(priv, GC_SR_SRC, BIT(16), BIT(16));
@@ -3949,6 +3995,9 @@ static int gc1601_eth_open(struct net_device *netdev)
 			dev_err(priv->dev, "Could not connect to PHY\n");
 			return -ENODEV;
 		}
+		phy_support_asym_pause(phydev);
+		if (priv->pause_autoneg)
+			phy_set_asym_pause(phydev, priv->rx_pause, priv->tx_pause);
 	} else {
 		dev_err(priv->dev, "No PHY node specified in device tree\n");
 		return -ENODEV;
@@ -4056,6 +4105,21 @@ static int gc1601_set_mac_address(struct net_device *netdev, void *p)
 	return 0;
 }
 
+static int gc1601_change_mtu(struct net_device *netdev, int new_mtu)
+{
+	struct gc1601_eth *priv = netdev_priv(netdev);
+
+	WRITE_ONCE(netdev->mtu, new_mtu);
+	if (priv->switch_base && priv->sr_ready &&
+	    (!uni_omci_attrs || !priv->uni_attrs.max_frame_size)) {
+		u32 frame = new_mtu + VLAN_ETH_HLEN + VLAN_HLEN + ETH_FCS_LEN + 34;
+
+		gc1601_sr_update(priv, GC_SR_HA + 0x2c, 0x3fff,
+				 max_t(u32, frame, priv->sr_ha_frame));
+	}
+	return 0;
+}
+
 static const struct net_device_ops gc1601_netdev_ops = {
 	.ndo_open		= gc1601_eth_open,
 	.ndo_stop		= gc1601_eth_stop,
@@ -4063,7 +4127,35 @@ static const struct net_device_ops gc1601_netdev_ops = {
 	.ndo_set_mac_address	= gc1601_set_mac_address,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_eth_ioctl		= phy_do_ioctl_running,
+	.ndo_change_mtu		= gc1601_change_mtu,
 };
+
+static void gc1601_get_pauseparam(struct net_device *netdev,
+				  struct ethtool_pauseparam *pause)
+{
+	struct gc1601_eth *priv = netdev_priv(netdev);
+
+	pause->autoneg = priv->pause_autoneg;
+	pause->rx_pause = priv->rx_pause;
+	pause->tx_pause = priv->tx_pause;
+}
+
+static int gc1601_set_pauseparam(struct net_device *netdev,
+				 struct ethtool_pauseparam *pause)
+{
+	struct gc1601_eth *priv = netdev_priv(netdev);
+	struct phy_device *phydev = netdev->phydev;
+
+	priv->pause_autoneg = !!pause->autoneg;
+	priv->rx_pause = !!pause->rx_pause;
+	priv->tx_pause = !!pause->tx_pause;
+
+	if (phydev)
+		phy_set_asym_pause(phydev, priv->rx_pause, priv->tx_pause);
+	if (priv->running)
+		gc1601_flow_ctrl_apply(priv);
+	return 0;
+}
 
 static void gc1601_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *info)
 {
@@ -4108,6 +4200,8 @@ static const struct ethtool_ops gc1601_ethtool_ops = {
 	.get_link		= ethtool_op_get_link,
 	.get_link_ksettings	= phy_ethtool_get_link_ksettings,
 	.set_link_ksettings	= phy_ethtool_set_link_ksettings,
+	.get_pauseparam		= gc1601_get_pauseparam,
+	.set_pauseparam		= gc1601_set_pauseparam,
 	.get_strings		= gc1601_get_strings,
 	.get_sset_count		= gc1601_get_sset_count,
 	.get_ethtool_stats	= gc1601_get_ethtool_stats,
@@ -4958,6 +5052,9 @@ static int gc1601_eth_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&priv->diag_work, gc1601_diag_work);
 	priv->tx_detected_slot = -1;
 	priv->rx_first_slot = -1;
+	priv->pause_autoneg = true;
+	priv->rx_pause = true;
+	priv->tx_pause = true;
 
 	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32));
 	if (ret)
