@@ -3,6 +3,8 @@ config epon 'main'
 	# Start OAM discovery instead of waiting for the OLT (802.3ah active
 	# mode). Only for OLTs that never send the first Information PDU.
 	option active_discovery '0'
+	# MAC of the ONU this clones (EPON LLID identity); empty keeps our own
+	option onu_mac ''
 	# CTC LOID authentication, as provisioned on the OLT
 	option loid ''
 	option loid_password ''
@@ -24,6 +26,8 @@ config epon 'main'
 	# VSOL OLTs (OUI 80:14:a8, leaf 0xc7/0x2040) check a key derived from
 	# the PON MAC and this shared secret; empty leaves it unanswered
 	option interauth_secret ''
+	# Verbatim VSOL Get 0x2040 reply (cloned-ONU key, 32 hex); replaces the MD5 derivation
+	option interauth_onu_key ''
 	# LAN VLAN: 'olt' applies the OLT's CTC Port VLAN; 'transparent' or
 	# 'tag' (with vlan_id) override it
 	option vlan_mode 'olt'
