@@ -30,8 +30,10 @@
 #include <linux/soc/galachip/gc1601.h>
 #include <linux/unaligned.h>
 
-#define GC1601_BUFFER_COUNT	512
+#define GC1601_BUFFER_COUNT	1440	/* PMU_container_init; the loader sets up 512 */
 #define GC1601_BUFFER_SIZE	2048
+#define GC1601_JUMBO_COUNT	32	/* secondary pool, frames over the 2000-byte MTU */
+#define GC1601_JUMBO_SIZE	0x3000
 #define GC1601_RING_SIZE	256
 #define GC1601_IRQ_RETRY_MS	200	/* polling after an IRQ storm, then retry */
 #define GC1601_IRQ_RETRY_MAX_MS	10000
@@ -51,10 +53,17 @@
 /* GMAC TX octets count the FCS beyond the descriptor length (iperf: +4.0/frame). */
 #define GC1601_PROBE_OCTET_EXTRA	4
 
-/* Physical bases in loader-reserved memory (0x40800000..0x40911fff) */
-#define GC1601_FREE_LIST_PHYS	0x40800000
-#define GC1601_PKT_POOL_PHYS	0x40801000
-#define GC1601_RX_RING_PHYS	0x40901000	/* the loader's: 16 containers, 4 KiB apart */
+/*
+ * Stock's 1440-buffer pool, free list and 32-slot jumbo pool
+ * (0x40a00000..0x40d31fff). A free-list base other than ours at probe
+ * means the loader's 512-buffer pool, so the cold init takes this one.
+ */
+#define GC1601_PKT_POOL_PHYS	0x40a00000
+#define GC1601_FREE_LIST_PHYS	(GC1601_PKT_POOL_PHYS + 0x2d0000)
+#define GC1601_JUMBO_POOL_PHYS	(GC1601_PKT_POOL_PHYS + 0x2d1000)
+#define GC1601_JUMBO_LIST_PHYS	(GC1601_PKT_POOL_PHYS + 0x331000)
+/* The loader's rings (0x40800000..0x40911fff), drained once at setup. */
+#define GC1601_RX_RING_PHYS	0x40901000	/* 16 containers, 4 KiB apart */
 #define GC1601_TX_RING_PHYS	0x40911000
 
 /* PMU_register_edev: one RX ring per container, container 15 carries OMCI. */
@@ -125,8 +134,10 @@ static const char * const gc1601_reg_names[GC1601_NUM_WINDOWS] = {
 #define GC_BUF_READ_CLEAR_EN	BIT(1)
 #define GC_BUF_CTRL		0x24
 #define GC_BUF_FREE_LIST_BASE	0x28
+#define GC_BUF_JUMBO_LIST_BASE	0x2c
 #define GC_BUF_RX_RING_BASE	0x30
 #define GC_BUF_PKT_POOL_BASE	0x34
+#define GC_BUF_JUMBO_POOL_BASE	0x38
 #define GC_BUF_POOL_CFG		0x3c
 #define GC_BUF_INTR_MASK	0x04
 #define GC_BUF_INTR_STATUS	0x40
@@ -170,6 +181,7 @@ static const char * const gc1601_reg_names[GC1601_NUM_WINDOWS] = {
 #define GC_RX_RELEASE_BUF	0x10
 #define GC_RX_ALLOC_REQ		0x14
 #define GC_RX_PARTITION		0x18	/* pool size in bits 31:16; reads back other state */
+#define GC_RX_JUMBO_COUNT	0x1c	/* jumbo pool size in bits 31:16 */
 #define GC_RX_CTRL		0x20
 #define GC_RX_CTRL_VAL		0x0f	/* as U-Boot; 0x2c clears bit 1 and the CPU allocator returns no buffer */
 #define GC_RX_PUBLISH_TX	0x38
@@ -584,19 +596,19 @@ static void gc1601_cold_finish(struct gc1601_eth *priv)
 	writel(0x10, priv->base[GC1601_TX_CONFIG] + 0x14);
 	writel(0, priv->queue_base + 0x0c);
 	writel(GC1601_BUFFER_COUNT << 16, priv->base[GC1601_RX] + GC_RX_PARTITION);
+	writel(GC1601_JUMBO_COUNT << 16, priv->base[GC1601_RX] + GC_RX_JUMBO_COUNT);
 	writel(0x51555555, priv->switch_base + 0x4198);
 }
 
 static int gc1601_cvrd_write(struct gc1601_eth *priv, u32 index, u32 data);
 
 /*
- * T-CONT queue limits in buffers. Queue 0's output stage carries the rate
- * only with 256 (at 128 it stays empty and upload falls to ~118). Input 256
- * gives burst capacity for 1 Gbps LAN bursts (peak 240/256 with zero drops
- * versus 192/192 saturation at 192) inside the 512-buffer pool.
+ * T-CONT queue limits in buffers. Input 256 plus stock's 1080/720 output
+ * limits match ALLCFG 0x4f8 (1272) for queue 0 and 0x390 (912) for queues
+ * 1-7 inside the 1440-buffer pool (256 + 1080 = 1336 <= 1440).
  */
 static unsigned int tcont_depth = 256;
-static unsigned int tcont_out = 256;
+static unsigned int tcont_out = 1080;
 
 static int gc1601_descriptor_setup(struct gc1601_eth *priv)
 {
@@ -606,15 +618,15 @@ static int gc1601_descriptor_setup(struct gc1601_eth *priv)
 	writel(readl(base + GC_DESC_CTRL) | 0x14, base + GC_DESC_CTRL);
 
 	/*
-	 * PMU_buffer_init's 1080/720 assume stock's 1440-buffer pool; with our
-	 * 512 queue 0 may hold 256 buffers, queues 1-7 64. The loader's 32
+	 * PMU_buffer_init's 1080/720 output limits match the 1440-buffer pool:
+	 * queue 0 may hold 1080 buffers, queues 1-7 720, while the loader's 32
 	 * overflow when the 2.5G PON bursts into the 1G UNI.
 	 */
 	for (i = 0; i < GC_CVRD_UNI_QUEUES; i++) {
 		u32 index = GC_CVRD_UNI0 + i;
 		int ret;
 
-		priv->cvrd_uni_outmax[i] = 32 | ((i ? 64 : 256) << 11);
+		priv->cvrd_uni_outmax[i] = 32 | ((i ? 720 : 1080) << 11);
 		priv->cvrd_uni_allcfg[i] = i ? 0x390 : 0x4f8;
 		ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | index, 0x00040020);
 		if (!ret)
@@ -671,7 +683,7 @@ static int gc1601_tcont_queue_setup(struct gc1601_eth *priv)
 		ret = gc1601_cvrd_write(priv, GC_CVRD_INMAX | i, 32 | (tcont_depth << 11));
 		if (!ret)
 			ret = gc1601_cvrd_write(priv, GC_CVRD_OUTMAX | i,
-						32 | ((q0 ? tcont_out : 64) << 11));
+						32 | ((q0 ? tcont_out : 720) << 11));
 		if (!ret)
 			ret = gc1601_cvrd_write(priv, GC_CVRD_ALLCFG | i, q0 ? 0x4f8 : 0x390);
 		if (ret)
@@ -934,7 +946,7 @@ static int tcont_limit_set(const char *val, const struct kernel_param *kp)
 	rtnl_lock();
 	depth = limit == &tcont_depth ? value : tcont_depth;
 	out = limit == &tcont_out ? value : tcont_out;
-	if (value < 32 || value > 256 || depth + out > GC1601_BUFFER_COUNT) {
+	if (value < 32 || value > 1080 || depth + out > GC1601_BUFFER_COUNT) {
 		rtnl_unlock();
 		return -ERANGE;
 	}
@@ -960,8 +972,8 @@ static const struct kernel_param_ops tcont_limit_ops = {
 };
 module_param_cb(tcont_depth, &tcont_limit_ops, &tcont_depth, 0644);
 module_param_cb(tcont_out, &tcont_limit_ops, &tcont_out, 0644);
-MODULE_PARM_DESC(tcont_out, "T-CONT queue 0 output limit in buffers (32-256)");
-MODULE_PARM_DESC(tcont_depth, "T-CONT queue input depth in buffers (32-256)");
+MODULE_PARM_DESC(tcont_out, "T-CONT queue 0 output limit in buffers (32-1080)");
+MODULE_PARM_DESC(tcont_depth, "T-CONT queue input depth in buffers (32-1080)");
 MODULE_PARM_DESC(sfu_pcp_class5, "set match class 5 on upstream P-bit SFU flows");
 
 /* Indirect L3 table write: index, then the data words, last word first. */
@@ -1874,6 +1886,12 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 		dma_sync_single_for_device(priv->dev, GC1601_FREE_LIST_PHYS,
 					   GC1601_BUFFER_COUNT * sizeof(__be16),
 					   DMA_TO_DEVICE);
+		free_list = phys_to_virt(GC1601_JUMBO_LIST_PHYS);
+		for (j = 0; j < GC1601_JUMBO_COUNT; j++)
+			free_list[j] = cpu_to_be16(j);
+		dma_sync_single_for_device(priv->dev, GC1601_JUMBO_LIST_PHYS,
+					   GC1601_JUMBO_COUNT * sizeof(__be16),
+					   DMA_TO_DEVICE);
 	}
 
 	writel(mode | GC_BUF_READ_CLEAR_EN,
@@ -1968,6 +1986,8 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 
 	writel(GC1601_FREE_LIST_PHYS, priv->base[GC1601_BUFFERS] + GC_BUF_FREE_LIST_BASE);
 	writel(GC1601_PKT_POOL_PHYS, priv->base[GC1601_BUFFERS] + GC_BUF_PKT_POOL_BASE);
+	writel(GC1601_JUMBO_LIST_PHYS, priv->base[GC1601_BUFFERS] + GC_BUF_JUMBO_LIST_BASE);
+	writel(GC1601_JUMBO_POOL_PHYS, priv->base[GC1601_BUFFERS] + GC_BUF_JUMBO_POOL_BASE);
 	writel(priv->rx_ring_dma, priv->base[GC1601_BUFFERS] + GC_BUF_RX_RING_BASE);
 	writel(priv->tx_ring_dma, priv->base[GC1601_TX_RING] + GC_TX_RING_BASE);
 
@@ -2860,7 +2880,7 @@ static int gc1601_qos_encode(const struct gc1601_tcont_qos *qos,
 	for (q = 0; q < 8; q++) {
 		tables->fill[q] = sp ? BIT(16) : qos->weight[q] * scale;
 		tables->inmax[q] = 32 | (tcont_depth << 11);
-		tables->outmax[q] = 32 | ((sp ? (q ? 64 : tcont_out) : 128) << 11);
+		tables->outmax[q] = 32 | ((sp ? (q ? 720 : tcont_out) : 128) << 11);
 		tables->cfg[q][0] = sp ? (q ? 0x390 : 0x4f8) : 0x140;
 	}
 	return 0;
@@ -4775,11 +4795,11 @@ static ssize_t free_list_show(struct device *dev,
 	struct gc1601_eth *priv = netdev_priv(dev_get_drvdata(dev));
 	const __be16 *list = phys_to_virt(GC1601_FREE_LIST_PHYS);
 	ssize_t len = 0;
-	unsigned int i;
+	unsigned int i, n = min_t(unsigned int, GC1601_BUFFER_COUNT, 768);
 
 	dma_sync_single_for_cpu(priv->dev, GC1601_FREE_LIST_PHYS,
-				GC1601_BUFFER_COUNT * sizeof(__be16), DMA_FROM_DEVICE);
-	for (i = 0; i < GC1601_BUFFER_COUNT; i++)
+				n * sizeof(__be16), DMA_FROM_DEVICE);
+	for (i = 0; i < n; i++)
 		len += sysfs_emit_at(buf, len, "%s%04x",
 				     i % 16 ? " " : (i ? "\n" : ""),
 				     be16_to_cpu(list[i]));
