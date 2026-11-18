@@ -58,6 +58,7 @@ struct omci_agent_config {
 	u8 onu_type;
 	u8 onu_type_source;
 	u8 uni_count;
+	u8 pots_count;
 	u8 olt_profile;
 	u8 olt_profile_force;
 	u8 olt_profile_source;

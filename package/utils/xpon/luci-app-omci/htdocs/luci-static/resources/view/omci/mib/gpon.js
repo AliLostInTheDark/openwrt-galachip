@@ -5,7 +5,7 @@
 return view.extend({
 	load: mib.load,
 	render: function(data) {
-		return mib.render('gpon', data, _('GPON'), _('ANI and GPON-facing managed entities.'));
+		return mib.render('gpon', data, _('ANI'), _('The PON side of the ONU: ANI-G, T-CONTs, GEM ports and their traffic management entities.'));
 	},
 	handleSaveApply: null,
 	handleSave: null,

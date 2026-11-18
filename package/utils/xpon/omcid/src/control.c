@@ -169,7 +169,13 @@ int omcid_control(struct omcid *ctx, const struct nlmsghdr *request,
 			ret = omci_agent_mib_get(&ctx->engine, class_id, entity, &object);
 			name = omci_me_class_name(class_id);
 		} else {
+			/* An optional class id limits the walk to that class. */
+			if (tb[OMCI_ATTR_CLASS_ID] &&
+			    index < omci_agent_mib_class_index(class_id))
+				index = omci_agent_mib_class_index(class_id);
 			ret = omci_agent_mib_next(&ctx->engine, index, &object, &next, &name);
+			if (!ret && tb[OMCI_ATTR_CLASS_ID] && object.class_id != class_id)
+				ret = -ENOENT;
 		}
 		if (!ret)
 			ret = omci_native_put_mib_object(&out, &object, next, name);
@@ -191,7 +197,13 @@ int omcid_control(struct omcid *ctx, const struct nlmsghdr *request,
 			memcpy(object.data, omcid_data(tb[OMCI_ATTR_ATTR_DATA]), len);
 			object.data_len = len;
 		}
-		ret = omci_agent_mib_set(&ctx->engine, &object);
+		if (tb[OMCI_ATTR_ORIGIN] &&
+		    omcid_scalar(tb[OMCI_ATTR_ORIGIN], &object.origin, sizeof(object.origin)))
+			return -EINVAL;
+		/* The voice and management services report ONU state as hardware. */
+		ret = object.origin == OMCI_MIB_ORIGIN_HARDWARE ?
+		      omci_agent_mib_status(&ctx->engine, &object) :
+		      omci_agent_mib_set(&ctx->engine, &object);
 		break;
 	case OMCI_CMD_MIB_DELETE:
 		if (!tb[OMCI_ATTR_CLASS_ID] || !tb[OMCI_ATTR_ENTITY_ID])

@@ -207,6 +207,7 @@ static DEVICE_ATTR_RW(_name)
 
 OMCI_CONFIG_U8_ATTR_RW(traffic_management_option, OMCI_CONFIG_TRAFFIC_MGMT_OPTION);
 OMCI_CONFIG_U8_ATTR_RW(uni_count, OMCI_CONFIG_UNI_COUNT);
+OMCI_CONFIG_U8_ATTR_RW(pots_count, OMCI_CONFIG_POTS_COUNT);
 OMCI_CONFIG_U8_ATTR_RW(omcc_version, OMCI_CONFIG_OMCC_VERSION);
 OMCI_CONFIG_BOOL_ATTR_RW(agent_enabled, OMCI_CONFIG_AGENT_ENABLED);
 OMCI_CONFIG_BOOL_ATTR_RW(agent_permissive, OMCI_CONFIG_AGENT_PERMISSIVE);
@@ -562,6 +563,7 @@ static struct attribute *omci_attrs[] = {
 	&dev_attr_onu_type.attr,
 	&dev_attr_onu_type_id.attr,
 	&dev_attr_uni_count.attr,
+	&dev_attr_pots_count.attr,
 	&dev_attr_omcc_version.attr,
 	&dev_attr_olt_profile.attr,
 	&dev_attr_olt_profile_force.attr,

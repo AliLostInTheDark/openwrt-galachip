@@ -219,6 +219,11 @@ int omci_agent_config_get(struct omci_device *odev, u16 key,
 		source = &scalar;
 		source_len = sizeof(scalar);
 		break;
+	case OMCI_CONFIG_POTS_COUNT:
+		scalar = agent->config.pots_count;
+		source = &scalar;
+		source_len = sizeof(scalar);
+		break;
 	case OMCI_CONFIG_AGENT_ENABLED:
 		scalar = agent->enabled;
 		source = &scalar;
@@ -480,6 +485,7 @@ __omci_agent_config_set_source(struct omci_device *odev, u16 key,
 	case OMCI_CONFIG_TRAFFIC_MGMT_OPTION:
 	case OMCI_CONFIG_ONU_TYPE:
 	case OMCI_CONFIG_UNI_COUNT:
+	case OMCI_CONFIG_POTS_COUNT:
 	case OMCI_CONFIG_AGENT_ENABLED:
 	case OMCI_CONFIG_AGENT_PERMISSIVE:
 	case OMCI_CONFIG_AGENT_FAKE_OMCI:
@@ -503,6 +509,10 @@ __omci_agent_config_set_source(struct omci_device *odev, u16 key,
 			scalar = clamp_t(u8, scalar, 1, 16);
 			changed = agent->config.uni_count != scalar;
 			agent->config.uni_count = scalar;
+		} else if (key == OMCI_CONFIG_POTS_COUNT) {
+			scalar = min_t(u8, scalar, 8);
+			changed = agent->config.pots_count != scalar;
+			agent->config.pots_count = scalar;
 		} else if (key == OMCI_CONFIG_AGENT_ENABLED) {
 			changed = agent->enabled != !!scalar;
 			agent->enabled = !!scalar;

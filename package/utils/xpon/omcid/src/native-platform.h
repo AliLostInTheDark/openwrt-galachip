@@ -33,7 +33,7 @@ struct omci_identity;
 struct omci_device;
 struct device {
 	const struct omci_identity *identity;
-	u8 onu_type, uni_count;
+	u8 onu_type, uni_count, pots_count;
 	void (*notify)(struct omci_device *, u8 event);
 	void (*reboot)(struct omci_device *);
 };
@@ -55,6 +55,7 @@ struct xarray { struct omci_native_entry *entries; size_t count, capacity; };
 #define U8_MAX UINT8_MAX
 #define U16_MAX UINT16_MAX
 #define U32_MAX UINT32_MAX
+#define U64_MAX UINT64_MAX
 #define S16_MIN INT16_MIN
 #define S16_MAX INT16_MAX
 #define HZ 1000UL
@@ -122,6 +123,9 @@ static inline void INIT_DELAYED_WORK(struct delayed_work *w, void (*fn)(struct w
 static inline int cancel_delayed_work_sync(struct delayed_work *w)
 {bool pending=w->pending;w->pending=false;return pending;}
 unsigned long omci_native_now(void);
+int omci_native_netdev_counter(const char *ifname, const char *name, u64 *value);
+int omci_native_ifname(u32 ifindex, char *name, size_t len);
+int omci_native_mcast_groups(bool ipv6, u8 **table, size_t *table_len);
 static inline int schedule_delayed_work(struct delayed_work *w,unsigned long delay)
 {if(w->pending)return 0;w->due=jiffies+delay;w->pending=true;return 1;}
 static inline int mod_delayed_work(void *queue,struct delayed_work *w,unsigned long delay)
@@ -159,6 +163,7 @@ static inline u16 get_unaligned_be16(const void *p) {const u8 *b=p;return (b[0]<
 static inline u32 get_unaligned_be32(const void *p) {const u8 *b=p;return ((u32)b[0]<<24)|((u32)b[1]<<16)|(b[2]<<8)|b[3];}
 static inline void put_unaligned_be16(u16 v,void *p) {u8 *b=p;b[0]=v>>8;b[1]=v;}
 static inline void put_unaligned_be32(u32 v,void *p) {u8 *b=p;b[0]=v>>24;b[1]=v>>16;b[2]=v>>8;b[3]=v;}
+static inline void put_unaligned_be64(u64 v,void *p) {u8 *b=p;put_unaligned_be32(v>>32,b);put_unaligned_be32(v,b+4);}
 static inline int hex_to_bin(u8 c)
 {if(c>='0'&&c<='9')return c-'0';c|=32;return c>='a'&&c<='f'?c-'a'+10:-1;}
 static inline ssize_t strscpy(void *dest,const void *src,size_t len)

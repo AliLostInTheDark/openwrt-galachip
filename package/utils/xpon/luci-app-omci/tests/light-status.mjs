@@ -261,18 +261,18 @@ assert.deepEqual([ind.shown[0][1], ind.shown[0][3]], ['EPON no light', 'inactive
 ind = await indicator({}, {}, {});
 assert.equal(ind.shown.length + ind.polls.length, 0);
 const xponAcl = JSON.parse(read(path.join(xpon, 'luci-app-xpon/root/usr/share/rpcd/acl.d/luci-app-xpon.json')))['luci-app-xpon'];
-assert.deepEqual(Object.keys(xponAcl.write.file), ['/usr/sbin/xpon-report -o -']);
+assert.deepEqual(Object.keys(xponAcl.write.file), ['/usr/sbin/xpon-report -o -', '/usr/sbin/xpon-mode-switch gpon', '/usr/sbin/xpon-mode-switch epon']);
 
 const menu = JSON.parse(read(path.join(pkg, 'root/usr/share/luci/menu.d/luci-app-omci.json')));
 // MIB reads and edits are on demand; the page must not poll.
 const mibRoot = 'admin/network/omci/mib';
 assert.equal(menu[mibRoot].action.type, 'firstchild');
 assert.deepEqual(Object.keys(menu).filter(k => k.startsWith(mibRoot + '/')),
-  ['read', 'inventory', 'gpon', 'bridge', 'multicast', 'other'].map(group => mibRoot + '/' + group));
+  ['read', 'inventory', 'gpon', 'bridge', 'multicast', 'voice', 'performance', 'other'].map(group => mibRoot + '/' + group));
 assert(!/\bpoll\b/.test(read(path.join(resource, 'omci/mib-editor.js'))));
 assert(!/\bpoll\b/.test(read(path.join(resource, 'view/omci/mib/read.js'))));
 assert.equal(menu[mibRoot + '/read'].action.path, 'omci/mib/read');
-for (const group of ['inventory', 'gpon', 'bridge', 'multicast', 'other']) {
+for (const group of ['inventory', 'gpon', 'bridge', 'multicast', 'voice', 'performance', 'other']) {
   const route = menu[mibRoot + '/' + group].action.path;
   assert.equal(route, 'omci/mib/' + group);
   assert(read(path.join(resource, 'view', route + '.js')).includes('require omci.mib-editor as mib'));

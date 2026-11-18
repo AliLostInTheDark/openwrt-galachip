@@ -582,6 +582,7 @@ int main(int argc, char **argv)
 	ctx.parent.identity = &ctx.identity;
 	ctx.parent.onu_type = config.value[OMCI_CONFIG_ONU_TYPE][0];
 	ctx.parent.uni_count = config.value[OMCI_CONFIG_UNI_COUNT][0];
+	ctx.parent.pots_count = config.value[OMCI_CONFIG_POTS_COUNT][0];
 	ctx.parent.reboot = reboot_request;
 	ctx.engine.parent = &ctx.parent;
 	ctx.engine.priv = &ctx;

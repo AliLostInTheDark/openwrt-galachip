@@ -42,19 +42,25 @@ struct omci_mcast_table_row {
 	u8 data[OMCI_MCAST_TABLE_ROW_LEN];
 };
 
+#define OMCI_PM_MAX_COUNTERS	14
+
 struct omci_mib_object {
 	u16 class_id;
 	u16 entity_id;
 	u16 attr_mask;
 	u8 origin;
 	u8 owner_profile;
-	u8 data_len;
+	u16 data_len;
 	bool pending_delete;
 	bool qos_configured;
 	/* ONU-created, and the OLT has Set it since the last MIB reset. */
 	bool olt_written;
+	/* PM history data: the source counters at the start of the interval. */
+	u64 pm_base[OMCI_PM_MAX_COUNTERS];
 	/* First byte of the G.988 alarm bitmap: alarm N is BIT(7 - N). */
 	u8 alarms;
+	/* PM history data: TCAs raised this interval, TCA N is BIT(15 - N). */
+	u16 tca;
 	/* Alarm free with ARC set since arc_clean_since. */
 	bool arc_clean;
 	unsigned long arc_clean_since;
@@ -103,6 +109,7 @@ struct omci_agent_config {
 	u8 onu_type;
 	u8 onu_type_source;
 	u8 uni_count;
+	u8 pots_count;
 	u8 olt_profile;
 	u8 olt_profile_force;
 	u8 olt_profile_source;
@@ -134,7 +141,6 @@ struct omci_agent {
 	struct delayed_work pm_work;
 	bool pm_running;
 	u8 pm_interval;
-	u64 pm_base[5];
 	bool operational;
 	u8 alarm_sequence;
 	struct delayed_work alarm_work;
@@ -252,12 +258,15 @@ int omci_identity_normalize_config(u16 key, const void *value, size_t len,
 				   u8 *output, size_t *output_len);
 int omci_agent_mib_get(struct omci_device *odev, u16 class_id, u16 entity_id,
 		       struct omci_mib_object *object);
+int omci_agent_mib_status(struct omci_device *odev,
+			  const struct omci_mib_object *object);
 int omci_agent_mib_set(struct omci_device *odev,
 		       const struct omci_mib_object *object);
 int omci_agent_mib_delete(struct omci_device *odev, u16 class_id,
 			  u16 entity_id);
 void omci_agent_mib_reset(struct omci_device *odev, bool all);
 int omci_agent_mib_reset_result(struct omci_device *odev, bool all);
+u32 omci_agent_mib_class_index(u16 class_id);
 int omci_agent_mib_next(struct omci_device *odev, u32 index,
 			struct omci_mib_object *object, u32 *next_index,
 			const char **name);

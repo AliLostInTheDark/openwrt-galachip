@@ -40,6 +40,8 @@ for d in /sys/bus/platform/devices/*.packet-engine; do
 	[ -d "$d" ] && ETH=$d && break
 done
 omci_status=$(ubus call omci.agent status 2>/dev/null)
+taurus=
+grep -qs 'realtek,taurus' /proc/device-tree/compatible && taurus=1
 
 section() {
 	printf '\n===== %s =====\n' "$1"
@@ -94,7 +96,9 @@ build_mask() {
 	{
 		{
 			for k in omci.main.password omci.main.loid omci.main.loid_password \
-				epon.main.loid epon.main.loid_password omci.main.serial; do
+				epon.main.loid epon.main.loid_password omci.main.serial \
+				cwmp.main.password cwmp.main.connection_request_password \
+				cwmp.device.serial; do
 				uci -q get "$k"
 			done
 			cat "$PON/serial_number" "$XPON/omci/serial_number" 2>/dev/null
@@ -132,7 +136,62 @@ build_mask() {
 	} > "$1"
 }
 
+# Realtek Taurus (RTL9607DQ, cortina-gpon): only what this platform has.
+collect_taurus() {
+	section "System"
+	run date
+	run uptime
+	show /etc/openwrt_release /proc/version
+	run cat /tmp/sysinfo/model
+
+	section "GPON (Realtek Taurus)"
+	show "$XPON/mode_current" "$XPON/state" "$XPON/carrier" /proc/gpon
+	run omcictl status
+	run omcictl config list
+
+	section "OMCI"
+	run omcictl mib list
+	if [ "$full" = 1 ]; then run omci-report; else run omci-report -b; fi
+	run logread -e omcid
+
+	section "Services and LAN VLAN"
+	run ubus call omci.vlan status
+	run bridge link show
+
+	section "Voice"
+	run omcictl mib show 53
+	run omcictl mib show 141
+	run logread -e omci-voice
+
+	section "TR-069"
+	run ubus call cwmp status
+
+	section "Management access from the PON"
+	run nft list table bridge pon_guard
+	run nft list chain inet fw4 input_wan
+
+	section "Network"
+	run ip -s -d link show
+	run ip addr show
+	run ip route show
+	run ip -6 route show
+	show /proc/net/dev
+
+	section "Settings"
+	run uci show xpon
+	run uci show omci
+	run uci show cwmp
+	run uci show network
+
+	section "Kernel log (PON)"
+	dmesg | grep -E 'cortina-gpon|cortina-xpon|omci|xpon|pon0|BOSA|bosa' 2>&1
+
+	section "Kernel log"
+	dmesg
+}
+
 collect() {
+	[ -n "$taurus" ] && { collect_taurus; return; }
 	section "System"
 	run date
 	run uptime

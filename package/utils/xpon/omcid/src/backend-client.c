@@ -116,6 +116,7 @@ static int backend_call(struct omcid *ctx, u16 op, const void *data, size_t len,
 int omcid_backend(struct omcid *ctx, u16 op, const void *data, size_t len,
 		  void *out, size_t out_len)
 {
+	static u32 unsupported_logged;
 	static int debug = -1;
 	bool read = op == OMCI_BACKEND_TOPOLOGY || op == OMCI_BACKEND_TELEMETRY ||
 		    op == OMCI_BACKEND_UNI_LINK;
@@ -123,6 +124,12 @@ int omcid_backend(struct omcid *ctx, u16 op, const void *data, size_t len,
 
 	if (debug < 0)
 		debug = getenv("OMCID_DEBUG") && *getenv("OMCID_DEBUG") == '1';
+	/* A driver without this hook refuses it every time: say so once. */
+	if (ret == -EOPNOTSUPP && op < 32) {
+		if (unsupported_logged & (1U << op) && !debug)
+			return ret;
+		unsupported_logged |= 1U << op;
+	}
 	if (!read && ((ret && ret != -EAGAIN && ret != -ESTALE) || debug)) {
 		const u8 *p = data;
 		size_t i;

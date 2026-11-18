@@ -27,6 +27,9 @@ let last_applied_signature = null;
 let last_config_signature = null;
 let retry_polls = 0;
 
+/* enum omci_mib_origin */
+const MIB_ORIGIN_HARDWARE = 3;
+
 const config_specs = [
 	{ key: 1,  name: 'serial', option: 'serial', scalar: false },
 	{ key: 2,  name: 'vendor-id', option: 'vendor_id', scalar: false },
@@ -50,6 +53,7 @@ const config_specs = [
 	{ key: 21, name: 'loid-password', option: 'loid_password', scalar: false, secret: true },
 	{ key: 22, name: 'dba-status-reporting', option: 'dba_status_reporting', scalar: true },
 	{ key: 23, name: 'veip-slot', option: 'veip_slot', scalar: true },
+	{ key: 24, name: 'pots-count', option: 'pots_count', scalar: true },
 ];
 
 const profile_values = {
@@ -584,11 +588,25 @@ const methods = {
 	},
 
 	mib_list: {
-		args: { device: 0 },
+		/* classes: optional list of class ids; the default is the whole MIB */
+		args: { device: 0, classes: [] },
 		call: function(request) {
-			let list = omci.mib_list(device_arg(request));
-			if (list == null)
-				return native_error(request, 'mib_list');
+			let device = device_arg(request);
+			let classes = request.args.classes;
+			let list = [];
+
+			if (type(classes) != 'array' || !length(classes))
+				classes = [ 0 ];
+			for (let class_id in classes) {
+				if (type(class_id) != 'int' || class_id < 0 || class_id > 0xffff) {
+					request.reply({ error: 'invalid class id' }, UBUS_STATUS_INVALID_ARGUMENT);
+					return null;
+				}
+				let part = omci.mib_list(device, class_id);
+				if (part == null)
+					return native_error(request, 'mib_list');
+				push(list, ...part);
+			}
 			for (let item in list)
 				decorate_mib(item);
 			return { objects: list };
@@ -612,6 +630,18 @@ const methods = {
 					 request.args.entity_id, request.args.attr_mask,
 					 request.args.data) == null)
 				return native_error(request, 'mib_set');
+			return { success: true };
+		}
+	},
+
+	/* ONU state for read-only attributes, kept apart from local overrides */
+	mib_report: {
+		args: { device: 0, class_id: 0, entity_id: 0, attr_mask: 0, data: '' },
+		call: function(request) {
+			if (omci.mib_set(device_arg(request), request.args.class_id,
+					 request.args.entity_id, request.args.attr_mask,
+					 request.args.data, MIB_ORIGIN_HARDWARE) == null)
+				return native_error(request, 'mib_report');
 			return { success: true };
 		}
 	},

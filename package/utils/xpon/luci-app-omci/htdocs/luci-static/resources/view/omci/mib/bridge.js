@@ -5,7 +5,7 @@
 return view.extend({
 	load: mib.load,
 	render: function(data) {
-		return mib.render('bridge', data, _('Bridge / UNI'), _('Ethernet UNI, bridge, VLAN and datapath managed entities.'));
+		return mib.render('bridge', data, _('UNI and layer 2'), _('The subscriber side: Ethernet and virtual Ethernet UNIs, MAC bridges, 802.1p mappers and VLAN filtering and tagging.'));
 	},
 	handleSaveApply: null,
 	handleSave: null,

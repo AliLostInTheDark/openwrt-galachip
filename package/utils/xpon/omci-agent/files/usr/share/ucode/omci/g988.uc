@@ -32,6 +32,27 @@ const iw_options = {
 };
 const directions = { '1': 'UNI->ANI', '2': 'ANI->UNI', '3': 'bidirectional' };
 const policies = { '0': 'null', '1': 'strict priority', '2': 'WRR' };
+/* G.988 9.9.3 SIP status, 9.9.11 VoIP voice server status and line state */
+const sip_status = {
+	'0': 'ok/initial', '1': 'connected', '2': 'failed (ICMP)',
+	'3': 'failed (malformed response)', '4': 'failed (inadequate info)',
+	'5': 'failed (timeout)', '6': 'redundant, offline'
+};
+const voice_server_status = {
+	'0': 'none/initial', '1': 'registered', '2': 'in session',
+	'3': 'failed registration (ICMP)', '4': 'failed registration (TCP)',
+	'5': 'failed registration (authentication)', '6': 'failed registration (timeout)',
+	'7': 'failed registration (server error)', '8': 'failed invite (ICMP)',
+	'9': 'failed invite (TCP)', '10': 'failed invite (authentication)',
+	'11': 'failed invite (timeout)', '12': 'failed invite (server error)',
+	'13': 'port not configured', '14': 'configuration done'
+};
+const voip_line_state = {
+	'0': 'idle, on hook', '1': 'off hook, dial tone', '2': 'dialling',
+	'3': 'ringing', '4': 'audible ringback', '5': 'connecting', '6': 'connected',
+	'7': 'disconnecting', '8': 'receiver off hook, no tone',
+	'9': 'receiver off hook with tone', '10': 'unknown or error'
+};
 
 function counters(names, size) {
 	return map(names, (n) => [ n, size ]);
@@ -323,6 +344,220 @@ export const classes = {
 	] ],
 
 	/* Huawei */
+	'53': [ 'Physical path termination point POTS UNI', [
+		[ 'administrative_state', 1, '', admin ],
+		[ 'interworking_tp_pointer', 2, '', 'hex' ],
+		[ 'arc', 1 ],
+		[ 'arc_interval', 1 ],
+		[ 'impedance', 1 ],
+		[ 'transmission_path', 1 ],
+		[ 'rx_gain', 1 ],
+		[ 'tx_gain', 1 ],
+		[ 'operational_state', 1, '', oper ],
+		[ 'hook_state', 1, '', { '0': 'on hook', '1': 'off hook' } ],
+		[ 'pots_holdover_time', 2 ],
+		[ 'nominal_feed_voltage', 1 ],
+		[ 'loss_of_softswitch', 1 ]
+	] ],
+	'58': [ 'Voice service profile', [
+		[ 'announcement_type', 1, 'c' ],
+		[ 'jitter_target', 2, 'c' ],
+		[ 'jitter_buffer_max', 2, 'c' ],
+		[ 'echo_cancel_ind', 1, 'c' ],
+		[ 'pstn_protocol_variant', 2, 'c' ],
+		[ 'dtmf_digit_levels', 2, 'c' ],
+		[ 'dtmf_digit_duration', 2, 'c' ],
+		[ 'hook_flash_minimum_time', 2, 'c' ],
+		[ 'hook_flash_maximum_time', 2, 'c' ],
+		[ 'tone_pattern_table', 20, 't' ],
+		[ 'tone_event_table', 7, 't' ],
+		[ 'ringing_pattern_table', 5, 't' ],
+		[ 'ringing_event_table', 7, 't' ],
+		[ 'network_specific_extensions_pointer', 2, 'c', 'hex' ]
+	] ],
+	'138': [ 'VoIP config data', [
+		[ 'available_signalling_protocols', 1 ],
+		[ 'signalling_protocol_used', 1, '', { '0': 'none', '1': 'SIP', '2': 'H.248', '3': 'MGCP', '255': 'not used' } ],
+		[ 'available_voip_configuration_methods', 4 ],
+		[ 'voip_configuration_method_used', 1 ],
+		[ 'voip_configuration_address_pointer', 2, '', 'hex' ],
+		[ 'voip_configuration_state', 1, '', { '0': 'inactive', '1': 'active', '2': 'initializing', '3': 'fault' } ],
+		[ 'retrieve_profile', 1 ],
+		[ 'profile_version', 25, '', 'str' ]
+	] ],
+	'139': [ 'VoIP voice CTP', [
+		[ 'user_protocol_pointer', 2, 'c', 'hex' ],
+		[ 'pptp_pointer', 2, 'c', 'hex' ],
+		[ 'voip_media_profile_pointer', 2, 'c', 'hex' ],
+		[ 'signalling_code', 1, 'c' ]
+	] ],
+	'140': [ 'Call control performance monitoring history data', pm([
+		[ 'call_setup_failures', 4 ],
+		[ 'call_setup_timer', 4 ],
+		[ 'call_terminate_failures', 4 ],
+		[ 'analog_port_releases', 4 ],
+		[ 'analog_port_off_hook_timer', 4 ]
+	]) ],
+	'141': [ 'VoIP line status', [
+		[ 'voip_codec_used', 2 ],
+		[ 'voip_voice_server_status', 1, '', voice_server_status ],
+		[ 'voip_port_session_type', 1 ],
+		[ 'voip_call_1_packet_period', 2 ],
+		[ 'voip_call_2_packet_period', 2 ],
+		[ 'voip_call_1_dest_addr', 25, '', 'str' ],
+		[ 'voip_call_2_dest_addr', 25, '', 'str' ],
+		[ 'voip_line_state', 1, '', voip_line_state ],
+		[ 'emergency_call_status', 1 ]
+	] ],
+	'142': [ 'VoIP media profile', [
+		[ 'fax_mode', 1, 'c' ],
+		[ 'voice_service_profile_pointer', 2, 'c', 'hex' ],
+		[ 'codec_selection_1st_order', 1, 'c' ],
+		[ 'packet_period_selection_1st_order', 1, 'c' ],
+		[ 'silence_suppression_1st_order', 1, 'c' ],
+		[ 'codec_selection_2nd_order', 1, 'c' ],
+		[ 'packet_period_selection_2nd_order', 1, 'c' ],
+		[ 'silence_suppression_2nd_order', 1, 'c' ],
+		[ 'codec_selection_3rd_order', 1, 'c' ],
+		[ 'packet_period_selection_3rd_order', 1, 'c' ],
+		[ 'silence_suppression_3rd_order', 1, 'c' ],
+		[ 'codec_selection_4th_order', 1, 'c' ],
+		[ 'packet_period_selection_4th_order', 1, 'c' ],
+		[ 'silence_suppression_4th_order', 1, 'c' ],
+		[ 'oob_dtmf', 1, 'c' ],
+		[ 'rtp_profile_pointer', 2, 'c', 'hex' ]
+	] ],
+	'143': [ 'RTP profile data', [
+		[ 'local_port_min', 2, 'c' ],
+		[ 'local_port_max', 2, 'c' ],
+		[ 'dscp_mark', 1, 'c' ],
+		[ 'piggyback_events', 1, 'c' ],
+		[ 'tone_events', 1, 'c' ],
+		[ 'dtmf_events', 1, 'c' ],
+		[ 'cas_events', 1, 'c' ],
+		[ 'ip_host_config_pointer', 2, '', 'hex' ]
+	] ],
+	'144': [ 'RTP performance monitoring history data', pm([
+		[ 'rtp_errors', 4 ],
+		[ 'packet_loss', 4 ],
+		[ 'maximum_jitter', 4 ],
+		[ 'maximum_time_between_rtcp_packets', 4 ],
+		[ 'buffer_underflows', 4 ],
+		[ 'buffer_overflows', 4 ]
+	]) ],
+	'145': [ 'Network dial plan table', [
+		[ 'dial_plan_number', 2 ],
+		[ 'dial_plan_table_max_size', 2, 'c' ],
+		[ 'critical_dial_timeout', 2, 'c' ],
+		[ 'partial_dial_timeout', 2, 'c' ],
+		[ 'dial_plan_format', 1, 'c' ],
+		[ 'dial_plan_table', 30, 't' ]
+	] ],
+	'146': [ 'VoIP application service profile', [
+		[ 'cid_features', 1, 'c' ],
+		[ 'call_waiting_features', 1, 'c' ],
+		[ 'call_progress_or_transfer_features', 2, 'c' ],
+		[ 'call_presentation_features', 2, 'c' ],
+		[ 'direct_connect_feature', 1, 'c' ],
+		[ 'direct_connect_uri_pointer', 2, 'c', 'hex' ],
+		[ 'bridged_line_agent_uri_pointer', 2, 'c', 'hex' ],
+		[ 'conference_factory_uri_pointer', 2, 'c', 'hex' ],
+		[ 'dial_tone_feature_delay_warmline_timer', 2 ]
+	] ],
+	'147': [ 'VoIP feature access codes', [
+		[ 'cancel_call_waiting', 5 ],
+		[ 'call_hold', 5 ],
+		[ 'call_park', 5 ],
+		[ 'caller_id_activate', 5 ],
+		[ 'caller_id_deactivate', 5 ],
+		[ 'do_not_disturb_activation', 5 ],
+		[ 'do_not_disturb_deactivation', 5 ],
+		[ 'do_not_disturb_pin_change', 5 ],
+		[ 'emergency_service_number', 5 ],
+		[ 'intercom_service', 5 ],
+		[ 'unattended_blind_call_transfer', 5 ],
+		[ 'attended_call_transfer', 5 ]
+	] ],
+	'150': [ 'SIP agent config data', [
+		[ 'proxy_server_address_pointer', 2, 'c', 'hex' ],
+		[ 'outbound_proxy_address_pointer', 2, 'c', 'hex' ],
+		[ 'primary_sip_dns', 4, 'c' ],
+		[ 'secondary_sip_dns', 4, 'c' ],
+		[ 'tcp_udp_pointer', 2, '', 'hex' ],
+		[ 'sip_reg_exp_time', 4 ],
+		[ 'sip_rereg_head_start_time', 4 ],
+		[ 'host_part_uri', 2, 'c' ],
+		[ 'sip_status', 1, '', sip_status ],
+		[ 'sip_registrar', 2, 'c' ],
+		[ 'softswitch', 4, 'c' ],
+		[ 'sip_response_table', 5, 't' ],
+		[ 'sip_option_transmit_control', 1, 'c' ],
+		[ 'sip_uri_format', 1 ],
+		[ 'redundant_sip_agent_pointer', 2, 'c', 'hex' ]
+	] ],
+	'151': [ 'SIP agent performance monitoring history data', pm([
+		[ 'transactions', 4 ],
+		[ 'rx_invite_reqs', 4 ],
+		[ 'rx_invite_retrans', 4 ],
+		[ 'rx_noninvite_reqs', 4 ],
+		[ 'rx_noninvite_retrans', 4 ],
+		[ 'rx_response', 4 ],
+		[ 'rx_response_retransmissions', 4 ],
+		[ 'tx_invite_reqs', 4 ],
+		[ 'tx_invite_retrans', 4 ],
+		[ 'tx_noninvite_reqs', 4 ],
+		[ 'tx_noninvite_retrans', 4 ],
+		[ 'tx_response', 4 ],
+		[ 'tx_response_retransmissions', 4 ]
+	]) ],
+	'152': [ 'SIP call initiation performance monitoring history data', pm([
+		[ 'failed_to_connect_counter', 4 ],
+		[ 'failed_to_validate_counter', 4 ],
+		[ 'timeout_counter', 4 ],
+		[ 'failure_received_counter', 4 ],
+		[ 'failed_to_authenticate_counter', 4 ]
+	]) ],
+	'153': [ 'SIP user data', [
+		[ 'sip_agent_pointer', 2, 'c', 'hex' ],
+		[ 'user_part_aor', 2, 'c' ],
+		[ 'sip_display_name', 25, '', 'str' ],
+		[ 'username_password', 2, 'c' ],
+		[ 'voicemail_server_sip_uri', 2, 'c' ],
+		[ 'voicemail_subscription_expiration_time', 4, 'c' ],
+		[ 'network_dial_plan_pointer', 2, 'c', 'hex' ],
+		[ 'application_services_profile_pointer', 2, 'c', 'hex' ],
+		[ 'feature_code_pointer', 2, 'c', 'hex' ],
+		[ 'pptp_pointer', 2, 'c', 'hex' ],
+		[ 'release_timer', 1 ],
+		[ 'roh_timer', 1 ]
+	] ],
+	'276': [ 'GAL Ethernet performance monitoring history data', pm([
+		[ 'discarded_frames', 4 ]
+	]) ],
+	'298': [ 'Dot1 rate limiter', [
+		[ 'parent_me_pointer', 2, 'c', 'hex' ],
+		[ 'tp_type', 1, 'c' ],
+		[ 'upstream_unicast_flood_rate_pointer', 2, 'c', 'hex' ],
+		[ 'upstream_broadcast_rate_pointer', 2, 'c', 'hex' ],
+		[ 'upstream_multicast_payload_rate_pointer', 2, 'c', 'hex' ],
+		[ 'downstream_unicast_flood_rate_pointer', 2, '', 'hex' ],
+		[ 'downstream_broadcast_rate_pointer', 2, '', 'hex' ],
+		[ 'downstream_multicast_payload_rate_pointer', 2, '', 'hex' ]
+	] ],
+	'336': [ 'ONU dynamic power management control', [
+		[ 'power_reduction_management_capability', 1 ],
+		[ 'power_reduction_management_mode', 1 ],
+		[ 'itransinit', 2 ],
+		[ 'itxinit', 2 ],
+		[ 'maximum_sleep_interval', 4 ],
+		[ 'maximum_receiver_off_interval', 4 ],
+		[ 'minimum_aware_interval', 4 ],
+		[ 'minimum_active_held_interval', 2 ],
+		[ 'maximum_sleep_interval_extension', 8 ],
+		[ 'ethernet_passive_optical_network_capability_extension', 1 ],
+		[ 'ethernet_passive_optical_network_setup_extension', 1 ],
+		[ 'missing_consecutive_bursts_threshold', 4 ]
+	] ],
 	'350': [ 'Huawei flow mapping', numbered([ 1, 1, 1, 1, 2, 4, 16, 4, 6 ]) ],
 	'352': [ 'Huawei VLAN mapping', numbered([ 2, 2, 2, 1, 4, 4 ]) ],
 	'353': [ 'Huawei software image extension', numbered([ 14, 1, 1, 1, 4 ]) ],

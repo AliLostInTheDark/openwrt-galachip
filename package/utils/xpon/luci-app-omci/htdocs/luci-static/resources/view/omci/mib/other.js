@@ -5,7 +5,7 @@
 return view.extend({
 	load: mib.load,
 	render: function(data) {
-		return mib.render('other', data, _('Other MIB objects'), _('Managed entities that are not part of the primary inventory, GPON, bridge or multicast groups.'));
+		return mib.render('other', data, _('Other'), _('Managed entities outside the equipment, ANI, UNI and layer 2, and multicast groups.'));
 	},
 	handleSaveApply: null,
 	handleSave: null,

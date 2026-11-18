@@ -5,7 +5,7 @@
 #define OMCI_GENL_NAME		"omci"
 #define OMCI_GENL_VERSION	17
 #define OMCI_MAX_PDU_LEN	1980
-#define OMCI_MAX_ATTR_DATA	64
+#define OMCI_MAX_ATTR_DATA	384	/* G.988 Large string: 1 + 15 x 25 */
 #define OMCI_MAX_CONFIG_VALUE	64
 #define OMCI_VLAN_FILTER_MAX_ENTRIES	12
 #define OMCI_EXT_VLAN_MAX_RULES	32
@@ -307,6 +307,7 @@ enum omci_config_key {
 	OMCI_CONFIG_LOID_PASSWORD,
 	OMCI_CONFIG_DBA_STATUS_REPORTING,	/* ANI-G SR indication, 0 or 1 */
 	OMCI_CONFIG_VEIP_SLOT,			/* VEIP slot: 0=auto, 3, 6, 10 */
+	OMCI_CONFIG_POTS_COUNT,			/* PPTP POTS UNIs, 0 to 8 */
 
 	__OMCI_CONFIG_MAX,
 };

@@ -4,7 +4,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=omci-agent
 PKG_VERSION:=0.9.2
-PKG_RELEASE:=41
+PKG_RELEASE:=44
 PKG_MAINTAINER:=Matheus Sampaio Queiroga <srherobrine20@gmail.com>
 PKG_LICENSE:=GPL-2.0-only
 
@@ -15,7 +15,7 @@ define Package/omci-agent
   CATEGORY:=Utilities
   SUBMENU:=xPON
   TITLE:=OMCI userspace control plane
-  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125||TARGET_realtek_luna) +ucode +libucode +ucode-mod-math +ucode-mod-ubus +ucode-mod-uci +ucode-mod-uloop +rpcd +rpcd-mod-ucode +libuci +libubus
+  DEPENDS:=@(TARGET_galachip_gc1601||TARGET_zte_zx279125||TARGET_realtek_luna) +ucode +libucode +ucode-mod-fs +ucode-mod-log +ucode-mod-math +ucode-mod-ubus +ucode-mod-uci +ucode-mod-uloop +rpcd +rpcd-mod-ucode +libuci +libubus
 endef
 
 define Package/omci-agent/description
@@ -49,6 +49,10 @@ define Package/omci-agent/install
 		$(1)/usr/share/ucode/omci/mib.uc
 	$(INSTALL_DATA) ./files/usr/share/ucode/omci/g988.uc \
 		$(1)/usr/share/ucode/omci/g988.uc
+	$(INSTALL_DATA) ./files/usr/share/ucode/omci/voice.uc \
+		$(1)/usr/share/ucode/omci/voice.uc
+	$(INSTALL_DATA) ./files/usr/share/ucode/omci/mcast.uc \
+		$(1)/usr/share/ucode/omci/mcast.uc
 
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/ucode
 	$(INSTALL_BIN) ./files/usr/share/rpcd/ucode/omci.agent \
@@ -58,6 +62,16 @@ define Package/omci-agent/install
 	$(INSTALL_BIN) ./files/usr/sbin/omcictl $(1)/usr/sbin/omcictl
 	$(INSTALL_BIN) ./files/usr/sbin/omci-diag $(1)/usr/sbin/omci-diag
 	$(INSTALL_BIN) ./files/usr/sbin/omci-report $(1)/usr/sbin/omci-report
+	$(INSTALL_BIN) ./files/usr/sbin/omci-voice $(1)/usr/sbin/omci-voice
+	$(INSTALL_BIN) ./files/usr/sbin/omci-mcast $(1)/usr/sbin/omci-mcast
+
+	$(INSTALL_DIR) $(1)/usr/share/nftables.d/ruleset-post
+	$(INSTALL_DATA) ./files/usr/share/nftables.d/ruleset-post/20-pon-guard.nft \
+		$(1)/usr/share/nftables.d/ruleset-post/
+
+	$(INSTALL_DIR) $(1)/etc/init.d
+	$(INSTALL_BIN) ./files/etc/init.d/omci-voice $(1)/etc/init.d/omci-voice
+	$(INSTALL_BIN) ./files/etc/init.d/omci-mcast $(1)/etc/init.d/omci-mcast
 
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./files/etc/config/omci $(1)/etc/config/omci

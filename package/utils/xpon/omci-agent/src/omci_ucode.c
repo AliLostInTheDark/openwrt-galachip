@@ -442,7 +442,7 @@ static uc_value_t *config_value_decode(uint16_t key, const void *data, size_t le
 	if ((key >= OMCI_CONFIG_TRAFFIC_MGMT_OPTION &&
 	     key <= OMCI_CONFIG_OMCC_VERSION) || key == OMCI_CONFIG_AGENT_REBOOT ||
 	    key == OMCI_CONFIG_DBA_STATUS_REPORTING ||
-	    key == OMCI_CONFIG_VEIP_SLOT) {
+	    key == OMCI_CONFIG_VEIP_SLOT || key == OMCI_CONFIG_POTS_COUNT) {
 		if (len != 1)
 			return hex_value(data, len);
 		return ucv_uint64_new(p[0]);
@@ -1125,7 +1125,7 @@ static uc_value_t *uc_config_set(uc_vm_t *vm, size_t nargs)
 	if ((key >= OMCI_CONFIG_TRAFFIC_MGMT_OPTION &&
 	     key <= OMCI_CONFIG_OMCC_VERSION) || key == OMCI_CONFIG_AGENT_REBOOT ||
 	    key == OMCI_CONFIG_DBA_STATUS_REPORTING ||
-	    key == OMCI_CONFIG_VEIP_SLOT) {
+	    key == OMCI_CONFIG_VEIP_SLOT || key == OMCI_CONFIG_POTS_COUNT) {
 		if (!parse_u32_arg(value, &n32) || n32 > 255) { ret = -EINVAL; goto out; }
 		n8 = n32;
 		ret = add_attr(&req, OMCI_ATTR_CONFIG_VALUE, &n8, sizeof(n8));
@@ -1242,6 +1242,8 @@ static int mib_get_one(struct omci_nl *ctx, uc_vm_t *vm, uint32_t device,
 		if (!ret) ret = add_u16(&req, OMCI_ATTR_ENTITY_ID, entity_id);
 	} else {
 		if (!ret) ret = add_u32(&req, OMCI_ATTR_INDEX, index);
+		/* G.988 assigns no class 0: 0 walks the whole MIB */
+		if (!ret && class_id) ret = add_u16(&req, OMCI_ATTR_CLASS_ID, class_id);
 	}
 	if (!ret) ret = request_exec(ctx, &req, true, mib_reply, &r);
 	if (!ret) *value = r.value;
@@ -1276,19 +1278,22 @@ static uc_value_t *uc_mib_list(uc_vm_t *vm, size_t nargs)
 {
 	struct omci_nl ctx;
 	uc_value_t *array, *value, *nv;
-	uint32_t device, index = 0, next;
+	uint32_t device, index = 0, next, class_id = 0;
 	int ret;
-	(void)nargs;
 
 	if (!parse_u32_arg(uc_fn_arg(0), &device)) {
 		set_error(-EINVAL, "mib_list(): invalid device id"); return NULL;
+	}
+	if (nargs > 1 && uc_fn_arg(1) &&
+	    (!parse_u32_arg(uc_fn_arg(1), &class_id) || class_id > 0xffff)) {
+		set_error(-EINVAL, "mib_list(): invalid class id"); return NULL;
 	}
 	ret = omci_nl_open(&ctx);
 	if (ret) goto fail_open;
 	array = ucv_array_new(vm);
 	for (;;) {
 		value = NULL;
-		ret = mib_get_one(&ctx, vm, device, OMCI_CMD_MIB_NEXT, index, 0, 0, &value);
+		ret = mib_get_one(&ctx, vm, device, OMCI_CMD_MIB_NEXT, index, class_id, 0, &value);
 		if (ret == -ENOENT) { ret = 0; break; }
 		if (ret) break;
 		nv = ucv_object_get(value, "next_index", NULL);
@@ -1311,7 +1316,8 @@ static uc_value_t *uc_mib_set(uc_vm_t *vm, size_t nargs)
 	struct nl_request req;
 	uint8_t data[OMCI_MAX_ATTR_DATA];
 	uc_value_t *data_v = uc_fn_arg(4);
-	uint32_t device;
+	uc_value_t *origin_v = uc_fn_arg(5);
+	uint32_t device, origin = 0;
 	uint16_t class_id, entity_id, mask;
 	const char *hex;
 	size_t data_len;
@@ -1321,7 +1327,8 @@ static uc_value_t *uc_mib_set(uc_vm_t *vm, size_t nargs)
 	if (!parse_u32_arg(uc_fn_arg(0), &device) ||
 	    !parse_u16_arg(uc_fn_arg(1), &class_id) ||
 	    !parse_u16_arg(uc_fn_arg(2), &entity_id) ||
-	    !parse_u16_arg(uc_fn_arg(3), &mask) || ucv_type(data_v) != UC_STRING) {
+	    !parse_u16_arg(uc_fn_arg(3), &mask) || ucv_type(data_v) != UC_STRING ||
+	    (origin_v && (!parse_u32_arg(origin_v, &origin) || origin > 255))) {
 		set_error(-EINVAL, "mib_set(): invalid arguments"); return NULL;
 	}
 	hex = ucv_string_get(data_v);
@@ -1334,6 +1341,8 @@ static uc_value_t *uc_mib_set(uc_vm_t *vm, size_t nargs)
 	if (!ret) ret = add_u16(&req, OMCI_ATTR_ENTITY_ID, entity_id);
 	if (!ret) ret = add_u16(&req, OMCI_ATTR_ATTR_MASK, mask);
 	if (!ret && data_len) ret = add_attr(&req, OMCI_ATTR_ATTR_DATA, data, data_len);
+	/* origin hardware reports ONU state instead of overriding attributes */
+	if (!ret && origin_v) ret = add_u8(&req, OMCI_ATTR_ORIGIN, origin);
 	if (!ret) ret = request_exec(&ctx, &req, false, NULL, NULL);
 	omci_nl_close(&ctx);
 	if (ret) { set_errno_error(ret, "OMCI MIB set"); return NULL; }

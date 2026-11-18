@@ -10,11 +10,23 @@ var words = {
 	pbs: 'PBS', fec: 'FEC'
 };
 
-/* An ME is created autonomously by the ONU (G.988) or provisioned by the OLT. */
-var originLabels = {
-	'default': _('ONU-created'), 'local': _('Local override'),
-	'olt': _('OLT-provisioned'), 'hardware': _('Hardware')
-};
+/*
+ * Where a MIB instance came from. G.988 has the ONU create some instances
+ * autonomously at start-up and the OLT create the rest; the OLT may also Set
+ * attributes of an ONU-created instance. Ordered as the origin filter lists them.
+ */
+var origins = [
+	[ 'olt', _('OLT-provisioned'),
+	  _('Created by the OLT with an OMCI Create. It lasts until the OLT deletes it or resets the MIB.') ],
+	[ 'olt_written', _('ONU-created, OLT-configured'),
+	  _('Created by the ONU at start-up; the OLT has since changed its attributes with an OMCI Set.') ],
+	[ 'default', _('ONU-created'),
+	  _('Created by the ONU at start-up with its own values; the OLT has not changed it.') ],
+	[ 'local', _('Local override'),
+	  _('Changed on this device in LuCI or with omcictl, not by the OLT.') ],
+	[ 'hardware', _('Hardware-reported'),
+	  _('Filled in from the hardware by the ONU.') ]
+];
 
 function label(name) {
 	var attr = /^attr_(\d+)$/.exec(name), pbit = /^pbit(\d)_(.+)$/.exec(name);
@@ -38,10 +50,26 @@ function entityText(id) {
 	return '0x%04x (%d)'.format(id, id);
 }
 
+function originKey(o) {
+	return o.origin_name == 'default' && o.olt_written ? 'olt_written' : o.origin_name;
+}
+
+function originEntry(o) {
+	var key = originKey(o);
+
+	return origins.filter(function(e) { return e[0] == key; })[0];
+}
+
 function originText(o) {
-	if (o.origin_name == 'default' && o.olt_written)
-		return _('ONU-created, OLT-configured');
-	return originLabels[o.origin_name] || o.origin_name || '-';
+	var e = originEntry(o);
+
+	return e ? e[1] : (o.origin_name || '-');
+}
+
+function originHelp(o) {
+	var e = originEntry(o);
+
+	return e ? e[2] : null;
 }
 
 function printable(code) {
@@ -117,7 +145,7 @@ function object(o) {
 	return E('div', { 'class': 'xpon-panel omci-mib-object' + (rules.length ? ' omci-mib-wide' : '') }, [
 		E('div', { 'class': 'omci-mib-object-head' }, [
 			E('strong', {}, _('Entity %s').format(entityText(o.entity_id))),
-			E('span', { 'class': 'omci-mib-origin' }, originText(o))
+			E('span', { 'class': 'omci-mib-origin', 'title': originHelp(o) }, originText(o))
 		]),
 		o.fields ? fieldTable(o.fields) : E('p', {}, _('No field names are known for this class; its data is shown below.')),
 		rules.length ? E('h5', {}, _('VLAN rules')) : '',
@@ -139,8 +167,10 @@ function summary(o) {
 
 return baseclass.extend({
 	entityText: entityText,
-	originLabels: originLabels,
+	origins: origins,
+	originKey: originKey,
 	originText: originText,
+	originHelp: originHelp,
 	object: object,
 	summary: summary
 });

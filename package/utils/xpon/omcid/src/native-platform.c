@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
+#include <arpa/inet.h>
+#include <net/if.h>
+#include <stdio.h>
+#include <string.h>
 #include <time.h>
 #include <stdarg.h>
 #include "native.h"
@@ -189,6 +193,35 @@ unsigned int bitmap_weight(const unsigned long *map, unsigned int bits)
 	return n;
 }
 
+/* One counter of /sys/class/net/<ifname>/statistics. */
+int omci_native_netdev_counter(const char *ifname, const char *name, u64 *value)
+{
+	unsigned long long v;
+	char path[96];
+	FILE *f;
+	int ret;
+
+	snprintf(path, sizeof(path), "/sys/class/net/%s/statistics/%s", ifname, name);
+	f = fopen(path, "r");
+	if (!f)
+		return -ENOENT;
+	ret = fscanf(f, "%llu", &v) == 1 ? 0 : -EIO;
+	fclose(f);
+	if (!ret)
+		*value = v;
+	return ret;
+}
+
+int omci_native_ifname(u32 ifindex, char *name, size_t len)
+{
+	char buf[IF_NAMESIZE];
+
+	if (!ifindex || !if_indextoname(ifindex, buf))
+		return -ENODEV;
+	snprintf(name, len, "%s", buf);
+	return 0;
+}
+
 unsigned long omci_native_now(void)
 {
 	struct timespec now;
@@ -258,6 +291,7 @@ void omci_native_load_board(struct omci_device *odev)
 {
 	odev->agent.config.onu_type = odev->parent->onu_type;
 	odev->agent.config.uni_count = odev->parent->uni_count;
+	odev->agent.config.pots_count = odev->parent->pots_count;
 }
 
 void omci_native_timers(struct omci_device *odev)
@@ -323,4 +357,146 @@ void omci_native_reboot(struct omci_device *odev)
 {
 	if (odev->parent->reboot)
 		odev->parent->reboot(odev);
+}
+
+/*
+ * The multicast groups this router receives from the PON, as G.988 9.3.31
+ * active group list rows: the kernel's multicast routing cache entries whose
+ * input interface is pon0, one of its VLANs or a PPP link (igmpproxy runs
+ * the routes). The client address is not known to the router: it reads 0.
+ */
+#define OMCI_MCAST_SEEN_MAX	64
+#define OMCI_MCAST_ROW_V4	24
+#define OMCI_MCAST_ROW_V6	58
+
+struct omci_mcast_seen {
+	bool used, ipv6, present;
+	u8 group[16], source[16];
+	time_t first;
+	u64 first_bytes;
+};
+
+static struct omci_mcast_seen omci_mcast_seen[OMCI_MCAST_SEEN_MAX];
+
+/* The VLAN of a PON input interface (0 if untagged), or -1 if not the PON. */
+static int omci_mcast_pon_vif(bool ipv6, int vif)
+{
+	char line[160], name[IF_NAMESIZE + 1];
+	int index, vid = -1;
+	FILE *f;
+
+	f = fopen(ipv6 ? "/proc/net/ip6_mr_vif" : "/proc/net/ip_mr_vif", "r");
+	if (!f)
+		return -1;
+	while (fgets(line, sizeof(line), f)) {
+		if (sscanf(line, "%d %16s", &index, name) != 2 || index != vif)
+			continue;
+		if (!strncmp(name, "pon0.", 5))
+			vid = atoi(name + 5);
+		else if (!strcmp(name, "pon0") || !strncmp(name, "pppoe-", 6))
+			vid = 0;
+		break;
+	}
+	fclose(f);
+	return vid;
+}
+
+static struct omci_mcast_seen *omci_mcast_track(bool ipv6, const u8 *group,
+						const u8 *source, u64 bytes,
+						time_t now)
+{
+	struct omci_mcast_seen *s, *free_slot = NULL;
+	unsigned int i;
+
+	for (i = 0; i < OMCI_MCAST_SEEN_MAX; i++) {
+		s = &omci_mcast_seen[i];
+		if (!s->used) {
+			free_slot = free_slot ?: s;
+			continue;
+		}
+		if (s->ipv6 == ipv6 && !memcmp(s->group, group, 16) &&
+		    !memcmp(s->source, source, 16))
+			return s;
+	}
+	if (!free_slot)
+		return NULL;
+	*free_slot = (struct omci_mcast_seen) {
+		.used = true, .ipv6 = ipv6, .first = now, .first_bytes = bytes,
+	};
+	memcpy(free_slot->group, group, 16);
+	memcpy(free_slot->source, source, 16);
+	return free_slot;
+}
+
+int omci_native_mcast_groups(bool ipv6, u8 **table, size_t *table_len)
+{
+	size_t row = ipv6 ? OMCI_MCAST_ROW_V6 : OMCI_MCAST_ROW_V4, len = 0;
+	size_t addr = ipv6 ? 16 : 4;
+	time_t now = time(NULL);
+	char line[256], g[48], o[48];
+	unsigned long long pkts, bytes;
+	unsigned int i;
+	u8 *out;
+	FILE *f;
+	int vif;
+
+	out = calloc(OMCI_MCAST_SEEN_MAX, row);
+	if (!out)
+		return -ENOMEM;
+	for (i = 0; i < OMCI_MCAST_SEEN_MAX; i++)
+		omci_mcast_seen[i].present = false;
+
+	f = fopen(ipv6 ? "/proc/net/ip6_mr_cache" : "/proc/net/ip_mr_cache", "r");
+	while (f && fgets(line, sizeof(line), f) && len + row <= OMCI_MCAST_SEEN_MAX * row) {
+		u8 group[16] = { 0 }, source[16] = { 0 };
+		struct omci_mcast_seen *s;
+		u64 rate = 0;
+		u8 *r;
+		int vid;
+
+		if (sscanf(line, "%47s %47s %d %llu %llu", g, o, &vif, &pkts, &bytes) != 5)
+			continue;
+		if (ipv6) {
+			if (inet_pton(AF_INET6, g, group) != 1 ||
+			    inet_pton(AF_INET6, o, source) != 1)
+				continue;
+		} else {
+			u32 gv, ov;
+
+			/* the kernel prints the network-order words as host integers */
+			if (sscanf(g, "%x", &gv) != 1 || sscanf(o, "%x", &ov) != 1)
+				continue;
+			memcpy(group, &gv, 4);
+			memcpy(source, &ov, 4);
+		}
+		vid = omci_mcast_pon_vif(ipv6, vif);
+		if (vid < 0)
+			continue;
+		s = omci_mcast_track(ipv6, group, source, bytes, now);
+		if (!s)
+			continue;
+		s->present = true;
+		if (now > s->first)
+			rate = (bytes - s->first_bytes) / (now - s->first);
+
+		r = out + len;
+		put_unaligned_be16(vid, r);
+		memcpy(r + 2, source, addr);
+		memcpy(r + 2 + addr, group, addr);
+		put_unaligned_be32(min_t(u64, rate, U32_MAX), r + 2 + 2 * addr);
+		/* client address: unknown, left 0 */
+		put_unaligned_be32(now - s->first, r + 6 + 3 * addr);
+		len += row;
+	}
+	if (f)
+		fclose(f);
+
+	/* groups the router no longer routes start over if they come back */
+	for (i = 0; i < OMCI_MCAST_SEEN_MAX; i++)
+		if (omci_mcast_seen[i].ipv6 == ipv6 && !omci_mcast_seen[i].present)
+			omci_mcast_seen[i].used = false;
+
+	*table = out;
+	*table_len = len;
+	return 0;
 }

@@ -379,6 +379,132 @@ int main(void)
 		xa_for_each(&odev.agent.mib, i, o)
 			CHECK(!o->olt_written);
 	}
+	{
+		/*
+		 * In permissive mode, an OLT Get on OMCI_CLASS_VEIP for a
+		 * different slot must move the profile's default VEIP, UNI-G
+		 * and TR-069 MEs before creating an OLT ghost instance, so
+		 * later Set/MIB reset sees only the learned slot.
+		 */
+		u8 profile = OMCI_OLT_PROFILE_NOKIA_ALCL;
+		u8 permissive = 1;
+		u8 get_mask[2] = { 0x80, 0x00 };
+		u8 set_veip[3] = { 0x80, 0x00, 0x00 };
+
+		CHECK(!omci_agent_config_set(&odev, OMCI_CONFIG_OLT_PROFILE_FORCE, &profile, 1));
+		CHECK(!omci_agent_config_set(&odev, OMCI_CONFIG_AGENT_PERMISSIVE,
+					     &permissive, 1));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_TR069_MANAGEMENT_SERVER,
+					 0x0601, &object));
+
+		request(&odev, 96, 9, OMCI_CLASS_VEIP, 0x0a01, get_mask, sizeof(get_mask));
+		CHECK(response[8] == 0);
+		request(&odev, 96, 8, OMCI_CLASS_VEIP, 0x0a01, set_veip, sizeof(set_veip));
+		CHECK(response[8] == 0);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0a01, &object) &&
+		      object.olt_written);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_UNI_G, 0x0a01, &object));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_TR069_MANAGEMENT_SERVER,
+					 0x0a01, &object));
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object) == -ENOENT);
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_UNI_G, 0x0601, &object) == -ENOENT);
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_TR069_MANAGEMENT_SERVER,
+					 0x0601, &object) == -ENOENT);
+		CHECK(odev.agent.veip_learned == 0x0a && odev.agent.veip_port_learned == 1);
+
+		/* Subsequent MIB reset preserves the learned slot without duplicating 0x0601 */
+		request(&odev, 96, 15, OMCI_CLASS_ONU_DATA, 0, NULL, 0);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0a01, &object) &&
+		      object.origin == OMCI_MIB_ORIGIN_DEFAULT && !object.olt_written);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_TR069_MANAGEMENT_SERVER,
+					 0x0a01, &object));
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_VEIP, 0x0601, &object) == -ENOENT);
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_TR069_MANAGEMENT_SERVER,
+					 0x0601, &object) == -ENOENT);
+
+		odev.agent.veip_learned = 0;
+		odev.agent.veip_port_learned = 0;
+		permissive = 0;
+		CHECK(!omci_agent_config_set(&odev, OMCI_CONFIG_AGENT_PERMISSIVE,
+					     &permissive, 1));
+		profile = OMCI_OLT_PROFILE_GENERIC;
+		CHECK(!omci_agent_config_set(&odev, OMCI_CONFIG_OLT_PROFILE_FORCE, &profile, 1));
+	}
+	{
+		/* G.988 9.9: an analogue port brings its POTS MEs after a MIB reset */
+		u8 pots = 1, create[32] = { 0 };
+
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_PPTP_POTS_UNI, 0x0201, &object) == -ENOENT);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_ONU_POWER_SHEDDING, 0, &object));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_ONU_REMOTE_DEBUG, 0, &object));
+		CHECK(!omci_agent_config_set(&odev, OMCI_CONFIG_POTS_COUNT, &pots, 1));
+		request(&odev, 97, 15, OMCI_CLASS_ONU_DATA, 0, NULL, 0);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_CIRCUIT_PACK, 0x0102, &object));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_PPTP_POTS_UNI, 0x0201, &object));
+		CHECK(get_unaligned_be16(object.data + 1) == 0xffff);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VOIP_LINE_STATUS, 0x0201, &object));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_VOIP_CONFIG_DATA, 0, &object));
+		CHECK(object.data[0] == 1 && object.data[1] == 1);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_IP_HOST_CONFIG_DATA, 0, &object));
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_PPTP_POTS_UNI, 0x0202, &object) == -ENOENT);
+
+		/* ONU state comes in as hardware: read-only attributes only, AVC for op state */
+		{
+			struct omci_mib_object report = { .class_id = OMCI_CLASS_PPTP_POTS_UNI,
+				.entity_id = 0x0201, .origin = OMCI_MIB_ORIGIN_HARDWARE,
+				.attr_mask = BIT(15) | BIT(7) | BIT(6) };
+			unsigned int sent = transmissions;
+
+			report.data[0] = 1;	/* administrative state: OLT-writable, ignored */
+			report.data[9] = 1;	/* operational state: disabled */
+			report.data[10] = 1;	/* hook state: off hook */
+			CHECK(!omci_agent_mib_status(&odev, &report));
+			CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_PPTP_POTS_UNI, 0x0201, &object));
+			CHECK(!object.data[0] && object.data[9] == 1 && object.data[10] == 1);
+			CHECK(object.origin == OMCI_MIB_ORIGIN_DEFAULT);
+			CHECK(transmissions == sent + 1 && response[2] == 17);
+			CHECK(get_unaligned_be16(response + 8) == BIT(7) && response[10] == 1);
+			CHECK(!omci_agent_mib_status(&odev, &report) && transmissions == sent + 1);
+		}
+
+		/* G.988 9.3.6-9.3.8: a bridge port brings its tables, and takes them along */
+		create[3] = 1;
+		put_unaligned_be16(0x0101, create + 4);
+		request(&odev, 98, 4, OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA, 0x0110, create, 6);
+		CHECK(response[8] == 0);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_MAC_BRIDGE_PORT_FILTER_TABLE, 0x0110, &object));
+		CHECK(object.origin == OMCI_MIB_ORIGIN_DEFAULT);
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_MAC_BRIDGE_PORT_BRIDGE_TABLE, 0x0110, &object));
+		CHECK(!omci_agent_mib_get(&odev, OMCI_CLASS_MAC_BRIDGE_PORT_FILTER_PREASSIGN, 0x0110, &object));
+		request(&odev, 99, 6, OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA, 0x0110, NULL, 0);
+		CHECK(response[8] == 0);
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_MAC_BRIDGE_PORT_FILTER_TABLE, 0x0110, &object) == -ENOENT);
+		CHECK(omci_agent_mib_get(&odev, OMCI_CLASS_MAC_BRIDGE_PORT_FILTER_PREASSIGN, 0x0110, &object) == -ENOENT);
+	}
+	{
+		/* PM history data: every class runs on the 15-minute intervals */
+		static const u16 pm[] = { OMCI_CLASS_ETHERNET_PM, OMCI_CLASS_GEM_PORT_CTP_PM,
+					  OMCI_CLASS_ETHERNET_FRAME_EXT_PM };
+		u8 create[32] = { 0 }, sync[7] = { 0, 0, 0, 0, 10, 7, 30 };
+		unsigned int k;
+
+		for (k = 0; k < ARRAY_SIZE(pm); k++) {
+			memset(create, 0, sizeof(create));
+			request(&odev, 110 + k, 4, pm[k], 0x0101, create,
+				pm[k] == OMCI_CLASS_ETHERNET_FRAME_EXT_PM ? 16 : 2);
+			CHECK(response[8] == 0);
+		}
+		request(&odev, 120, 24, OMCI_CLASS_ONU_G, 0, sync, sizeof(sync));
+		CHECK(odev.agent.pm_running && !odev.agent.pm_interval);
+		for (k = 0; k < ARRAY_SIZE(pm); k++) {
+			u8 mask[2] = { 0x20, 0x00 };	/* attribute 3: the first counter */
+
+			request(&odev, 121 + k, 28, pm[k], 0x0101, mask, 2);
+			CHECK(response[8] == 0);
+			CHECK(!omci_agent_mib_get(&odev, pm[k], 0x0101, &object) && !object.data[0]);
+		}
+	}
 	omci_agent_cleanup(&odev);
 	CHECK(!odev.agent.mib.count && !odev.agent.services.count);
 	printf("%u native MIB/transaction/rollback/table tests passed\n", checks);

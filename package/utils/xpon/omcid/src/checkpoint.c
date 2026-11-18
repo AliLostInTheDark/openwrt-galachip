@@ -6,7 +6,7 @@
 #include "daemon.h"
 
 #define CHECKPOINT_MAGIC 0x4f4d4331
-#define CHECKPOINT_VERSION 7
+#define CHECKPOINT_VERSION 9
 #define CHECKPOINT_MAX (2U * 1024 * 1024)
 #define CHECKPOINT_MAX_TABLE (256U * 1024)
 
@@ -20,7 +20,7 @@ struct checkpoint_header {
 	u8 profile_effective, loid_status, voice_calls, pm_interval, alarm_sequence, veip_learned, veip_port_learned;
 	u8 alarm_snapshot_count;
 	struct omci_alarm_entry alarm_snapshot[OMCI_ALARM_SNAPSHOT_LEN];
-	u64 pm_base[5], ber_base;
+	u64 ber_base;
 	unsigned long ber_since, pm_due, table_jiffies, reboot_due;
 	u32 request_len, response_len, table_len;
 	u16 table_class, table_entity, table_mask;
@@ -118,7 +118,6 @@ int omcid_checkpoint_save(struct omcid *ctx)
 	h->alarm_sequence = a->alarm_sequence;
 	h->alarm_snapshot_count = a->alarm_snapshot_count;
 	memcpy(h->alarm_snapshot, a->alarm_snapshot, sizeof(h->alarm_snapshot));
-	memcpy(h->pm_base, a->pm_base, sizeof(h->pm_base));
 	h->ber_base = a->ber_base;
 	h->ber_since = a->ber_since;
 	h->pm_due = a->pm_work.due;
@@ -293,7 +292,7 @@ int omcid_checkpoint_load(struct omcid *ctx)
 	    !omci_profile_forceable(h->config.olt_profile_force) ||
 	    h->profile_quirks != omci_profile_quirks(h->profile_effective) ||
 	    h->config.traffic_mgmt_option > 2 ||
-	    !h->config.uni_count || h->config.uni_count > 16 || h->config.onu_type > OMCI_ONU_TYPE_CBU ||
+	    !h->config.uni_count || h->config.uni_count > 16 || h->config.pots_count > 8 || h->config.onu_type > OMCI_ONU_TYPE_CBU ||
 	    (!!h->request_len != !!h->response_len)) {
 		ret = -EBADMSG;
 		goto out;
@@ -385,7 +384,6 @@ int omcid_checkpoint_load(struct omcid *ctx)
 	a->alarm_snapshot_count = h->alarm_snapshot_count;
 	memcpy(a->alarm_snapshot, h->alarm_snapshot, sizeof(a->alarm_snapshot));
 	a->pm_interval = h->pm_interval;
-	memcpy(a->pm_base, h->pm_base, sizeof(a->pm_base));
 	a->ber_base = h->ber_base;
 	a->ber_since = h->ber_since;
 	a->enabled = !!(h->flags & CP_ENABLED);

@@ -11,10 +11,13 @@ var groups = {
 	gpon: function(c) { return c.category_name === 'ani'; },
 	bridge: function(c) { return c.category_name === 'uni' || c.category_name === 'layer2' || !!(c.flags & (1 << 6)); },
 	multicast: function(c) { return c.category_name === 'multicast'; },
+	voice: function(c) { return c.category_name === 'voice'; },
+	performance: function(c) { return c.category_name === 'performance'; },
 	other: function(c) {
 		return c.category_name !== 'equipment' && c.category_name !== 'management' &&
 		       c.category_name !== 'ani' && c.category_name !== 'uni' &&
 		       c.category_name !== 'layer2' && c.category_name !== 'multicast' &&
+		       c.category_name !== 'voice' && c.category_name !== 'performance' &&
 		       !(c.flags & (1 << 6));
 	}
 };
@@ -60,13 +63,12 @@ function render(group, data, title, description) {
 	var byId, groupClasses, createButton;
 	var originFilter = E('select', { 'class': 'cbi-input-select', 'id': 'omci-mib-origin-filter' }, [
 		E('option', { 'value': 'all' }, _('All origins')),
-		E('option', { 'value': 'olt_any' }, _('OLT-provisioned or configured')),
-		E('option', { 'value': 'olt' }, _('OLT-provisioned')),
-		E('option', { 'value': 'olt_written' }, _('ONU-created, OLT-configured')),
-		E('option', { 'value': 'default' }, _('ONU-created')),
-		E('option', { 'value': 'local' }, _('Local override')),
-		E('option', { 'value': 'hardware' }, _('Hardware'))
-	]);
+		E('option', { 'value': 'olt_any', 'title': _('Every instance the OLT created or changed.') },
+		  _('OLT-provisioned or OLT-configured'))
+	].concat(mibView.origins.map(function(e) {
+		return E('option', { 'value': e[0], 'title': e[2] }, e[1]);
+	})));
+	var originHelp = E('div', { 'class': 'cbi-value-description' });
 	var tableRoot = E('div', { 'class': 'omci-table-scroll', 'tabindex': '0',
 		'role': 'region', 'aria-label': _('MIB objects') });
 	var count = E('span');
@@ -184,17 +186,15 @@ function render(group, data, title, description) {
 	}
 
 	function originMatches(o) {
+		var key = mibView.originKey(o);
+
 		switch (originFilter.value) {
 		case 'all':
 			return true;
 		case 'olt_any':
-			return o.origin_name == 'olt' || !!o.olt_written;
-		case 'olt_written':
-			return o.origin_name == 'default' && !!o.olt_written;
-		case 'default':
-			return o.origin_name == 'default' && !o.olt_written;
+			return key == 'olt' || key == 'olt_written';
 		default:
-			return o.origin_name == originFilter.value;
+			return key == originFilter.value;
 		}
 	}
 
@@ -224,7 +224,7 @@ function render(group, data, title, description) {
 				E('td', { 'class': 'td nowrap' }, String(o.class_id)),
 				E('td', { 'class': 'td nowrap' }, hex(o.entity_id, 4)),
 				E('td', { 'class': 'td' }, [ o.name || c.name || '-' ]),
-				E('td', { 'class': 'td' }, [ mibView.originText(o) ]),
+				E('td', { 'class': 'td', 'title': mibView.originHelp(o) }, [ mibView.originText(o) ]),
 				E('td', { 'class': 'td', 'style': 'overflow-wrap:anywhere;max-width:32em' }, [ mibView.summary(o) ]),
 				E('td', { 'class': 'td nowrap' }, [
 					modalButton(_('Details'), 'action', function() {
@@ -246,13 +246,18 @@ function render(group, data, title, description) {
 	updateCatalog();
 	if (writable)
 		createButton = modalButton(_('Create MIB object'), 'action', function() { showEditor(null); });
-	originFilter.addEventListener('change', renderTable);
+	originFilter.addEventListener('change', function() {
+		var opt = originFilter.options[originFilter.selectedIndex];
+
+		originHelp.textContent = opt.title || '';
+		renderTable();
+	});
 	renderTable();
 
 	return layout.apply(E([], [
 		E('h2', {}, title), E('p', {}, description),
 		E('div', { 'class': 'cbi-section omci-mib-filter' }, [
-			E('label', { 'for': 'omci-mib-origin-filter' }, _('Origin filter')), originFilter, count
+			E('label', { 'for': 'omci-mib-origin-filter' }, _('Origin')), originFilter, count, originHelp
 		]),
 		tableRoot,
 		E('div', { 'class': 'cbi-page-actions omci-mib-actions' }, [

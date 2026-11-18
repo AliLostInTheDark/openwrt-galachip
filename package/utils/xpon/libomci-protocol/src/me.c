@@ -348,6 +348,8 @@ static const struct omci_class_name omci_classes[] = {
 			 OMCI_ATTR_ACCESS_SET_CREATE)
 #define OMCI_RW		(OMCI_ATTR_ACCESS_READ | OMCI_ATTR_ACCESS_WRITE)
 #define OMCI_R		OMCI_ATTR_ACCESS_READ
+#define OMCI_R_SC	(OMCI_ATTR_ACCESS_READ | OMCI_ATTR_ACCESS_SET_CREATE)
+#define OMCI_W		OMCI_ATTR_ACCESS_WRITE
 
 static const struct omci_attr_desc omci_software_image_attrs[] = {
 	OMCI_ATTR(15, 0, OMCI_SOFTWARE_VERSION_LEN, OMCI_R),
@@ -647,9 +649,536 @@ static const struct omci_attr_desc omci_attribute_attrs[] = {
 	OMCI_ATTR(7, 45, 1, OMCI_R),
 };
 
+/* G.988 class 24, Ethernet performance monitoring history data */
+static const struct omci_attr_desc omci_ethernet_pm_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Interval end time */
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),	/* Threshold data 1/2 ID */
+	OMCI_ATTR(13, 3, 4, OMCI_R),	/* FCS errors */
+	OMCI_ATTR(12, 7, 4, OMCI_R),	/* Excessive collision counter */
+	OMCI_ATTR(11, 11, 4, OMCI_R),	/* Late collision counter */
+	OMCI_ATTR(10, 15, 4, OMCI_R),	/* Frames too long */
+	OMCI_ATTR(9, 19, 4, OMCI_R),	/* Buffer overflows on receive */
+	OMCI_ATTR(8, 23, 4, OMCI_R),	/* Buffer overflows on transmit */
+	OMCI_ATTR(7, 27, 4, OMCI_R),	/* Single collision frame counter */
+	OMCI_ATTR(6, 31, 4, OMCI_R),	/* Multiple collisions frame counter */
+	OMCI_ATTR(5, 35, 4, OMCI_R),	/* SQE counter */
+	OMCI_ATTR(4, 39, 4, OMCI_R),	/* Deferred transmission counter */
+	OMCI_ATTR(3, 43, 4, OMCI_R),	/* Internal MAC transmit error counter */
+	OMCI_ATTR(2, 47, 4, OMCI_R),	/* Carrier sense error counter */
+	OMCI_ATTR(1, 51, 4, OMCI_R),	/* Alignment error counter */
+	OMCI_ATTR(0, 55, 4, OMCI_R),	/* Internal MAC receive error counter */
+};
+
+/* G.988 class 49, MAC bridge port filter table data */
+static const struct omci_attr_desc omci_mac_bridge_port_filter_table_attrs[] = {
+	OMCI_ATTR(15, 0, 8, OMCI_RW),	/* MAC filter table */
+};
+
+/* G.988 class 50, MAC bridge port bridge table data */
+static const struct omci_attr_desc omci_mac_bridge_port_bridge_table_attrs[] = {
+	OMCI_ATTR(15, 0, 8, OMCI_R),	/* Bridge table */
+};
+
+/* G.988 class 51, MAC bridge performance monitoring history data */
+static const struct omci_attr_desc omci_mac_bridge_pm_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Interval end time */
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),	/* Threshold data 1/2 ID */
+	OMCI_ATTR(13, 3, 4, OMCI_R),	/* Bridge learning entry discard count */
+};
+
+/* G.988 class 52, MAC bridge port performance monitoring history data */
+static const struct omci_attr_desc omci_mac_bridge_port_pm_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Interval end time */
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),	/* Threshold data 1/2 ID */
+	OMCI_ATTR(13, 3, 4, OMCI_R),	/* Forwarded frame counter */
+	OMCI_ATTR(12, 7, 4, OMCI_R),	/* Delay exceeded discard counter */
+	OMCI_ATTR(11, 11, 4, OMCI_R),	/* MTU exceeded discard counter */
+	OMCI_ATTR(10, 15, 4, OMCI_R),	/* Received frame counter */
+	OMCI_ATTR(9, 19, 4, OMCI_R),	/* Received and discarded counter */
+};
+
+/* G.988 class 53, Physical path termination point POTS UNI */
+static const struct omci_attr_desc omci_pptp_pots_uni_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),	/* Administrative state */
+	OMCI_ATTR(14, 1, 2, OMCI_RW),	/* Interworking TP pointer */
+	OMCI_ATTR(13, 3, 1, OMCI_RW),	/* ARC */
+	OMCI_ATTR(12, 4, 1, OMCI_RW),	/* ARC interval */
+	OMCI_ATTR(11, 5, 1, OMCI_RW),	/* Impedance */
+	OMCI_ATTR(10, 6, 1, OMCI_RW),	/* Transmission path */
+	OMCI_ATTR(9, 7, 1, OMCI_RW),	/* Rx gain */
+	OMCI_ATTR(8, 8, 1, OMCI_RW),	/* Tx gain */
+	OMCI_ATTR(7, 9, 1, OMCI_R),	/* Operational state */
+	OMCI_ATTR(6, 10, 1, OMCI_R),	/* Hook state */
+	OMCI_ATTR(5, 11, 2, OMCI_RW),	/* POTS holdover time */
+	OMCI_ATTR(4, 13, 1, OMCI_RW),	/* Nominal feed voltage */
+	OMCI_ATTR(3, 14, 1, OMCI_RW),	/* Loss of softswitch */
+};
+
+/* G.988 class 58, Voice service profile */
+static const struct omci_attr_desc omci_voice_service_profile_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),	/* Announcement type */
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),	/* Jitter target */
+	OMCI_ATTR(13, 3, 2, OMCI_RW_SC),	/* Jitter buffer max */
+	OMCI_ATTR(12, 5, 1, OMCI_RW_SC),	/* Echo cancel ind */
+	OMCI_ATTR(11, 6, 2, OMCI_RW_SC),	/* PSTN protocol variant */
+	OMCI_ATTR(10, 8, 2, OMCI_RW_SC),	/* DTMF digit levels */
+	OMCI_ATTR(9, 10, 2, OMCI_RW_SC),	/* DTMF digit duration */
+	OMCI_ATTR(8, 12, 2, OMCI_RW_SC),	/* Hook flash minimum time */
+	OMCI_ATTR(7, 14, 2, OMCI_RW_SC),	/* Hook flash maximum time */
+	OMCI_ATTR(6, 16, 20, OMCI_RW),	/* Tone pattern table */
+	OMCI_ATTR(5, 36, 7, OMCI_RW),	/* Tone event table */
+	OMCI_ATTR(4, 43, 5, OMCI_RW),	/* Ringing pattern table */
+	OMCI_ATTR(3, 48, 7, OMCI_RW),	/* Ringing event table */
+	OMCI_ATTR(2, 55, 2, OMCI_RW_SC),	/* Network specific extensions pointer */
+};
+
+/* G.988 class 79, MAC bridge port filter preassign table */
+static const struct omci_attr_desc omci_mac_bridge_port_filter_preassign_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),	/* IPv4 multicast filtering */
+	OMCI_ATTR(14, 1, 1, OMCI_RW),	/* IPv6 multicast filtering */
+	OMCI_ATTR(13, 2, 1, OMCI_RW),	/* IPv4 broadcast filtering */
+	OMCI_ATTR(12, 3, 1, OMCI_RW),	/* RARP filtering */
+	OMCI_ATTR(11, 4, 1, OMCI_RW),	/* IPX filtering */
+	OMCI_ATTR(10, 5, 1, OMCI_RW),	/* NetBEUI filtering */
+	OMCI_ATTR(9, 6, 1, OMCI_RW),	/* AppleTalk filtering */
+	OMCI_ATTR(8, 7, 1, OMCI_RW),	/* Bridge management information filtering */
+	OMCI_ATTR(7, 8, 1, OMCI_RW),	/* ARP filtering */
+	OMCI_ATTR(6, 9, 1, OMCI_RW),	/* PPPoE broadcast filtering */
+};
+
+/* G.988 class 89, Ethernet performance monitoring history data 2 */
+static const struct omci_attr_desc omci_ethernet_pm_2_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Interval end time */
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),	/* Threshold data 1/2 ID */
+	OMCI_ATTR(13, 3, 4, OMCI_R),	/* PPPoE filtered frame counter */
+};
+
+/* G.988 class 133, ONU power shedding */
+static const struct omci_attr_desc omci_onu_power_shedding_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW),	/* Restore power timer reset interval */
+	OMCI_ATTR(14, 2, 2, OMCI_RW),	/* Data class shedding interval */
+	OMCI_ATTR(13, 4, 2, OMCI_RW),	/* Voice class shedding interval */
+	OMCI_ATTR(12, 6, 2, OMCI_RW),	/* Video overlay class shedding interval */
+	OMCI_ATTR(11, 8, 2, OMCI_RW),	/* Video return class shedding interval */
+	OMCI_ATTR(10, 10, 2, OMCI_RW),	/* DSL class shedding interval */
+	OMCI_ATTR(9, 12, 2, OMCI_RW),	/* ATM class shedding interval */
+	OMCI_ATTR(8, 14, 2, OMCI_RW),	/* CES class shedding interval */
+	OMCI_ATTR(7, 16, 2, OMCI_RW),	/* Frame class shedding interval */
+	OMCI_ATTR(6, 18, 2, OMCI_RW),	/* SDH-SONET class shedding interval */
+	OMCI_ATTR(5, 20, 2, OMCI_R),	/* Shedding status */
+};
+
+/* G.988 class 134, IP host config data */
+static const struct omci_attr_desc omci_ip_host_config_data_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),	/* IP options */
+	OMCI_ATTR(14, 1, 6, OMCI_R),	/* MAC address */
+	OMCI_ATTR(13, 7, 25, OMCI_RW),	/* ONU identifier */
+	OMCI_ATTR(12, 32, 4, OMCI_RW),	/* IP address */
+	OMCI_ATTR(11, 36, 4, OMCI_RW),	/* Mask */
+	OMCI_ATTR(10, 40, 4, OMCI_RW),	/* Gateway */
+	OMCI_ATTR(9, 44, 4, OMCI_RW),	/* Primary DNS */
+	OMCI_ATTR(8, 48, 4, OMCI_RW),	/* Secondary DNS */
+	OMCI_ATTR(7, 52, 4, OMCI_R),	/* Current address */
+	OMCI_ATTR(6, 56, 4, OMCI_R),	/* Current mask */
+	OMCI_ATTR(5, 60, 4, OMCI_R),	/* Current gateway */
+	OMCI_ATTR(4, 64, 4, OMCI_R),	/* Current primary DNS */
+	OMCI_ATTR(3, 68, 4, OMCI_R),	/* Current secondary DNS */
+	OMCI_ATTR(2, 72, 25, OMCI_R),	/* Domain name */
+	OMCI_ATTR(1, 97, 25, OMCI_R),	/* Host name */
+	OMCI_ATTR(0, 122, 2, OMCI_RW),	/* Relay agent options */
+};
+
+/* G.988 class 136, TCP/UDP config data */
+static const struct omci_attr_desc omci_tcp_udp_config_data_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW_SC),	/* Port ID */
+	OMCI_ATTR(14, 2, 1, OMCI_RW_SC),	/* Protocol */
+	OMCI_ATTR(13, 3, 1, OMCI_RW_SC),	/* TOS/diffserv field */
+	OMCI_ATTR(12, 4, 2, OMCI_RW_SC),	/* IP host pointer */
+};
+
+/* G.988 class 137, Network address */
+static const struct omci_attr_desc omci_network_address_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW_SC),	/* Security pointer */
+	OMCI_ATTR(14, 2, 2, OMCI_RW_SC),	/* Address pointer */
+};
+
+/* G.988 class 138, VoIP config data */
+static const struct omci_attr_desc omci_voip_config_data_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Available signalling protocols */
+	OMCI_ATTR(14, 1, 1, OMCI_RW),	/* Signalling protocol used */
+	OMCI_ATTR(13, 2, 4, OMCI_R),	/* Available VoIP configuration methods */
+	OMCI_ATTR(12, 6, 1, OMCI_RW),	/* VoIP configuration method used */
+	OMCI_ATTR(11, 7, 2, OMCI_RW),	/* VoIP configuration address pointer */
+	OMCI_ATTR(10, 9, 1, OMCI_R),	/* VoIP configuration state */
+	OMCI_ATTR(9, 10, 1, OMCI_W),	/* Retrieve profile */
+	OMCI_ATTR(8, 11, 25, OMCI_R),	/* Profile version */
+};
+
+/* G.988 class 139, VoIP voice CTP */
+static const struct omci_attr_desc omci_voip_voice_ctp_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW_SC),	/* User protocol pointer */
+	OMCI_ATTR(14, 2, 2, OMCI_RW_SC),	/* PPTP pointer */
+	OMCI_ATTR(13, 4, 2, OMCI_RW_SC),	/* VoIP media profile pointer */
+	OMCI_ATTR(12, 6, 1, OMCI_RW_SC),	/* Signalling code */
+};
+
+/* G.988 class 140, Call control performance monitoring history data */
+static const struct omci_attr_desc omci_call_control_pm_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Interval end time */
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),	/* Threshold data 1/2 ID */
+	OMCI_ATTR(13, 3, 4, OMCI_R),	/* Call setup failures */
+	OMCI_ATTR(12, 7, 4, OMCI_R),	/* Call setup timer */
+	OMCI_ATTR(11, 11, 4, OMCI_R),	/* Call terminate failures */
+	OMCI_ATTR(10, 15, 4, OMCI_R),	/* Analog port releases */
+	OMCI_ATTR(9, 19, 4, OMCI_R),	/* Analog port off-hook timer */
+};
+
+/* G.988 class 141, VoIP line status */
+static const struct omci_attr_desc omci_voip_line_status_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_R),	/* VoIP codec used */
+	OMCI_ATTR(14, 2, 1, OMCI_R),	/* VoIP voice server status */
+	OMCI_ATTR(13, 3, 1, OMCI_R),	/* VoIP port session type */
+	OMCI_ATTR(12, 4, 2, OMCI_R),	/* VoIP call 1 packet period */
+	OMCI_ATTR(11, 6, 2, OMCI_R),	/* VoIP call 2 packet period */
+	OMCI_ATTR(10, 8, 25, OMCI_R),	/* VoIP call 1 dest addr */
+	OMCI_ATTR(9, 33, 25, OMCI_R),	/* VoIP call 2 dest addr */
+	OMCI_ATTR(8, 58, 1, OMCI_R),	/* VoIP line state */
+	OMCI_ATTR(7, 59, 1, OMCI_R),	/* Emergency call status */
+};
+
+/* G.988 class 142, VoIP media profile */
+static const struct omci_attr_desc omci_voip_media_profile_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),	/* Fax mode */
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),	/* Voice service profile pointer */
+	OMCI_ATTR(13, 3, 1, OMCI_RW_SC),	/* Codec selection (1st order) */
+	OMCI_ATTR(12, 4, 1, OMCI_RW_SC),	/* Packet period selection (1st order) */
+	OMCI_ATTR(11, 5, 1, OMCI_RW_SC),	/* Silence suppression (1st order) */
+	OMCI_ATTR(10, 6, 1, OMCI_RW_SC),	/* Codec selection (2nd order) */
+	OMCI_ATTR(9, 7, 1, OMCI_RW_SC),	/* Packet period selection (2nd order) */
+	OMCI_ATTR(8, 8, 1, OMCI_RW_SC),	/* Silence suppression (2nd order) */
+	OMCI_ATTR(7, 9, 1, OMCI_RW_SC),	/* Codec selection (3rd order) */
+	OMCI_ATTR(6, 10, 1, OMCI_RW_SC),	/* Packet period selection (3rd order) */
+	OMCI_ATTR(5, 11, 1, OMCI_RW_SC),	/* Silence suppression (3rd order) */
+	OMCI_ATTR(4, 12, 1, OMCI_RW_SC),	/* Codec selection (4th order) */
+	OMCI_ATTR(3, 13, 1, OMCI_RW_SC),	/* Packet period selection (4th order) */
+	OMCI_ATTR(2, 14, 1, OMCI_RW_SC),	/* Silence suppression (4th order) */
+	OMCI_ATTR(1, 15, 1, OMCI_RW_SC),	/* OOB DTMF */
+	OMCI_ATTR(0, 16, 2, OMCI_RW_SC),	/* RTP profile pointer */
+};
+
+/* G.988 class 143, RTP profile data */
+static const struct omci_attr_desc omci_rtp_profile_data_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW_SC),	/* Local port min */
+	OMCI_ATTR(14, 2, 2, OMCI_RW_SC),	/* Local port max */
+	OMCI_ATTR(13, 4, 1, OMCI_RW_SC),	/* DSCP mark */
+	OMCI_ATTR(12, 5, 1, OMCI_RW_SC),	/* Piggyback events */
+	OMCI_ATTR(11, 6, 1, OMCI_RW_SC),	/* Tone events */
+	OMCI_ATTR(10, 7, 1, OMCI_RW_SC),	/* DTMF events */
+	OMCI_ATTR(9, 8, 1, OMCI_RW_SC),	/* CAS events */
+	OMCI_ATTR(8, 9, 2, OMCI_RW),	/* IP host config pointer */
+};
+
+/* G.988 class 144, RTP performance monitoring history data */
+static const struct omci_attr_desc omci_rtp_pm_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Interval end time */
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),	/* Threshold data 1/2 ID */
+	OMCI_ATTR(13, 3, 4, OMCI_R),	/* RTP errors */
+	OMCI_ATTR(12, 7, 4, OMCI_R),	/* Packet loss */
+	OMCI_ATTR(11, 11, 4, OMCI_R),	/* Maximum jitter */
+	OMCI_ATTR(10, 15, 4, OMCI_R),	/* Maximum time between RTCP packets */
+	OMCI_ATTR(9, 19, 4, OMCI_R),	/* Buffer underflows */
+	OMCI_ATTR(8, 23, 4, OMCI_R),	/* Buffer overflows */
+};
+
+/* G.988 class 145, Network dial plan table */
+static const struct omci_attr_desc omci_network_dial_plan_table_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_R),	/* Dial plan number */
+	OMCI_ATTR(14, 2, 2, OMCI_R_SC),	/* Dial plan table max size */
+	OMCI_ATTR(13, 4, 2, OMCI_RW_SC),	/* Critical dial timeout */
+	OMCI_ATTR(12, 6, 2, OMCI_RW_SC),	/* Partial dial timeout */
+	OMCI_ATTR(11, 8, 1, OMCI_RW_SC),	/* Dial plan format */
+	OMCI_ATTR(10, 9, 30, OMCI_RW),	/* Dial plan table */
+};
+
+/* G.988 class 146, VoIP application service profile */
+static const struct omci_attr_desc omci_voip_app_service_profile_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),	/* CID features */
+	OMCI_ATTR(14, 1, 1, OMCI_RW_SC),	/* Call waiting features */
+	OMCI_ATTR(13, 2, 2, OMCI_RW_SC),	/* Call progress or transfer features */
+	OMCI_ATTR(12, 4, 2, OMCI_RW_SC),	/* Call presentation features */
+	OMCI_ATTR(11, 6, 1, OMCI_RW_SC),	/* Direct connect feature */
+	OMCI_ATTR(10, 7, 2, OMCI_RW_SC),	/* Direct connect URI pointer */
+	OMCI_ATTR(9, 9, 2, OMCI_RW_SC),	/* Bridged line agent URI pointer */
+	OMCI_ATTR(8, 11, 2, OMCI_RW_SC),	/* Conference factory URI pointer */
+	OMCI_ATTR(7, 13, 2, OMCI_RW),	/* Dial tone feature delay/warmline timer */
+};
+
+/* G.988 class 147, VoIP feature access codes */
+static const struct omci_attr_desc omci_voip_feature_access_codes_attrs[] = {
+	OMCI_ATTR(15, 0, 5, OMCI_RW),	/* Cancel call waiting */
+	OMCI_ATTR(14, 5, 5, OMCI_RW),	/* Call hold */
+	OMCI_ATTR(13, 10, 5, OMCI_RW),	/* Call park */
+	OMCI_ATTR(12, 15, 5, OMCI_RW),	/* Caller ID activate */
+	OMCI_ATTR(11, 20, 5, OMCI_RW),	/* Caller ID deactivate */
+	OMCI_ATTR(10, 25, 5, OMCI_RW),	/* Do not disturb activation */
+	OMCI_ATTR(9, 30, 5, OMCI_RW),	/* Do not disturb deactivation */
+	OMCI_ATTR(8, 35, 5, OMCI_RW),	/* Do not disturb PIN change */
+	OMCI_ATTR(7, 40, 5, OMCI_RW),	/* Emergency service number */
+	OMCI_ATTR(6, 45, 5, OMCI_RW),	/* Intercom service */
+	OMCI_ATTR(5, 50, 5, OMCI_RW),	/* Unattended/blind call transfer */
+	OMCI_ATTR(4, 55, 5, OMCI_RW),	/* Attended call transfer */
+};
+
+/* G.988 class 148, Authentication security method */
+static const struct omci_attr_desc omci_auth_method_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),	/* Validation scheme */
+	OMCI_ATTR(14, 1, 25, OMCI_RW_SC),	/* Username 1 */
+	OMCI_ATTR(13, 26, 25, OMCI_RW),	/* Password */
+	OMCI_ATTR(12, 51, 25, OMCI_RW),	/* Realm */
+	OMCI_ATTR(11, 76, 14, OMCI_RW),	/* Username 2 */
+};
+
+/* G.988 class 150, SIP agent config data */
+static const struct omci_attr_desc omci_sip_agent_config_data_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW_SC),	/* Proxy server address pointer */
+	OMCI_ATTR(14, 2, 2, OMCI_RW_SC),	/* Outbound proxy address pointer */
+	OMCI_ATTR(13, 4, 4, OMCI_RW_SC),	/* Primary SIP DNS */
+	OMCI_ATTR(12, 8, 4, OMCI_RW_SC),	/* Secondary SIP DNS */
+	OMCI_ATTR(11, 12, 2, OMCI_RW),	/* TCP/UDP pointer */
+	OMCI_ATTR(10, 14, 4, OMCI_RW),	/* SIP reg exp time */
+	OMCI_ATTR(9, 18, 4, OMCI_RW),	/* SIP rereg head start time */
+	OMCI_ATTR(8, 22, 2, OMCI_RW_SC),	/* Host part URI */
+	OMCI_ATTR(7, 24, 1, OMCI_R),	/* SIP status */
+	OMCI_ATTR(6, 25, 2, OMCI_RW_SC),	/* SIP registrar */
+	OMCI_ATTR(5, 27, 4, OMCI_RW_SC),	/* Softswitch */
+	OMCI_ATTR(4, 31, 5, OMCI_RW),	/* SIP response table */
+	OMCI_ATTR(3, 36, 1, OMCI_RW_SC),	/* SIP option transmit control */
+	OMCI_ATTR(2, 37, 1, OMCI_R),	/* SIP URI format */
+	OMCI_ATTR(1, 38, 2, OMCI_RW_SC),	/* Redundant SIP agent pointer */
+};
+
+/* G.988 class 151, SIP agent performance monitoring history data */
+static const struct omci_attr_desc omci_sip_agent_pm_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Interval end time */
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),	/* Threshold data 1/2 ID */
+	OMCI_ATTR(13, 3, 4, OMCI_R),	/* Transactions */
+	OMCI_ATTR(12, 7, 4, OMCI_R),	/* Rx invite reqs */
+	OMCI_ATTR(11, 11, 4, OMCI_R),	/* Rx invite retrans */
+	OMCI_ATTR(10, 15, 4, OMCI_R),	/* Rx noninvite reqs */
+	OMCI_ATTR(9, 19, 4, OMCI_R),	/* Rx noninvite retrans */
+	OMCI_ATTR(8, 23, 4, OMCI_R),	/* Rx response */
+	OMCI_ATTR(7, 27, 4, OMCI_R),	/* Rx response retransmissions */
+	OMCI_ATTR(6, 31, 4, OMCI_R),	/* Tx invite reqs */
+	OMCI_ATTR(5, 35, 4, OMCI_R),	/* Tx invite retrans */
+	OMCI_ATTR(4, 39, 4, OMCI_R),	/* Tx noninvite reqs */
+	OMCI_ATTR(3, 43, 4, OMCI_R),	/* Tx noninvite retrans */
+	OMCI_ATTR(2, 47, 4, OMCI_R),	/* Tx response */
+	OMCI_ATTR(1, 51, 4, OMCI_R),	/* Tx response retransmissions */
+};
+
+/* G.988 class 152, SIP call initiation performance monitoring history data */
+static const struct omci_attr_desc omci_sip_call_init_pm_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Interval end time */
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),	/* Threshold data 1/2 ID */
+	OMCI_ATTR(13, 3, 4, OMCI_R),	/* Failed to connect counter */
+	OMCI_ATTR(12, 7, 4, OMCI_R),	/* Failed to validate counter */
+	OMCI_ATTR(11, 11, 4, OMCI_R),	/* Timeout counter */
+	OMCI_ATTR(10, 15, 4, OMCI_R),	/* Failure received counter */
+	OMCI_ATTR(9, 19, 4, OMCI_R),	/* Failed to authenticate counter */
+};
+
+/* G.988 class 153, SIP user data */
+static const struct omci_attr_desc omci_sip_user_data_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW_SC),	/* SIP agent pointer */
+	OMCI_ATTR(14, 2, 2, OMCI_RW_SC),	/* User part AOR */
+	OMCI_ATTR(13, 4, 25, OMCI_RW),	/* SIP display name */
+	OMCI_ATTR(12, 29, 2, OMCI_RW_SC),	/* Username/password */
+	OMCI_ATTR(11, 31, 2, OMCI_RW_SC),	/* Voicemail server SIP URI */
+	OMCI_ATTR(10, 33, 4, OMCI_RW_SC),	/* Voicemail subscription expiration time */
+	OMCI_ATTR(9, 37, 2, OMCI_RW_SC),	/* Network dial plan pointer */
+	OMCI_ATTR(8, 39, 2, OMCI_RW_SC),	/* Application services profile pointer */
+	OMCI_ATTR(7, 41, 2, OMCI_RW_SC),	/* Feature code pointer */
+	OMCI_ATTR(6, 43, 2, OMCI_RW_SC),	/* PPTP pointer */
+	OMCI_ATTR(5, 45, 1, OMCI_RW),	/* Release timer */
+	OMCI_ATTR(4, 46, 1, OMCI_RW),	/* ROH timer */
+};
+
+/* G.988 class 157, Large string */
+static const struct omci_attr_desc omci_large_string_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),	/* Number of parts */
+	OMCI_ATTR(14, 1, 25, OMCI_RW),	/* Part 1 */
+	OMCI_ATTR(13, 26, 25, OMCI_RW),	/* Part 2 */
+	OMCI_ATTR(12, 51, 25, OMCI_RW),	/* Part 3 */
+	OMCI_ATTR(11, 76, 25, OMCI_RW),	/* Part 4 */
+	OMCI_ATTR(10, 101, 25, OMCI_RW),	/* Part 5 */
+	OMCI_ATTR(9, 126, 25, OMCI_RW),	/* Part 6 */
+	OMCI_ATTR(8, 151, 25, OMCI_RW),	/* Part 7 */
+	OMCI_ATTR(7, 176, 25, OMCI_RW),	/* Part 8 */
+	OMCI_ATTR(6, 201, 25, OMCI_RW),	/* Part 9 */
+	OMCI_ATTR(5, 226, 25, OMCI_RW),	/* Part 10 */
+	OMCI_ATTR(4, 251, 25, OMCI_RW),	/* Part 11 */
+	OMCI_ATTR(3, 276, 25, OMCI_RW),	/* Part 12 */
+	OMCI_ATTR(2, 301, 25, OMCI_RW),	/* Part 13 */
+	OMCI_ATTR(1, 326, 25, OMCI_RW),	/* Part 14 */
+	OMCI_ATTR(0, 351, 25, OMCI_RW),	/* Part 15 */
+};
+
+/* G.988 class 158, ONU remote debug */
+static const struct omci_attr_desc omci_onu_remote_debug_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Command format */
+	OMCI_ATTR(14, 1, 25, OMCI_W),	/* Command */
+	OMCI_ATTR(13, 26, 25, OMCI_R),	/* Reply table */
+};
+
+/* G.988 class 273, Threshold data 1 */
+static const struct omci_attr_desc omci_threshold_data_1_attrs[] = {
+	OMCI_ATTR(15, 0, 4, OMCI_RW_SC),	/* Threshold value 1 */
+	OMCI_ATTR(14, 4, 4, OMCI_RW_SC),	/* Threshold value 2 */
+	OMCI_ATTR(13, 8, 4, OMCI_RW_SC),	/* Threshold value 3 */
+	OMCI_ATTR(12, 12, 4, OMCI_RW_SC),	/* Threshold value 4 */
+	OMCI_ATTR(11, 16, 4, OMCI_RW_SC),	/* Threshold value 5 */
+	OMCI_ATTR(10, 20, 4, OMCI_RW_SC),	/* Threshold value 6 */
+	OMCI_ATTR(9, 24, 4, OMCI_RW_SC),	/* Threshold value 7 */
+};
+
+/* G.988 class 274, Threshold data 2 */
+static const struct omci_attr_desc omci_threshold_data_2_attrs[] = {
+	OMCI_ATTR(15, 0, 4, OMCI_RW_SC),	/* Threshold value 8 */
+	OMCI_ATTR(14, 4, 4, OMCI_RW_SC),	/* Threshold value 9 */
+	OMCI_ATTR(13, 8, 4, OMCI_RW_SC),	/* Threshold value 10 */
+	OMCI_ATTR(12, 12, 4, OMCI_RW_SC),	/* Threshold value 11 */
+	OMCI_ATTR(11, 16, 4, OMCI_RW_SC),	/* Threshold value 12 */
+	OMCI_ATTR(10, 20, 4, OMCI_RW_SC),	/* Threshold value 13 */
+	OMCI_ATTR(9, 24, 4, OMCI_RW_SC),	/* Threshold value 14 */
+};
+
+/* G.988 class 276, GAL Ethernet performance monitoring history data */
+static const struct omci_attr_desc omci_gal_ethernet_pm_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Interval end time */
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),	/* Threshold data 1/2 ID */
+	OMCI_ATTR(13, 3, 4, OMCI_R),	/* Discarded frames */
+};
+
+/* G.988 class 296, Ethernet performance monitoring history data 3 */
+static const struct omci_attr_desc omci_ethernet_pm_3_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Interval end time */
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),	/* Threshold data 1/2 ID */
+	OMCI_ATTR(13, 3, 4, OMCI_R),	/* Drop events */
+	OMCI_ATTR(12, 7, 4, OMCI_R),	/* Octets */
+	OMCI_ATTR(11, 11, 4, OMCI_R),	/* Packets */
+	OMCI_ATTR(10, 15, 4, OMCI_R),	/* Broadcast packets */
+	OMCI_ATTR(9, 19, 4, OMCI_R),	/* Multicast packets */
+	OMCI_ATTR(8, 23, 4, OMCI_R),	/* Undersize packets */
+	OMCI_ATTR(7, 27, 4, OMCI_R),	/* Fragments */
+	OMCI_ATTR(6, 31, 4, OMCI_R),	/* Jabbers */
+	OMCI_ATTR(5, 35, 4, OMCI_R),	/* Packets 64 octets */
+	OMCI_ATTR(4, 39, 4, OMCI_R),	/* Packets 65 to 127 octets */
+	OMCI_ATTR(3, 43, 4, OMCI_R),	/* Packets 128 to 255 octets */
+	OMCI_ATTR(2, 47, 4, OMCI_R),	/* Packets 256 to 511 octets */
+	OMCI_ATTR(1, 51, 4, OMCI_R),	/* Packets 512 to 1023 octets */
+	OMCI_ATTR(0, 55, 4, OMCI_R),	/* Packets 1024 to 1518 octets */
+};
+
+/* G.988 class 298, Dot1 rate limiter */
+static const struct omci_attr_desc omci_dot1_rate_limiter_attrs[] = {
+	OMCI_ATTR(15, 0, 2, OMCI_RW_SC),	/* Parent ME pointer */
+	OMCI_ATTR(14, 2, 1, OMCI_RW_SC),	/* TP type */
+	OMCI_ATTR(13, 3, 2, OMCI_RW_SC),	/* Upstream unicast flood rate pointer */
+	OMCI_ATTR(12, 5, 2, OMCI_RW_SC),	/* Upstream broadcast rate pointer */
+	OMCI_ATTR(11, 7, 2, OMCI_RW_SC),	/* Upstream multicast payload rate pointer */
+	OMCI_ATTR(10, 9, 2, OMCI_RW),	/* Downstream unicast flood rate pointer */
+	OMCI_ATTR(9, 11, 2, OMCI_RW),	/* Downstream broadcast rate pointer */
+	OMCI_ATTR(8, 13, 2, OMCI_RW),	/* Downstream multicast payload rate pointer */
+};
+
+/* G.988 class 311, Multicast subscriber monitor */
+static const struct omci_attr_desc omci_multicast_subscriber_monitor_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW_SC),	/* ME type */
+	OMCI_ATTR(14, 1, 4, OMCI_R),	/* Current multicast bandwidth */
+	OMCI_ATTR(13, 5, 4, OMCI_R),	/* Join messages counter */
+	OMCI_ATTR(12, 9, 4, OMCI_R),	/* Bandwidth exceeded counter */
+	OMCI_ATTR(11, 13, 24, OMCI_R),	/* IPv4 active group list table */
+	OMCI_ATTR(10, 37, 58, OMCI_R),	/* IPv6 active group list table */
+};
+
+/* G.988 class 336, ONU dynamic power management control */
+static const struct omci_attr_desc omci_onu_dynamic_power_mgmt_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Power reduction management capability */
+	OMCI_ATTR(14, 1, 1, OMCI_RW),	/* Power reduction management mode */
+	OMCI_ATTR(13, 2, 2, OMCI_R),	/* Itransinit */
+	OMCI_ATTR(12, 4, 2, OMCI_R),	/* Itxinit */
+	OMCI_ATTR(11, 6, 4, OMCI_RW),	/* Maximum sleep interval */
+	OMCI_ATTR(10, 10, 4, OMCI_RW),	/* Maximum receiver-off interval */
+	OMCI_ATTR(9, 14, 4, OMCI_RW),	/* Minimum aware interval */
+	OMCI_ATTR(8, 18, 2, OMCI_RW),	/* Minimum active held interval */
+	OMCI_ATTR(7, 20, 8, OMCI_RW),	/* Maximum sleep interval extension */
+	OMCI_ATTR(6, 28, 1, OMCI_R),	/* Ethernet passive optical network capability extension */
+	OMCI_ATTR(5, 29, 1, OMCI_RW),	/* Ethernet passive optical network setup extension */
+	OMCI_ATTR(4, 30, 4, OMCI_RW),	/* Missing consecutive bursts threshold */
+};
+
+/* G.988 class 340, TR-069 management server */
+static const struct omci_attr_desc omci_tr069_management_server_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_RW),	/* Administrative state */
+	OMCI_ATTR(14, 1, 2, OMCI_RW),	/* ACS network address */
+	OMCI_ATTR(13, 3, 2, OMCI_RW),	/* Associated tag */
+};
+
+/* G.988 class 341, GEM port network CTP performance monitoring history data */
+static const struct omci_attr_desc omci_gem_port_ctp_pm_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Interval end time */
+	OMCI_ATTR(14, 1, 2, OMCI_RW_SC),	/* Threshold data 1/2 ID */
+	OMCI_ATTR(13, 3, 4, OMCI_R),	/* Transmitted GEM frames */
+	OMCI_ATTR(12, 7, 4, OMCI_R),	/* Received GEM frames */
+	OMCI_ATTR(11, 11, 8, OMCI_R),	/* Received payload bytes */
+	OMCI_ATTR(10, 19, 8, OMCI_R),	/* Transmitted payload bytes */
+	OMCI_ATTR(9, 27, 4, OMCI_R),	/* Encryption key errors */
+};
+
+/* G.988 class 334, Ethernet frame extended PM */
+static const struct omci_attr_desc omci_ethernet_frame_ext_pm_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Interval end time */
+	OMCI_ATTR(14, 1, 16, OMCI_RW_SC),	/* Control block */
+	OMCI_ATTR(13, 17, 4, OMCI_R),	/* Drop events */
+	OMCI_ATTR(12, 21, 4, OMCI_R),	/* Octets */
+	OMCI_ATTR(11, 25, 4, OMCI_R),	/* Frames */
+	OMCI_ATTR(10, 29, 4, OMCI_R),	/* Broadcast frames */
+	OMCI_ATTR(9, 33, 4, OMCI_R),	/* Multicast frames */
+	OMCI_ATTR(8, 37, 4, OMCI_R),	/* CRC errored frames */
+	OMCI_ATTR(7, 41, 4, OMCI_R),	/* Undersize frames */
+	OMCI_ATTR(6, 45, 4, OMCI_R),	/* Oversize frames */
+	OMCI_ATTR(5, 49, 4, OMCI_R),	/* Frames 64 octets */
+	OMCI_ATTR(4, 53, 4, OMCI_R),	/* Frames 65 to 127 octets */
+	OMCI_ATTR(3, 57, 4, OMCI_R),	/* Frames 128 to 255 octets */
+	OMCI_ATTR(2, 61, 4, OMCI_R),	/* Frames 256 to 511 octets */
+	OMCI_ATTR(1, 65, 4, OMCI_R),	/* Frames 512 to 1023 octets */
+	OMCI_ATTR(0, 69, 4, OMCI_R),	/* Frames 1024 to 1518 octets */
+};
+
+/* G.988 class 425, Ethernet frame extended PM 64-bit */
+static const struct omci_attr_desc omci_ethernet_frame_ext_pm_64_attrs[] = {
+	OMCI_ATTR(15, 0, 1, OMCI_R),	/* Interval end time */
+	OMCI_ATTR(14, 1, 16, OMCI_RW_SC),	/* Control block */
+	OMCI_ATTR(13, 17, 8, OMCI_R),	/* Drop events */
+	OMCI_ATTR(12, 25, 8, OMCI_R),	/* Octets */
+	OMCI_ATTR(11, 33, 8, OMCI_R),	/* Frames */
+	OMCI_ATTR(10, 41, 8, OMCI_R),	/* Broadcast frames */
+	OMCI_ATTR(9, 49, 8, OMCI_R),	/* Multicast frames */
+	OMCI_ATTR(8, 57, 8, OMCI_R),	/* CRC errored frames */
+	OMCI_ATTR(7, 65, 8, OMCI_R),	/* Undersize frames */
+	OMCI_ATTR(6, 73, 8, OMCI_R),	/* Oversize frames */
+	OMCI_ATTR(5, 81, 8, OMCI_R),	/* Frames 64 octets */
+	OMCI_ATTR(4, 89, 8, OMCI_R),	/* Frames 65 to 127 octets */
+	OMCI_ATTR(3, 97, 8, OMCI_R),	/* Frames 128 to 255 octets */
+	OMCI_ATTR(2, 105, 8, OMCI_R),	/* Frames 256 to 511 octets */
+	OMCI_ATTR(1, 113, 8, OMCI_R),	/* Frames 512 to 1023 octets */
+	OMCI_ATTR(0, 121, 8, OMCI_R),	/* Frames 1024 to 1518 octets */
+};
+
 #define STANDARD_ACTIONS (OMCI_ME_ACTION_GET | OMCI_ME_ACTION_SET)
 #define OLT_CREATED_ACTIONS (OMCI_ME_ACTION_CREATE | OMCI_ME_ACTION_DELETE | \
 			     OMCI_ME_ACTION_GET | OMCI_ME_ACTION_SET)
+#define PM_ACTIONS (OLT_CREATED_ACTIONS | OMCI_ME_ACTION_GET_CURRENT_DATA)
 #define STANDARD_DESC(_class, _name, _actions, _flags, _mask, _upload, \
 		      _len, _category, _support, _attrs) \
 	{ .class_id = (_class), .name = (_name), \
@@ -769,6 +1298,211 @@ static const struct omci_me_desc omci_me_descs[] = {
 		      OMCI_CLASS_CATEGORY_UNI, OMCI_CLASS_SUPPORT_PROVISIONED,
 		      omci_veip_attrs),
 
+	STANDARD_DESC(OMCI_CLASS_ETHERNET_PM, "Ethernet performance monitoring history data",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 0), OMCI_GENMASK(15, 0), 59,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_ethernet_pm_attrs),
+	STANDARD_DESC(OMCI_CLASS_MAC_BRIDGE_PORT_FILTER_TABLE, "MAC bridge port filter table data",
+		      STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		      OMCI_GENMASK(15, 15), 0x0000, 8,
+		      OMCI_CLASS_CATEGORY_LAYER2, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_mac_bridge_port_filter_table_attrs),
+	STANDARD_DESC(OMCI_CLASS_MAC_BRIDGE_PORT_BRIDGE_TABLE, "MAC bridge port bridge table data",
+		      STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		      OMCI_GENMASK(15, 15), 0x0000, 8,
+		      OMCI_CLASS_CATEGORY_LAYER2, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_mac_bridge_port_bridge_table_attrs),
+	STANDARD_DESC(OMCI_CLASS_MAC_BRIDGE_PM, "MAC bridge performance monitoring history data",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 13), OMCI_GENMASK(15, 13), 7,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_mac_bridge_pm_attrs),
+	STANDARD_DESC(OMCI_CLASS_MAC_BRIDGE_PORT_PM, "MAC bridge port performance monitoring history data",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 9), OMCI_GENMASK(15, 9), 23,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_mac_bridge_port_pm_attrs),
+	STANDARD_DESC(OMCI_CLASS_PPTP_POTS_UNI, "Physical path termination point POTS UNI",
+		      STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		      OMCI_GENMASK(15, 3), OMCI_GENMASK(15, 3), 15,
+		      OMCI_CLASS_CATEGORY_VOICE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_pptp_pots_uni_attrs),
+	STANDARD_DESC(OMCI_CLASS_VOICE_SERVICE_PROFILE, "Voice service profile",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 2), 0xff84, 57,
+		      OMCI_CLASS_CATEGORY_VOICE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_voice_service_profile_attrs),
+	STANDARD_DESC(OMCI_CLASS_MAC_BRIDGE_PORT_FILTER_PREASSIGN, "MAC bridge port filter preassign table",
+		      STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		      OMCI_GENMASK(15, 6), OMCI_GENMASK(15, 6), 10,
+		      OMCI_CLASS_CATEGORY_LAYER2, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_mac_bridge_port_filter_preassign_attrs),
+	STANDARD_DESC(OMCI_CLASS_ETHERNET_PM_2, "Ethernet performance monitoring history data 2",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 13), OMCI_GENMASK(15, 13), 7,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_ethernet_pm_2_attrs),
+	STANDARD_DESC(OMCI_CLASS_ONU_POWER_SHEDDING, "ONU power shedding",
+		      STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		      OMCI_GENMASK(15, 5), OMCI_GENMASK(15, 5), 22,
+		      OMCI_CLASS_CATEGORY_EQUIPMENT, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_onu_power_shedding_attrs),
+	STANDARD_DESC(OMCI_CLASS_IP_HOST_CONFIG_DATA, "IP host config data",
+		      STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		      OMCI_GENMASK(15, 0), OMCI_GENMASK(15, 0), 124,
+		      OMCI_CLASS_CATEGORY_LAYER3, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_ip_host_config_data_attrs),
+	STANDARD_DESC(OMCI_CLASS_TCP_UDP_CONFIG_DATA, "TCP/UDP config data",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 12), OMCI_GENMASK(15, 12), 6,
+		      OMCI_CLASS_CATEGORY_LAYER3, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_tcp_udp_config_data_attrs),
+	STANDARD_DESC(OMCI_CLASS_NETWORK_ADDRESS, "Network address",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 14), OMCI_GENMASK(15, 14), 4,
+		      OMCI_CLASS_CATEGORY_MANAGEMENT, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_network_address_attrs),
+	STANDARD_DESC(OMCI_CLASS_VOIP_CONFIG_DATA, "VoIP config data",
+		      STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		      OMCI_GENMASK(15, 8), OMCI_GENMASK(15, 8), 36,
+		      OMCI_CLASS_CATEGORY_VOICE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_voip_config_data_attrs),
+	STANDARD_DESC(OMCI_CLASS_VOIP_VOICE_CTP, "VoIP voice CTP",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 12), OMCI_GENMASK(15, 12), 7,
+		      OMCI_CLASS_CATEGORY_VOICE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_voip_voice_ctp_attrs),
+	STANDARD_DESC(OMCI_CLASS_CALL_CONTROL_PM, "Call control performance monitoring history data",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 9), OMCI_GENMASK(15, 9), 23,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_call_control_pm_attrs),
+	STANDARD_DESC(OMCI_CLASS_VOIP_LINE_STATUS, "VoIP line status",
+		      STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		      OMCI_GENMASK(15, 7), OMCI_GENMASK(15, 7), 60,
+		      OMCI_CLASS_CATEGORY_VOICE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_voip_line_status_attrs),
+	STANDARD_DESC(OMCI_CLASS_VOIP_MEDIA_PROFILE, "VoIP media profile",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 0), OMCI_GENMASK(15, 0), 18,
+		      OMCI_CLASS_CATEGORY_VOICE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_voip_media_profile_attrs),
+	STANDARD_DESC(OMCI_CLASS_RTP_PROFILE_DATA, "RTP profile data",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 8), OMCI_GENMASK(15, 8), 11,
+		      OMCI_CLASS_CATEGORY_VOICE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_rtp_profile_data_attrs),
+	STANDARD_DESC(OMCI_CLASS_RTP_PM, "RTP performance monitoring history data",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 8), OMCI_GENMASK(15, 8), 27,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_rtp_pm_attrs),
+	STANDARD_DESC(OMCI_CLASS_NETWORK_DIAL_PLAN_TABLE, "Network dial plan table",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 10), 0xf800, 39,
+		      OMCI_CLASS_CATEGORY_VOICE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_network_dial_plan_table_attrs),
+	STANDARD_DESC(OMCI_CLASS_VOIP_APP_SERVICE_PROFILE, "VoIP application service profile",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 7), OMCI_GENMASK(15, 7), 15,
+		      OMCI_CLASS_CATEGORY_VOICE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_voip_app_service_profile_attrs),
+	STANDARD_DESC(OMCI_CLASS_VOIP_FEATURE_ACCESS_CODES, "VoIP feature access codes",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 4), OMCI_GENMASK(15, 4), 60,
+		      OMCI_CLASS_CATEGORY_VOICE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_voip_feature_access_codes_attrs),
+	STANDARD_DESC(OMCI_CLASS_AUTH_METHOD, "Authentication security method",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 11), OMCI_GENMASK(15, 11), 90,
+		      OMCI_CLASS_CATEGORY_SECURITY, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_auth_method_attrs),
+	STANDARD_DESC(OMCI_CLASS_SIP_AGENT_CONFIG_DATA, "SIP agent config data",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 1), 0xffee, 40,
+		      OMCI_CLASS_CATEGORY_VOICE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_sip_agent_config_data_attrs),
+	STANDARD_DESC(OMCI_CLASS_SIP_AGENT_PM, "SIP agent performance monitoring history data",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 1), OMCI_GENMASK(15, 1), 55,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_sip_agent_pm_attrs),
+	STANDARD_DESC(OMCI_CLASS_SIP_CALL_INIT_PM, "SIP call initiation performance monitoring history data",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 9), OMCI_GENMASK(15, 9), 23,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_sip_call_init_pm_attrs),
+	STANDARD_DESC(OMCI_CLASS_SIP_USER_DATA, "SIP user data",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 4), OMCI_GENMASK(15, 4), 47,
+		      OMCI_CLASS_CATEGORY_VOICE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_sip_user_data_attrs),
+	STANDARD_DESC(OMCI_CLASS_LARGE_STRING, "Large string",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 0), OMCI_GENMASK(15, 0), 376,
+		      OMCI_CLASS_CATEGORY_MANAGEMENT, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_large_string_attrs),
+	STANDARD_DESC(OMCI_CLASS_ONU_REMOTE_DEBUG, "ONU remote debug",
+		      STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		      OMCI_GENMASK(15, 13), 0xc000, 51,
+		      OMCI_CLASS_CATEGORY_EQUIPMENT, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_onu_remote_debug_attrs),
+	STANDARD_DESC(OMCI_CLASS_THRESHOLD_DATA_1, "Threshold data 1",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 9), OMCI_GENMASK(15, 9), 28,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_threshold_data_1_attrs),
+	STANDARD_DESC(OMCI_CLASS_THRESHOLD_DATA_2, "Threshold data 2",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 9), OMCI_GENMASK(15, 9), 28,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_threshold_data_2_attrs),
+	STANDARD_DESC(OMCI_CLASS_GAL_ETHERNET_PM, "GAL Ethernet performance monitoring history data",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 13), OMCI_GENMASK(15, 13), 7,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_gal_ethernet_pm_attrs),
+	STANDARD_DESC(OMCI_CLASS_ETHERNET_PM_3, "Ethernet performance monitoring history data 3",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 0), OMCI_GENMASK(15, 0), 59,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_ethernet_pm_3_attrs),
+	STANDARD_DESC(OMCI_CLASS_DOT1_RATE_LIMITER, "Dot1 rate limiter",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 8), OMCI_GENMASK(15, 8), 15,
+		      OMCI_CLASS_CATEGORY_LAYER2, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_dot1_rate_limiter_attrs),
+	STANDARD_DESC(OMCI_CLASS_MULTICAST_SUBSCRIBER_MONITOR, "Multicast subscriber monitor",
+		      OLT_CREATED_ACTIONS, 0,
+		      OMCI_GENMASK(15, 10), 0xf000, 95,
+		      OMCI_CLASS_CATEGORY_MULTICAST, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_multicast_subscriber_monitor_attrs),
+	STANDARD_DESC(OMCI_CLASS_ONU_DYNAMIC_POWER_MGMT, "ONU dynamic power management control",
+		      STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		      OMCI_GENMASK(15, 4), OMCI_GENMASK(15, 4), 34,
+		      OMCI_CLASS_CATEGORY_EQUIPMENT, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_onu_dynamic_power_mgmt_attrs),
+	STANDARD_DESC(OMCI_CLASS_TR069_MANAGEMENT_SERVER, "TR-069 management server",
+		      STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,
+		      OMCI_GENMASK(15, 13), OMCI_GENMASK(15, 13), 5,
+		      OMCI_CLASS_CATEGORY_LAYER3, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_tr069_management_server_attrs),
+	STANDARD_DESC(OMCI_CLASS_GEM_PORT_CTP_PM, "GEM port network CTP performance monitoring history data",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 9), OMCI_GENMASK(15, 9), 31,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_gem_port_ctp_pm_attrs),
+	STANDARD_DESC(OMCI_CLASS_ETHERNET_FRAME_EXT_PM, "Ethernet frame extended PM",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 0), OMCI_GENMASK(15, 0), 73,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_ethernet_frame_ext_pm_attrs),
+	STANDARD_DESC(OMCI_CLASS_ETHERNET_FRAME_EXT_PM_64, "Ethernet frame extended PM 64-bit",
+		      PM_ACTIONS, 0,
+		      OMCI_GENMASK(15, 0), OMCI_GENMASK(15, 0), 129,
+		      OMCI_CLASS_CATEGORY_PERFORMANCE, OMCI_CLASS_SUPPORT_PARSED,
+		      omci_ethernet_frame_ext_pm_64_attrs),
 	VENDOR_DESC(OMCI_CLASS_HUAWEI_FLOW_MAPPING,
 		    "Huawei flow mapping configuration", OMCI_OLT_PROFILE_HUAWEI,
 		    STANDARD_ACTIONS, OMCI_ME_F_ONU_CREATED,

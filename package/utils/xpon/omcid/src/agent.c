@@ -175,6 +175,10 @@ enum {
 #define OMCI_ETHERNET_UNIT_TYPE		47
 #define OMCI_VEIP_UNIT_TYPE		48
 #define OMCI_GPON_UNIT_TYPE		248
+/* G.988 Table 9.1.5-1 plug-in unit type; slot 2 is where vendor ONUs put POTS */
+#define OMCI_POTS_SLOT			0x02
+#define OMCI_POTS_UNIT_TYPE		32
+#define OMCI_NULL_POINTER		0xffff
 #define OMCI_EQUIPMENT_ENTITY_ID(_slot)	(0x0100 | (_slot))
 #define OMCI_UNI_ENTITY_ID(_slot, _port)	(((_slot) << 8) | (_port))
 #define OMCI_ANI_G_RX_LEVEL_MASK	0x0040
@@ -767,6 +771,17 @@ omci_agent_should_fake_result(const struct omci_agent *agent, u16 class_id,
 static bool omci_mib_object_olt_provisioned(const struct omci_mib_object *object)
 {
 	return object->origin == OMCI_MIB_ORIGIN_OLT || object->olt_written;
+}
+
+static bool omci_agent_mib_olt_provisioned_locked(struct omci_agent *agent)
+{
+	struct omci_mib_object *object;
+	unsigned long index;
+
+	xa_for_each(&agent->mib, index, object)
+		if (omci_mib_object_olt_provisioned(object))
+			return true;
+	return false;
 }
 
 static int
@@ -1397,15 +1412,27 @@ static void omci_mib_drop_default(struct omci_agent *agent, u16 class_id,
 	kfree(object);
 }
 
+static int omci_agent_add_tr069_default(struct omci_agent *agent, u16 veip,
+					u8 data[OMCI_MAX_ATTR_DATA])
+{
+	memset(data, 0, OMCI_MAX_ATTR_DATA);
+	put_unaligned_be16(OMCI_NULL_POINTER, data + 1);	/* ACS address */
+	put_unaligned_be16(OMCI_NULL_POINTER, data + 3);	/* associated tag */
+	return omci_mib_add_default(agent, OMCI_CLASS_TR069_MANAGEMENT_SERVER,
+				    veip, data, OMCI_MAX_ATTR_DATA);
+}
+
 /*
- * Report a single VEIP: drop the ONU-created VEIP, its UNI-G and its
- * equipment of a slot the current profile does not use, so a profile
+ * Report a single VEIP: drop the ONU-created VEIP, its UNI-G, TR-069 server
+ * and equipment of a slot the current profile does not use, so a profile
  * change does not leave a second VEIP for the OLT to provision.
  */
 static void omci_agent_drop_veip_default(struct omci_agent *agent, u16 entity)
 {
 	omci_mib_drop_default(agent, OMCI_CLASS_VEIP, entity);
 	omci_mib_drop_default(agent, OMCI_CLASS_UNI_G, entity);
+	omci_mib_drop_default(agent, OMCI_CLASS_TR069_MANAGEMENT_SERVER,
+			      entity);
 	omci_mib_drop_default(agent, OMCI_CLASS_CARDHOLDER,
 			      OMCI_EQUIPMENT_ENTITY_ID(entity >> 8));
 	omci_mib_drop_default(agent, OMCI_CLASS_CIRCUIT_PACK,
@@ -1447,7 +1474,7 @@ static int omci_agent_move_veip_default(struct omci_device *odev, u16 entity)
 	if (old == entity)
 		return 0;
 	object = old ? omci_mib_lookup(agent, OMCI_CLASS_VEIP, old) : NULL;
-	if (object && object->olt_written)
+	if (object && omci_mib_object_olt_provisioned(object))
 		return -EBUSY;
 	ret = omci_agent_get_ani_topology(odev, &topology);
 	if (ret)
@@ -1477,16 +1504,17 @@ static int omci_agent_move_veip_default(struct omci_device *odev, u16 entity)
 					GENMASK(15, 12), data, sizeof(data));
 	if (ret)
 		return ret;
-	return 0;
+	return omci_agent_add_tr069_default(agent, entity, data);
 }
 
 /*
- * A Create that ties a bridge port (TP type 11) or a class 171 rule
- * (association type 10) to a VEIP the MIB lacks names the slot the OLT was
- * provisioned for. Move the VEIP there before the Create is handled and keep
- * the slot, so later MIB uploads already report it. Create carries only the
- * set-by-create attributes: class 47 has the TP type and pointer at 3 and 4,
- * class 171 the association type and pointer at 0 and 1.
+ * A Create for a VEIP, a bridge port (TP type 11) or a class 171 rule
+ * (association type 10) referencing a VEIP the MIB lacks names the slot the
+ * OLT was provisioned for. Move the VEIP there before the Create is handled
+ * and keep the slot, so later MIB uploads already report it. Create carries
+ * only the set-by-create attributes: class 329 carries the ME ID directly,
+ * class 47 has the TP type and pointer at 3 and 4, class 171 the association
+ * type and pointer at 0 and 1.
  */
 static void omci_agent_learn_veip(struct omci_device *odev, u16 pointer)
 {
@@ -1518,6 +1546,136 @@ static void omci_agent_learn_veip_slot(struct omci_device *odev, u16 class_id,
 		return;
 
 	omci_agent_learn_veip(odev, pointer);
+}
+
+/*
+ * G.988 9.9.1, 9.9.11: one PPTP POTS UNI per analogue port and its VoIP line
+ * status, linked by the same ME ID, plus the ONU's single VoIP config data
+ * and the IP host the voice service uses. SIP is the only signalling and
+ * OMCI the only configuration method this ONU offers.
+ */
+static int omci_agent_add_voice_defaults(struct omci_agent *agent,
+					 const struct omci_ani_topology *topology,
+					 u8 data[OMCI_MAX_ATTR_DATA])
+{
+	unsigned int i;
+	int ret;
+
+	if (!agent->config.pots_count)
+		return 0;
+
+	ret = omci_agent_add_equipment_default(agent, topology, OMCI_POTS_SLOT,
+					       OMCI_POTS_UNIT_TYPE,
+					       agent->config.pots_count, false,
+					       data);
+	if (ret)
+		return ret;
+
+	for (i = 0; i < agent->config.pots_count; i++) {
+		u16 entity_id = OMCI_UNI_ENTITY_ID(OMCI_POTS_SLOT, i + 1);
+
+		memset(data, 0, OMCI_MAX_ATTR_DATA);
+		put_unaligned_be16(OMCI_NULL_POINTER, data + 1);	/* IWTP */
+		ret = omci_mib_add_default(agent, OMCI_CLASS_PPTP_POTS_UNI,
+					   entity_id, data, OMCI_MAX_ATTR_DATA);
+		if (ret)
+			return ret;
+
+		memset(data, 0, OMCI_MAX_ATTR_DATA);
+		ret = omci_mib_add_default(agent, OMCI_CLASS_VOIP_LINE_STATUS,
+					   entity_id, data, OMCI_MAX_ATTR_DATA);
+		if (ret)
+			return ret;
+	}
+
+	memset(data, 0, OMCI_MAX_ATTR_DATA);
+	data[0] = BIT(0);			/* available: SIP */
+	data[1] = 1;				/* used: SIP */
+	put_unaligned_be32(BIT(0), data + 2);	/* configurable through OMCI */
+	put_unaligned_be16(OMCI_NULL_POINTER, data + 7);
+	ret = omci_mib_add_default(agent, OMCI_CLASS_VOIP_CONFIG_DATA, 0, data,
+				   OMCI_MAX_ATTR_DATA);
+	if (ret)
+		return ret;
+
+	memset(data, 0, OMCI_MAX_ATTR_DATA);
+	data[0] = BIT(1);			/* DHCP */
+	return omci_mib_add_default(agent, OMCI_CLASS_IP_HOST_CONFIG_DATA, 0,
+				    data, OMCI_MAX_ATTR_DATA);
+}
+
+/*
+ * ONU-wide MEs every ONU creates: the TR-069 management server of the VEIP
+ * (G.988 9.12.15, same ME ID), power shedding and dynamic power management
+ * with nothing supported, and remote debug, whose commands are never run.
+ */
+static int omci_agent_add_management_defaults(struct omci_agent *agent,
+					      u16 veip,
+					      u8 data[OMCI_MAX_ATTR_DATA])
+{
+	int ret;
+
+	ret = omci_agent_add_tr069_default(agent, veip, data);
+	if (ret)
+		return ret;
+
+	memset(data, 0, OMCI_MAX_ATTR_DATA);
+	ret = omci_mib_add_default(agent, OMCI_CLASS_ONU_POWER_SHEDDING, 0,
+				   data, OMCI_MAX_ATTR_DATA);
+	if (ret)
+		return ret;
+	ret = omci_mib_add_default(agent, OMCI_CLASS_ONU_DYNAMIC_POWER_MGMT, 0,
+				   data, OMCI_MAX_ATTR_DATA);
+	if (ret)
+		return ret;
+	return omci_mib_add_default(agent, OMCI_CLASS_ONU_REMOTE_DEBUG, 0, data,
+				    OMCI_MAX_ATTR_DATA);
+}
+
+/*
+ * G.988 9.3.6, 9.3.7, 9.3.8: the ONU creates the filter table, bridge table
+ * and filter preassign table of every MAC bridge port with its ME ID, and
+ * deletes them with the port. Add what is missing and drop what lost its
+ * port; idempotent, so it also tidies up after a MIB reset.
+ */
+static const u16 omci_bridge_port_companions[] = {
+	OMCI_CLASS_MAC_BRIDGE_PORT_FILTER_TABLE,
+	OMCI_CLASS_MAC_BRIDGE_PORT_BRIDGE_TABLE,
+	OMCI_CLASS_MAC_BRIDGE_PORT_FILTER_PREASSIGN,
+};
+
+static void omci_agent_sync_bridge_port_companions_locked(struct omci_agent *agent)
+{
+	u8 data[OMCI_MAX_ATTR_DATA] = {};
+	struct omci_mib_object *object;
+	unsigned long index;
+	unsigned int i;
+
+	xa_for_each(&agent->mib, index, object) {
+		for (i = 0; i < ARRAY_SIZE(omci_bridge_port_companions); i++) {
+			if (object->class_id != omci_bridge_port_companions[i])
+				continue;
+			if (omci_mib_lookup(agent, OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA,
+					    object->entity_id))
+				continue;
+			xa_erase(&agent->mib, index);
+			kfree(object);
+			break;
+		}
+	}
+
+	xa_for_each(&agent->mib, index, object) {
+		if (object->class_id != OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA ||
+		    object->pending_delete)
+			continue;
+		for (i = 0; i < ARRAY_SIZE(omci_bridge_port_companions); i++)
+			if (!omci_mib_lookup(agent, omci_bridge_port_companions[i],
+					     object->entity_id))
+				omci_mib_add_default(agent,
+						     omci_bridge_port_companions[i],
+						     object->entity_id, data,
+						     sizeof(data));
+	}
 }
 
 static int omci_agent_populate_defaults(struct omci_device *odev)
@@ -1640,6 +1798,13 @@ static int omci_agent_populate_defaults(struct omci_device *odev)
 	if (ret)
 		return ret;
 
+	ret = omci_agent_add_voice_defaults(agent, &topology, data);
+	if (ret)
+		return ret;
+	ret = omci_agent_add_management_defaults(agent, veip, data);
+	if (ret)
+		return ret;
+
 	for (i = 0; i < topology.tcont_count; i++) {
 		u16 scheduler_id = topology.scheduler_base + i;
 
@@ -1698,51 +1863,318 @@ void omci_agent_restage(struct omci_device *odev)
 
 #define OMCI_PM_INTERVAL	(15 * 60 * HZ)
 
-/* FEC totals since boot: corrected bytes and code words, uncorrectable, total, FEC seconds */
-static bool omci_agent_fec_read(struct omci_device *odev, u64 v[5])
-{
-	struct omci_telemetry t = {};
+/*
+ * PM history data (G.988 9.3, 9.5, 9.9, 9.2). Each class lists where its
+ * counters sit and how wide they are; a source reads the totals since boot
+ * for one instance. A counter the hardware does not keep reads 0. Counters
+ * saturate at their maximum instead of wrapping.
+ */
+/*
+ * A threshold crossing alert: the counter (0 = the first), its threshold
+ * value in threshold data 1/2 (1-14) and the TCA number it raises, from the
+ * G.988 alarm list of each PM ME.
+ */
+struct omci_pm_tca {
+	u8 counter;
+	u8 threshold;
+	u8 alarm;
+};
 
-	if (!odev->ops->get_telemetry || odev->ops->get_telemetry(odev, &t) ||
-	    !(t.valid & OMCI_TELEMETRY_F_FEC_COUNTERS))
-		return false;
-	v[0] = t.fec_corrected_bytes;
-	v[1] = t.fec_corrected_codewords;
-	v[2] = t.fec_uncorrectable_codewords;
-	v[3] = t.fec_total_codewords;
-	v[4] = t.fec_seconds;
-	return true;
-}
+struct omci_pm_class {
+	u16 class_id;
+	u8 offset;			/* first counter in the object data */
+	u8 count;
+	const u8 *width;		/* bytes per counter, or NULL for 4 each */
+	const char *const *rx;		/* netdev counter per PM counter */
+	const char *const *tx;		/* same, the downstream direction */
+	const struct omci_pm_tca *tca;
+	u8 tca_count;
+};
 
-/* PM counters saturate at their maximum instead of wrapping (G.988). */
-static void omci_agent_fec_pm_fill(u8 *data, const u64 *now, const u64 *base)
+/* 9.2.9 FEC PM: total code words has no TCA */
+static const struct omci_pm_tca omci_fec_pm_tca[] = {
+	{ 0, 1, 0 }, { 1, 2, 1 }, { 2, 3, 2 }, { 4, 4, 4 },
+};
+
+/* 9.5.2 Ethernet PM: every counter, in order */
+static const struct omci_pm_tca omci_ethernet_pm_tca[] = {
+	{ 0, 1, 0 }, { 1, 2, 1 }, { 2, 3, 2 }, { 3, 4, 3 }, { 4, 5, 4 },
+	{ 5, 6, 5 }, { 6, 7, 6 }, { 7, 8, 7 }, { 8, 9, 8 }, { 9, 10, 9 },
+	{ 10, 11, 10 }, { 11, 12, 11 }, { 12, 13, 12 }, { 13, 14, 13 },
+};
+
+/* 9.5.3 Ethernet PM 2: PPPoE filtered frames */
+static const struct omci_pm_tca omci_ethernet_pm2_tca[] = { { 0, 1, 0 } };
+
+/* 9.5.4 Ethernet PM 3: drop events, undersize, fragments, jabbers */
+static const struct omci_pm_tca omci_ethernet_pm3_tca[] = {
+	{ 0, 1, 0 }, { 5, 2, 1 }, { 6, 3, 2 }, { 7, 4, 3 },
+};
+
+/* 9.3.9 MAC bridge port PM: delay and MTU exceeded, received and discarded */
+static const struct omci_pm_tca omci_bridge_port_pm_tca[] = {
+	{ 1, 1, 1 }, { 2, 2, 2 }, { 4, 3, 4 },
+};
+
+/* 9.2.13 GEM port network CTP PM: encryption key errors */
+static const struct omci_pm_tca omci_gem_ctp_pm_tca[] = { { 4, 1, 1 } };
+
+/* 9.9.12 call control PM: every counter */
+static const struct omci_pm_tca omci_call_control_pm_tca[] = {
+	{ 0, 1, 0 }, { 1, 2, 1 }, { 2, 3, 2 }, { 3, 4, 3 }, { 4, 5, 4 },
+};
+
+/* 9.9.13 RTP PM: threshold value 5 is not used */
+static const struct omci_pm_tca omci_rtp_pm_tca[] = {
+	{ 0, 1, 0 }, { 1, 2, 1 }, { 2, 3, 2 }, { 3, 4, 3 }, { 4, 6, 4 },
+	{ 5, 7, 5 },
+};
+
+#define OMCI_PM_TCA(_t)	.tca = (_t), .tca_count = ARRAY_SIZE(_t)
+
+#define OMCI_IFNAME_LEN	16
+
+static const u8 omci_fec_pm_width[] = { 4, 4, 4, 4, 2 };
+static const u8 omci_gem_ctp_pm_width[] = { 4, 4, 8, 8, 4 };
+static const u8 omci_frame_ext_64_width[] = { 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8 };
+
+/* 9.5.2: received-side errors of the UNI, transmit-side ones where defined */
+static const char *const omci_ethernet_pm_stats[] = {
+	"rx_crc_errors", "tx_aborted_errors", "tx_window_errors",
+	"rx_length_errors", "rx_over_errors", "tx_fifo_errors", NULL, NULL,
+	NULL, NULL, "tx_errors", "tx_carrier_errors", "rx_frame_errors",
+	"rx_missed_errors",
+};
+
+/* 9.5.3 (class 296): frames received at the UNI */
+static const char *const omci_ethernet_pm3_stats[] = {
+	"rx_dropped", "rx_bytes", "rx_packets", NULL, "multicast", NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+};
+
+/* 9.3.9: forwarded out of the port, received at it, received and dropped */
+static const char *const omci_bridge_port_pm_stats[] = {
+	"tx_packets", NULL, NULL, "rx_packets", "rx_dropped",
+};
+
+/* 9.2.13 (class 341), from the WAN netdev */
+static const char *const omci_gem_ctp_pm_stats[] = {
+	"tx_packets", "rx_packets", "rx_bytes", "tx_bytes", NULL,
+};
+
+static const char *const omci_gal_pm_stats[] = { "rx_dropped" };
+
+/* 9.3.32/9.3.34: upstream counts what the UNI receives, downstream what it sends */
+static const char *const omci_frame_ext_us_stats[] = {
+	"rx_dropped", "rx_bytes", "rx_packets", NULL, "multicast",
+	"rx_crc_errors", NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+};
+
+static const char *const omci_frame_ext_ds_stats[] = {
+	"tx_dropped", "tx_bytes", "tx_packets", NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL,
+};
+
+static const struct omci_pm_class omci_pm_classes[] = {
+	{ .class_id = OMCI_CLASS_FEC_PM, .offset = 3, .count = 5,
+	  .width = omci_fec_pm_width, OMCI_PM_TCA(omci_fec_pm_tca) },
+	{ .class_id = OMCI_CLASS_ETHERNET_PM, .offset = 3, .count = 14,
+	  .rx = omci_ethernet_pm_stats, OMCI_PM_TCA(omci_ethernet_pm_tca) },
+	{ .class_id = OMCI_CLASS_ETHERNET_PM_2, .offset = 3, .count = 1,
+	  OMCI_PM_TCA(omci_ethernet_pm2_tca) },
+	{ .class_id = OMCI_CLASS_ETHERNET_PM_3, .offset = 3, .count = 14,
+	  .rx = omci_ethernet_pm3_stats, OMCI_PM_TCA(omci_ethernet_pm3_tca) },
+	{ .class_id = OMCI_CLASS_MAC_BRIDGE_PM, .offset = 3, .count = 1 },
+	{ .class_id = OMCI_CLASS_MAC_BRIDGE_PORT_PM, .offset = 3, .count = 5,
+	  .rx = omci_bridge_port_pm_stats, OMCI_PM_TCA(omci_bridge_port_pm_tca) },
+	{ .class_id = OMCI_CLASS_GAL_ETHERNET_PM, .offset = 3, .count = 1,
+	  .rx = omci_gal_pm_stats },
+	{ .class_id = OMCI_CLASS_GEM_PORT_CTP_PM, .offset = 3, .count = 5,
+	  .width = omci_gem_ctp_pm_width, .rx = omci_gem_ctp_pm_stats,
+	  OMCI_PM_TCA(omci_gem_ctp_pm_tca) },
+	{ .class_id = OMCI_CLASS_ETHERNET_FRAME_EXT_PM, .offset = 17, .count = 14,
+	  .rx = omci_frame_ext_us_stats, .tx = omci_frame_ext_ds_stats },
+	{ .class_id = OMCI_CLASS_ETHERNET_FRAME_EXT_PM_64, .offset = 17, .count = 14,
+	  .width = omci_frame_ext_64_width, .rx = omci_frame_ext_us_stats,
+	  .tx = omci_frame_ext_ds_stats },
+	{ .class_id = OMCI_CLASS_CALL_CONTROL_PM, .offset = 3, .count = 5,
+	  OMCI_PM_TCA(omci_call_control_pm_tca) },
+	{ .class_id = OMCI_CLASS_RTP_PM, .offset = 3, .count = 6,
+	  OMCI_PM_TCA(omci_rtp_pm_tca) },
+	{ .class_id = OMCI_CLASS_SIP_AGENT_PM, .offset = 3, .count = 13 },
+	{ .class_id = OMCI_CLASS_SIP_CALL_INIT_PM, .offset = 3, .count = 5 },
+};
+
+static const struct omci_pm_class *omci_pm_class(u16 class_id)
 {
 	unsigned int i;
 
-	for (i = 0; i < 4; i++)
-		put_unaligned_be32(min_t(u64, now[i] - base[i], U32_MAX),
-				   data + 3 + i * 4);
-	put_unaligned_be16(min_t(u64, now[4] - base[4], U16_MAX), data + 19);
+	for (i = 0; i < ARRAY_SIZE(omci_pm_classes); i++)
+		if (omci_pm_classes[i].class_id == class_id)
+			return &omci_pm_classes[i];
+	return NULL;
 }
 
-/* Close the current interval: its counts become every FEC PM's history. */
+static bool omci_agent_is_pm(u16 class_id)
+{
+	return omci_pm_class(class_id);
+}
+
+/*
+ * The netdev behind a UNI-side ME: PPTP Ethernet UNI port N is lanN, as
+ * OpenWrt names DSA user ports, and the VEIP is the WAN netdev the PON
+ * driver reports. A bridge port resolves through its termination point.
+ */
+static int omci_agent_netdev(struct omci_device *odev, u16 class_id,
+			     u16 entity_id, char *name, size_t len)
+{
+	struct omci_mib_object *port;
+
+	switch (class_id) {
+	case OMCI_CLASS_PPTP_ETHERNET_UNI:
+		if (entity_id >> 8 != OMCI_ETHERNET_SLOT || !(entity_id & 0xff))
+			return -ENOENT;
+		snprintf(name, len, "lan%u", entity_id & 0xff);
+		return 0;
+	case OMCI_CLASS_VEIP:
+		return omci_native_ifname(odev->ifindex, name, len);
+	case OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA:
+		port = omci_mib_lookup(&odev->agent, class_id, entity_id);
+		if (!port)
+			return -ENOENT;
+		if (port->data[3] == 1)
+			return omci_agent_netdev(odev, OMCI_CLASS_PPTP_ETHERNET_UNI,
+						 get_unaligned_be16(port->data + 4),
+						 name, len);
+		if (port->data[3] == OMCI_BRIDGE_TP_VEIP)
+			return omci_agent_netdev(odev, OMCI_CLASS_VEIP, 0, name, len);
+		return -ENOENT;
+	}
+	return -ENOENT;
+}
+
+/* The netdev a PM instance counts, and whether it counts the transmit side. */
+static int omci_agent_pm_netdev(struct omci_device *odev,
+				const struct omci_mib_object *object,
+				char *name, size_t len, bool *downstream)
+{
+	const u8 *control = object->data + 1;
+
+	*downstream = false;
+	switch (object->class_id) {
+	case OMCI_CLASS_ETHERNET_PM:
+	case OMCI_CLASS_ETHERNET_PM_3:
+		/* implicitly linked to the PPTP Ethernet UNI of the same ID */
+		return omci_agent_netdev(odev, OMCI_CLASS_PPTP_ETHERNET_UNI,
+					 object->entity_id, name, len);
+	case OMCI_CLASS_MAC_BRIDGE_PORT_PM:
+		return omci_agent_netdev(odev, OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA,
+					 object->entity_id, name, len);
+	case OMCI_CLASS_GAL_ETHERNET_PM:
+	case OMCI_CLASS_GEM_PORT_CTP_PM:
+		return omci_agent_netdev(odev, OMCI_CLASS_VEIP, 0, name, len);
+	case OMCI_CLASS_ETHERNET_FRAME_EXT_PM:
+	case OMCI_CLASS_ETHERNET_FRAME_EXT_PM_64:
+		/* control block: parent class and instance, control fields bit 2 */
+		*downstream = get_unaligned_be16(control + 10) & BIT(1);
+		return omci_agent_netdev(odev, get_unaligned_be16(control + 2),
+					 get_unaligned_be16(control + 4), name, len);
+	}
+	return -ENOENT;
+}
+
+/* Totals since boot of every counter of @object; false if there is no source. */
+static bool omci_agent_pm_read(struct omci_device *odev,
+			       const struct omci_mib_object *object, u64 *v)
+{
+	const struct omci_pm_class *pm = omci_pm_class(object->class_id);
+	const char *const *names;
+	char ifname[OMCI_IFNAME_LEN];
+	bool downstream;
+	unsigned int i;
+
+	memset(v, 0, sizeof(u64) * OMCI_PM_MAX_COUNTERS);
+	if (object->class_id == OMCI_CLASS_FEC_PM) {
+		struct omci_telemetry t = {};
+
+		if (!odev->ops->get_telemetry || odev->ops->get_telemetry(odev, &t) ||
+		    !(t.valid & OMCI_TELEMETRY_F_FEC_COUNTERS))
+			return false;
+		v[0] = t.fec_corrected_bytes;
+		v[1] = t.fec_corrected_codewords;
+		v[2] = t.fec_uncorrectable_codewords;
+		v[3] = t.fec_total_codewords;
+		v[4] = t.fec_seconds;
+		return true;
+	}
+	if (!pm->rx || omci_agent_pm_netdev(odev, object, ifname, sizeof(ifname),
+					    &downstream))
+		return false;
+	names = downstream && pm->tx ? pm->tx : pm->rx;
+	for (i = 0; i < pm->count; i++)
+		if (names[i])
+			omci_native_netdev_counter(ifname, names[i], &v[i]);
+	return true;
+}
+
+/* Write now - base into the counters of @object, saturating each one. */
+static void omci_agent_pm_fill(struct omci_mib_object *object,
+			       const struct omci_pm_class *pm, const u64 *now)
+{
+	unsigned int i, at = pm->offset;
+
+	for (i = 0; i < pm->count; i++) {
+		u8 width = pm->width ? pm->width[i] : 4;
+		u64 delta = now[i] - object->pm_base[i];
+		u64 max = width == 8 ? U64_MAX : (1ULL << (width * 8)) - 1;
+
+		delta = min(delta, max);
+		if (width == 8)
+			put_unaligned_be64(delta, object->data + at);
+		else if (width == 4)
+			put_unaligned_be32(delta, object->data + at);
+		else
+			put_unaligned_be16(delta, object->data + at);
+		at += width;
+	}
+}
+
+/* Start counting @object from now, with an empty interval. */
+static void omci_agent_pm_restart(struct omci_device *odev,
+				  struct omci_mib_object *object)
+{
+	const struct omci_pm_class *pm = omci_pm_class(object->class_id);
+	u64 now[OMCI_PM_MAX_COUNTERS];
+
+	if (!omci_agent_pm_read(odev, object, now))
+		memset(now, 0, sizeof(now));
+	memcpy(object->pm_base, now, sizeof(object->pm_base));
+	omci_agent_pm_fill(object, pm, now);
+	object->data[0] = odev->agent.pm_interval;
+	object->tca = 0;
+}
+
+/* Close the current interval: its counts become each instance's history. */
 static void omci_agent_pm_end_interval_locked(struct omci_device *odev,
 					      u8 interval)
 {
 	struct omci_agent *agent = &odev->agent;
 	struct omci_mib_object *object;
+	u64 now[OMCI_PM_MAX_COUNTERS];
 	unsigned long index;
-	u64 now[5];
 
-	if (!omci_agent_fec_read(odev, now))
-		memcpy(now, agent->pm_base, sizeof(now));
 	xa_for_each(&agent->mib, index, object) {
-		if (object->class_id != OMCI_CLASS_FEC_PM)
+		const struct omci_pm_class *pm = omci_pm_class(object->class_id);
+
+		if (!pm)
 			continue;
+		if (!omci_agent_pm_read(odev, object, now))
+			memcpy(now, object->pm_base, sizeof(now));
 		object->data[0] = interval;
-		omci_agent_fec_pm_fill(object->data, now, agent->pm_base);
+		omci_agent_pm_fill(object, pm, now);
+		memcpy(object->pm_base, now, sizeof(now));
+		object->tca = 0;	/* a new interval, cleared without notice */
 	}
-	memcpy(agent->pm_base, now, sizeof(now));
 	agent->pm_interval = interval;
 }
 
@@ -1762,13 +2194,11 @@ static void omci_agent_pm_work(struct work_struct *work)
 }
 
 /*
- * Synchronize Time starts interval 0 now. The history so far is cleared,
- * not closed, since the OLT starts counting from here.
- */
-/*
- * G.988 A.2.33/A.3.33: with a time of day, the running interval ends at the
- * next quarter-hour; without one (or with an invalid one), it restarts.
- * There is no real-time clock to set, so the reply reports the tick only.
+ * G.988 A.2.33/A.3.33: Synchronize Time starts interval 0. With a time of
+ * day the running interval ends at the next quarter-hour; without one (or
+ * with an invalid one), it restarts. The history so far is cleared, not
+ * closed, since the OLT starts counting from here. There is no real-time
+ * clock to set, so the reply reports the tick only.
  */
 static void omci_agent_sync_time_locked(struct omci_device *odev,
 					const u8 *content, size_t len)
@@ -1781,13 +2211,10 @@ static void omci_agent_sync_time_locked(struct omci_device *odev,
 	if (len >= 7 && content[4] < 24 && content[5] < 60 && content[6] < 60)
 		interval = (900 - (content[5] % 15 * 60 + content[6])) * HZ;
 
-	if (!omci_agent_fec_read(odev, agent->pm_base))
-		memset(agent->pm_base, 0, sizeof(agent->pm_base));
+	agent->pm_interval = 0;
 	xa_for_each(&agent->mib, index, object)
-		if (object->class_id == OMCI_CLASS_FEC_PM)
-			omci_agent_fec_pm_fill(object->data, agent->pm_base,
-					       agent->pm_base);
-	omci_agent_pm_end_interval_locked(odev, 0);
+		if (omci_agent_is_pm(object->class_id))
+			omci_agent_pm_restart(odev, object);
 	agent->pm_running = true;
 	mod_delayed_work(system_wq, &agent->pm_work, interval);
 }
@@ -1798,20 +2225,21 @@ static u8 omci_agent_get_current_locked(struct omci_device *odev, u16 class_id,
 					size_t content_len, u8 *response,
 					size_t capacity, size_t *response_len)
 {
+	const struct omci_pm_class *pm = omci_pm_class(class_id);
 	struct omci_agent *agent = &odev->agent;
 	struct omci_mib_object *object;
-	u8 history[21];
-	u64 now[5];
+	u8 history[OMCI_MAX_ATTR_DATA];
+	u64 now[OMCI_PM_MAX_COUNTERS];
 	u8 result;
 
 	object = omci_mib_lookup(agent, class_id, entity_id);
-	if (class_id != OMCI_CLASS_FEC_PM || !object || !agent->pm_running ||
-	    !omci_agent_fec_read(odev, now))
+	if (!pm || !object || !agent->pm_running ||
+	    !omci_agent_pm_read(odev, object, now))
 		return omci_agent_get_locked(odev, class_id, entity_id, content,
 					     content_len, response, capacity,
 					     response_len);
 	memcpy(history, object->data, sizeof(history));
-	omci_agent_fec_pm_fill(object->data, now, agent->pm_base);
+	omci_agent_pm_fill(object, pm, now);
 	result = omci_agent_get_locked(odev, class_id, entity_id, content,
 				       content_len, response, capacity,
 				       response_len);
@@ -2078,6 +2506,42 @@ static u8 omci_agent_get_omci_table_locked(struct omci_device *odev,
 
 	omci_set_table_snapshot_locked(agent, OMCI_CLASS_OMCI, entity_id,
 				       mask, table, table_len);
+
+	memset(response_content, 0, response_capacity);
+	response_content[0] = OMCI_RESULT_SUCCESS;
+	put_unaligned_be16(mask, response_content + 1);
+	put_unaligned_be32(table_len, response_content + 3);
+	*response_len = 7;
+	return OMCI_RESULT_SUCCESS;
+}
+
+/* 9.3.31 attributes 5 and 6: the IPv4 and IPv6 active group list tables */
+#define OMCI_MCAST_MONITOR_IPV4_MASK	BIT(11)
+#define OMCI_MCAST_MONITOR_IPV6_MASK	BIT(10)
+
+/* The groups the router receives from the PON, read when the OLT asks. */
+static u8 omci_agent_get_mcast_groups_locked(struct omci_device *odev,
+					     u16 entity_id, u16 mask,
+					     u8 *response_content,
+					     size_t response_capacity,
+					     size_t *response_len)
+{
+	struct omci_agent *agent = &odev->agent;
+	size_t table_len;
+	u8 *table;
+
+	if (!omci_mib_lookup(agent, OMCI_CLASS_MULTICAST_SUBSCRIBER_MONITOR,
+			     entity_id))
+		return OMCI_RESULT_UNKNOWN_INSTANCE;
+	if (response_capacity < 7)
+		return OMCI_RESULT_PARAMETER_ERROR;
+	if (omci_native_mcast_groups(mask == OMCI_MCAST_MONITOR_IPV6_MASK,
+				     &table, &table_len))
+		return OMCI_RESULT_PROCESSING_ERROR;
+
+	omci_set_table_snapshot_locked(agent,
+				       OMCI_CLASS_MULTICAST_SUBSCRIBER_MONITOR,
+				       entity_id, mask, table, table_len);
 
 	memset(response_content, 0, response_capacity);
 	response_content[0] = OMCI_RESULT_SUCCESS;
@@ -2615,6 +3079,8 @@ static int omci_agent_mib_reset_locked(struct omci_device *odev, bool all,
 	 * expose the same MIB and capability table as a fresh agent.
 	 */
 	ret = omci_agent_populate_defaults(odev);
+	if (!ret)
+		omci_agent_sync_bridge_port_companions_locked(agent);
 	if (!ret)
 		ret = omci_agent_seed_profile_locked(odev,
 						     agent->profile_effective);
@@ -3949,6 +4415,10 @@ static u8 omci_agent_create_locked(struct omci_device *odev,
 			goto rollback;
 		}
 	}
+	if (class_id == OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA)
+		omci_agent_sync_bridge_port_companions_locked(agent);
+	if (stored && omci_agent_is_pm(class_id))
+		omci_agent_pm_restart(odev, stored);
 	omci_agent_increment_mib_sync_locked(agent);
 	goto out;
 
@@ -4231,6 +4701,8 @@ static u8 omci_agent_delete_locked(struct omci_device *odev, u16 class_id,
 
 	xa_erase(&agent->mib, omci_mib_key(class_id, entity_id));
 	kfree(object);
+	if (class_id == OMCI_CLASS_MAC_BRIDGE_PORT_CONFIG_DATA)
+		omci_agent_sync_bridge_port_companions_locked(agent);
 	omci_agent_increment_mib_sync_locked(agent);
 	return OMCI_RESULT_SUCCESS;
 
@@ -4488,10 +4960,12 @@ static u8 omci_agent_get_locked(struct omci_device *odev, u16 class_id,
 {
 	struct omci_agent *agent = &odev->agent;
 	const struct omci_me_desc *desc;
+	struct omci_mib_object *transient = NULL;
 	struct omci_mib_object *object;
 	size_t encoded_len = 0;
 	u16 encoded_mask;
 	u16 mask;
+	u8 status;
 	int ret;
 
 	if (content_len < 2 || response_capacity < 1)
@@ -4512,6 +4986,11 @@ static u8 omci_agent_get_locked(struct omci_device *odev, u16 class_id,
 	if (class_id == OMCI_CLASS_ATTRIBUTE)
 		return omci_agent_get_attribute_locked(odev, entity_id, mask,
 			response_content, response_capacity, response_len);
+	if (class_id == OMCI_CLASS_MULTICAST_SUBSCRIBER_MONITOR &&
+	    (mask == OMCI_MCAST_MONITOR_IPV4_MASK ||
+	     mask == OMCI_MCAST_MONITOR_IPV6_MASK))
+		return omci_agent_get_mcast_groups_locked(odev, entity_id, mask,
+			response_content, response_capacity, response_len);
 
 	if (omci_agent_get_uses_ani_g_telemetry(class_id, entity_id, mask) &&
 	    odev->ops && odev->ops->get_telemetry)
@@ -4520,14 +4999,27 @@ static u8 omci_agent_get_locked(struct omci_device *odev, u16 class_id,
 						      response_capacity,
 						      response_len);
 
-	object = omci_get_or_create_locked(agent, class_id, entity_id,
-					   agent->permissive ||
-					   agent->fake_omci);
-	if (!object)
-		return OMCI_RESULT_UNKNOWN_INSTANCE;
+	object = omci_mib_lookup(agent, class_id, entity_id);
+	if (!object) {
+		if (!agent->permissive && !agent->fake_omci)
+			return OMCI_RESULT_UNKNOWN_INSTANCE;
+		/*
+		 * Permissive reads synthesize a zeroed response without
+		 * inserting a ghost OLT object into the MIB, so later VEIP
+		 * learning or profile seeding is not blocked.
+		 */
+		transient = kzalloc(sizeof(*transient), GFP_KERNEL);
+		if (!transient)
+			return OMCI_RESULT_DEVICE_BUSY;
+		transient->class_id = class_id;
+		transient->entity_id = entity_id;
+		object = transient;
+	}
 	if (class_id == OMCI_CLASS_NOKIA_OPTICAL_SUPERVISION &&
-	    omci_agent_refresh_nokia_optical(odev, object))
-		return OMCI_RESULT_PROCESSING_ERROR;
+	    omci_agent_refresh_nokia_optical(odev, object)) {
+		status = OMCI_RESULT_PROCESSING_ERROR;
+		goto out_free;
+	}
 	if (class_id == OMCI_CLASS_ANI_G)
 		omci_agent_refresh_ani_g(odev, object);
 
@@ -4541,22 +5033,26 @@ static u8 omci_agent_get_locked(struct omci_device *odev, u16 class_id,
 		memcpy(onu_g + OMCI_ONU_G_LOID_PASSWORD_OFFSET,
 		       agent->config.loid_password, OMCI_LOID_PASSWORD_LEN);
 		onu_g[OMCI_ONU_G_CREDENTIALS_OFFSET] = agent->loid_status;
-		return omci_agent_get_masked_object(
+		status = omci_agent_get_masked_object(
 			onu_g, omci_onu_g_attr_layout,
 			ARRAY_SIZE(omci_onu_g_attr_layout), OMCI_ONU_G_ATTR_MASK,
 			mask, response_content, response_capacity, response_len);
+		goto out_free;
 	}
 	case OMCI_CLASS_ONU2_G:
-		return omci_agent_get_masked_object(
+		status = omci_agent_get_masked_object(
 			object->data, omci_onu2_g_attr_layout,
 			ARRAY_SIZE(omci_onu2_g_attr_layout), OMCI_ONU2_G_ATTR_MASK,
 			mask, response_content, response_capacity, response_len);
+		goto out_free;
 	default:
 		break;
 	}
 
-	if (response_capacity < 3)
-		return OMCI_RESULT_PARAMETER_ERROR;
+	if (response_capacity < 3) {
+		status = OMCI_RESULT_PARAMETER_ERROR;
+		goto out_free;
+	}
 	memset(response_content, 0, response_capacity);
 	response_content[0] = OMCI_RESULT_SUCCESS;
 	if (class_id == OMCI_CLASS_PRIORITY_QUEUE) {
@@ -4583,7 +5079,8 @@ static u8 omci_agent_get_locked(struct omci_device *odev, u16 class_id,
 			put_unaligned_be16(mask, response_content + 1);
 			memcpy(response_content + 3, object->data, encoded_len);
 			*response_len = 3 + encoded_len;
-			return OMCI_RESULT_SUCCESS;
+			status = OMCI_RESULT_SUCCESS;
+			goto out_free;
 		}
 		ret = omci_me_encode_attributes(desc, object, mask,
 						response_content + 3,
@@ -4594,16 +5091,23 @@ static u8 omci_agent_get_locked(struct omci_device *odev, u16 class_id,
 		put_unaligned_be16(encoded_mask, response_content + 1);
 	}
 	*response_len = 3 + encoded_len;
-	return OMCI_RESULT_SUCCESS;
+	status = OMCI_RESULT_SUCCESS;
+	goto out_free;
 
 attribute_failed:
-	if (response_capacity < 5)
-		return OMCI_RESULT_PARAMETER_ERROR;
+	if (response_capacity < 5) {
+		status = OMCI_RESULT_PARAMETER_ERROR;
+		goto out_free;
+	}
 	response_content[0] = OMCI_RESULT_ATTRIBUTE_FAILED;
 	put_unaligned_be16(0, response_content + 1);
 	put_unaligned_be16(mask, response_content + 3);
 	*response_len = 5;
-	return OMCI_RESULT_ATTRIBUTE_FAILED;
+	status = OMCI_RESULT_ATTRIBUTE_FAILED;
+
+out_free:
+	kfree(transient);
+	return status;
 }
 
 static void omci_test_result_put(u8 *field, u8 type, u16 value)
@@ -4617,6 +5121,18 @@ static bool omci_agent_is_ani_g_test(const struct omci_wire_request *request)
 	return (request->message_type & 0x1f) == OMCI_MSG_TYPE_TEST &&
 	       request->class_id == OMCI_CLASS_ANI_G &&
 	       request->entity_id == OMCI_ANI_G_ENTITY_ID;
+}
+
+/* G.988 9.1.1/9.1.6: test 7 is the ONU-G or circuit pack self-test. */
+#define OMCI_TEST_SELF			7
+#define OMCI_SELF_TEST_PASSED		1
+
+static bool omci_agent_is_self_test(const struct omci_wire_request *request)
+{
+	return (request->message_type & 0x1f) == OMCI_MSG_TYPE_TEST &&
+	       (request->class_id == OMCI_CLASS_ONU_G ||
+		request->class_id == OMCI_CLASS_CIRCUIT_PACK) &&
+	       request->payload_len && request->payload[0] == OMCI_TEST_SELF;
 }
 
 static void omci_agent_log_wire(struct omci_device *odev,
@@ -4678,15 +5194,32 @@ static void omci_agent_log_wire(struct omci_device *odev,
 		direction, (int)len, data);
 }
 
+static int omci_agent_send_test_result(struct omci_device *odev,
+				       const struct omci_wire_request *request,
+				       const u8 *content, size_t len)
+{
+	u8 pdu[OMCI_BASELINE_LEN_NO_MIC];
+	size_t pdu_len;
+	int ret;
+
+	ret = omci_wire_encode_response(request, OMCI_MSG_TYPE_TEST_RESULT,
+					content, len, pdu, sizeof(pdu), &pdu_len);
+	if (ret)
+		return ret;
+
+	omci_agent_log_wire(odev, "TX", pdu, pdu_len);
+	ret = omci_device_xmit(odev, pdu, pdu_len);
+	if (!ret)
+		atomic64_inc(&odev->agent.responses);
+	return ret;
+}
+
 static int
 omci_agent_send_ani_g_test_result(struct omci_device *odev,
 				  const struct omci_wire_request *request)
 {
-	struct omci_agent *agent = &odev->agent;
 	struct omci_telemetry telemetry = {};
-	u8 pdu[OMCI_BASELINE_LEN_NO_MIC];
 	u8 content[17] = {};
-	size_t pdu_len;
 	u16 value;
 	int ret;
 
@@ -4739,18 +5272,8 @@ omci_agent_send_ani_g_test_result(struct omci_device *odev,
 	}
 	put_unaligned_be16(0, content + 15);
 
-	ret = omci_wire_encode_response(request, OMCI_MSG_TYPE_TEST_RESULT,
-					content, sizeof(content), pdu,
-					sizeof(pdu), &pdu_len);
-	if (ret)
-		return ret;
-
-	omci_agent_log_wire(odev, "TX", pdu, pdu_len);
-	ret = omci_device_xmit(odev, pdu, pdu_len);
-	if (!ret)
-		atomic64_inc(&agent->responses);
-
-	return ret;
+	return omci_agent_send_test_result(odev, request, content,
+					   sizeof(content));
 }
 
 /* A baseline MIB upload next carries class, instance, mask and 26 value bytes. */
@@ -5325,11 +5848,13 @@ omci_agent_evaluate_alarms_locked(struct omci_device *odev,
 		if (!test_bit(i, &in->uni_known))
 			continue;
 
-		/* An administratively locked UNI raises no alarms. A spare LAN
-		 * port is not a fault while another one carries the service:
-		 * LAN LOS is raised only once every UNI has lost its link. */
+		/*
+		 * LAN LOS is per port (G.988 9.5.1); an administratively
+		 * locked UNI raises no alarms, and the OLT silences unused
+		 * ports with ARC.
+		 */
 		alarms = object->data[OMCI_PPTP_ADMIN_STATE_OFFSET] ||
-			 in->uni_up ?
+			 test_bit(i, &in->uni_up) ?
 			 0 : OMCI_ALARM(OMCI_PPTP_ALARM_LAN_LOS);
 		omci_agent_update_alarms_locked(agent, object, alarms, pdus,
 						&count);
@@ -5351,13 +5876,69 @@ static void omci_agent_clear_alarms_locked(struct omci_agent *agent)
 	agent->ber_valid = false;
 }
 
+#define OMCI_TCA_MAX_PDUS	8
+
+/* Threshold value @k (1-14) of threshold data 1/2 instance @id, 0 if none. */
+static u32 omci_pm_threshold(struct omci_agent *agent, u16 id, u8 k)
+{
+	struct omci_mib_object *td;
+
+	td = omci_mib_lookup(agent, k <= 7 ? OMCI_CLASS_THRESHOLD_DATA_1 :
+					     OMCI_CLASS_THRESHOLD_DATA_2, id);
+	return td ? get_unaligned_be32(td->data + 4 * ((k - 1) % 7)) : 0;
+}
+
+/*
+ * G.988 I.4: a TCA is raised once the counter of the current interval
+ * reaches its threshold, and reported when it is raised; it is cleared when
+ * the interval ends. 0 and all-ones thresholds disable the alert.
+ */
+static unsigned int omci_agent_evaluate_tca_locked(struct omci_device *odev,
+						   u8 (*pdus)[OMCI_BASELINE_LEN_NO_MIC])
+{
+	struct omci_agent *agent = &odev->agent;
+	u64 now[OMCI_PM_MAX_COUNTERS];
+	struct omci_mib_object *object;
+	unsigned int count = 0, i;
+	unsigned long index;
+
+	if (!agent->pm_running)
+		return 0;
+
+	xa_for_each(&agent->mib, index, object) {
+		const struct omci_pm_class *pm = omci_pm_class(object->class_id);
+		u16 id, tca = 0;
+
+		if (!pm || !pm->tca || !omci_mib_object_active(agent, object) ||
+		    !omci_agent_pm_read(odev, object, now))
+			continue;
+		id = get_unaligned_be16(object->data + 1);
+		for (i = 0; i < pm->tca_count; i++) {
+			const struct omci_pm_tca *t = &pm->tca[i];
+			u32 limit = omci_pm_threshold(agent, id, t->threshold);
+
+			if (limit && limit != U32_MAX &&
+			    now[t->counter] - object->pm_base[t->counter] >= limit)
+				tca |= BIT(15 - t->alarm);
+		}
+		if ((tca & ~object->tca) && count < OMCI_TCA_MAX_PDUS) {
+			omci_agent_build_alarm_locked(agent, pdus[count],
+						      object->class_id,
+						      object->entity_id, tca >> 8);
+			pdus[count++][9] = tca & 0xff;
+		}
+		object->tca = tca;
+	}
+	return count;
+}
+
 static void omci_agent_alarm_work(struct work_struct *work)
 {
 	struct omci_agent *agent = container_of(to_delayed_work(work),
 						struct omci_agent, alarm_work);
 	struct omci_device *odev = container_of(agent, struct omci_device,
 						agent);
-	u8 pdus[OMCI_ALARM_MAX_PDUS][OMCI_BASELINE_LEN_NO_MIC];
+	u8 pdus[OMCI_ALARM_MAX_PDUS + OMCI_TCA_MAX_PDUS][OMCI_BASELINE_LEN_NO_MIC];
 	struct omci_alarm_inputs in = {};
 	unsigned int count = 0;
 	unsigned int i;
@@ -5373,8 +5954,10 @@ static void omci_agent_alarm_work(struct work_struct *work)
 
 	omci_agent_read_alarm_inputs(odev, &in);
 	mutex_lock(&agent->lock);
-	if (agent->enabled)
+	if (agent->enabled) {
 		count = omci_agent_evaluate_alarms_locked(odev, &in, pdus);
+		count += omci_agent_evaluate_tca_locked(odev, pdus + count);
+	}
 	mutex_unlock(&agent->lock);
 
 	for (i = 0; i < count; i++) {
@@ -5666,7 +6249,10 @@ omci_agent_build_response_locked(struct omci_device *odev,
 		content[0] = OMCI_RESULT_SUCCESS;
 		break;
 	case OMCI_MSG_TYPE_TEST:
-		content[0] = OMCI_RESULT_SUCCESS;
+		/* the result follows in a Test result message */
+		content[0] = omci_agent_is_ani_g_test(request) ||
+			     omci_agent_is_self_test(request) ?
+			     OMCI_RESULT_SUCCESS : OMCI_RESULT_NOT_SUPPORTED;
 		break;
 	case OMCI_MSG_TYPE_START_SW_DOWNLOAD:
 		agent->sw_download_seen = true;
@@ -5825,6 +6411,10 @@ void omci_agent_receive(struct omci_device *odev, const struct sk_buff *skb)
 				dev_dbg(odev->parent,
 					"OMCI ANI-G test result unavailable: %d\n",
 					ret);
+		} else if (omci_agent_is_self_test(&request)) {
+			u8 result = OMCI_SELF_TEST_PASSED;
+
+			omci_agent_send_test_result(odev, &request, &result, 1);
 		}
 	}
 	if (duplicate)
@@ -6063,6 +6653,11 @@ int omci_agent_config_get(struct omci_device *odev, u16 key,
 		break;
 	case OMCI_CONFIG_UNI_COUNT:
 		scalar = agent->config.uni_count;
+		source = &scalar;
+		source_len = sizeof(scalar);
+		break;
+	case OMCI_CONFIG_POTS_COUNT:
+		scalar = agent->config.pots_count;
 		source = &scalar;
 		source_len = sizeof(scalar);
 		break;
@@ -6350,6 +6945,7 @@ __omci_agent_config_set_source(struct omci_device *odev, u16 key,
 	case OMCI_CONFIG_TRAFFIC_MGMT_OPTION:
 	case OMCI_CONFIG_ONU_TYPE:
 	case OMCI_CONFIG_UNI_COUNT:
+	case OMCI_CONFIG_POTS_COUNT:
 	case OMCI_CONFIG_AGENT_ENABLED:
 	case OMCI_CONFIG_AGENT_PERMISSIVE:
 	case OMCI_CONFIG_AGENT_FAKE_OMCI:
@@ -6373,6 +6969,17 @@ __omci_agent_config_set_source(struct omci_device *odev, u16 key,
 			scalar = clamp_t(u8, scalar, 1, 16);
 			changed = agent->config.uni_count != scalar;
 			agent->config.uni_count = scalar;
+		} else if (key == OMCI_CONFIG_POTS_COUNT) {
+			scalar = min_t(u8, scalar, 8);
+			changed = agent->config.pots_count != scalar;
+			agent->config.pots_count = scalar;
+			/*
+			 * The count usually arrives from UCI after the daemon
+			 * built its defaults: rebuild them so the phone ports
+			 * are there, unless the OLT has provisioned the MIB.
+			 */
+			if (changed && !omci_agent_mib_olt_provisioned_locked(agent))
+				ret = omci_agent_mib_reset_locked(odev, false, NULL);
 		} else if (key == OMCI_CONFIG_AGENT_ENABLED) {
 			changed = agent->enabled != !!scalar;
 			agent->enabled = !!scalar;
@@ -6538,6 +7145,88 @@ int omci_agent_mib_get(struct omci_device *odev, u16 class_id, u16 entity_id,
 	return ret;
 }
 
+/*
+ * Attributes whose change G.988 reports with an AVC: the POTS UNI operational
+ * state (9.9.1) and the VoIP configuration state and profile version (9.9.18).
+ */
+static const struct {
+	u16 class_id;
+	u16 mask;
+} omci_status_avcs[] = {
+	{ OMCI_CLASS_PPTP_POTS_UNI, BIT(15 - 8) },
+	{ OMCI_CLASS_VOIP_CONFIG_DATA, BIT(15 - 5) | BIT(15 - 7) },
+};
+
+static u16 omci_status_avc_mask(u16 class_id)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(omci_status_avcs); i++)
+		if (omci_status_avcs[i].class_id == class_id)
+			return omci_status_avcs[i].mask;
+	return 0;
+}
+
+/*
+ * Report ONU state into an instance: copy the read-only attributes of
+ * @object that changed, never one the OLT can write, and keep the instance's
+ * origin. Changes that G.988 reports go to the OLT as one AVC per attribute.
+ */
+int omci_agent_mib_status(struct omci_device *odev,
+			  const struct omci_mib_object *object)
+{
+	struct omci_agent *agent = &odev->agent;
+	u8 pdus[16][OMCI_BASELINE_LEN_NO_MIC];
+	const struct omci_me_desc *desc;
+	struct omci_mib_object *stored;
+	unsigned int i, count = 0;
+	bool send;
+
+	mutex_lock(&agent->lock);
+	if (odev->userspace_mode) {
+		mutex_unlock(&agent->lock);
+		return -EBUSY;
+	}
+	desc = omci_me_lookup(agent, object->class_id);
+	stored = omci_mib_lookup(agent, object->class_id, object->entity_id);
+	if (!desc || !stored) {
+		mutex_unlock(&agent->lock);
+		return -ENOENT;
+	}
+	for (i = 0; i < desc->num_attrs; i++) {
+		const struct omci_attr_desc *attr = &desc->attrs[i];
+		u8 *pdu;
+
+		if (!(object->attr_mask & attr->mask) ||
+		    attr->access != OMCI_ATTR_ACCESS_READ ||
+		    attr->offset + attr->len > sizeof(stored->data) ||
+		    !memcmp(stored->data + attr->offset,
+			    object->data + attr->offset, attr->len))
+			continue;
+		memcpy(stored->data + attr->offset, object->data + attr->offset,
+		       attr->len);
+		stored->attr_mask |= attr->mask;
+		if (!(omci_status_avc_mask(object->class_id) & attr->mask) ||
+		    attr->len > OMCI_BASELINE_LEN_NO_MIC - 10 ||
+		    count == ARRAY_SIZE(pdus))
+			continue;
+		pdu = pdus[count++];
+		omci_alarm_build(pdu, OMCI_MSG_TYPE_AVC, object->class_id,
+				 object->entity_id);
+		put_unaligned_be16(attr->mask, pdu + 8);
+		memcpy(pdu + 10, stored->data + attr->offset, attr->len);
+	}
+	send = agent->enabled && odev->channel_up;
+	mutex_unlock(&agent->lock);
+
+	for (i = 0; send && i < count; i++) {
+		if (omci_device_xmit(odev, pdus[i], sizeof(pdus[i])))
+			break;
+		omci_agent_log_wire(odev, "TX", pdus[i], sizeof(pdus[i]));
+	}
+	return 0;
+}
+
 int omci_agent_mib_set(struct omci_device *odev,
 		       const struct omci_mib_object *object)
 {
@@ -6698,6 +7387,12 @@ int omci_agent_mib_reset_result(struct omci_device *odev, bool all)
 void omci_agent_mib_reset(struct omci_device *odev, bool all)
 {
 	omci_agent_mib_reset_result(odev, all);
+}
+
+/* The MIB walk index of the first instance of a class. */
+u32 omci_agent_mib_class_index(u16 class_id)
+{
+	return omci_mib_key(class_id, 0);
 }
 
 int omci_agent_mib_next(struct omci_device *odev, u32 index,

@@ -190,8 +190,8 @@ function print_classes(classes) {
 			join(',', item.flag_names || []));
 }
 
-/* ONU-created, OLT-provisioned, or ONU-created and OLT-configured. */
-const origin_text = { default: 'onu-created', olt: 'olt-provisioned', local: 'local-override', hardware: 'hardware' };
+/* MIB instance origin, named as in LuCI (see omci/mib-view.js). */
+const origin_text = { default: 'onu-created', olt: 'olt-provisioned', local: 'local-override', hardware: 'hardware-reported' };
 
 function origin(item) {
 	if (item.origin_name == 'default' && item.olt_written)

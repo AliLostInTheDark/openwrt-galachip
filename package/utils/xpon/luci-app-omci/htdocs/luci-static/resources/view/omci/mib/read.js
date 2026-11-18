@@ -100,8 +100,8 @@ return view.extend({
 		draw();
 
 		return layout.apply(E([], [
-			E('h2', {}, _('MIB read')),
-			E('p', {}, _('Every managed entity in the live MIB, decoded. Open a class to see its objects.')),
+			E('h2', {}, _('Decoded MIB')),
+			E('p', {}, _('Every managed entity in the live MIB, decoded from its G.988 attributes. Open a class to see its instances; hover an origin for what it means.')),
 			E('div', { 'class': 'cbi-section omci-mib-filter' }, [
 				E('label', { 'for': 'omci-mib-class-filter' }, _('Class')), classFilter,
 				E('label', { 'for': 'omci-mib-search' }, _('Search')), search,

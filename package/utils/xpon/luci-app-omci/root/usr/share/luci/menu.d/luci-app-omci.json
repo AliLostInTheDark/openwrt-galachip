@@ -49,7 +49,7 @@
 		}
 	},
 	"admin/network/omci/mib/read": {
-		"title": "Read",
+		"title": "Decoded",
 		"order": 5,
 		"action": {
 			"type": "view",
@@ -57,7 +57,7 @@
 		}
 	},
 	"admin/network/omci/mib/inventory": {
-		"title": "Inventory",
+		"title": "Equipment",
 		"order": 10,
 		"action": {
 			"type": "view",
@@ -65,7 +65,7 @@
 		}
 	},
 	"admin/network/omci/mib/gpon": {
-		"title": "GPON",
+		"title": "ANI",
 		"order": 20,
 		"action": {
 			"type": "view",
@@ -73,7 +73,7 @@
 		}
 	},
 	"admin/network/omci/mib/bridge": {
-		"title": "Bridge / UNI",
+		"title": "UNI and layer 2",
 		"order": 30,
 		"action": {
 			"type": "view",
@@ -86,6 +86,22 @@
 		"action": {
 			"type": "view",
 			"path": "omci/mib/multicast"
+		}
+	},
+	"admin/network/omci/mib/voice": {
+		"title": "Voice",
+		"order": 41,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/voice"
+		}
+	},
+	"admin/network/omci/mib/performance": {
+		"title": "Performance",
+		"order": 42,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/performance"
 		}
 	},
 	"admin/network/omci/mib/other": {

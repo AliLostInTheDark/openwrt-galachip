@@ -11,6 +11,8 @@
  *                its Extended VLAN tagging operation (ME 171) rules give
  *                untagged UNI traffic, or transparent when it only provisions
  *                tagged traffic, as the vendor remote mode does
+ *   routed       pon0 is the router's WAN and not a br-lan port; the default
+ *                when a network interface uses pon0
  *
  * Configured in omci.vlan, applied to the network config and reported on
  * ubus as omci.vlan.
@@ -52,7 +54,7 @@ function read_config() {
 	let s = cursor().get_all('omci', 'vlan') || {};
 
 	return {
-		mode: s.mode || 'transparent',
+		mode: s.mode,
 		vid: number(s.vid),
 		prio: number(s.prio) ?? 0
 	};
@@ -150,6 +152,21 @@ function bridge_section(uci) {
 	return name;
 }
 
+function is_pon_port(port) {
+	return match(port, regexp(`^${PON}(\\.[0-9]+)?$`)) != null;
+}
+
+/* An interface on pon0 or one of its VLANs makes this ONU a router. */
+function pon_routed(uci) {
+	let routed = false;
+
+	uci.foreach('network', 'interface', (s) => {
+		if (is_pon_port(s.device ?? ''))
+			routed = true;
+	});
+	return routed;
+}
+
 function resolve() {
 	let net = cursor(), bridge = bridge_section(net);
 
@@ -157,6 +174,9 @@ function resolve() {
 	    readfile(`/sys/class/net/${PON}/device/l2_port_priority`) != null)
 		return { mode: 'bridge', source: 'network', port: PON };
 	let config = read_config();
+
+	if (config.mode == 'routed' || (!config.mode && pon_routed(net)))
+		return { mode: 'routed', source: config.mode ? 'config' : 'network' };
 
 	switch (config.mode) {
 	case 'tagged':
@@ -197,10 +217,6 @@ function pon_ports(uci, bridge) {
 	return type(ports) == 'array' ? ports : [ ports ];
 }
 
-function is_pon_port(port) {
-	return match(port, regexp(`^${PON}(\\.[0-9]+)?$`)) != null;
-}
-
 function current_port() {
 	let uci = cursor();
 	let bridge = bridge_section(uci);
@@ -218,6 +234,25 @@ function offload_untag(uci, vid) {
 		uci.commit('omci');
 	}
 	return true;
+}
+
+/* Routed: take the PON out of br-lan and drop the VLAN device made for it. */
+function unbridge() {
+	let uci = cursor();
+	let bridge = bridge_section(uci);
+	let changed = false;
+
+	if (bridge)
+		changed = set_option(uci, bridge, 'ports',
+				     filter(pon_ports(uci, bridge), (p) => !is_pon_port(p)));
+	if (uci.get('network', SECTION) != null) {
+		uci.delete('network', SECTION);
+		changed = true;
+	}
+	if (changed) {
+		uci.commit('network');
+		conn.call('network', 'reload', {});
+	}
 }
 
 /* Returns the PON port of br-lan */
@@ -283,6 +318,8 @@ function update() {
 
 	if (next.mode == 'bridge')
 		sync_port_priority();
+	else if (next.mode == 'routed')
+		unbridge();
 	else if (next.error || next.source == 'pending')
 		next.port = current_port();
 	else {

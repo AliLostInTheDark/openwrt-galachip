@@ -218,12 +218,12 @@ return view.extend({
 		s.uciconfig = 'omci';
 		s.addremove = false;
 		o = s.option(form.ListValue, 'mode', _('Mode'));
+		o.value('', _('Automatic'));
+		o.value('routed', _('Routed (the PON is the WAN)'));
 		o.value('transparent', _('Transparent (router tags)'));
 		o.value('tagged', _('Tagged (router untagged)'));
 		o.value('olt', _('Control by OLT'));
-		o.default = 'transparent';
-		o.rmempty = false;
-		o.description = _('<em>Control by OLT</em> works like Tagged, using the VLAN that the OLT assigns to untagged traffic. To mix ports, choose Tagged or Control by OLT, then set the port below to Transparent.');
+		o.description = _('<em>Automatic</em> is Routed when a network interface uses the PON, as on a home gateway, and Transparent otherwise. <em>Control by OLT</em> works like Tagged, using the VLAN that the OLT assigns to untagged traffic. To mix ports, choose Tagged or Control by OLT, then set the port below to Transparent.');
 
 		o = s.option(form.Value, 'vid', _('VLAN ID'));
 		o.datatype = 'range(1,4094)';
