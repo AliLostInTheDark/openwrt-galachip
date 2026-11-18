@@ -25,7 +25,7 @@ return view.extend({
 			'placeholder': _('VLAN, name, value…') });
 		var count = E('span');
 		var root = E('div');
-		var expandAll = true;
+		var expandAll = false;
 
 		function bySectionAndClass() {
 			var sections = {};
