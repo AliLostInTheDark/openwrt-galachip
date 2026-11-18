@@ -43,6 +43,7 @@
 #define GC_SR_HM		0x0c000
 #define GC_SR_SRC		0x10000
 #define GC_SR_CA		0x18000
+#define GC_SR_CAR		0x1c000	/* CAR (rate limiter) bank, vendor DAT_000917cc */
 #define GC1601_GEM_METERS	32
 #define GC1601_SLOT_PROBE_SIZE	320
 #define GC1601_SLOT_PROBE_COUNT	4
@@ -700,14 +701,42 @@ static void gc1601_sr_update(struct gc1601_eth *priv, u32 off, u32 clear, u32 se
 
 /*
  * SR_hw_init as xpon_sdk runs it with hw_br_flood=1: table init, L3 lookup
- * and port defaults, isolation, multicast permits and ageing. The loader
- * leaves the engine minimal, so frames the switch takes are dropped without
- * it. car_init (CPU trap rate limits) is left out.
+ * and port defaults, isolation, multicast permits, ageing and car_init
+ * (CPU trap PPS queue rate limits). The loader leaves the engine minimal,
+ * so frames the switch takes are dropped without it.
  */
 static int gc1601_uni_attrs_apply(struct gc1601_eth *priv);
 static int gc1601_qos_replay(struct gc1601_eth *priv);
 static int gc1601_sr_default_configs_apply(struct gc1601_eth *priv);
 static void gc1601_gmac_pause_addr_apply(struct gc1601_eth *priv);
+
+/*
+ * car_init (xpon_sdk_complete.c:44371): 20M token reference, fill time
+ * 0x30d4, CAR A/B enable, and chipset_car_sl_pps_queue_set(1, port, q, pps)
+ * for queues 1..4 on ports 0 and 1.
+ */
+static void gc1601_car_init(struct gc1601_eth *priv)
+{
+	static const u16 pps[4] = { 800, 200, 500, 2000 };
+	void __iomem *ca = priv->switch_base + GC_SR_CA;
+	void __iomem *car = priv->switch_base + GC_SR_CAR;
+	unsigned int q;
+
+	writel(20000000, ca + 0x44);
+	writel(20000000, car + 0x0c);
+	writel(0x30d4 - 1, car + 0x34);
+	writel(readl(car) | 1, car);
+	writel(readl(ca) | 1, ca);
+
+	for (q = 1; q <= ARRAY_SIZE(pps); q++) {
+		u32 limit = BIT(21) | ((pps[q - 1] / 10) & 0x1fffff);
+
+		writel((readl(ca + 0x80 + 4 * q) & 0xffe00000) | limit,
+		       ca + 0x80 + 4 * q);
+		writel((readl(ca + 0xc0 + 4 * q) & 0xffe00000) | limit,
+		       ca + 0xc0 + 4 * q);
+	}
+}
 
 /*
  * The 2024-12 stock image ends S03sdk with "w e4002 bd" on dbg_reg, setting
@@ -778,6 +807,7 @@ static int gc1601_sr_hw_init(struct gc1601_eth *priv)
 	gc1601_sr_update(priv, GC_SR_HA + 0x2c, ~0xffffe328, 9000);
 	gc1601_sr_update(priv, GC_SR_HA + 0x2c, 0x8000, 0x4000);
 	priv->sr_ha_frame = readl(sw + GC_SR_HA + 0x2c) & 0x3fff;
+	gc1601_car_init(priv);
 	return gc1601_uni_attrs_apply(priv);
 }
 
@@ -2528,7 +2558,6 @@ static bool uni_omci_attrs;
 
 #define GC_GMAC_PAUSE_RX	0x90	/* honour received pause frames */
 #define GC_GMAC_PAUSE_TX	0x70	/* quanta << 16 | send pause << 1 */
-#define GC_SR_CAR		0x1c000	/* CAR (rate limiter) bank, vendor DAT_000917cc */
 #define GC_SR_AGE_UNIT		0x367e	/* chipset_set_aging_time: register per second */
 #define GC_SR_LEARN_UNI		BIT(9)	/* chipset_mactbl_limit port 1 */
 
