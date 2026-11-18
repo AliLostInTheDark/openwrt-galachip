@@ -1992,11 +1992,12 @@ static int gc1601_hw_setup(struct gc1601_eth *priv)
 	writel(priv->tx_ring_dma, priv->base[GC1601_TX_RING] + GC_TX_RING_BASE);
 
 	writel(0x30000800, priv->base[GC1601_BUFFERS] + GC_BUF_POOL_CFG);
-	writel(0x60, priv->base[GC1601_RX] + GC_RX_PARTITION);
+	if (cold)
+		writel(0x60, priv->base[GC1601_RX] + GC_RX_PARTITION);
 	writel(GC_RX_CTRL_VAL, priv->base[GC1601_RX] + GC_RX_CTRL);
 
-	dev_dbg(priv->dev, "RX setup: partition=%08x (readback %08x), rx_ctrl=%08x (readback %08x)\n",
-		0x60, readl(priv->base[GC1601_RX] + GC_RX_PARTITION),
+	dev_dbg(priv->dev, "RX setup: partition readback=%08x, rx_ctrl=%08x (readback %08x)\n",
+		readl(priv->base[GC1601_RX] + GC_RX_PARTITION),
 		GC_RX_CTRL_VAL,
 		readl(priv->base[GC1601_RX] + GC_RX_CTRL));
 
