@@ -1,5 +1,7 @@
 'use strict';
 
+import { classes as g988_classes } from 'omci.g988';
+
 /*
  * Readable fields for MIB objects. The agent returns each object's attribute
  * data as hex in G.988 attribute order, so a field is a name, a byte offset,
@@ -272,8 +274,7 @@ const huawei_multicast = numbered([ 1, 2, 2, 2, 4 ]);
 
 layouts['350'] = numbered([ 1, 1, 1, 1, 2, 4, 16, 4, 6 ]);
 layouts['352'] = numbered([ 2, 2, 2, 1, 4, 4 ]);
-layouts['353'] = numbered([ 14, 1, 1, 1, 4 ]);
-for (let id in [ 367, 370, 373, 65408, 65414, 65425 ])
+for (let id in [ 367, 65408 ])
 	layouts[id] = huawei_multicast;
 layouts['65295'] = numbered([ 1, 2, 1, 2, 1, 2, 1, 2, 1, 2 ]);
 layouts['65296'] = numbered([ 1, 1, 4, 1, 1, 1, 4, 1, 1, 12, 4, 25 ]);
@@ -489,13 +490,59 @@ function mcast_rows(item) {
 	return rows;
 }
 
+function decode_g988_value(data, offset, size, fmt) {
+	if (type(fmt) == 'object') {
+		let n = number(data, offset, size);
+		let label = fmt[n];
+
+		return label != null ? `${n} (${label})` : n;
+	}
+	if (fmt == 'str')
+		return text(data, offset, size);
+	if (fmt == 'mac')
+		return field(data, [ null, offset, size, 'mac' ]);
+	if (fmt == 'sn')
+		return field(data, [ null, offset, size, 'serial' ]);
+	if (fmt == 'ip' && size == 4)
+		return ip_text(data, offset);
+	if (fmt == 'hex')
+		return size <= 4 ? sprintf(`0x%0${size * 2}x`, number(data, offset, size)) :
+			'0x' + substr(data, offset * 2, size * 2);
+	if (size <= 4)
+		return number(data, offset, size);
+	return text(data, offset, size);
+}
+
+function decode_from_g988(class_id, data) {
+	let entry = g988_classes[class_id];
+
+	if (!entry)
+		return null;
+
+	let fields = {}, offset = 0, avail = length(data) / 2;
+
+	for (let attr in entry[1]) {
+		let name = attr[0], size = attr[1], flags = attr[2] ?? '', fmt = attr[3];
+
+		if (index(flags, 't') >= 0 || !size)
+			continue;
+		if (offset + size > avail)
+			break;
+		fields[name] = decode_g988_value(data, offset, size, fmt);
+		offset += size;
+	}
+	return length(fields) ? fields : null;
+}
+
 export function decode(item) {
 	let layout = layouts[item.class_id];
 	let data = item.data;
 	let fields = {}, notes = {};
 
-	if (!layout || type(data) != 'string')
+	if (type(data) != 'string')
 		return null;
+	if (!layout)
+		return decode_from_g988(item.class_id, data);
 	for (let spec in layout) {
 		let explained = note(item.class_id, spec, data);
 

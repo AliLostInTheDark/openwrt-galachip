@@ -558,9 +558,237 @@ export const classes = {
 		[ 'ethernet_passive_optical_network_setup_extension', 1 ],
 		[ 'missing_consecutive_bursts_threshold', 4 ]
 	] ],
+	/* Huawei */
 	'350': [ 'Huawei flow mapping', numbered([ 1, 1, 1, 1, 2, 4, 16, 4, 6 ]) ],
+	'351': [ 'Huawei extended configuration 351', numbered([ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 ]) ],
 	'352': [ 'Huawei VLAN mapping', numbered([ 2, 2, 2, 1, 4, 4 ]) ],
-	'353': [ 'Huawei software image extension', numbered([ 14, 1, 1, 1, 4 ]) ],
+	'353': [ 'Huawei VoIP/software image extension', [
+		[ 'version', 14, '', 'str' ], [ 'committed', 1 ],
+		[ 'active', 1 ], [ 'valid', 1 ], [ 'crc32', 4, '', 'hex' ]
+	] ],
+	'367': [ 'Huawei multicast configuration 367', numbered([ 1, 2, 2, 2, 4 ]) ],
+	'370': [ 'Huawei UNI egress queue weight', [
+		[ 'queue_weight_cfg', 2, '', 'hex' ], [ 'mode', 4, '', 'hex' ], [ 'flags', 4, '', 'hex' ]
+	] ],
+	'373': [ 'Huawei T-CONT queue configuration', numbered([ 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1 ]) ],
+	'65398': [ 'Huawei extended ONT-G2', [
+		...numbered([ 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1 ]),
+		[ 'vendor_info', 25, '', 'str' ], [ 'attr_15', 1 ], [ 'attr_16', 1 ]
+	] ],
+	'65408': [ 'Huawei multicast configuration 65408', numbered([ 1, 2, 2, 2, 4 ]) ],
+	'65414': [ 'Huawei optical data', [
+		[ 'attr_1', 1 ], [ 'attr_2', 1 ], [ 'attr_3', 1 ], [ 'attr_4', 1 ], [ 'attr_5', 1 ],
+		[ 'transceiver_info', 16, '', 'str' ], [ 'attr_7', 2 ], [ 'attr_8', 2 ],
+		[ 'attr_9', 4 ], [ 'attr_10', 4 ], [ 'attr_11', 2 ], [ 'attr_12', 2 ], [ 'attr_13', 8, '', 'hex' ]
+	] ],
+	'65415': [ 'Huawei extended WAN info', numbered([ 1, 1, 1 ]) ],
+	'65417': [ 'Huawei extended PPP', [
+		[ 'enable', 1, 'c' ], [ 'username_1', 25, 'c', 'str' ],
+		[ 'username_2', 25, '', 'str' ], [ 'username_3', 25, '', 'str' ],
+		[ 'password_1', 25, 'c', 'str' ], [ 'password_2', 25, '', 'str' ],
+		[ 'password_3', 25, '', 'str' ], [ 'flags', 1 ]
+	] ],
+	'65423': [ 'Huawei extended ONT3 ability', [
+		[ 'attr_1', 1 ], [ 'attr_2', 1 ], [ 'attr_3', 1 ], [ 'attr_4', 1 ],
+		[ 'attr_5', 4, '', 'hex' ], [ 'attr_6', 8, '', 'hex' ], [ 'attr_7', 1 ],
+		[ 'capability_str', 25, '', 'str' ], [ 'attr_9', 6, '', 'hex' ],
+		[ 'attr_10', 4, '', 'hex' ], [ 'attr_11', 1 ], [ 'attr_12', 1 ],
+		[ 'attr_13', 1 ], [ 'attr_14', 1 ], [ 'attr_15', 1 ], [ 'attr_16', 2 ]
+	] ],
+	'65425': [ 'Huawei extended CPU', numbered([ 1, 4, 4, 4, 4, 2, 1 ]) ],
+	'65426': [ 'Huawei maintenance', numbered([ 2, 2 ]) ],
+	'65427': [ 'Huawei capability descriptor', [
+		[ 'attr_mask', 2, '', 'hex' ], [ 'descriptor', 16, '', 'hex' ],
+		[ 'table_1', 16, '', 'hex' ], [ 'table_2', 16, '', 'hex' ]
+	] ],
+	'65430': [ 'Huawei extended type', numbered([ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 ]) ],
+	'65431': [ 'Huawei extended OLT', [ [ 'flags', 4, '', 'hex' ] ] ],
+	'65444': [ 'Huawei extended 802.11', [ [ 'config', 8, '', 'hex' ] ] ],
+	'65447': [ 'Huawei extended MAC', [ [ 'mode', 1 ] ] ],
+	'65450': [ 'Huawei extended 802.11 interface', numbered([ 1, 1, 1, 1, 1 ]) ],
+	'65451': [ 'Huawei extended WAN config', numbered([ 1, 1, 2 ]) ],
+	'65453': [ 'Huawei extended WAN data 3', [
+		[ 'attr_1', 1, 'c' ], [ 'attr_2', 1, 'c' ], [ 'data', 12, 'c', 'hex' ]
+	] ],
+	'65454': [ 'Huawei extended 802.11 management', [
+		[ 'attr_1', 2 ], [ 'attr_2', 2 ], [ 'attr_3', 2 ], [ 'attr_4', 4 ],
+		[ 'attr_5', 8, '', 'hex' ], [ 'attr_6', 6, '', 'hex' ], [ 'attr_7', 6, '', 'hex' ]
+	] ],
+
+	/* ZTE */
+	'242': [ 'ZTE PPTP schedule pointer', [
+		[ 'policy', 1, 'c', policies ], [ 'sched_ptr', 2, 'c', 'hex' ]
+	] ],
+	'243': [ 'ZTE UNI schedule configuration', [
+		[ 'num_queues', 1, 'c' ], [ 'queue_map', 8, 'c', 'hex' ], [ 'queue_weight', 8, 'c', 'hex' ]
+	] ],
+	'247': [ 'ZTE extended ONU-G', [
+		[ 'attr_1', 2 ], [ 'attr_2', 2 ], [ 'version', 14, '', 'str' ],
+		[ 'attr_4', 2 ], [ 'attr_5', 2 ], [ 'attr_6', 2 ], [ 'attr_7', 2 ],
+		[ 'attr_8', 2 ], [ 'attr_9', 2 ], [ 'attr_10', 2 ], [ 'attr_11', 2 ],
+		[ 'attr_12', 2 ], [ 'attr_13', 2 ], [ 'attr_14', 2 ], [ 'attr_15', 2 ],
+		[ 'reset_default', 1 ]
+	] ],
+	'65294': [ 'ZTE SNTP configuration', [
+		[ 'time_zone', 2 ], [ 'master_server', 4, '', 'ip' ],
+		[ 'slave_server', 4, '', 'ip' ], [ 'interval', 4 ],
+		[ 'attr_5', 1 ], [ 'attr_6', 1 ]
+	] ],
+	'65314': [ 'ZTE SSID control', [
+		[ 'bssid_mac', 6, '', 'mac' ], [ 'ssid_name_ptr', 2, '', 'hex' ],
+		[ 'ssid_hide', 1 ], [ 'user_isolation', 1 ], [ 'max_users', 2 ],
+		[ 'current_users', 2 ], [ 'acl', 16, '', 'hex' ], [ 'assoc_devices', 16, '', 'hex' ]
+	] ],
+	'65315': [ 'ZTE SSID authentication and encryption', [
+		[ 'auth_algo', 1 ], [ 'wep_encry_level', 1 ], [ 'wep_default_key_id', 1 ],
+		[ 'key_value_ptr', 2, '', 'hex' ], [ 'wpa_rekey_interval', 2 ], [ 'wpa_encry_algo', 1 ]
+	] ],
+
+	/* FiberHome */
+	'65322': [ 'FiberHome WAN configuration', [
+		[ 'wan_index', 1, 'c' ], [ 'wan_name_1', 16, 'c', 'str' ],
+		[ 'wan_name_2', 16, '', 'str' ], [ 'wan_name_3', 16, '', 'str' ],
+		[ 'wan_name_4', 16, '', 'str' ], [ 'connection_mode', 1, 'c' ],
+		[ 'connection_type', 1, 'c' ], [ 'vlan_id', 2, 'c' ], [ 'priority', 2, 'c' ],
+		[ 'nat_enable', 1, 'c' ], [ 'address_mode', 1, 'c' ], [ 'qos_enable', 1 ],
+		[ 'connection_status', 1 ], [ 'gem_tp_ptr', 2, 'c', 'hex' ],
+		[ 'dhcp_remote_id', 10, '', 'str' ]
+	] ],
+	'65323': [ 'FiberHome PPPoE configuration', [
+		[ 'pppoe_proxy_enable', 1, 'c' ], [ 'username_1', 16, 'c', 'str' ],
+		[ 'username_2', 16, '', 'str' ], [ 'password_1', 16, 'c', 'str' ],
+		[ 'password_2', 16, '', 'str' ], [ 'service_name_1', 16, '', 'str' ],
+		[ 'service_name_2', 16, '', 'str' ], [ 'dial_pattern', 1 ]
+	] ],
+	'65324': [ 'FiberHome WAN port binding', [
+		[ 'fe_bind_mask', 1, 'c', 'hex' ], [ 'ssid_bind_mask', 1, 'c', 'hex' ]
+	] ],
+	'65326': [ 'FiberHome WiFi station management 1', [
+		[ 'ssid_enable', 1 ], [ 'wifi_standard', 1 ], [ 'ssid_hide', 1 ],
+		[ 'auth_mode', 1 ], [ 'encry_type', 1 ], [ 'psk_1', 16, '', 'str' ],
+		[ 'psk_2', 16, '', 'str' ], [ 'psk_3', 16, '', 'str' ],
+		[ 'psk_4', 16, '', 'str' ], [ 'wpa_rekey_interval', 4 ],
+		[ 'ssid_index', 2 ], [ 'ssid_1', 16, '', 'str' ],
+		[ 'ssid_2', 16, '', 'str' ], [ 'wifi_switch', 1 ], [ 'ssid_count', 2 ]
+	] ],
+	'65327': [ 'FiberHome WiFi station management 2', [
+		[ 'wep_encry_level', 1 ], [ 'wep_key1_1', 16, '', 'hex' ],
+		[ 'wep_key1_2', 16, '', 'hex' ], [ 'wep_key2_1', 16, '', 'hex' ],
+		[ 'wep_key2_2', 16, '', 'hex' ], [ 'wep_key3_1', 16, '', 'hex' ],
+		[ 'wep_key3_2', 16, '', 'hex' ], [ 'wep_key4_1', 16, '', 'hex' ],
+		[ 'wep_key4_2', 16, '', 'hex' ], [ 'wep_key_index', 1 ],
+		[ 'channel', 1 ], [ 'power', 1 ], [ 'country', 1 ],
+		[ 'frequency', 2 ], [ 'sta_num', 2 ], [ 'bandwidth', 2 ]
+	] ],
+	'65328': [ 'FiberHome WiFi station management 3', [
+		[ 'radius_service_len', 2 ], [ 'rad_addr_1', 16, '', 'str' ],
+		[ 'rad_addr_2', 16, '', 'str' ], [ 'rad_addr_3', 16, '', 'str' ],
+		[ 'rad_addr_4', 16, '', 'str' ], [ 'rad_addr_5', 16, '', 'str' ],
+		[ 'rad_addr_6', 16, '', 'str' ], [ 'rad_addr_7', 16, '', 'str' ],
+		[ 'rad_addr_8', 16, '', 'str' ], [ 'radius_port', 2 ],
+		[ 'radius_pwd_1', 16, '', 'str' ], [ 'radius_pwd_2', 16, '', 'str' ],
+		[ 'wapi_as_ip', 4, '', 'ip' ], [ 'wapi_as_port', 2 ]
+	] ],
+	'65329': [ 'FiberHome WAN IP host configuration', [
+		[ 'ip_address', 4, 'c', 'ip' ], [ 'netmask', 4, 'c', 'ip' ],
+		[ 'gateway', 4, 'c', 'ip' ], [ 'primary_dns', 4, 'c', 'ip' ],
+		[ 'secondary_dns', 4, 'c', 'ip' ], [ 'static_ipv6_addr', 19, '', 'str' ],
+		[ 'ipv6_gateway', 19, '', 'str' ], [ 'ipv6_primary_dns', 19, '', 'str' ]
+	] ],
+	'65333': [ 'FiberHome PON switchport rate limit', [
+		[ 'us_limit_speed', 4 ], [ 'ds_limit_speed', 4 ]
+	] ],
+	'65338': [ 'FiberHome WAN extended VLAN', [
+		[ 'vlan_model', 1, 'c' ], [ 'translation_enable', 1, 'c' ],
+		[ 'translation_vid', 2, 'c' ], [ 'cos', 2, 'c' ],
+		[ 'qinq_enable', 1 ], [ 'tpid', 2, '', 'hex' ],
+		[ 'svlan_id', 2 ], [ 'svlan_cos', 2 ]
+	] ],
+	'65363': [ 'FiberHome OMCI mode', [
+		[ 'standard_omci_flag', 1 ], [ 'cfg_file_ver', 12, '', 'str' ],
+		[ 'olt_no', 2 ], [ 'pon_no', 2 ], [ 'onu_no', 2 ]
+	] ],
+	'65411': [ 'FiberHome WiFi status', [
+		[ 'conversation', 2 ], [ 'overlap', 1 ], [ 'wireless_enable', 1 ]
+	] ],
+
+	/* CTC / stock G7 */
+	'250': [ 'CTC PPPoE WAN configuration', [
+		[ 'nat_enable', 1, 'c' ], [ 'pppoe_mode', 1, 'c' ],
+		[ 'conn_trigger', 1, 'c' ], [ 'release_timer', 2, 'c' ],
+		[ 'username', 25, '', 'str' ], [ 'password', 25, '', 'str' ],
+		[ 'status', 1 ], [ 'online_duration', 4 ],
+		[ 'proxy', 2, '', 'hex' ], [ 'username_2_ptr', 2, '', 'hex' ]
+	] ],
+	'65282': [ 'CTC extended VLAN translation', [
+		[ 'tag_control_mode', 1, 'c' ], [ 'entries_num', 1, 'c' ],
+		[ 'translation_vlan', 24, 'c', 'hex' ]
+	] ],
+	'65320': [ 'CTC optical transceiver info', [
+		[ 'identifier', 1 ], [ 'vendor_name', 16, '', 'str' ],
+		[ 'vendor_oui', 3, '', 'hex' ], [ 'vendor_pn', 16, '', 'str' ],
+		[ 'vendor_rev', 4, '', 'str' ], [ 'vendor_sn', 16, '', 'str' ],
+		[ 'date_code', 8, '', 'str' ], [ 'diagnostic_type', 1, '', 'hex' ]
+	] ],
+	'65321': [ 'CTC WAN service binding', [
+		[ 'service', 1, 'c' ], [ 'ip_host_instance', 2, 'c', 'hex' ],
+		[ 'lan_port_mask', 2, 'c', 'hex' ], [ 'attr_4', 2 ],
+		[ 'mvlan', 2, 'c' ], [ 'mtu', 2, 'c' ]
+	] ],
+	'65380': [ 'CTC WAN connection configuration', [
+		[ 'connect_mode', 1, 'c' ], [ 'connect_type', 1, 'c' ],
+		[ 'vlan', 2, 'c' ], [ 'priority', 1, 'c' ],
+		[ 'vlan_mode', 1, 'c' ], [ 'igmp_proxy', 1, 'c' ], [ 'mvlan', 2, 'c' ]
+	] ],
+	'65381': [ 'CTC WAN IP/PPPoE profile', [
+		[ 'wan_dsp_mode', 1, 'c' ], [ 'pppoe_username', 24, 'c', 'str' ],
+		[ 'pppoe_password', 24, 'c', 'str' ], [ 'bind_lan_mask', 1, 'c', 'hex' ],
+		[ 'bind_ssid_mask', 1, 'c', 'hex' ], [ 'bind_ssid5g_mask', 1, 'c', 'hex' ],
+		[ 'static_ip', 4, 'c', 'ip' ], [ 'static_netmask', 4, 'c', 'ip' ],
+		[ 'static_gateway', 4, 'c', 'ip' ], [ 'static_dns', 4, 'c', 'ip' ],
+		[ 'static_dns2', 4, 'c', 'ip' ], [ 'bridge_mode', 1, 'c' ], [ 'enable', 1, 'c' ]
+	] ],
+	'65385': [ 'CTC WiFi interface configuration', [
+		[ 'wifi_mode', 1, 'c' ], [ 'channel', 1, 'c' ],
+		[ 'ssid_name', 24, 'c', 'str' ], [ 'bandwidth', 1, 'c' ],
+		[ 'rate', 1, 'c' ], [ 'guard_interval', 2, 'c' ],
+		[ 'beacon_interval', 2, 'c' ], [ 'dtim_interval', 2, 'c' ],
+		[ 'ap_isolation', 1, 'c' ], [ 'broadcast_cancel', 1, 'c' ],
+		[ 'ssid_enable', 1, 'c' ], [ 'wifi_enable', 1, 'c' ]
+	] ],
+	'65386': [ 'CTC WiFi security configuration', [
+		[ 'security_mode', 1, 'c' ], [ 'share_key', 24, 'c', 'str' ],
+		[ 'wep_auth', 1, 'c' ], [ 'wep_key_bit', 1, 'c' ],
+		[ 'key_index', 1, 'c' ], [ 'key_1', 26, 'c', 'str' ],
+		[ 'key_2', 26, 'c', 'str' ], [ 'key_3', 26, 'c', 'str' ],
+		[ 'key_4', 26, 'c', 'str' ], [ 'wpa_encrypt', 1, 'c' ]
+	] ],
+	'65523': [ 'CTC loop detection control', [
+		[ 'enable', 1 ], [ 'loop_detection', 1 ]
+	] ],
+	'65528': [ 'CTC loop detection', [
+		[ 'operator_id', 4, '', 'str' ], [ 'loop_detect_mgmt', 2 ],
+		[ 'loop_port_down', 2 ], [ 'detect_msg_freq', 2 ],
+		[ 'recovery_interval', 2 ], [ 'port_vlan_table', 0, 't' ]
+	] ],
+	'65529': [ 'CTC ONU capability', [
+		[ 'operator_id', 4, '', 'str' ], [ 'ctc_spec_version', 1 ],
+		[ 'onu_type', 1 ], [ 'tx_power_supply_ctrl', 1 ]
+	] ],
+	'65530': [ 'CTC LOID authentication', [
+		[ 'operator_id', 4, '', 'str' ], [ 'loid', 24, '', 'str' ],
+		[ 'password', 12, '', 'str' ], [ 'auth_status', 1 ]
+	] ],
+	'65531': [ 'CTC extended multicast operations profile', [
+		[ 'igmp_version', 1, 'c' ], [ 'igmp_function', 1, 'c' ],
+		[ 'immediate_leave', 1, 'c' ], [ 'upstream_igmp_tci', 2, 'c', 'hex' ],
+		[ 'upstream_igmp_tag_ctrl', 1, 'c' ], [ 'upstream_igmp_rate', 4, 'c' ],
+		[ 'ext_dynamic_acl', 0, 't' ], [ 'ext_static_acl', 0, 't' ],
+		[ 'ext_lost_groups', 0, 't' ], [ 'robustness', 1, 'c' ],
+		[ 'querier_ip', 16, '', 'hex' ], [ 'query_interval', 4, 'c' ],
+		[ 'query_max_resp_time', 4, 'c' ], [ 'last_member_query_interval', 4 ],
+		[ 'unauthorized_join_behaviour', 1 ], [ 'ds_igmp_mcast_tci', 3, 'c', 'hex' ]
+	] ],
 
 	/* Nokia/ALCL */
 	'65295': [ 'Nokia optical supervision', numbered([ 1, 2, 1, 2, 1, 2, 1, 2, 1, 2 ]) ],
@@ -569,9 +797,6 @@ export const classes = {
 	'65305': [ 'Nokia VLAN downstream supplemental', numbered([ 1, 6 ]) ],
 	'65306': [ 'Nokia VLAN upstream policer', numbered([ 19 ]) ]
 };
-
-for (let id in [ 367, 370, 373, 65408, 65414, 65425 ])
-	classes[id] = [ `Huawei multicast ${id}`, numbered([ 1, 2, 2, 2, 4 ]) ];
 
 export const actions = {
 	'4': 'Create', '6': 'Delete', '8': 'Set', '9': 'Get',

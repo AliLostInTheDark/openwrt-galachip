@@ -96,6 +96,31 @@ check('277 port note', f.notes.related_port, 'port 257, priority 2');
 f = decode({ class_id: 130, data: data([ 'ffff' ]) });
 check('130 pointer', f.tp, '0xffff');
 check('130 null pointer', f.notes.tp, 'none');
+
+/* Fallback g988.uc decoding for G.988 management & vendor MEs. */
+f = decode({ class_id: 340, data: '0000010002' });
+check('340 admin', f.admin_state, '0 (unlocked)');
+check('340 acs', f.acs_address, '0x0001');
+
+f = decode({ class_id: 353, data: '56312e300000000000000000000001010112345678' });
+check('353 version', f.version, 'V1.0');
+check('353 committed', f.committed, 1);
+check('353 crc32', f.crc32, '0x12345678');
+
+f = decode({ class_id: 370, data: '01020300000000000004' });
+check('370 weight', f.queue_weight_cfg, '0x0102');
+check('370 mode', f.mode, '0x03000000');
+
+f = decode({ class_id: 65294, data: '0008080808080101010100000e100102' });
+check('65294 master', f.master_server, '8.8.8.8');
+check('65294 slave', f.slave_server, '1.1.1.1');
+check('65294 interval', f.interval, 3600);
+
+f = decode({ class_id: 65530, data: '43544330' + '4c4f49443132333400000000000000000000000000000000' + '504153530000000000000000' + '01' });
+check('65530 operator', f.operator_id, 'CTC0');
+check('65530 loid', f.loid, 'LOID1234');
+check('65530 auth', f.auth_status, 1);
+
 check('unknown class', decode({ class_id: 9999, data: '00' }), null);
 
 if (fails)
