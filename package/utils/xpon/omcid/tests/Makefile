@@ -31,7 +31,7 @@ test: check-sync
 	ASAN_OPTIONS=detect_leaks=0 $(TEST_BIN)-proxy
 	$(CC) $(CFLAGS) $(WARN) -I../src -I$(LIB) -I$(LIB)/include \
 		-o $(TEST_BIN)-client backend-client-test.c $(SOURCES) $(LIB_SOURCES) \
-		../src/backend-client.c ../src/backend.c ../src/checkpoint.c
+		../src/backend-client.c ../src/backend.c ../src/checkpoint.c ../src/olt-watch.c
 	ASAN_OPTIONS=detect_leaks=0 $(TEST_BIN)-client
 
 	$(CC) $(CFLAGS) $(WARN) -I../src -I$(LIB) -I$(LIB)/include \

@@ -29,6 +29,9 @@ void omcid_olt_watch_link(struct omcid_olt_watch *w, bool up, unsigned long now)
 	w->outage_ms = w->down ? now - w->down_ms : 0;
 	w->down = false;
 	memset(w->count, 0, sizeof(w->count));
+	memset(w->issues, 0, sizeof(w->issues));
+	w->issue_count = 0;
+	w->issue_overflow = 0;
 	w->messages = 0;
 	w->up_ms = w->last_ms = now;
 	w->active = true;
@@ -42,6 +45,75 @@ void omcid_olt_watch_rx(struct omcid_olt_watch *w, const u8 *pdu, size_t len,
 	w->count[pdu[2] & 0x1f]++;
 	w->messages++;
 	w->last_ms = now;
+}
+
+static bool olt_watch_has_result(u8 mt)
+{
+	switch (mt) {
+	case OLT_MT_CREATE:
+	case OLT_MT_DELETE:
+	case OLT_MT_SET:
+	case OLT_MT_GET:
+	case OLT_MT_MIB_RESET:
+	case 18: /* Test */
+	case 19: /* Start SW download */
+	case 21: /* End SW download */
+	case 22: /* Activate SW */
+	case 23: /* Commit SW */
+	case 24: /* Sync time */
+	case 25: /* Reboot */
+	case 26: /* Get next */
+	case 29: /* Set table */
+		return true;
+	default:
+		return false;
+	}
+}
+
+void omcid_olt_watch_tx(struct omcid_olt_watch *w, const u8 *pdu, size_t len)
+{
+	u8 mt, rc;
+	size_t rc_off;
+	u16 class_id, inst;
+	unsigned int i;
+
+	if (!w || len < 9)
+		return;
+	if (!(pdu[2] & 0x20)) /* AK=1 responses only */
+		return;
+	mt = pdu[2] & 0x1f;
+	if (!olt_watch_has_result(mt))
+		return;
+	rc_off = (pdu[3] == 0x0b) ? 10 : 8;
+	if (len <= rc_off)
+		return;
+	rc = pdu[rc_off];
+	if (rc == 0)
+		return;
+	class_id = ((u16)pdu[4] << 8) | pdu[5];
+	inst = ((u16)pdu[6] << 8) | pdu[7];
+
+	for (i = 0; i < w->issue_count; i++) {
+		if (w->issues[i].class_id == class_id &&
+		    w->issues[i].msg_type == mt &&
+		    w->issues[i].result == rc) {
+			if (w->issues[i].count < 0xffff)
+				w->issues[i].count++;
+			w->issues[i].inst = inst;
+			return;
+		}
+	}
+	if (w->issue_count < OMCID_OLT_ISSUE_MAX) {
+		struct omcid_olt_issue *e = &w->issues[w->issue_count++];
+
+		e->class_id = class_id;
+		e->inst = inst;
+		e->msg_type = mt;
+		e->result = rc;
+		e->count = 1;
+	} else if (w->issue_overflow < 0xffff) {
+		w->issue_overflow++;
+	}
 }
 
 static const char *olt_watch_verdict(const struct omcid_olt_watch *w)
@@ -88,8 +160,26 @@ long omcid_olt_watch_poll(struct omcid_olt_watch *w, unsigned long now,
 		w->count[OLT_MT_CREATE], w->count[OLT_MT_SET], w->count[OLT_MT_DELETE],
 		w->count[OLT_MT_GET], mib_sync);
 	fputs(line, out);
+	if (w->issue_count) {
+		unsigned int i, show = w->issue_count < 8 ? w->issue_count : 8;
+
+		fprintf(out, "omcid: OLT non-zero responses (%u unique%s):",
+			w->issue_count, w->issue_overflow ? "+" : "");
+		for (i = 0; i < show; i++) {
+			const struct omcid_olt_issue *e = &w->issues[i];
+
+			fprintf(out, " me=%u/0x%04x(mt=%u,rc=%u,x%u)",
+				e->class_id, e->inst, e->msg_type, e->result, e->count);
+		}
+		if (w->issue_count > show || w->issue_overflow)
+			fprintf(out, " ...(+%u)",
+				(unsigned int)(w->issue_count - show) + w->issue_overflow);
+		fputc('\n', out);
+	}
 	fflush(out);
 	if (kernel_log) {
+		FILE *dfp;
+
 		fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC | O_NONBLOCK);
 		if (fd >= 0) {
 			if (dprintf(fd, "<6>%s", line) < 0)
@@ -97,6 +187,27 @@ long omcid_olt_watch_poll(struct omcid_olt_watch *w, unsigned long now,
 			close(fd);
 		} else {
 			fprintf(stderr, "omcid: cannot open /dev/kmsg for recovery summary: %s\n", strerror(errno));
+		}
+		dfp = fopen("/tmp/omcid-olt-diag.tmp", "w");
+		if (dfp) {
+			unsigned int i;
+
+			fputs(line, dfp);
+			if (!w->issue_count) {
+				fputs("non_zero_responses: none\n", dfp);
+			} else {
+				fprintf(dfp, "non_zero_responses: %u (overflow %u)\n",
+					w->issue_count, w->issue_overflow);
+				for (i = 0; i < w->issue_count; i++) {
+					const struct omcid_olt_issue *e = &w->issues[i];
+
+					fprintf(dfp, "  class=%u inst=0x%04x mt=%u rc=%u count=%u\n",
+						e->class_id, e->inst, e->msg_type,
+						e->result, e->count);
+				}
+			}
+			fclose(dfp);
+			rename("/tmp/omcid-olt-diag.tmp", "/tmp/omcid-olt-diag.txt");
 		}
 	}
 	w->active = false;

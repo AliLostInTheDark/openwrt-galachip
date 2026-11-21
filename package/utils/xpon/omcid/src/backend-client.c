@@ -394,6 +394,7 @@ static int tx(struct omci_device *odev, struct sk_buff *skb, u16 gem_port)
 			fprintf(ctx->trace, "# tx checkpoint %lu send %lu retries %u\n",
 				saved - start, omci_native_now() - saved, retries);
 		omcid_trace(ctx, "tx", 0, 0, skb->data, skb->len);
+		omcid_olt_watch_tx(&ctx->olt, skb->data, skb->len);
 		kfree_skb(skb);
 	}
 	return transport_result(ctx, ret);

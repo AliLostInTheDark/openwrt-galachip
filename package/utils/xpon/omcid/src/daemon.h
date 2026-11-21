@@ -5,10 +5,23 @@
 #include "transport.h"
 #include <linux/omci-backend.h>
 
+#define OMCID_OLT_ISSUE_MAX	32
+
+struct omcid_olt_issue {
+	u16 class_id;
+	u16 inst;
+	u8 msg_type;
+	u8 result;
+	u16 count;
+};
+
 struct omcid_olt_watch {
 	unsigned long down_ms, up_ms, last_ms, outage_ms;
 	unsigned int messages;
 	u16 count[32];
+	struct omcid_olt_issue issues[OMCID_OLT_ISSUE_MAX];
+	u8 issue_count;
+	u16 issue_overflow;
 	bool active, down, had_outage;
 };
 
@@ -42,6 +55,7 @@ void omcid_trace_toggle(struct omcid *ctx);
 void omcid_olt_watch_link(struct omcid_olt_watch *w, bool up, unsigned long now);
 void omcid_olt_watch_rx(struct omcid_olt_watch *w, const u8 *pdu, size_t len,
 			unsigned long now);
+void omcid_olt_watch_tx(struct omcid_olt_watch *w, const u8 *pdu, size_t len);
 long omcid_olt_watch_poll(struct omcid_olt_watch *w, unsigned long now,
 			  u16 mib_sync, FILE *out, bool kernel_log, bool force);
 void omcid_trace(struct omcid *ctx, const char *direction, u64 sequence, u32 flags,

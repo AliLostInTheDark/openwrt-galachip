@@ -68,6 +68,31 @@ int main(void)
 	report(&w, 432000, line, sizeof(line));
 	CHECK(strstr(line, "after 300 s OMCC unavailable"));
 
+	/* Non-zero TX responses are deduplicated and summarized for OLT onboarding. */
+	{
+		u8 rx_set[16] = { 0, 1, 0x40 | 8, 0x0a, 0x01, 0x00, 0x00, 0x01 };
+		u8 tx_ok[16] = { 0, 1, 0x20 | 8, 0x0a, 0x01, 0x00, 0x00, 0x01, 0 };
+		u8 tx_unk[16] = { 0, 2, 0x20 | 9, 0x0a, 0xfe, 0x01, 0x00, 0x02, 4 };
+		u8 tx_ext[16] = { 0, 3, 0x20 | 4, 0x0b, 0x01, 0x50, 0x00, 0x03, 0, 4, 2 };
+		char big[1024];
+
+		omcid_olt_watch_link(&w, true, 500000);
+		omcid_olt_watch_rx(&w, rx_set, sizeof(rx_set), 500100);
+		omcid_olt_watch_tx(&w, tx_ok, sizeof(tx_ok));
+		omcid_olt_watch_tx(&w, tx_unk, sizeof(tx_unk));
+		omcid_olt_watch_tx(&w, tx_unk, sizeof(tx_unk));
+		omcid_olt_watch_tx(&w, tx_ext, sizeof(tx_ext));
+		CHECK(w.issue_count == 2);
+		CHECK(w.issues[0].class_id == 0xfe01 && w.issues[0].count == 2 &&
+		      w.issues[0].result == 4);
+		CHECK(w.issues[1].class_id == 0x0150 && w.issues[1].count == 1 &&
+		      w.issues[1].result == 2);
+		report(&w, 520000, big, sizeof(big));
+		CHECK(strstr(big, "OLT non-zero responses (2 unique):"));
+		CHECK(strstr(big, "me=65025/0x0002(mt=9,rc=4,x2)"));
+		CHECK(strstr(big, "me=336/0x0003(mt=4,rc=2,x1)"));
+	}
+
 	printf("%u OLT activation summary checks passed\n", checks);
 	return 0;
 }

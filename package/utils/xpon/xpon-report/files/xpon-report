@@ -7,9 +7,10 @@
 
 usage() {
 	cat <<-EOT
-	usage: xpon-report [-o FILE|-] [-f] [-u]
+	usage: xpon-report [-o FILE|-] [-f] [-O] [-u]
 	  -o FILE  write here (default /tmp/xpon-report-DATE.txt; - for stdout)
 	  -f       also read full driver and packet engine snapshots
+	  -O       compact OLT onboarding report (OLT-G, quirks, non-zero OMCI replies, MIB)
 	  -u       do not mask serial numbers, passwords and LOIDs
 	For the most detail, load the diagnostics module for your mode first
 	and let the link come up (or fail) once:
@@ -23,11 +24,13 @@ usage() {
 
 out="/tmp/xpon-report-$(date +%Y%m%d-%H%M%S).txt"
 full=0
+olt_only=0
 unmasked=0
-while getopts "o:fuh" opt; do
+while getopts "o:fOuh" opt; do
 	case "$opt" in
 	o) out="$OPTARG" ;;
 	f) full=1 ;;
+	O) olt_only=1 ;;
 	u) unmasked=1 ;;
 	*) usage ;;
 	esac
@@ -150,6 +153,7 @@ collect_taurus() {
 	run omcictl config list
 
 	section "OMCI"
+	show /tmp/omcid-olt-diag.txt /etc/omci/olt-profiles.conf
 	run omcictl mib list
 	if [ "$full" = 1 ]; then run omci-report; else run omci-report -b; fi
 	run logread -e omcid
@@ -264,16 +268,43 @@ collect() {
 	dmesg
 }
 
+collect_olt() {
+	section "OLT Onboarding Summary"
+	show "$XPON/mode_current" "$XPON/state" "$XPON/carrier" \
+		/tmp/omcid-olt-diag.txt /etc/omci/olt-profiles.conf
+	run omcictl status
+	run omcictl config list
+
+	section "OLT-G and Core Datapath MEs"
+	run omcictl mib show 131
+	run omcictl mib show 262
+	run omcictl mib show 268
+	run omcictl mib show 171
+	run omcictl mib list
+
+	section "OMCI Activity"
+	run omci-report -b
+	run logread -e omcid
+}
+
 umask 077
 mask=$(mktemp /tmp/.xpon-report-mask.XXXXXX) || exit 1
 trap 'rm -f "$mask"' EXIT
 trap 'exit 1' HUP INT TERM
 [ "$unmasked" = 1 ] || build_mask "$mask"
 
+run_collect() {
+	if [ "$olt_only" = 1 ]; then
+		collect_olt
+	else
+		collect
+	fi
+}
+
 if [ "$out" = "-" ]; then
-	collect | sed -f "$mask"
+	run_collect | sed -f "$mask"
 else
-	collect | sed -f "$mask" > "$out"
+	run_collect | sed -f "$mask" > "$out"
 	echo "Report written to $out"
 	[ "$unmasked" = 1 ] || echo "Serial numbers, passwords and LOIDs are masked; check the file before sharing it."
 	echo "Copy it off with WinSCP (SCP) or: scp -O root@192.168.1.1:$out ."
