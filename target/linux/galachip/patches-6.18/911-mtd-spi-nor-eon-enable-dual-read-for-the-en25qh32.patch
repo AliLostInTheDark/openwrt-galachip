@@ -1,0 +1,34 @@
+From ddb135fbae3582d38cb42941f3657e897f3325d8 Mon Sep 17 00:00:00 2001
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Date: Sat, 21 Nov 2026 16:31:53 +0530
+Subject: [PATCH] mtd: spi-nor: eon: enable dual read for the EN25QH32
+
+The EN25QH32 has no SFDP table, so without a flag in the flash table the
+core reads it with the plain 0x03 opcode on one data line, whatever the
+controller and the device tree allow. Its sibling EN25QH64 is already
+listed with SPI_NOR_DUAL_READ; the EN25QH32 is the same family and supports
+the Dual Output Fast Read (0x3b).
+
+Only dual read is enabled. The 4 KiB erase of the EN25QH64 entry is left
+out so the erase layout of the 4 MiB part does not change.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+ drivers/mtd/spi-nor/eon.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/mtd/spi-nor/eon.c b/drivers/mtd/spi-nor/eon.c
+index a3b57a6..8332dad 100644
+--- a/drivers/mtd/spi-nor/eon.c
++++ b/drivers/mtd/spi-nor/eon.c
+@@ -59,6 +59,7 @@ static const struct flash_info eon_nor_parts[] = {
+ 		.id = SNOR_ID(0x1c, 0x70, 0x16),
+ 		.name = "en25qh32",
+ 		.size = SZ_4M,
++		.no_sfdp_flags = SPI_NOR_DUAL_READ,
+ 	}, {
+ 		.id = SNOR_ID(0x1c, 0x70, 0x17),
+ 		.name = "en25qh64",
+-- 
+2.43.0
+
