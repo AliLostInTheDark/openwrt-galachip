@@ -264,7 +264,7 @@ assert.deepEqual([ind.shown[0][1], ind.shown[0][3]], ['EPON no light', 'inactive
 ind = await indicator({}, {}, {});
 assert.equal(ind.shown.length + ind.polls.length, 0);
 const xponAcl = JSON.parse(read(path.join(xpon, 'luci-app-xpon/root/usr/share/rpcd/acl.d/luci-app-xpon.json')))['luci-app-xpon'];
-assert.deepEqual(Object.keys(xponAcl.write.file), ['/usr/sbin/xpon-report -o -', '/usr/sbin/xpon-mode-switch gpon', '/usr/sbin/xpon-mode-switch epon']);
+assert.deepEqual(Object.keys(xponAcl.write.file), ['/usr/sbin/xpon-report -o -', '/usr/sbin/xpon-report -u -o -', '/usr/sbin/xpon-mode-switch gpon', '/usr/sbin/xpon-mode-switch epon']);
 
 const menu = JSON.parse(read(path.join(pkg, 'root/usr/share/luci/menu.d/luci-app-omci.json')));
 // MIB reads and edits are on demand; the page must not poll.

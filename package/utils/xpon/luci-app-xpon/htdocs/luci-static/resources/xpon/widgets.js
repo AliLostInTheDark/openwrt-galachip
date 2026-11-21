@@ -203,30 +203,65 @@ return baseclass.extend({
 		}));
 	},
 
-	/* xpon-report masks serial numbers, passwords and LOIDs by default. */
-	report: function() {
-		var save = function(text) {
-			var url = URL.createObjectURL(new Blob([ text ], { type: 'text/plain' }));
-			var link = E('a', { 'href': url, 'download': 'xpon-report-%s.txt'.format(new Date().toISOString().replace(/[:.]/g, '-')) });
+	/*
+	 * Diagnostic downloads, each masked (serial numbers, passwords and LOIDs
+	 * hidden, and the ACS login in the JSON snapshot; safe to share) or with
+	 * those values in clear.
+	 * @opts.onSnapshot(withSecrets): optional, returns an object to save as JSON.
+	 */
+	report: function(opts) {
+		var stamp = function() {
+			return new Date().toISOString().replace(/[:.]/g, '-');
+		};
+		var save = function(text, name, mime) {
+			var url = URL.createObjectURL(new Blob([ text ], { type: mime }));
+			var link = E('a', { 'href': url, 'download': name });
 
 			document.body.appendChild(link);
 			link.click();
 			link.remove();
 			window.setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
 		};
+		var button = function(label, cls, run) {
+			return E('button', {
+				'class': 'cbi-button ' + cls,
+				'type': 'button',
+				'click': ui.createHandlerFn(this, function() {
+					return Promise.resolve().then(run).catch(function(e) {
+						ui.addNotification(null, E('p', _('Could not export: %s').format(e.message || e)), 'error');
+					});
+				})
+			}, label);
+		};
+		var textReport = function(withSecrets) {
+			return function() {
+				return fs.exec_direct('/usr/sbin/xpon-report', withSecrets ? [ '-u', '-o', '-' ] : [ '-o', '-' ]).then(function(text) {
+					save(text, 'xpon-report%s-%s.txt'.format(withSecrets ? '-secrets' : '', stamp()), 'text/plain');
+				});
+			};
+		};
+		var jsonSnapshot = function(withSecrets) {
+			return function() {
+				return Promise.resolve(opts.onSnapshot(withSecrets)).then(function(payload) {
+					save(JSON.stringify(payload, null, 2) + '\n',
+						'pon-snapshot%s-%s.json'.format(withSecrets ? '-secrets' : '', stamp()), 'application/json');
+				});
+			};
+		};
+		var masked = [ button(_('Download diagnostic report'), 'cbi-button-action', textReport(false)) ];
+		var clear = [ button(_('Download report with secrets'), 'cbi-button-neutral', textReport(true)) ];
+
+		if (opts && typeof(opts.onSnapshot) == 'function') {
+			masked.push(button(_('Download JSON snapshot'), 'cbi-button-neutral', jsonSnapshot(false)));
+			clear.push(button(_('Download JSON snapshot with secrets'), 'cbi-button-neutral', jsonSnapshot(true)));
+		}
 
 		return E('div', { 'class': 'cbi-section' }, [
 			E('h3', {}, _('Diagnostics')),
-			E('p', {}, _('Collects the PON state, settings and the kernel log into one text file to attach to a bug report. Serial numbers, passwords and LOIDs are masked.')),
-			E('div', { 'class': 'xpon-report-actions' }, E('button', {
-				'class': 'cbi-button cbi-button-action',
-				'type': 'button',
-				'click': ui.createHandlerFn(this, function() {
-					return fs.exec_direct('/usr/sbin/xpon-report', [ '-o', '-' ]).then(save).catch(function(e) {
-						ui.addNotification(null, E('p', _('Could not collect the report: %s').format(e.message || e)), 'error');
-					});
-				})
-			}, _('Download diagnostic report')))
+			E('p', {}, _('Collects the PON state, settings and the kernel log into one file to attach to a bug report. The first set masks serial numbers, passwords and LOIDs (and the ACS login in the JSON snapshot), so it is safe to share.')),
+			E('div', { 'class': 'xpon-report-actions' }, masked),
+			E('p', {}, _('The second set keeps those values, for your own records. Share it only with someone you trust.')),
+			E('div', { 'class': 'xpon-report-actions' }, clear)
 		]);
 	},
 

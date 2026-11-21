@@ -27,6 +27,9 @@
 				"/usr/sbin/xpon-report -o -": [
 					"exec"
 				],
+				"/usr/sbin/xpon-report -u -o -": [
+					"exec"
+				],
 				"/usr/sbin/xpon-mode-switch gpon": [
 					"exec"
 				],
