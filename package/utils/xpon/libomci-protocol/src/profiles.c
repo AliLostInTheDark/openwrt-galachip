@@ -65,6 +65,10 @@ static const struct omci_profile_desc omci_profiles[] = {
 			  OMCI_OLT_QUIRK_ZTE_VLAN_TAG_MODE |
 			  OMCI_OLT_QUIRK_VENDOR_SPECIFIC_MES,
 		.name = "zte",
+	}, {
+		.profile = OMCI_OLT_PROFILE_GENEXIS,
+		.quirks = OMCI_OLT_QUIRK_VENDOR_SPECIFIC_MES,
+		.name = "genexis",
 	},
 };
 
@@ -168,7 +172,7 @@ int omci_profiles_load_file(const char *path)
 
 	while (fgets(line, sizeof(line), fp)) {
 		char *s = line;
-		char name[32], match[16], token[24], quirks_str[192];
+		char name[33], match[17], token[25], quirks_str[193];
 		struct omci_custom_profile *entry;
 		__u32 quirks = 0;
 		__u8 match_type;
@@ -177,8 +181,13 @@ int omci_profiles_load_file(const char *path)
 			s++;
 		if (!*s || *s == '#')
 			continue;
-		if (sscanf(s, "%31s %15s %23s %191s",
+		/* one byte wider than the stored fields: a longer token is refused, not split */
+		if (sscanf(s, "%32s %16s %24s %192s",
 			   name, match, token, quirks_str) != 4)
+			continue;
+		if (strlen(name) >= sizeof(entry->name) ||
+		    strlen(match) > 15 || strlen(token) >= sizeof(entry->token) ||
+		    strlen(quirks_str) > 191)
 			continue;
 		if (!strcasecmp(match, "vendor"))
 			match_type = OMCI_MATCH_VENDOR;
@@ -194,8 +203,10 @@ int omci_profiles_load_file(const char *path)
 		entry->profile = (__u8)(OMCI_OLT_PROFILE_CUSTOM_BASE + loaded);
 		entry->match_type = match_type;
 		entry->quirks = quirks;
-		snprintf(entry->name, sizeof(entry->name), "%s", name);
-		snprintf(entry->token, sizeof(entry->token), "%s", token);
+		snprintf(entry->name, sizeof(entry->name), "%.*s",
+			 (int)sizeof(entry->name) - 1, name);
+		snprintf(entry->token, sizeof(entry->token), "%.*s",
+			 (int)sizeof(entry->token) - 1, token);
 		loaded++;
 	}
 	fclose(fp);
@@ -338,6 +349,8 @@ __u8 omci_profile_detect(const struct omci_olt_g *olt)
 	if (omci_profile_vendor_is(olt, "ZTEG") ||
 	    omci_profile_vendor_is(olt, "ZTEC"))
 		return OMCI_OLT_PROFILE_ZTE;
+	if (omci_profile_vendor_is(olt, "GNXS"))
+		return OMCI_OLT_PROFILE_GENEXIS;
 
 	if (olt->equipment_id_valid) {
 		if (omci_profile_field_contains(olt->equipment_id,
@@ -363,6 +376,10 @@ __u8 omci_profile_detect(const struct omci_olt_g *olt)
 						OMCI_OLT_EQUIPMENT_ID_LEN,
 						"ZTE"))
 			return OMCI_OLT_PROFILE_ZTE;
+		if (omci_profile_field_contains(olt->equipment_id,
+						OMCI_OLT_EQUIPMENT_ID_LEN,
+						"GENEXIS"))
+			return OMCI_OLT_PROFILE_GENEXIS;
 	}
 
 	return OMCI_OLT_PROFILE_GENERIC;

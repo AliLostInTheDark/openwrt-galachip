@@ -14,16 +14,18 @@
 
 import * as ubus from 'ubus';
 import * as uloop from 'uloop';
-import { readfile, writefile, popen } from 'fs';
+import { readfile, writefile, unlink, popen } from 'fs';
 import { cursor } from 'uci';
 import { syslog, openlog, LOG_INFO, LOG_WARNING, LOG_DAEMON } from 'log';
 import { CLASS, settings } from 'omci.mcast';
 
 const POLL_MS = 5000;
 const NFT_FILE = '/var/run/omci-mcast.nft';
+const STATE_FILE = '/var/run/omci-mcast.state';
 const TABLE = 'omci_mcast';
 
-let bus, applied = null, saved = {};
+/* the local settings, kept across a respawn so they are never lost */
+let bus, applied = null, saved = json(readfile(STATE_FILE) ?? '{}') ?? {};
 
 function log(level, fmt, ...args) {
 	syslog(level, sprintf(fmt, ...args));
@@ -48,7 +50,10 @@ function knob(path, value) {
 
 	if (!length(old))
 		return;
-	saved[path] ??= old;
+	if (saved[path] == null) {
+		saved[path] = old;
+		writefile(STATE_FILE, sprintf('%J', saved));
+	}
 	if (value == null)
 		value = saved[path];
 	if (old != `${value}`)
@@ -59,6 +64,7 @@ function restore() {
 	for (let path, value in saved)
 		writefile(path, value);
 	saved = {};
+	unlink(STATE_FILE);
 }
 
 function sh(cmd) {
@@ -158,7 +164,14 @@ function clear() {
 function poll() {
 	let mib = bus.call('omci.agent', 'mib_list',
 			   { classes: [ CLASS.profile, CLASS.subscriber ] });
-	let s = settings(mib?.objects ?? []);
+
+	/* the agent is restarting: keep what is applied */
+	if (!mib) {
+		uloop.timer(POLL_MS, poll);
+		return;
+	}
+
+	let s = settings(mib.objects ?? []);
 	let key = sprintf('%J', s);
 
 	if (key != applied) {
@@ -170,7 +183,7 @@ function poll() {
 			else
 				log(LOG_WARNING, 'OLT multicast profile 0x%04x applied in part',
 				    s.profile);
-		} else if (applied != null) {
+		} else if (applied != null || length(saved)) {
 			clear();
 			log(LOG_INFO, 'OLT multicast profile removed, local settings restored');
 		}
@@ -180,6 +193,13 @@ function poll() {
 }
 
 openlog('omci-mcast', 0, LOG_DAEMON);
+
+/* "omci-mcast clear": put the local settings back, for the init script's stop */
+if (ARGV[0] == 'clear') {
+	clear();
+	exit(0);
+}
+
 uloop.init();
 bus = ubus.connect();
 if (!bus) {

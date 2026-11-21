@@ -9,6 +9,7 @@
 
 import * as omci from 'omci';
 import { decode as decode_fields } from 'omci.mib';
+import { vendor_of } from 'omci.g988';
 import { connect } from 'ubus';
 import { cursor } from 'uci';
 import { interval } from 'uloop';
@@ -68,11 +69,12 @@ const profile_values = {
 	huawei: 5,
 	fiberhome: 6,
 	zte: 7,
+	genexis: 8,
 };
 
 const profile_names = [
 	'unspecified', 'generic', 'auto', 'nokia-alcl', 'dasan', 'huawei',
-	'fiberhome', 'zte'
+	'fiberhome', 'zte', 'genexis'
 ];
 
 const source_names = [
@@ -147,10 +149,37 @@ function profile_value(value) {
 	return value;
 }
 
+const OLT_PROFILES_PATH = '/etc/omci/olt-profiles.conf';
+const CUSTOM_PROFILE_BASE = 64;
+const CUSTOM_PROFILE_MAX = 16;
+
+/*
+ * The names of the custom OLT profiles, ids from 64 in file order. Lines that
+ * omcid refuses (a field too long, a wrong match type) take no id.
+ */
+function custom_profile_names() {
+	let names = [];
+
+	for (let line in split(readfile(OLT_PROFILES_PATH) ?? '', '\n')) {
+		let f = split(trim(line), /\s+/);
+
+		if (length(names) >= CUSTOM_PROFILE_MAX)
+			break;
+		if (length(f) < 4 || match(f[0], /^#/) || length(f[0]) > 31 ||
+		    !(lc(f[1]) in [ 'vendor', 'equip' ]) || length(f[2]) > 23 ||
+		    length(f[3]) > 191)
+			continue;
+		push(names, f[0]);
+	}
+	return names;
+}
+
 /* null: no agent reported one, e.g. while omcid is not running */
 function profile_name(value) {
 	if (value == null)
 		return 'none';
+	if (value >= CUSTOM_PROFILE_BASE)
+		return custom_profile_names()[value - CUSTOM_PROFILE_BASE] || `unknown-${value}`;
 	return profile_names[value] || `unknown-${value}`;
 }
 
@@ -208,10 +237,16 @@ function decorate_class(item) {
 	return item;
 }
 
-function decorate_mib(item) {
+function decorate_mib(item, profile) {
 	item.origin_name = origin_names[item.origin] || `unknown-${item.origin}`;
-	item.fields = decode_fields(item);
+	item.fields = decode_fields(item, profile);
+	item.vendor = vendor_of(item.class_id, profile);
 	return item;
+}
+
+/* the profile the OLT's vendor MEs are read with */
+function effective_profile(device) {
+	return omci.status(device, true)?.olt_profile_effective ?? 0;
 }
 
 function load_config(device) {
@@ -607,8 +642,10 @@ const methods = {
 					return native_error(request, 'mib_list');
 				push(list, ...part);
 			}
+			let profile = effective_profile(device);
+
 			for (let item in list)
-				decorate_mib(item);
+				decorate_mib(item, profile);
 			return { objects: list };
 		}
 	},
@@ -619,7 +656,7 @@ const methods = {
 			let item = omci.mib_get(device_arg(request), request.args.class_id, request.args.entity_id);
 			if (item == null)
 				return native_error(request, 'mib_get');
-			return { object: decorate_mib(item) };
+			return { object: decorate_mib(item, effective_profile(device_arg(request))) };
 		}
 	},
 

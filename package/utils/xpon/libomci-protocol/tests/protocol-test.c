@@ -69,7 +69,7 @@ static void catalogue(void)
 {
 	unsigned int profile, classes = 0;
 
-	for (profile = 0; profile <= OMCI_OLT_PROFILE_ZTE; profile++) {
+	for (profile = 0; profile <= OMCI_OLT_PROFILE_GENEXIS; profile++) {
 		struct omci_me_class class, direct;
 		unsigned int index = 0, next = 0, nattrs = 0;
 		unsigned char seen[65536] = { 0 };
@@ -118,6 +118,7 @@ static void profiles(void)
 		{ "HWTC", OMCI_OLT_PROFILE_HUAWEI }, { "hwti", OMCI_OLT_PROFILE_HUAWEI },
 		{ "FHTT", OMCI_OLT_PROFILE_FIBERHOME }, { "fhtc", OMCI_OLT_PROFILE_FIBERHOME },
 		{ "ZTEG", OMCI_OLT_PROFILE_ZTE }, { "ztec", OMCI_OLT_PROFILE_ZTE },
+		{ "GNXS", OMCI_OLT_PROFILE_GENEXIS }, { "gnxs", OMCI_OLT_PROFILE_GENEXIS },
 		{ "TEST", OMCI_OLT_PROFILE_GENERIC }
 	};
 	struct omci_olt_g olt = { .valid = true, .vendor_id_valid = true };
@@ -138,7 +139,7 @@ static void profiles(void)
 	CHECK(!strcmp(olt.version, "a b c"));
 	for (i = 0; i <= 255; i++) {
 		unsigned short ani = 0;
-		bool known = i >= OMCI_OLT_PROFILE_GENERIC && i <= OMCI_OLT_PROFILE_ZTE;
+		bool known = i >= OMCI_OLT_PROFILE_GENERIC && i <= OMCI_OLT_PROFILE_GENEXIS;
 		struct omci_extended_vlan_rule rule = {
 			.treat_inner_vid = 4096, .treat_outer_vid = 4096, .treat_inner_pbit = 15
 		};

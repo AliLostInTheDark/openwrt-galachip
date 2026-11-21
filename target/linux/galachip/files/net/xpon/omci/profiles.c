@@ -25,6 +25,7 @@ static const struct omci_profile_name_entry omci_profile_names[] = {
 	{ OMCI_OLT_PROFILE_HUAWEI,	"huawei" },
 	{ OMCI_OLT_PROFILE_FIBERHOME,	"fiberhome" },
 	{ OMCI_OLT_PROFILE_ZTE,		"zte" },
+	{ OMCI_OLT_PROFILE_GENEXIS,	"genexis" },
 };
 
 bool omci_profile_valid(u8 profile)

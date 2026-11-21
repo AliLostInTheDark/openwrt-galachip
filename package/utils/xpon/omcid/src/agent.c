@@ -847,9 +847,8 @@ omci_agent_seed_huawei_locked(struct omci_device *odev, u8 profile)
 	u8 data[OMCI_MAX_ATTR_DATA] = {};
 	int ret;
 
-	data[1] = agent->config.traffic_mgmt_option;
 	ret = omci_mib_add_default_profile_mask(agent, profile,
-			OMCI_CLASS_HUAWEI_FLOW_MAPPING, 0, GENMASK(15, 7),
+			OMCI_CLASS_HUAWEI_FLOW_MAPPING, 0, GENMASK(15, 0),
 			data, sizeof(data));
 	if (ret)
 		return ret;
@@ -873,22 +872,12 @@ omci_agent_seed_huawei_locked(struct omci_device *odev, u8 profile)
 	if (ret)
 		return ret;
 	ret = omci_mib_add_default_profile_mask(agent, profile,
-			OMCI_CLASS_HUAWEI_MULTICAST_367, 0, GENMASK(15, 11),
-			data, sizeof(data));
-	if (ret)
-		return ret;
-	ret = omci_mib_add_default_profile_mask(agent, profile,
 			OMCI_CLASS_HUAWEI_MULTICAST_370, 0x0101,
 			GENMASK(15, 13), data, sizeof(data));
 	if (ret)
 		return ret;
 	ret = omci_mib_add_default_profile_mask(agent, profile,
-			OMCI_CLASS_HUAWEI_MULTICAST_373, 0, GENMASK(15, 1),
-			data, sizeof(data));
-	if (ret)
-		return ret;
-	ret = omci_mib_add_default_profile_mask(agent, profile,
-			OMCI_CLASS_HUAWEI_MULTICAST_65408, 0, GENMASK(15, 11),
+			OMCI_CLASS_HUAWEI_MULTICAST_373, 0, GENMASK(15, 0),
 			data, sizeof(data));
 	if (ret)
 		return ret;

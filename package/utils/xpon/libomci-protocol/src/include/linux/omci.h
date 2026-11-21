@@ -347,6 +347,7 @@ enum omci_onu_type {
  * @OMCI_OLT_PROFILE_HUAWEI: Huawei interoperability
  * @OMCI_OLT_PROFILE_FIBERHOME: FiberHome interoperability
  * @OMCI_OLT_PROFILE_ZTE: ZTE interoperability
+ * @OMCI_OLT_PROFILE_GENEXIS: Genexis interoperability
  */
 enum omci_olt_profile {
 	OMCI_OLT_PROFILE_UNSPEC,
@@ -357,6 +358,7 @@ enum omci_olt_profile {
 	OMCI_OLT_PROFILE_HUAWEI,
 	OMCI_OLT_PROFILE_FIBERHOME,
 	OMCI_OLT_PROFILE_ZTE,
+	OMCI_OLT_PROFILE_GENEXIS,
 };
 
 #define OMCI_OLT_QUIRK_ALLOW_SET_CREATE		(1U << 0)

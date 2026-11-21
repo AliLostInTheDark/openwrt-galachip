@@ -559,23 +559,39 @@ export const classes = {
 		[ 'missing_consecutive_bursts_threshold', 4 ]
 	] ],
 	/* Huawei */
-	'350': [ 'Huawei flow mapping', numbered([ 1, 1, 1, 1, 2, 4, 16, 4, 6 ]) ],
+	'350': [ 'Huawei ONU management', numbered([ 4, 2, 2, 2, 2, 2, 1, 4, 3, 1, 1, 1, 1, 4, 6, 2 ]) ],
 	'351': [ 'Huawei extended configuration 351', numbered([ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 ]) ],
 	'352': [ 'Huawei VLAN mapping', numbered([ 2, 2, 2, 1, 4, 4 ]) ],
-	'353': [ 'Huawei VoIP/software image extension', [
+	'353': [ 'Huawei VoIP image', [
 		[ 'version', 14, '', 'str' ], [ 'committed', 1 ],
 		[ 'active', 1 ], [ 'valid', 1 ], [ 'crc32', 4, '', 'hex' ]
 	] ],
-	'367': [ 'Huawei multicast configuration 367', numbered([ 1, 2, 2, 2, 4 ]) ],
-	'370': [ 'Huawei UNI egress queue weight', [
+	'370': [ 'Huawei UNI QoS', [
 		[ 'queue_weight_cfg', 2, '', 'hex' ], [ 'mode', 4, '', 'hex' ], [ 'flags', 4, '', 'hex' ]
 	] ],
-	'373': [ 'Huawei T-CONT queue configuration', numbered([ 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1 ]) ],
+	'373': [ 'Huawei product identification', [
+		[ 'part_count', 1 ],
+		[ 'part_1', 25, '', 'str' ],
+		[ 'part_2', 25, '', 'str' ],
+		[ 'part_3', 25, '', 'str' ],
+		[ 'part_4', 25, '', 'str' ],
+		[ 'part_5', 25, '', 'str' ],
+		[ 'part_6', 25, '', 'str' ],
+		[ 'part_7', 25, '', 'str' ],
+		[ 'part_8', 25, '', 'str' ],
+		[ 'part_9', 25, '', 'str' ],
+		[ 'part_10', 25, '', 'str' ],
+		[ 'part_11', 25, '', 'str' ],
+		[ 'part_12', 25, '', 'str' ],
+		[ 'part_13', 25, '', 'str' ],
+		[ 'part_14', 25, '', 'str' ],
+		[ 'part_15', 25, '', 'str' ]
+	] ],
 	'65398': [ 'Huawei extended ONT-G2', [
 		...numbered([ 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1 ]),
 		[ 'vendor_info', 25, '', 'str' ], [ 'attr_15', 1 ], [ 'attr_16', 1 ]
 	] ],
-	'65408': [ 'Huawei multicast configuration 65408', numbered([ 1, 2, 2, 2, 4 ]) ],
+	'65408': [ 'CTC extended ONU-G', [ [ 'reset_default', 1 ] ] ],
 	'65414': [ 'Huawei optical data', [
 		[ 'attr_1', 1 ], [ 'attr_2', 1 ], [ 'attr_3', 1 ], [ 'attr_4', 1 ], [ 'attr_5', 1 ],
 		[ 'transceiver_info', 16, '', 'str' ], [ 'attr_7', 2 ], [ 'attr_8', 2 ],
@@ -583,10 +599,9 @@ export const classes = {
 	] ],
 	'65415': [ 'Huawei extended WAN info', numbered([ 1, 1, 1 ]) ],
 	'65417': [ 'Huawei extended PPP', [
-		[ 'enable', 1, 'c' ], [ 'username_1', 25, 'c', 'str' ],
-		[ 'username_2', 25, '', 'str' ], [ 'username_3', 25, '', 'str' ],
-		[ 'password_1', 25, 'c', 'str' ], [ 'password_2', 25, '', 'str' ],
-		[ 'password_3', 25, '', 'str' ], [ 'flags', 1 ]
+		[ 'flags', 2, '', 'hex' ], [ 'username', 25, '', 'str' ],
+		[ 'attr_4', 2 ], [ 'attr_5', 2 ], [ 'password', 25, '', 'secret' ],
+		[ 'attr_7', 2 ], [ 'attr_8', 25, '', 'hex' ], [ 'attr_9', 1 ]
 	] ],
 	'65423': [ 'Huawei extended ONT3 ability', [
 		[ 'attr_1', 1 ], [ 'attr_2', 1 ], [ 'attr_3', 1 ], [ 'attr_4', 1 ],
@@ -597,10 +612,7 @@ export const classes = {
 	] ],
 	'65425': [ 'Huawei extended CPU', numbered([ 1, 4, 4, 4, 4, 2, 1 ]) ],
 	'65426': [ 'Huawei maintenance', numbered([ 2, 2 ]) ],
-	'65427': [ 'Huawei capability descriptor', [
-		[ 'attr_mask', 2, '', 'hex' ], [ 'descriptor', 16, '', 'hex' ],
-		[ 'table_1', 16, '', 'hex' ], [ 'table_2', 16, '', 'hex' ]
-	] ],
+	'65427': [ 'Huawei ME 65427', [ [ 'attr_1', 2 ], [ 'attr_2', 24, '', 'hex' ] ] ],
 	'65430': [ 'Huawei extended type', numbered([ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 ]) ],
 	'65431': [ 'Huawei extended OLT', [ [ 'flags', 4, '', 'hex' ] ] ],
 	'65444': [ 'Huawei extended 802.11', [ [ 'config', 8, '', 'hex' ] ] ],
@@ -656,8 +668,8 @@ export const classes = {
 	] ],
 	'65323': [ 'FiberHome PPPoE configuration', [
 		[ 'pppoe_proxy_enable', 1, 'c' ], [ 'username_1', 16, 'c', 'str' ],
-		[ 'username_2', 16, '', 'str' ], [ 'password_1', 16, 'c', 'str' ],
-		[ 'password_2', 16, '', 'str' ], [ 'service_name_1', 16, '', 'str' ],
+		[ 'username_2', 16, '', 'str' ], [ 'password_1', 16, 'c', 'secret' ],
+		[ 'password_2', 16, '', 'secret' ], [ 'service_name_1', 16, '', 'str' ],
 		[ 'service_name_2', 16, '', 'str' ], [ 'dial_pattern', 1 ]
 	] ],
 	'65324': [ 'FiberHome WAN port binding', [
@@ -665,18 +677,18 @@ export const classes = {
 	] ],
 	'65326': [ 'FiberHome WiFi station management 1', [
 		[ 'ssid_enable', 1 ], [ 'wifi_standard', 1 ], [ 'ssid_hide', 1 ],
-		[ 'auth_mode', 1 ], [ 'encry_type', 1 ], [ 'psk_1', 16, '', 'str' ],
-		[ 'psk_2', 16, '', 'str' ], [ 'psk_3', 16, '', 'str' ],
-		[ 'psk_4', 16, '', 'str' ], [ 'wpa_rekey_interval', 4 ],
+		[ 'auth_mode', 1 ], [ 'encry_type', 1 ], [ 'psk_1', 16, '', 'secret' ],
+		[ 'psk_2', 16, '', 'secret' ], [ 'psk_3', 16, '', 'secret' ],
+		[ 'psk_4', 16, '', 'secret' ], [ 'wpa_rekey_interval', 4 ],
 		[ 'ssid_index', 2 ], [ 'ssid_1', 16, '', 'str' ],
 		[ 'ssid_2', 16, '', 'str' ], [ 'wifi_switch', 1 ], [ 'ssid_count', 2 ]
 	] ],
 	'65327': [ 'FiberHome WiFi station management 2', [
-		[ 'wep_encry_level', 1 ], [ 'wep_key1_1', 16, '', 'hex' ],
-		[ 'wep_key1_2', 16, '', 'hex' ], [ 'wep_key2_1', 16, '', 'hex' ],
-		[ 'wep_key2_2', 16, '', 'hex' ], [ 'wep_key3_1', 16, '', 'hex' ],
-		[ 'wep_key3_2', 16, '', 'hex' ], [ 'wep_key4_1', 16, '', 'hex' ],
-		[ 'wep_key4_2', 16, '', 'hex' ], [ 'wep_key_index', 1 ],
+		[ 'wep_encry_level', 1 ], [ 'wep_key1_1', 16, '', 'secret' ],
+		[ 'wep_key1_2', 16, '', 'secret' ], [ 'wep_key2_1', 16, '', 'secret' ],
+		[ 'wep_key2_2', 16, '', 'secret' ], [ 'wep_key3_1', 16, '', 'secret' ],
+		[ 'wep_key3_2', 16, '', 'secret' ], [ 'wep_key4_1', 16, '', 'secret' ],
+		[ 'wep_key4_2', 16, '', 'secret' ], [ 'wep_key_index', 1 ],
 		[ 'channel', 1 ], [ 'power', 1 ], [ 'country', 1 ],
 		[ 'frequency', 2 ], [ 'sta_num', 2 ], [ 'bandwidth', 2 ]
 	] ],
@@ -686,7 +698,7 @@ export const classes = {
 		[ 'rad_addr_4', 16, '', 'str' ], [ 'rad_addr_5', 16, '', 'str' ],
 		[ 'rad_addr_6', 16, '', 'str' ], [ 'rad_addr_7', 16, '', 'str' ],
 		[ 'rad_addr_8', 16, '', 'str' ], [ 'radius_port', 2 ],
-		[ 'radius_pwd_1', 16, '', 'str' ], [ 'radius_pwd_2', 16, '', 'str' ],
+		[ 'radius_pwd_1', 16, '', 'secret' ], [ 'radius_pwd_2', 16, '', 'secret' ],
 		[ 'wapi_as_ip', 4, '', 'ip' ], [ 'wapi_as_port', 2 ]
 	] ],
 	'65329': [ 'FiberHome WAN IP host configuration', [
@@ -716,7 +728,7 @@ export const classes = {
 	'250': [ 'CTC PPPoE WAN configuration', [
 		[ 'nat_enable', 1, 'c' ], [ 'pppoe_mode', 1, 'c' ],
 		[ 'conn_trigger', 1, 'c' ], [ 'release_timer', 2, 'c' ],
-		[ 'username', 25, '', 'str' ], [ 'password', 25, '', 'str' ],
+		[ 'username', 25, '', 'str' ], [ 'password', 25, '', 'secret' ],
 		[ 'status', 1 ], [ 'online_duration', 4 ],
 		[ 'proxy', 2, '', 'hex' ], [ 'username_2_ptr', 2, '', 'hex' ]
 	] ],
@@ -742,7 +754,7 @@ export const classes = {
 	] ],
 	'65381': [ 'CTC WAN IP/PPPoE profile', [
 		[ 'wan_dsp_mode', 1, 'c' ], [ 'pppoe_username', 24, 'c', 'str' ],
-		[ 'pppoe_password', 24, 'c', 'str' ], [ 'bind_lan_mask', 1, 'c', 'hex' ],
+		[ 'pppoe_password', 24, 'c', 'secret' ], [ 'bind_lan_mask', 1, 'c', 'hex' ],
 		[ 'bind_ssid_mask', 1, 'c', 'hex' ], [ 'bind_ssid5g_mask', 1, 'c', 'hex' ],
 		[ 'static_ip', 4, 'c', 'ip' ], [ 'static_netmask', 4, 'c', 'ip' ],
 		[ 'static_gateway', 4, 'c', 'ip' ], [ 'static_dns', 4, 'c', 'ip' ],
@@ -757,14 +769,19 @@ export const classes = {
 		[ 'ssid_enable', 1, 'c' ], [ 'wifi_enable', 1, 'c' ]
 	] ],
 	'65386': [ 'CTC WiFi security configuration', [
-		[ 'security_mode', 1, 'c' ], [ 'share_key', 24, 'c', 'str' ],
+		[ 'security_mode', 1, 'c' ], [ 'share_key', 24, 'c', 'secret' ],
 		[ 'wep_auth', 1, 'c' ], [ 'wep_key_bit', 1, 'c' ],
-		[ 'key_index', 1, 'c' ], [ 'key_1', 26, 'c', 'str' ],
-		[ 'key_2', 26, 'c', 'str' ], [ 'key_3', 26, 'c', 'str' ],
-		[ 'key_4', 26, 'c', 'str' ], [ 'wpa_encrypt', 1, 'c' ]
+		[ 'key_index', 1, 'c' ], [ 'key_1', 26, 'c', 'secret' ],
+		[ 'key_2', 26, 'c', 'secret' ], [ 'key_3', 26, 'c', 'secret' ],
+		[ 'key_4', 26, 'c', 'secret' ], [ 'wpa_encrypt', 1, 'c' ]
 	] ],
 	'65523': [ 'CTC loop detection control', [
 		[ 'enable', 1 ], [ 'loop_detection', 1 ]
+	] ],
+	'65527': [ 'CTC OLT location configuration data', [
+		[ 'horizontal_error', 2 ], [ 'altitude_error', 2 ],
+		[ 'area_code', 8, '', 'hex' ], [ 'timestamp', 4 ],
+		[ 'gis_digest', 8, '', 'hex' ]
 	] ],
 	'65528': [ 'CTC loop detection', [
 		[ 'operator_id', 4, '', 'str' ], [ 'loop_detect_mgmt', 2 ],
@@ -773,11 +790,12 @@ export const classes = {
 	] ],
 	'65529': [ 'CTC ONU capability', [
 		[ 'operator_id', 4, '', 'str' ], [ 'ctc_spec_version', 1 ],
-		[ 'onu_type', 1 ], [ 'tx_power_supply_ctrl', 1 ]
+		[ 'onu_type', 1 ], [ 'tx_power_supply_ctrl', 1 ],
+		[ 'customized_onu_type', 1 ]
 	] ],
 	'65530': [ 'CTC LOID authentication', [
-		[ 'operator_id', 4, '', 'str' ], [ 'loid', 24, '', 'str' ],
-		[ 'password', 12, '', 'str' ], [ 'auth_status', 1 ]
+		[ 'operator_id', 4, '', 'str' ], [ 'loid', 24, '', 'secret' ],
+		[ 'password', 12, '', 'secret' ], [ 'auth_status', 1 ]
 	] ],
 	'65531': [ 'CTC extended multicast operations profile', [
 		[ 'igmp_version', 1, 'c' ], [ 'igmp_function', 1, 'c' ],
@@ -797,6 +815,64 @@ export const classes = {
 	'65305': [ 'Nokia VLAN downstream supplemental', numbered([ 1, 6 ]) ],
 	'65306': [ 'Nokia VLAN upstream policer', numbered([ 19 ]) ]
 };
+
+/*
+ * Classes the OLT vendors share by number. The layout follows the OLT profile
+ * (omci.agent: 3 nokia-alcl, 5 huawei, 6 fiberhome, 7 zte, 8 genexis); a
+ * variant without profiles is the default. classes above holds the default.
+ */
+const ip_filter = [
+	[ 'state', 1, 'c' ], [ 'mode', 1, 'c' ], [ 'protocol', 1, 'c' ],
+	[ 'ingress_type', 2, 'c' ], [ 'ingress_type_value', 2, 'c' ],
+	[ 'start_src_ip', 4, 'c', 'ip' ], [ 'end_src_ip', 4, 'c', 'ip' ]
+];
+
+export const variants = {
+	'255': [
+		{ profiles: [ 8 ], vendor: 'genexis', name: 'Genexis Ethernet PM history data 4', attrs: [
+			[ 'interval_end_time', 1 ], [ 'threshold_id', 2, 'c', 'hex' ],
+			[ 'associate_type', 1, 'c' ], [ 'tx_traffic_kbps', 4 ],
+			[ 'rx_traffic_kbps', 4 ], [ 'tx_rate_pps', 4 ], [ 'rx_rate_pps', 4 ],
+			[ 'tx_octets', 4 ], [ 'rx_octets', 4 ], [ 'tx_discards', 4 ],
+			[ 'rx_discards', 4 ], [ 'tx_errors', 4 ], [ 'rx_errors', 4 ]
+		] }
+	],
+	'65305': [
+		{ profiles: [ 7 ], vendor: 'zte', name: 'ZTE IP flow filter', attrs: ip_filter },
+		{ profiles: [ 8 ], vendor: 'genexis', name: 'Genexis IP flow filter', attrs: ip_filter },
+		{ vendor: 'nokia', name: 'Nokia VLAN downstream supplemental', attrs: numbered([ 1, 6 ]) }
+	],
+	'65321': [
+		{ profiles: [ 6 ], vendor: 'fiberhome', name: 'FiberHome WAN profile', attrs: [
+			[ 'attr_1', 2 ], [ 'attr_2', 2 ]
+		] },
+		{ vendor: 'ctc', name: 'CTC WAN service binding', attrs: [
+			[ 'service', 1, 'c' ], [ 'ip_host_instance', 2, 'c', 'hex' ],
+			[ 'lan_port_mask', 2, 'c', 'hex' ], [ 'attr_4', 2 ],
+			[ 'mvlan', 2, 'c' ], [ 'mtu', 2, 'c' ]
+		] }
+	]
+};
+
+/* the variant of a shared class for @profile, or null for a class without any */
+export function variant_for(class_id, profile) {
+	let list = variants[class_id];
+
+	if (!list)
+		return null;
+	for (let v in list)
+		if (v.profiles && profile in v.profiles)
+			return v;
+	for (let v in list)
+		if (!v.profiles)
+			return v;
+	return null;
+}
+
+/* the vendor a shared class belongs to under @profile, or null */
+export function vendor_of(class_id, profile) {
+	return variant_for(class_id, profile)?.vendor;
+}
 
 export const actions = {
 	'4': 'Create', '6': 'Delete', '8': 'Set', '9': 'Get',

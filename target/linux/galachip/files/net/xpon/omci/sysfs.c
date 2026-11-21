@@ -458,7 +458,7 @@ static int omci_sysfs_parse_profile(const char *buf, size_t count,
 		return 0;
 	}
 
-	for (i = OMCI_OLT_PROFILE_GENERIC; i <= OMCI_OLT_PROFILE_ZTE; i++) {
+	for (i = OMCI_OLT_PROFILE_GENERIC; i <= OMCI_OLT_PROFILE_GENEXIS; i++) {
 		if (!strcasecmp(name, omci_olt_profile_name(i))) {
 			if (force && !omci_profile_forceable(i))
 				return -EINVAL;

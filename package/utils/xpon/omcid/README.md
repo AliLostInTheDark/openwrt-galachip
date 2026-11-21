@@ -54,6 +54,21 @@ alarm/PM/reboot timers. There is no sample collector or mean/median history.
 With an Airtel (Nokia) provisioned MIB it measured about 1.1 MiB RSS
 (1.4 MiB peak) and a 270 KiB checkpoint in RAM.
 
+## Custom OLT profiles
+
+`/etc/omci/olt-profiles.conf` (kept over sysupgrade) adds profiles for OLTs
+the built-in table does not know. One profile per line, `#` starts a comment:
+
+    <name> <vendor|equip> <token> <quirks>
+
+`vendor` matches the OLT-G vendor ID, `equip` its equipment ID; `token` is
+the string to match. `quirks` is `none`, a comma separated list of quirk
+names (`sanitize_version`, `allow_set_create`, `fake_unsupported`,
+`ignore_unsupported_uni`, `vendor_mes`, `full_uni_id`, `zte_vlan_tag`,
+`dasan_mcast_ani`) or a `0x` mask. A field longer than 31 (name), 15, 23
+(token) or 191 characters, or an unknown quirk, drops the line. Profiles get
+the ids from 64 up in file order.
+
 ## Development
 
 Run `make -C tests test`. The engine started as the in-kernel agent and

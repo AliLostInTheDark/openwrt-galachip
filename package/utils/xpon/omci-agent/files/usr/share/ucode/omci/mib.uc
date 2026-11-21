@@ -1,6 +1,6 @@
 'use strict';
 
-import { classes as g988_classes } from 'omci.g988';
+import { classes as g988_classes, variant_for } from 'omci.g988';
 
 /*
  * Readable fields for MIB objects. The agent returns each object's attribute
@@ -280,7 +280,6 @@ layouts['65295'] = numbered([ 1, 2, 1, 2, 1, 2, 1, 2, 1, 2 ]);
 layouts['65296'] = numbered([ 1, 1, 4, 1, 1, 1, 4, 1, 1, 12, 4, 25 ]);
 layouts['65296'][9][3] = 'vendor_serial';
 layouts['65297'] = numbered([ 1, 1, 2, 1, 1, 1, 1 ]);
-layouts['65305'] = numbered([ 1, 6 ]);
 layouts['65306'] = numbered([ 19 ]);
 
 function byte(data, offset) {
@@ -513,15 +512,15 @@ function decode_g988_value(data, offset, size, fmt) {
 	return text(data, offset, size);
 }
 
-function decode_from_g988(class_id, data) {
-	let entry = g988_classes[class_id];
+function decode_from_g988(class_id, data, profile) {
+	let attrs = variant_for(class_id, profile)?.attrs ?? g988_classes[class_id]?.[1];
 
-	if (!entry)
+	if (!attrs)
 		return null;
 
 	let fields = {}, offset = 0, avail = length(data) / 2;
 
-	for (let attr in entry[1]) {
+	for (let attr in attrs) {
 		let name = attr[0], size = attr[1], flags = attr[2] ?? '', fmt = attr[3];
 
 		if (index(flags, 't') >= 0 || !size)
@@ -534,15 +533,15 @@ function decode_from_g988(class_id, data) {
 	return length(fields) ? fields : null;
 }
 
-export function decode(item) {
+export function decode(item, profile) {
 	let layout = layouts[item.class_id];
 	let data = item.data;
 	let fields = {}, notes = {};
 
 	if (type(data) != 'string')
 		return null;
-	if (!layout)
-		return decode_from_g988(item.class_id, data);
+	if (!layout || variant_for(item.class_id, profile))
+		return decode_from_g988(item.class_id, data, profile);
 	for (let spec in layout) {
 		let explained = note(item.class_id, spec, data);
 
