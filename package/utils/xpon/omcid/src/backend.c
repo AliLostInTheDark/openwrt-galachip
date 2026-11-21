@@ -261,11 +261,9 @@ int omci_backend_execute(struct omci_device *odev, u16 op, const void *data,
 
 		if (len != sizeof(*q))
 			return -EINVAL;
-		if (q->configured > OMCI_OLT_PROFILE_ZTE || q->effective > OMCI_OLT_PROFILE_ZTE ||
-		    q->forced > OMCI_OLT_PROFILE_ZTE || !omci_profile_forceable(q->forced) ||
-		    !omci_profile_valid(q->configured) ||
-		    !omci_profile_forceable(q->effective) ||
-		    !q->effective || q->quirks != omci_profile_quirks(q->effective))
+		if (!omci_profile_valid(q->configured) ||
+		    !omci_profile_forceable(q->forced) ||
+		    !q->effective || !omci_profile_forceable(q->effective))
 			return -ERANGE;
 		state = (struct omci_olt_profile_state) {
 			.configured = q->configured, .effective = q->effective,

@@ -145,7 +145,6 @@ int omci_identity_normalize_config(u16 key, const void *value, size_t len,
 
 bool omci_profile_valid(u8 profile);
 bool omci_profile_forceable(u8 profile);
-u32 omci_profile_quirks(u8 profile);
 
 int omci_sysfs_init(void);
 void omci_sysfs_exit(void);
