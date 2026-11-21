@@ -42,7 +42,11 @@
 
 static bool fast_sck = true;
 module_param(fast_sck, bool, 0644);
-MODULE_PARM_DESC(fast_sck, "Read the flash at 50 MHz instead of 25 MHz; writes stay at 25 MHz (default on)");
+MODULE_PARM_DESC(fast_sck, "Read the flash faster than 25 MHz; writes stay at 25 MHz (default on)");
+
+static unsigned int fast_hz = FTSPI020_SCK_FAST_HZ;
+module_param(fast_hz, uint, 0644);
+MODULE_PARM_DESC(fast_hz, "SCK of large reads when fast_sck is on: 100000000, 50000000 (default), 33333333 or 25000000. Overrides spi-max-frequency");
 
 #define CONFIG_SPI_FTSPI020_V1_7_0 1
 
@@ -174,6 +178,7 @@ struct ftspi020_priv {
 	u32 rx_transfer_size;
 	u32 max_hz;
 	u32 divider;
+	u32 fast_divider;
 	bool cpha;
 	bool clk_fast;
 	u8 txfifo_depth;
@@ -426,7 +431,8 @@ static void ftspi020_set_sck(struct ftspi020_priv *ctrl, u32 hz);
 /* Choose the SPI clock for the next operation; the controller is idle and locked. */
 static void ftspi020_tune_sck(struct ftspi020_priv *ctrl, const struct spi_mem_op *op)
 {
-	u32 hz = FTSPI020_SCK_SLOW_HZ;
+	u32 hz = min(ctrl->max_hz, (u32)FTSPI020_SCK_SLOW_HZ);
+	bool fast;
 
 	if (!ctrl->max_hz)
 		return;
@@ -441,11 +447,18 @@ static void ftspi020_tune_sck(struct ftspi020_priv *ctrl, const struct spi_mem_o
 		dev_info(ctrl->dev, "SPI clock %lu Hz\n", clk_get_rate(ctrl->clk));
 	}
 
-	if (ctrl->clk_fast && op->data.dir == SPI_MEM_DATA_IN &&
-	    op->data.nbytes >= FTSPI020_FAST_MIN_BYTES)
-		hz = FTSPI020_SCK_FAST_HZ;
+	fast = ctrl->clk_fast && op->data.dir == SPI_MEM_DATA_IN &&
+	       op->data.nbytes >= FTSPI020_FAST_MIN_BYTES;
+	if (fast)
+		hz = fast_hz;
 
-	ftspi020_set_sck(ctrl, min(ctrl->max_hz, hz));
+	ftspi020_set_sck(ctrl, hz);
+
+	if (fast && ctrl->divider != ctrl->fast_divider) {
+		ctrl->fast_divider = ctrl->divider;
+		dev_info(ctrl->dev, "large reads at %lu Hz\n",
+			 clk_get_rate(ctrl->clk) / ctrl->divider);
+	}
 }
 
 static int ftspi020_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
