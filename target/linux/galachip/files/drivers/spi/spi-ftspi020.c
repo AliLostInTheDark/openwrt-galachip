@@ -31,6 +31,19 @@
 #include <linux/spi/spi-mem.h>
 #include <linux/mtd/spi-nor.h>
 
+/*
+ * The SPI clock runs at 200 MHz and the controller divides it: by 8 for 25 MHz,
+ * which is what the flash always got, and by 4 for 50 MHz on large reads.
+ * Writes, erases and short reads stay at 25 MHz.
+ */
+#define FTSPI020_SCK_SLOW_HZ		25000000
+#define FTSPI020_SCK_FAST_HZ		50000000
+#define FTSPI020_FAST_MIN_BYTES		64
+
+static bool fast_sck = true;
+module_param(fast_sck, bool, 0644);
+MODULE_PARM_DESC(fast_sck, "Read the flash at 50 MHz instead of 25 MHz; writes stay at 25 MHz (default on)");
+
 #define CONFIG_SPI_FTSPI020_V1_7_0 1
 
 /******************************************************************************
@@ -159,6 +172,10 @@ struct ftspi020_priv {
 	bool needs_abort;
 	u32 tx_transfer_size;
 	u32 rx_transfer_size;
+	u32 max_hz;
+	u32 divider;
+	bool cpha;
+	bool clk_fast;
 	u8 txfifo_depth;
 	u8 rxfifo_depth;
 	phys_addr_t phys_io_base;
@@ -404,6 +421,33 @@ static int ftspi020_exec_op_by_cmd(struct ftspi020_priv *ctrl,
 	return ftspi020_firecmd(ctrl, cmd, op);
 }
 
+static void ftspi020_set_sck(struct ftspi020_priv *ctrl, u32 hz);
+
+/* Choose the SPI clock for the next operation; the controller is idle and locked. */
+static void ftspi020_tune_sck(struct ftspi020_priv *ctrl, const struct spi_mem_op *op)
+{
+	u32 hz = FTSPI020_SCK_SLOW_HZ;
+
+	if (!ctrl->max_hz)
+		return;
+
+	if (fast_sck != ctrl->clk_fast) {
+		int ret = clk_set_rate(ctrl->clk, fast_sck ? 200000000 : 50000000);
+
+		if (ret)
+			dev_warn(ctrl->dev, "cannot set the SPI clock: %d\n", ret);
+		ctrl->clk_fast = fast_sck;
+		ctrl->divider = 0;
+		dev_info(ctrl->dev, "SPI clock %lu Hz\n", clk_get_rate(ctrl->clk));
+	}
+
+	if (ctrl->clk_fast && op->data.dir == SPI_MEM_DATA_IN &&
+	    op->data.nbytes >= FTSPI020_FAST_MIN_BYTES)
+		hz = FTSPI020_SCK_FAST_HZ;
+
+	ftspi020_set_sck(ctrl, min(ctrl->max_hz, hz));
+}
+
 static int ftspi020_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
 {
 	struct ftspi020_priv *ctrl = spi_controller_get_devdata(mem->spi->controller);
@@ -412,6 +456,7 @@ static int ftspi020_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
 	u32 ce;
 
 	mutex_lock(&ctrl->lock);
+	ftspi020_tune_sck(ctrl, op);
 	if (ctrl->needs_abort) {
 		err = ftspi020_abort(ctrl);
 		if (err)
@@ -483,30 +528,23 @@ static const struct spi_controller_mem_ops ftspi020_mem_ops = {
 	.get_name = ftspi020_get_name,
 };
 
-static int ftspi020_setup(struct spi_device *spi)
+static void ftspi020_set_sck(struct ftspi020_priv *ctrl, u32 hz)
 {
-	struct spi_controller *master = spi->controller;
-	struct ftspi020_priv *ctrl = spi_controller_get_devdata(master);
-	u32 clk_rate, divider, val;
-
-	if (master->busy)
-		return -EBUSY;
-
-	if (!spi->max_speed_hz)
-		return 0;
+	u32 clk_rate, divider = 2, val;
 
 	clk_rate = clk_get_rate(ctrl->clk);
 	if (!clk_rate)
-		return 0;
+		return;
 
-	divider = 2;
-	while ((clk_rate / divider) > spi->max_speed_hz) {
+	while ((clk_rate / divider) > hz) {
 		divider += 2;
 		if (divider > 8) {
 			divider = 8;
 			break;
 		}
 	}
+	if (divider == ctrl->divider)
+		return;
 
 	val = ioread32(ctrl->io_base + FTSPI020_REG_CTRL);
 	val &= ~FTSPI020_CTRL_CLK_DIVIDER;
@@ -526,15 +564,33 @@ static int ftspi020_setup(struct spi_device *spi)
 		break;
 	}
 
-	if (spi->mode & SPI_CPHA)
+	if (ctrl->cpha)
 		val |= FTSPI020_CTRL_CLK_MODE_3;
 	else
 		val &= ~FTSPI020_CTRL_CLK_MODE_3;
 
 	iowrite32(val, ctrl->io_base + FTSPI020_REG_CTRL);
+	ctrl->divider = divider;
 
 	dev_dbg(ctrl->dev, "spi clock %u, divider %d, ctrl %08x\n",
 		clk_rate / divider, divider, ioread32(ctrl->io_base + FTSPI020_REG_CTRL));
+}
+
+static int ftspi020_setup(struct spi_device *spi)
+{
+	struct spi_controller *master = spi->controller;
+	struct ftspi020_priv *ctrl = spi_controller_get_devdata(master);
+
+	if (master->busy)
+		return -EBUSY;
+
+	if (!spi->max_speed_hz)
+		return 0;
+
+	ctrl->max_hz = spi->max_speed_hz;
+	ctrl->cpha = spi->mode & SPI_CPHA;
+	ctrl->divider = 0;
+	ftspi020_set_sck(ctrl, ctrl->max_hz);
 
 	return 0;
 }
