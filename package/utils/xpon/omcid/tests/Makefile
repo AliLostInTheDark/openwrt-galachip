@@ -45,5 +45,9 @@ test: check-sync
 		-o $(TEST_BIN)-olt-watch olt-watch-test.c ../src/olt-watch.c
 	ASAN_OPTIONS=detect_leaks=0 $(TEST_BIN)-olt-watch
 
+	$(CC) $(CFLAGS) $(WARN) -I../src -I$(LIB) -I$(LIB)/include \
+		-o $(TEST_BIN)-replay replay-test.c $(SOURCES) $(LIB_SOURCES)
+	ASAN_OPTIONS=detect_leaks=0 $(TEST_BIN)-replay sessions/genexis-gnxs-boot.txt genexis
+
 check-sync:
 	sh check-sync.sh
