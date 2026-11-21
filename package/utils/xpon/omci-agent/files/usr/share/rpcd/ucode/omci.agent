@@ -28,6 +28,82 @@ let last_applied_signature = null;
 let last_config_signature = null;
 let retry_polls = 0;
 
+const MAX_EVENTS = 64;
+const OBSERVE_EVERY = 5;
+let observe_tick = 0;
+let event_log = {};
+let prev_obs = {};
+
+function uptime_str() {
+	let raw = readfile('/proc/uptime');
+	let parts = raw ? split(trim(raw), /\s+/) : [];
+	return parts[0] ? `${parts[0]}s` : '-';
+}
+
+function record_event(device, kind, message) {
+	let list = event_log[`${device}`] || (event_log[`${device}`] = []);
+	unshift(list, {
+		time: time(),
+		uptime: uptime_str(),
+		kind: kind,
+		message: message
+	});
+	if (length(list) > MAX_EVENTS)
+		splice(list, MAX_EVENTS);
+}
+
+function observe_status(device, s) {
+	if (!s)
+		return;
+
+	let key = `${device}`;
+	let prev = prev_obs[key];
+	let omci_alarms = s.alarms_text ? trim(s.alarms_text) : '';
+	let cur = {
+		state: s.state,
+		onu_id: s.onu_id,
+		channel_up: !!s.channel_up,
+		agent_op: !!s.agent_operational,
+		mib_sync: s.mib_sync,
+		bosa_alarms: s.bosa_alarms || 0,
+		omci_alarms: omci_alarms
+	};
+
+	if (!prev) {
+		prev_obs[key] = cur;
+		record_event(device, 'state',
+			sprintf('Initial observation: O%s, ONU ID %s, OMCC %s, MIB sync %s',
+				cur.state ?? '?', cur.onu_id ?? '-',
+				cur.channel_up ? 'up' : 'down', cur.mib_sync ?? '-'));
+		return;
+	}
+
+	if (cur.state != prev.state)
+		record_event(device, 'ploam',
+			sprintf('PON state changed: O%s -> O%s (ONU ID %s)',
+				prev.state ?? '?', cur.state ?? '?', cur.onu_id ?? '-'));
+	if (cur.channel_up != prev.channel_up)
+		record_event(device, 'omcc',
+			sprintf('OMCC channel %s (ONU ID %s)',
+				cur.channel_up ? 'up' : 'down', cur.onu_id ?? '-'));
+	if (cur.agent_op != prev.agent_op)
+		record_event(device, 'agent',
+			sprintf('OMCI agent %s', cur.agent_op ? 'operational' : 'not operational'));
+	if (cur.mib_sync != prev.mib_sync)
+		record_event(device, 'omci',
+			sprintf('MIB data sync changed: %s -> %s (%s objects)',
+				prev.mib_sync ?? '-', cur.mib_sync ?? '-', s.mib_objects ?? '-'));
+	if (cur.bosa_alarms != prev.bosa_alarms)
+		record_event(device, 'alarm',
+			sprintf('BOSA alarm mask changed: 0x%03x -> 0x%03x',
+				prev.bosa_alarms, cur.bosa_alarms));
+	if (cur.omci_alarms != prev.omci_alarms)
+		record_event(device, 'alarm',
+			cur.omci_alarms ? `OMCI alarms: ${replace(cur.omci_alarms, /\n/g, '; ')}` : 'OMCI alarms cleared');
+
+	prev_obs[key] = cur;
+}
+
 /* enum omci_mib_origin */
 const MIB_ORIGIN_HARDWARE = 3;
 
@@ -265,7 +341,78 @@ const credentials_names = [
 	'initial', 'successful', 'LOID error', 'password error', 'duplicate LOID'
 ];
 
+/* ITU-T G.984.3 / hack-gpon.org 4-character GPON vendor IDs. */
+const gpon_vendor_names = {
+	ADTN: 'Adtran',
+	ALCL: 'Nokia / Alcatel-Lucent',
+	ALLG: 'ALLNET',
+	ASKY: 'Askey',
+	AVMG: 'AVM',
+	CDAT: 'C-Data',
+	CDKT: 'KingType',
+	CIGG: 'CIG',
+	CMDT: 'Comtrend',
+	CXNK: 'Calix',
+	DASA: 'DASAN',
+	DDKT: 'DKT',
+	DLNK: 'D-Link',
+	DSNW: 'DASAN',
+	ELTR: 'Electra',
+	ELTX: 'Eltex',
+	FHTC: 'FiberHome',
+	FHTT: 'FiberHome',
+	GENX: 'Genexis',
+	GMTK: 'GemTek',
+	GNXS: 'Genexis',
+	GPNC: 'NuCom',
+	GPON: 'Generic',
+	GTHG: 'Alcatel-Lucent (ODM)',
+	HALN: 'HALNy',
+	HBMT: 'HiSense',
+	HSGQ: 'HSGQ',
+	HUMA: 'Humax',
+	HWTC: 'Huawei',
+	HWTI: 'Huawei',
+	ICTR: 'Icotera',
+	ISKT: 'Iskratel',
+	KAON: 'KAONMEDIA',
+	LEOX: 'LEOX',
+	LQDE: 'Lantiq',
+	MSTC: 'Mitrastar',
+	NOKG: 'Nokia',
+	NOKI: 'Nokia',
+	NOKW: 'Nokia',
+	PRLN: 'Prolink',
+	PTIN: 'Altice / PT Inovacao',
+	RTKG: 'Realtek',
+	SCOM: 'Sercomm',
+	SKYW: 'Skyworth',
+	SMBS: 'Sagemcom',
+	SPGA: 'SourcePhotonics',
+	TDTC: 'Tenda',
+	TMBB: 'Technicolor',
+	TPLG: 'TP-Link',
+	UBNT: 'Ubiquiti',
+	UGRD: 'UGrid',
+	VSOL: 'V-SOL',
+	YHTC: 'Youhua',
+	YOTC: 'YOTC',
+	ZNTS: 'DZS',
+	ZRMT: 'Zaram',
+	ZTEC: 'ZTE',
+	ZTEG: 'ZTE',
+	ZYWN: 'Zyxel',
+	ZYXE: 'Zyxel',
+};
+
+function vendor_name_for(id) {
+	if (type(id) != 'string' || length(id) == 0)
+		return null;
+	return gpon_vendor_names[uc(id)] || null;
+}
+
 function decorate_status(device, status, live) {
+	observe_status(device, status);
 	status.onu_type_name = onu_type_names[status.onu_type] || `unknown-${status.onu_type}`;
 	status.olt_profile_configured_name = profile_name(status.olt_profile_configured);
 	status.olt_profile_effective_name = profile_name(status.olt_profile_effective);
@@ -323,8 +470,12 @@ function decorate_status(device, status, live) {
 
 	/* OLT-G is class 131, entity 0. Its absence is not a status failure. */
 	let olt = live ? null : omci.mib_get(device, 131, 0);
-	if (olt != null && olt.olt_g != null)
+	if (olt != null && olt.olt_g != null) {
 		status.olt = olt.olt_g;
+		let vname = vendor_name_for(status.olt.vendor_id);
+		if (vname != null)
+			status.olt.vendor_name = vname;
+	}
 
 	return status;
 }
@@ -716,6 +867,13 @@ const methods = {
 		call: function(request) {
 			return apply_uci_values(request, device_arg(request));
 		}
+	},
+
+	events: {
+		args: { device: 0 },
+		call: function(request) {
+			return { events: event_log[`${device_arg(request)}`] || [] };
+		}
 	}
 };
 
@@ -880,8 +1038,18 @@ const config_poll = interval(CONFIG_POLL_MS, () => {
 	let epon = pon_mode_epon();
 
 	/* EPON: no OMCI; only the transmitter permission and the bridge check. */
-	if (!epon)
+	if (!epon) {
 		auto_apply('poll');
+		/* The event log notes state changes; a read every fifth poll is enough. */
+		if (++observe_tick >= OBSERVE_EVERY) {
+			let dev = device_from_section(uci_main(false));
+			let live_stat = omci.status(dev, true);
+
+			observe_tick = 0;
+			if (live_stat != null)
+				observe_status(dev, live_stat);
+		}
+	}
 	sync_transmit(false);
 	migrate_pon_vlan_ports();
 	if (vlanscan_running() || epon)
