@@ -31,5 +31,6 @@ return baseclass.extend({
 	mibDelete: declare('mib_delete', [ 'device', 'class_id', 'entity_id' ], {}),
 	mibReset: declare('mib_reset', [ 'device' ], {}),
 	apply: declare('apply', [ 'device' ], {}),
+	events: declare('events', [ 'device' ], { events: [] }),
 	vlanStatus: rpc.declare({ object: 'omci.vlan', method: 'status', expect: { '': {} } })
 });

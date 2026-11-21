@@ -11,7 +11,8 @@ var vendorSections = {
 	vendor_huawei: true,
 	vendor_zte: true,
 	vendor_fiberhome: true,
-	vendor_ctc: true
+	vendor_ctc: true,
+	vendor_genexis: true
 };
 
 var groups = {
@@ -26,6 +27,7 @@ var groups = {
 	zte: function(c) { return mibView.classifySection(c) === 'vendor_zte'; },
 	fiberhome: function(c) { return mibView.classifySection(c) === 'vendor_fiberhome'; },
 	ctc: function(c) { return mibView.classifySection(c) === 'vendor_ctc'; },
+	genexis: function(c) { return mibView.classifySection(c) === 'vendor_genexis'; },
 	other: function(c) {
 		return !vendorSections[mibView.classifySection(c)] &&
 		       c.category_name !== 'equipment' && c.category_name !== 'management' &&

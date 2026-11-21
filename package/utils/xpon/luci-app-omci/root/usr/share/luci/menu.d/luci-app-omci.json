@@ -152,6 +152,14 @@
 			"path": "omci/mib/ctc"
 		}
 	},
+	"admin/network/omci/mib/genexis": {
+		"title": "Genexis",
+		"order": 65,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/genexis"
+		}
+	},
 	"admin/network/omci_off": {
 		"title": "GPON",
 		"order": 65,

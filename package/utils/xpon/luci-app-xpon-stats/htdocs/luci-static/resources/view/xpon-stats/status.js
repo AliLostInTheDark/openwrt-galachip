@@ -273,7 +273,7 @@ function gpon(s, vlan, t) {
 		]),
 		cards([
 			[ _('OMCI agent'), s.agent_operational ? _('Operational') : _('Not operational') ],
-			[ _('OLT profile'), text(s.olt_profile_effective_name) ],
+			[ _('OLT vendor'), (olt.vendor_name && (olt.vendor_id || olt.vendor)) ? '%s (%s)'.format(olt.vendor_name, olt.vendor_id || olt.vendor) : text(olt.vendor_id || olt.vendor) ],
 			[ _('MIB objects'), text(s.mib_objects) ],
 			[ _('OMCI alarms'), alarmCount == null ? '-' : alarmCount ? _('%d active').format(alarmCount) : _('None') ]
 		]),
@@ -301,12 +301,12 @@ function gpon(s, vlan, t) {
 			[ _('LOID authentication'), text(s.loid_status_name) ]
 		]),
 		section(_('OLT interoperability'), [
-			[ _('Configured profile'), text(s.olt_profile_configured_name) ],
-			[ _('Effective profile'), text(s.olt_profile_effective_name) ],
-			[ _('Active quirks'), (s.olt_profile_quirk_names || []).join(', ') || _('None') ],
-			[ _('OLT vendor ID'), text(olt.vendor_id || olt.vendor) ],
+			[ _('OLT vendor'), (olt.vendor_name && (olt.vendor_id || olt.vendor)) ? '%s (%s)'.format(olt.vendor_name, olt.vendor_id || olt.vendor) : text(olt.vendor_id || olt.vendor) ],
 			[ _('OLT equipment ID'), text(olt.equipment_id || olt.model) ],
-			[ _('OLT version'), text(olt.version) ]
+			[ _('OLT version'), text(olt.version) ],
+			[ _('Configured quirk profile'), text(s.olt_profile_configured_name) ],
+			[ _('Effective quirk profile'), text(s.olt_profile_effective_name) ],
+			[ _('Applied quirks'), (s.olt_profile_quirk_names || []).join(', ') || _('None') ]
 		]),
 		section(_('MIB and OMCI traffic'), [
 			[ _('MIB data sync'), text(s.mib_sync) ],

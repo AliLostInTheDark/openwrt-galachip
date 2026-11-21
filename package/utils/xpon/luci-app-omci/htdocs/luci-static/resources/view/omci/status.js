@@ -165,8 +165,9 @@ function line(status) {
 /* What the OLT provisioned, in sentences, from the MIB objects it created or configured. */
 function provisioned(objects, vlan) {
 	var allocs = mib.allocIds(objects), gems = mib.gemPorts(objects);
-	var vlans = mib.provisionedVlans(objects), lead = [];
+	var vlans = mib.provisionedVlans(objects), paths = mib.dataPaths(objects), lead = [];
 	var vids = Object.keys(vlans).map(Number).sort(function(a, b) { return a - b; });
+	var pathTable = null;
 
 	if (!(objects || []).some(mib.oltProvisioned))
 		return E('p', { 'class': 'xpon-lead' },
@@ -179,6 +180,34 @@ function provisioned(objects, vlan) {
 		_('It set no VLAN rule: the service runs untagged.'));
 	lead.push(_('Towards the LAN: %s.').format(vlanText(vlan)));
 
+	if (paths.length) {
+		var titles = [
+			_('GEM Port'),
+			_('Direction'),
+			_('Alloc-ID (T-CONT)'),
+			_('802.1p Mapper / Priorities'),
+			_('VLAN Filter (ME 84)'),
+			_('UNI / Extended VLAN (ME 171)')
+		];
+		pathTable = E('table', { 'class': 'table', 'style': 'margin-top:12px' }, [
+			E('tr', { 'class': 'tr table-titles' }, titles.map(function(t) {
+				return E('th', { 'class': 'th left' }, t);
+			}))
+		].concat(paths.map(function(p) {
+			var pbits = p.prios.length == 8 ? '0-7' : (p.prios.length ? p.prios.join(', ') : '-');
+			var mapperTxt = p.mappers.length ? '%s (p %s)'.format(p.mappers.join(', '), pbits) : '-';
+
+			return E('tr', { 'class': 'tr' }, [
+				E('td', { 'class': 'td left', 'data-title': titles[0] }, String(p.gem)),
+				E('td', { 'class': 'td left', 'data-title': titles[1] }, p.direction),
+				E('td', { 'class': 'td left', 'data-title': titles[2] }, p.alloc != null ? String(p.alloc) : '-'),
+				E('td', { 'class': 'td left', 'data-title': titles[3] }, mapperTxt),
+				E('td', { 'class': 'td left', 'data-title': titles[4] }, p.filterVids.length ? p.filterVids.join(', ') : '-'),
+				E('td', { 'class': 'td left', 'data-title': titles[5] }, p.uniRules.length ? p.uniRules.join('; ') : '-')
+			]);
+		})));
+	}
+
 	return E([], [
 		E('p', { 'class': 'xpon-lead' }, [ lead.join(' ') ]),
 		vids.length ? E('div', { 'class': 'xpon-cards' }, vids.map(function(vid) {
@@ -190,14 +219,22 @@ function provisioned(objects, vlan) {
 				mib.oltPriority(objects, vid) || mib.mapperPriority(route) || _('No priority rule'),
 				_('From: %s').format(entry.sources.join(', '))
 			]);
-		})) : ''
+		})) : '',
+		pathTable || ''
 	]);
+}
+
+function oltVendorText(olt) {
+	var id = olt && (olt.vendor_id || olt.vendor);
+	if (olt && olt.vendor_name && id)
+		return '%s (%s)'.format(olt.vendor_name, id);
+	return text(id);
 }
 
 function summary(status) {
 	var cards = [
 		[ _('OMCI agent'), status.agent_operational ? _('Operational') : _('Not operational') ],
-		[ _('OLT profile'), text(status.olt_profile_effective_name) ],
+		[ _('OLT vendor'), oltVendorText(status.olt) ],
 		[ _('MIB objects'), text(status.mib_objects, '0') ],
 		[ _('OMCI alarms'), omciAlarmCount(status.omci_alarms, status.channel_up) ]
 	];
@@ -277,7 +314,6 @@ function values(status) {
 	var olt = status.olt || {};
 	var v = {
 		state: state(status.state),
-		responder: text(status.responder),
 		ifindex: text(status.ifindex),
 		onu_id: text(status.onu_id),
 		gem_port: status.gem_port == 0xffff ? _('Not assigned') : text(status.gem_port),
@@ -287,6 +323,7 @@ function values(status) {
 		permissive: yesno(status.permissive),
 		fake_omci: yesno(status.fake_omci),
 		reboot: status.reboot == null ? '-' : yesno(status.reboot),
+		responder: text(status.responder),
 		onu_type: text(status.onu_type_name),
 		uni_count: text(status.uni_count),
 		traffic_management_option: text(status.traffic_management_option),
@@ -307,12 +344,14 @@ function values(status) {
 		software_version_1: text(identity['software-version-1']), equipment_id: text(identity['equipment-id']),
 		loid_status: text(status.loid_status_name),
 		omcc_version: identity['omcc-version'] == null ? '-' : '%s (%s)'.format(hex(identity['omcc-version'], 2), identity['omcc-version']),
-		olt_vendor: text(olt.vendor_id || olt.vendor), olt_equipment: text(olt.equipment_id || olt.model),
+		olt_vendor: oltVendorText(olt), olt_equipment: text(olt.equipment_id || olt.model),
 		olt_version: text(olt.version),
 		fec_downstream: fec(status.fec_downstream), fec_upstream: fec(status.fec_upstream),
-		bosa_temperature: temperature(status.bosa_temperature_mc), bosa_voltage: scaled(status.bosa_voltage_uv, 1e6, 2, 'V'),
+		bosa_temperature: temperature(status.bosa_temperature_mc),
+		bosa_voltage: scaled(status.bosa_voltage_uv, 1e6, 2, 'V'),
 		bosa_bias: scaled(status.bosa_bias_ua, 1e3, 1, 'mA'),
-		bosa_tx_power: power(status.bosa_tx_power_nw), bosa_rx_power: power(status.bosa_rx_power_nw),
+		bosa_tx_power: power(status.bosa_tx_power_nw),
+		bosa_rx_power: power(status.bosa_rx_power_nw),
 		bosa_alarms: alarms(status.bosa_alarms)
 	};
 
@@ -341,13 +380,223 @@ function update(status) {
 }
 
 /* The MIB list is large: read it after rendering, and again only when the MIB changes. */
+var cachedObjects = [], cachedEvents = {}, showSecrets = false;
+
+function secretText(v) {
+	return v ? (showSecrets ? v : '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022') : '-';
+}
+
+function secretsToggle() {
+	return E('label', { 'style': 'display:inline-flex;align-items:center;gap:6px;margin:6px 0' }, [
+		E('input', {
+			'type': 'checkbox',
+			'checked': showSecrets ? 'checked' : null,
+			'change': function(ev) {
+				var node = document.getElementById('omci-olt-details-root');
+
+				showSecrets = ev.target.checked;
+				if (node)
+					dom.content(node, renderOltDetails(cachedObjects));
+			}
+		}),
+		_('Show passwords the OLT configured')
+	]);
+}
+
+function renderEvents(data) {
+	var events = (data && data.events) || [];
+	var rows = [];
+
+	if (!events.length) {
+		rows.push(E('tr', { 'class': 'tr placeholder' }, [
+			E('td', { 'class': 'td left', 'colspan': '3' }, E('em', {}, _('No OMCI or PLOAM events recorded yet.')))
+		]));
+	} else {
+		rows = events.slice(0, 30).map(function(ev) {
+			var ts = ev.time ? new Date(ev.time * 1000).toLocaleTimeString() : '-';
+			return E('tr', { 'class': 'tr' }, [
+				E('td', { 'class': 'td left', 'style': 'white-space:nowrap' }, [ '%s (%s)'.format(ts, ev.uptime || '-') ]),
+				E('td', { 'class': 'td left', 'style': 'white-space:nowrap' }, [ String(ev.kind || '-') ]),
+				E('td', { 'class': 'td left' }, [ String(ev.message || '-') ])
+			]);
+		});
+	}
+
+	return E('table', { 'class': 'table' }, [
+		E('tr', { 'class': 'tr table-titles' }, [
+			E('th', { 'class': 'th left', 'width': '20%' }, _('Time (Uptime)')),
+			E('th', { 'class': 'th left', 'width': '12%' }, _('Type')),
+			E('th', { 'class': 'th left' }, _('Event'))
+		])
+	].concat(rows));
+}
+
+function fmtEnum(val) {
+	if (val == null || val === '')
+		return '-';
+	return String(val).replace(/^(\d+)\s*\((.+)\)$/, '$1, $2');
+}
+
+function simpleTable(titles, rows) {
+	return E('table', { 'class': 'table' }, [
+		E('tr', { 'class': 'tr table-titles' }, titles.map(function(t) {
+			return E('th', { 'class': 'th left' }, t);
+		}))
+	].concat(rows.map(function(cols) {
+		return E('tr', { 'class': 'tr' }, cols.map(function(c, i) {
+			return E('td', { 'class': 'td left', 'data-title': titles[i] }, [ text(c) ]);
+		}));
+	})));
+}
+
+function renderOltDetails(objects) {
+	var sections = [];
+	var qos = mib.linkQos(objects);
+	var ports = mib.uniPorts(objects);
+	var svcs = mib.oltServices(objects);
+	var imgs = mib.softwareImages(objects);
+
+	if (qos.anig || qos.max_gem_payload != null || qos.tconts.length) {
+		var qosRows = [];
+		if (qos.anig) {
+			qosRows.push([ _('SR-DBA indication'), yesno(qos.anig.sr_indication) ]);
+			if (qos.anig.sf_threshold != null || qos.anig.sd_threshold != null)
+				qosRows.push([ _('Signal fail / degrade BER'), '1e-%s / 1e-%s'.format(
+					text(qos.anig.sf_threshold), text(qos.anig.sd_threshold)) ]);
+			if (qos.anig.gem_block_length != null)
+				qosRows.push([ _('GEM block length'), '%d B'.format(qos.anig.gem_block_length) ]);
+			if (qos.anig.response_time != null)
+				qosRows.push([ _('ONU response time'), '%d ns'.format(qos.anig.response_time) ]);
+			if (qos.anig.tconts != null)
+				qosRows.push([ _('Total T-CONTs supported'), String(qos.anig.tconts) ]);
+		}
+		if (qos.max_gem_payload != null)
+			qosRows.push([ _('Max GEM payload (GAL ME 272)'), '%d B'.format(qos.max_gem_payload) ]);
+		qos.tconts.forEach(function(t) {
+			qosRows.push([ _('Bound T-CONT %s').format(t.entity),
+				_('Alloc-ID %d · Policy %s').format(t.alloc_id, fmtEnum(t.policy)) ]);
+		});
+		sections.push(section(_('OLT-to-ONT link & QoS parameters'), qosRows.map(function(r, i) {
+			return row(r[0], r[1], 'qos_' + i);
+		})));
+	}
+
+	if (ports.length) {
+		sections.push(E('div', { 'class': 'cbi-section' }, [
+			E('h3', {}, _('Physical UNI & VEIP ports (OLT view)')),
+			simpleTable(
+				[ _('Port'), _('Entity'), _('Type'), _('Admin state'), _('Oper state'), _('OLT written'), _('Details') ],
+				ports.map(function(p) {
+					return [ p.kind, p.entity, fmtEnum(p.type), fmtEnum(p.admin), fmtEnum(p.oper), yesno(p.olt_written), p.details ];
+				})
+			)
+		]));
+	}
+
+	if (svcs.multicast.length || svcs.multicast_gems.length || svcs.ip_hosts.length || svcs.tr069.length) {
+		var svcRows = [];
+		if (svcs.multicast_gems.length)
+			svcRows.push([ _('Multicast GEM port (ME 281)'), svcs.multicast_gems.join(', ') ]);
+		svcs.multicast.forEach(function(m) {
+			svcRows.push([ _('Multicast profile %s (ME 309)').format(m.entity),
+				_('%s · Immediate leave: %s · Upstream IGMP: %s').format(
+					fmtEnum(m.igmp_version), yesno(m.immediate_leave), m.upstream_tci) ]);
+		});
+		svcs.ip_hosts.forEach(function(h) {
+			svcRows.push([ _('IP host %s (ME 134)').format(h.entity),
+				h.configured ?
+					_('IP %s · GW %s · DNS %s').format(h.ip, h.gateway, h.dns) :
+					_('Not configured by OLT') ]);
+		});
+		svcs.tr069.forEach(function(t) {
+			svcRows.push([ _('TR-069 server %s (ME 340)').format(t.entity),
+				t.acs ? _('ACS %s (%s)').format(t.acs_url || t.acs, fmtEnum(t.admin)) : _('Not configured (%s)').format(fmtEnum(t.admin)) ]);
+			if (t.acs_user || t.acs_password)
+				svcRows.push([ _('ACS login (ME 148)'),
+					_('User %s · Password %s%s').format(t.acs_user || '-', secretText(t.acs_password),
+						t.acs_realm ? _(' · Realm %s').format(t.acs_realm) : '') ]);
+		});
+		if (svcs.tr069.some(function(t) { return t.acs_user || t.acs_password; }))
+			sections.push(secretsToggle());
+		sections.push(section(_('OLT-provisioned multicast & remote management'), svcRows.map(function(r, i) {
+			return row(r[0], r[1], 'oltsvc_' + i);
+		})));
+	}
+
+	if (imgs.length) {
+		sections.push(E('div', { 'class': 'cbi-section' }, [
+			E('h3', {}, _('Dual-bank software images (OLT view)')),
+			simpleTable(
+				[ _('Bank'), _('Version'), _('Active'), _('Committed'), _('Valid') ],
+				imgs.map(function(im) {
+					return [ _('Image %d').format(im.bank), im.version, yesno(im.active), yesno(im.committed), yesno(im.valid) ];
+				})
+			)
+		]));
+	}
+
+	return E([], sections);
+}
+
+/* The JSON snapshot: identifiers and the ACS login are masked unless asked for. */
+function snapshot(status, vlan, events, withSecrets) {
+	var copy = JSON.parse(JSON.stringify(status || {}));
+	var services = JSON.parse(JSON.stringify(mib.oltServices(cachedObjects)));
+
+	if (!withSecrets) {
+		if (copy.serial) copy.serial = '[masked]';
+		if (copy.identity) {
+			if (copy.identity.serial) copy.identity.serial = '[masked]';
+			if (copy.identity.password) copy.identity.password = '[masked]';
+			if (copy.identity.loid) copy.identity.loid = '[masked]';
+		}
+		services.tr069.forEach(function(t) {
+			if (t.acs_user) t.acs_user = '[masked]';
+			if (t.acs_password) t.acs_password = '[masked]';
+		});
+	}
+	return {
+		generated_at: new Date().toISOString(),
+		masked: !withSecrets,
+		status: copy,
+		vlan: vlan || null,
+		data_paths: mib.dataPaths(cachedObjects),
+		provisioned_vlans: mib.provisionedVlans(cachedObjects),
+		link_qos: mib.linkQos(cachedObjects),
+		uni_ports: mib.uniPorts(cachedObjects),
+		olt_services: services,
+		software_images: mib.softwareImages(cachedObjects),
+		events: (events && events.events) || []
+	};
+}
+
 function loadProvisioned(vlan) {
 	var node = document.getElementById('omci-provisioned-root');
+	var detailsNode = document.getElementById('omci-olt-details-root');
 
 	if (!node)
 		return Promise.resolve();
 	return L.resolveDefault(omci.mibList(0), []).then(function(objects) {
+		cachedObjects = objects || [];
 		dom.content(node, provisioned(objects, vlan));
+		if (detailsNode)
+			dom.content(detailsNode, renderOltDetails(cachedObjects));
+	});
+}
+
+function eventKey(s) {
+	return [ s.state, s.onu_id, s.channel_up, s.agent_operational, s.mib_sync, s.bosa_alarms,
+		JSON.stringify(s.omci_alarms), s.alarms_text ].join('|');
+}
+
+function loadEvents() {
+	var node = document.getElementById('omci-events-root');
+
+	if (!node)
+		return Promise.resolve();
+	return L.resolveDefault(omci.events(0), { events: [] }).then(function(data) {
+		cachedEvents = data || { events: [] };
+		dom.content(node, renderEvents(cachedEvents));
 	});
 }
 
@@ -356,7 +605,8 @@ return view.extend({
 		return Promise.all([
 			omci.status(0),
 			L.resolveDefault(omci.vlanStatus(), null),
-			widgets.limits()
+			widgets.limits(),
+			L.resolveDefault(omci.events(0), { events: [] })
 		]);
 	},
 
@@ -366,8 +616,9 @@ return view.extend({
 		var v;
 
 		limits = data[2] || {};
+		cachedEvents = data[3] || { events: [] };
 		v = values(status);
-		var mibSync = status.mib_sync, vlan = data[1];
+		var mibSync = status.mib_sync, vlan = data[1], seen = eventKey(status);
 
 		poll.add(function() {
 			/* A load during an apply finds no configuration, and OLT-G
@@ -382,6 +633,11 @@ return view.extend({
 				}
 				vlan = next[1];
 				updateVlan(vlan);
+				/* The event log only changes with the status: read it then, not every poll. */
+				if (eventKey(status) != seen) {
+					seen = eventKey(status);
+					loadEvents();
+				}
 				if (status.mib_sync != mibSync) {
 					mibSync = status.mib_sync;
 					return loadProvisioned(vlan);
@@ -399,14 +655,15 @@ return view.extend({
 				E('h3', {}, _('What the OLT provisioned')),
 				E('div', { 'id': 'omci-provisioned-root' }, E('em', {}, _('Reading the MIB…')))
 			]),
+			E('div', { 'id': 'omci-olt-details-root' }),
 			section(_('Channel and agent'), [
 				row(_('PON state'), v.state, 'state'), row(_('Interface index'), v.ifindex, 'ifindex'),
-				row(_('Responder'), v.responder, 'responder'),
 				row(_('ONU ID'), v.onu_id, 'onu_id'), row(_('Default GEM port'), v.gem_port, 'gem_port'),
 				row(_('OMCI channel up'), v.channel_up, 'channel_up'), row(_('Agent enabled'), v.agent_enabled, 'agent_enabled'),
 				row(_('Agent operational'), v.agent_operational, 'agent_operational'), row(_('Permissive mode'), v.permissive, 'permissive'),
 				row(_('Fake OMCI'), v.fake_omci, 'fake_omci'),
 				row(_('Allow OLT-requested reboot'), v.reboot, 'reboot'),
+				row(_('Responder'), v.responder, 'responder'),
 				row(_('UAPI'), v.uapi, 'uapi'), row(_('Capabilities'), v.capabilities, 'capabilities'),
 				row(_('LAN VLAN mode'), vlanText(data[1]), 'lan_vlan')
 			]),
@@ -422,12 +679,12 @@ return view.extend({
 				row(_('LOID authentication'), v.loid_status, 'loid_status')
 			]),
 			section(_('OLT interoperability'), [
-				row(_('Configured profile'), v.profile_configured, 'profile_configured'),
-				row(_('Effective profile'), v.profile_effective, 'profile_effective'),
-				row(_('Forced profile'), v.profile_forced, 'profile_forced'),
-				row(_('Active quirks'), v.quirks, 'quirks'),
-				row(_('OLT vendor ID'), v.olt_vendor, 'olt_vendor'), row(_('OLT equipment ID'), v.olt_equipment, 'olt_equipment'),
-				row(_('OLT version'), v.olt_version, 'olt_version')
+				row(_('OLT vendor'), v.olt_vendor, 'olt_vendor'), row(_('OLT equipment ID'), v.olt_equipment, 'olt_equipment'),
+				row(_('OLT version'), v.olt_version, 'olt_version'),
+				row(_('Configured quirk profile'), v.profile_configured, 'profile_configured'),
+				row(_('Effective quirk profile'), v.profile_effective, 'profile_effective'),
+				row(_('Forced quirk profile'), v.profile_forced, 'profile_forced'),
+				row(_('Applied quirks'), v.quirks, 'quirks')
 			]),
 			section(_('MIB and OMCI traffic'), [
 				row(_('MIB data sync'), v.mib_sync, 'mib_sync'), row(_('MIB objects'), v.mib_objects, 'mib_objects'),
@@ -446,7 +703,15 @@ return view.extend({
 			section(_('OMCI alarms'), omciAlarmRows.map(function(alarm, i) {
 				return row(omciAlarmLabel(alarm), v['omci_alarm_' + i], 'omci_alarm_' + i);
 			})),
-			widgets.report()
+			E('div', { 'class': 'cbi-section' }, [
+				E('h3', {}, _('Recent OMCI & PLOAM events')),
+				E('div', { 'id': 'omci-events-root' }, renderEvents(cachedEvents))
+			]),
+			widgets.report({
+				onSnapshot: function(withSecrets) {
+					return snapshot(status, vlan, cachedEvents, withSecrets);
+				}
+			})
 		]));
 	},
 

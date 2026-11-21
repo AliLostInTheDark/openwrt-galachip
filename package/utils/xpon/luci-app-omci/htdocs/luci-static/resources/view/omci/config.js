@@ -151,15 +151,17 @@ return view.extend({
 		o.placeholder = '200:30';
 		o.description = _('Pairs of <code>S-VLAN:C-VLAN</code>. Upstream, the ONU adds the S-VLAN tag on top of the C-VLAN tag sent by the router; downstream, it removes it again.');
 
-		o = s.taboption('agent', form.ListValue, 'olt_profile', _('OLT profile'));
-		[ ['auto', _('Auto detect')], ['generic', _('Generic')], ['nokia-alcl', _('Nokia / Alcatel-Lucent')],
-		  ['dasan', _('DASAN')], ['huawei', _('Huawei')], ['fiberhome', _('FiberHome')], ['zte', _('ZTE')],
+		o = s.taboption('agent', form.ListValue, 'olt_profile', _('OLT quirk profile'));
+		o.description = _('Selects protocol workarounds when an OLT departs from ITU-T G.988. Does not affect OLT-G vendor detection.');
+		[ ['auto', _('Auto detect')], ['generic', _('Generic (no quirks)')], ['nokia-alcl', _('Nokia / Alcatel-Lucent')],
+		  ['dasan', _('DASAN')], ['huawei', _('Huawei')], ['fiberhome', _('FiberHome')], ['zte', _('ZTE')], ['genexis', _('Genexis')],
 		  ['unspecified', _('Unspecified')] ].forEach(function(v) { o.value(v[0], v[1]); });
 		o.default = 'auto';
 
-		o = s.taboption('agent', form.ListValue, 'olt_profile_force', _('Force OLT profile'));
-		[ ['unspecified', _('Do not force')], ['generic', _('Generic')], ['nokia-alcl', _('Nokia / Alcatel-Lucent')],
-		  ['dasan', _('DASAN')], ['huawei', _('Huawei')], ['fiberhome', _('FiberHome')], ['zte', _('ZTE')] ].forEach(function(v) { o.value(v[0], v[1]); });
+		o = s.taboption('agent', form.ListValue, 'olt_profile_force', _('Force OLT quirk profile'));
+		o.description = _('Override automatic quirk profile selection.');
+		[ ['unspecified', _('Do not force')], ['generic', _('Generic (no quirks)')], ['nokia-alcl', _('Nokia / Alcatel-Lucent')],
+		  ['dasan', _('DASAN')], ['huawei', _('Huawei')], ['fiberhome', _('FiberHome')], ['zte', _('ZTE')], ['genexis', _('Genexis')] ].forEach(function(v) { o.value(v[0], v[1]); });
 		o.default = 'unspecified';
 
 		o = s.taboption('identity', form.Value, 'serial', _('GPON serial number'));

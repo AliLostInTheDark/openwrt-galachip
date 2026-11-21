@@ -167,7 +167,7 @@ function summary(o) {
 
 var sectionOrder = [
 	'equipment', 'ani', 'uni', 'multicast', 'voice', 'performance', 'management', 'standard_other',
-	'vendor_nokia', 'vendor_huawei', 'vendor_zte', 'vendor_fiberhome', 'vendor_ctc', 'vendor_other'
+	'vendor_nokia', 'vendor_huawei', 'vendor_zte', 'vendor_fiberhome', 'vendor_ctc', 'vendor_genexis', 'vendor_other'
 ];
 
 var sectionLabels = {
@@ -184,6 +184,7 @@ var sectionLabels = {
 	vendor_zte: _('Vendor — ZTE'),
 	vendor_fiberhome: _('Vendor — FiberHome'),
 	vendor_ctc: _('Vendor — CTC'),
+	vendor_genexis: _('Vendor — Genexis'),
 	vendor_other: _('Vendor — Other')
 };
 
@@ -191,6 +192,11 @@ function classifySection(o) {
 	var id = Number(o.class_id || 0);
 	var name = String(o.name || '').toLowerCase();
 
+	/* the agent names the vendor of a class two OLTs share, by the OLT profile */
+	if (o.vendor)
+		return 'vendor_' + o.vendor;
+	if (name.indexOf('genexis') >= 0)
+		return 'vendor_genexis';
 	if (name.indexOf('nokia') >= 0 || name.indexOf('alcl') >= 0)
 		return 'vendor_nokia';
 	if (name.indexOf('huawei') >= 0)
@@ -202,15 +208,17 @@ function classifySection(o) {
 	if (name.indexOf('ctc') >= 0)
 		return 'vendor_ctc';
 
-	if ((id >= 350 && id <= 373) || id == 65398 || id == 65408 || (id >= 65414 && id <= 65454))
+	if ((id >= 350 && id <= 373) || id == 65398 || (id >= 65414 && id <= 65454))
 		return 'vendor_huawei';
 	if (id >= 65295 && id <= 65306)
 		return 'vendor_nokia';
+	if (id == 255)
+		return 'vendor_genexis';
 	if (id == 242 || id == 243 || id == 247 || id == 65294 || id == 65314 || id == 65315)
 		return 'vendor_zte';
 	if ((id >= 65322 && id <= 65338) || id == 65363 || id == 65411)
 		return 'vendor_fiberhome';
-	if (id == 250 || id == 65282 || id == 65320 || id == 65321 || (id >= 65380 && id <= 65386) ||
+	if (id == 250 || id == 65282 || id == 65320 || id == 65321 || id == 65408 || id == 65527 || (id >= 65380 && id <= 65386) ||
 	    id == 65523 || (id >= 65528 && id <= 65531))
 		return 'vendor_ctc';
 	if ((id >= 240 && id <= 255) || (id >= 350 && id <= 399) || id >= 65280)

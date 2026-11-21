@@ -103,7 +103,8 @@ function view(file, data, mode = 'gpon') {
       status: () => {count('full'); return Promise.resolve(data.status || {});},
       liveStatus: () => {count('live'); return Promise.resolve(data.live || {});},
       vlanStatus: () => {count('vlan'); return Promise.resolve(data.vlan || null);},
-      mibList: () => {count('mib'); return Promise.resolve(data.mib || []);}
+      mibList: () => {count('mib'); return Promise.resolve(data.mib || []);},
+      events: () => {count('events'); return Promise.resolve({events: []});}
     },
     layout: {apply: node => node},
     window: {setTimeout: fn => setImmediate(fn)},
@@ -168,10 +169,12 @@ assert.equal(flat(main.nodes.get('omci-status-traffic_management_option').childr
 for (let i = 0; i < 8640; i++) await main.polls[0].fn();
 assert.equal(main.calls.mib, 1, 'MIB list re-read without a MIB change');
 assert.equal(main.calls.public, 1, 'module thresholds re-read on every poll');
+assert.equal(main.calls.events, 2, 'event log read on load and on the first status change only, not on every poll');
 main.data.live.mib_sync = 2;
 await main.polls[0].fn();
 await main.polls[0].fn();
 assert.equal(main.calls.mib, 2, 'MIB list not re-read once after a MIB change');
+assert.equal(main.calls.events, 3, 'event log not re-read once after the MIB sync change');
 assert.equal(main.calls.full, 1);
 assert.equal(main.calls.live, 8642);
 assert.equal(main.calls.vlan, 8643);
@@ -268,11 +271,11 @@ const menu = JSON.parse(read(path.join(pkg, 'root/usr/share/luci/menu.d/luci-app
 const mibRoot = 'admin/network/omci/mib';
 assert.equal(menu[mibRoot].action.type, 'firstchild');
 assert.deepEqual(Object.keys(menu).filter(k => k.startsWith(mibRoot + '/')),
-  ['read', 'inventory', 'gpon', 'bridge', 'multicast', 'voice', 'performance', 'other', 'nokia', 'huawei', 'zte', 'fiberhome', 'ctc'].map(group => mibRoot + '/' + group));
+  ['read', 'inventory', 'gpon', 'bridge', 'multicast', 'voice', 'performance', 'other', 'nokia', 'huawei', 'zte', 'fiberhome', 'ctc', 'genexis'].map(group => mibRoot + '/' + group));
 assert(!/\bpoll\b/.test(read(path.join(resource, 'omci/mib-editor.js'))));
 assert(!/\bpoll\b/.test(read(path.join(resource, 'view/omci/mib/read.js'))));
 assert.equal(menu[mibRoot + '/read'].action.path, 'omci/mib/read');
-for (const group of ['inventory', 'gpon', 'bridge', 'multicast', 'voice', 'performance', 'other', 'nokia', 'huawei', 'zte', 'fiberhome', 'ctc']) {
+for (const group of ['inventory', 'gpon', 'bridge', 'multicast', 'voice', 'performance', 'other', 'nokia', 'huawei', 'zte', 'fiberhome', 'ctc', 'genexis']) {
   const route = menu[mibRoot + '/' + group].action.path;
   assert.equal(route, 'omci/mib/' + group);
   assert(read(path.join(resource, 'view', route + '.js')).includes('require omci.mib-editor as mib'));
