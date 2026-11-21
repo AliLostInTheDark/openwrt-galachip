@@ -33,11 +33,11 @@
 
 /*
  * The SPI clock runs at 200 MHz and the controller divides it: by 8 for 25 MHz,
- * which is what the flash always got, and by 4 for 50 MHz on large reads.
+ * which is what the flash always got, and by 2 for 100 MHz on large reads.
  * Writes, erases and short reads stay at 25 MHz.
  */
 #define FTSPI020_SCK_SLOW_HZ		25000000
-#define FTSPI020_SCK_FAST_HZ		50000000
+#define FTSPI020_SCK_FAST_HZ		100000000
 #define FTSPI020_FAST_MIN_BYTES		64
 
 static bool fast_sck = true;
@@ -46,7 +46,7 @@ MODULE_PARM_DESC(fast_sck, "Read the flash faster than 25 MHz; writes stay at 25
 
 static unsigned int fast_hz = FTSPI020_SCK_FAST_HZ;
 module_param(fast_hz, uint, 0644);
-MODULE_PARM_DESC(fast_hz, "SCK of large reads when fast_sck is on: 100000000, 50000000 (default), 33333333 or 25000000. Overrides spi-max-frequency");
+MODULE_PARM_DESC(fast_hz, "SCK of large reads when fast_sck is on: 100000000 (default), 50000000, 33333333 or 25000000. Overrides spi-max-frequency");
 
 #define CONFIG_SPI_FTSPI020_V1_7_0 1
 
