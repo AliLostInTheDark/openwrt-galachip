@@ -154,10 +154,50 @@ static void profiles(void)
 	}
 }
 
+static void custom_profiles(void)
+{
+	const char *path = "/tmp/omci-custom-profiles-test.conf";
+	struct omci_olt_g olt = { .valid = true, .vendor_id_valid = true };
+	FILE *fp = fopen(path, "w");
+
+	CHECK(fp != NULL);
+	if (!fp)
+		return;
+	fprintf(fp, "# test custom OLT profiles\n");
+	fprintf(fp, "syrotech vendor SYRO allow_set_create,vendor_mes\n");
+	fprintf(fp, "vsol-olt equip V1600G fake_unsupported,full_uni_id\n");
+	fprintf(fp, "bad-line missing-fields\n");
+	fprintf(fp, "bad-quirk vendor XXXX no_such_quirk\n");
+	fclose(fp);
+
+	CHECK(omci_profiles_load_file(path) == 2);
+	CHECK(omci_profiles_custom_count() == 2);
+	CHECK(omci_profile_valid(OMCI_OLT_PROFILE_CUSTOM_BASE));
+	CHECK(omci_profile_forceable(OMCI_OLT_PROFILE_CUSTOM_BASE));
+	CHECK(!strcmp(omci_olt_profile_name(OMCI_OLT_PROFILE_CUSTOM_BASE), "syrotech"));
+	CHECK(omci_profile_quirks(OMCI_OLT_PROFILE_CUSTOM_BASE) ==
+	      (OMCI_OLT_QUIRK_ALLOW_SET_CREATE | OMCI_OLT_QUIRK_VENDOR_SPECIFIC_MES));
+
+	memcpy(olt.vendor_id, "SYRO", 4);
+	CHECK(omci_profile_detect(&olt) == OMCI_OLT_PROFILE_CUSTOM_BASE);
+
+	olt.vendor_id_valid = false;
+	olt.equipment_id_valid = true;
+	strcpy(olt.equipment_id, "VSOL V1600G-D4");
+	CHECK(omci_profile_detect(&olt) == OMCI_OLT_PROFILE_CUSTOM_BASE + 1);
+	CHECK(omci_profile_normalize_uni_entity(OMCI_OLT_PROFILE_CUSTOM_BASE + 1, 0x1234) == 0x1234);
+
+	omci_profiles_clear_custom();
+	CHECK(omci_profiles_custom_count() == 0);
+	CHECK(!omci_profile_valid(OMCI_OLT_PROFILE_CUSTOM_BASE));
+	remove(path);
+}
+
 int main(void)
 {
 	catalogue();
 	profiles();
+	custom_profiles();
 	printf("%u shared catalogue/attribute/profile checks passed\n", checks);
 	return 0;
 }

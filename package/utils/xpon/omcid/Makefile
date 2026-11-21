@@ -2,7 +2,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=omcid
-PKG_RELEASE:=26
+PKG_RELEASE:=27
 PKG_LICENSE:=GPL-2.0-only LGPL-2.1-or-later
 PKG_BUILD_DEPENDS:=libomci-protocol
 
@@ -21,6 +21,10 @@ define Package/omcid/description
  live MIB administration, OLT profiles and exclusive typed kernel hardware
  operations. Started at boot in GPON mode; the kernel has no OMCI engine
  of its own.
+endef
+
+define Package/omcid/conffiles
+/etc/omci/olt-profiles.conf
 endef
 
 define Build/Compile

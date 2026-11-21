@@ -304,4 +304,14 @@ int omci_me_attr_get(const struct omci_agent *agent, __u16 attr_id,
 unsigned int omci_me_attr_count(const struct omci_agent *agent);
 #endif
 
+#ifndef __KERNEL__
+#define OMCI_OLT_PROFILES_DEFAULT_PATH	"/etc/omci/olt-profiles.conf"
+#define OMCI_OLT_PROFILE_CUSTOM_BASE	64
+#define OMCI_OLT_PROFILE_CUSTOM_MAX	16
+
+int omci_profiles_load_file(const char *path);
+void omci_profiles_clear_custom(void);
+unsigned int omci_profiles_custom_count(void);
+#endif
+
 #endif /* _NET_OMCI_ME_H */

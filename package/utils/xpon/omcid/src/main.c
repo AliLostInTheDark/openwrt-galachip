@@ -514,6 +514,10 @@ int main(int argc, char **argv)
 	if (geteuid() || optind != argc)
 		return 2;
 	umask(077);
+	ret = omci_profiles_load_file(OMCI_OLT_PROFILES_DEFAULT_PATH);
+	if (ret > 0)
+		fprintf(stderr, "omcid: loaded %d custom OLT profile(s) from %s\n",
+			ret, OMCI_OLT_PROFILES_DEFAULT_PATH);
 	snprintf(state, sizeof(state), "/tmp/omcid-%u.state", device);
 	if (!ctx.checkpoint)
 		ctx.checkpoint = state;
