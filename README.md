@@ -1,12 +1,33 @@
-# OpenWrt for the TP-Link XZ000-G7
+# OpenWrt for the TP-Link XZ000-G7 GPON/EPON ONU (GalaChip GC1601)
 
-OpenWrt with Linux 6.18 for the TP-Link XZ000-G7 GPON/EPON ONU, built on the
-GalaChip GC1601 SoC (Faraday FA626TE, ARMv5TE). It supports the **32 MiB RAM,
-4 MiB SPI NOR, one Gigabit Ethernet port** board. The 8 MiB v1.20 BR/TR
-variants are not covered.
+Open-source OpenWrt firmware with Linux 6.18 for the **TP-Link XZ000-G7**
+GPON/EPON SFU ONU, built on the GalaChip GC1601 (GC1601A) SoC (Faraday
+FA626TE, ARMv5TE). It replaces the vendor firmware and adds GPON and EPON
+with a userspace OMCI daemon, hardware switch offload between the Ethernet
+port and the PON at line rate, and a LuCI interface with a PON status page.
+It has been tested on a Nokia ISAM OLT and on Airtel India (GPON).
 
 The device is an ONU bridge. Use a separate router for PPPoE/IPoE, NAT, DHCP
 and firewalling. OLT provisioning and authentication requirements vary by ISP.
+
+## Supported hardware
+
+| | TP-Link XZ000-G7 |
+| --- | --- |
+| SoC | GalaChip GC1601 (GC1601A), Faraday FA626TE, ARMv5TE |
+| Hardware revision | v1.0 (US1, EU1, IN, BR) |
+| Memory | 32 MiB RAM, 4 MiB SPI NOR |
+| Network | One Gigabit Ethernet port, GPON and EPON optical interface |
+| Not covered | The 8 MiB v1.20 BR/TR variants |
+
+## Contents
+
+- [Status](#status) and [Features](#features)
+- [Stock firmware compared](#stock-firmware-compared) and [Measured performance](#measured-performance)
+- [Installation](#installation): UART, RAM boot, stock flash backup, install to flash
+- [PON configuration](#pon-configuration): GPON, EPON and VLAN modes
+- [Diagnostics](#diagnostics-1), [Updates](#updates), [U-Boot](#u-boot-optional) and [Recovery](#recovery)
+- [Building](#building)
 
 ## Status
 
