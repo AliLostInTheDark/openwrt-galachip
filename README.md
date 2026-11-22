@@ -25,9 +25,9 @@ and firewalling. OLT provisioning and authentication requirements vary by ISP.
 
 - [Status](#status) and [Features](#features)
 - [Stock firmware compared](#stock-firmware-compared) and [Measured performance](#measured-performance)
-- [Installation](#installation): UART, RAM boot, stock flash backup, optional U-Boot, install to flash
+- [Installation](#installation): UART, the OpenWrt U-Boot from RAM, flash backup, U-Boot install, OpenWrt install
 - [PON configuration](#pon-configuration): GPON, EPON and VLAN modes
-- [Diagnostics](#diagnostics-1), [Updates](#updates), [U-Boot](#u-boot-optional) and [Recovery](#recovery)
+- [Diagnostics](#diagnostics-1), [Updates](#updates), [U-Boot](#u-boot) and [Recovery](#recovery)
 - [Building](#building)
 
 ## Status
@@ -39,8 +39,8 @@ and firewalling. OLT provisioning and authentication requirements vary by ISP.
 | Datapath | Hardware switch offload between the LAN port and the PON at line rate |
 | Drivers | Vendor-free: the packet engine is a DSA switch (`lan1`, `pon0`), the PON is controlled over generic netlink, upstream-style logging |
 | OMCI | Userspace responder (`omcid`), which owns the ONU identity and configuration; the kernel engine has been removed |
-| LuCI | Status and configuration for GPON, EPON and the PON mode, with a light/dark theme |
-| U-Boot | Optional U-Boot 2026.10 (TPL, SPL and proper), self-updating, recoverable over serial without a programmer |
+| LuCI | Status and configuration for GPON, EPON and the PON mode, using the stock Bootstrap theme |
+| U-Boot | U-Boot 2026.10 (TPL, SPL and proper), installed from the stock loader, self-updating, recoverable over serial without a programmer |
 | Tested OLTs | GPON: Nokia ISAM (Airtel Fiber, JioFiber); Huawei and ZTE (Airtel Fiber) |
 
 ## Features
@@ -69,10 +69,11 @@ and firewalling. OLT provisioning and authentication requirements vary by ISP.
   from the ONU's read-only status API.
 - SSH diagnostics: `omcictl`, `xponctl`, debugfs counters, an on-demand OMCI
   trace and a one-line log of what the OLT did after each reconnect.
-- RAM boot and installation through the stock U-Boot, or an optional
-  OpenWrt-built U-Boot 2026.10 (TPL, SPL and proper) that updates itself as one
-  image, shows write progress, restores the stock firmware with one command,
-  and recovers over the serial console even with a broken SPL.
+- An OpenWrt-built U-Boot 2026.10 (TPL, SPL and proper), installed from the
+  stock one without a programmer: it backs up the whole flash, updates itself
+  as one image, flashes and restores firmware with one command each, shows
+  write progress, and recovers over the serial console even with a broken
+  SPL.
 
 ## How it works
 
@@ -111,7 +112,7 @@ The stock firmware is TP-Link's December 2024 release for this board.
 | --- | --- | --- |
 | GPON activation and PLOAM | Inside `xpon_sdk.ko` | `gc1601-gpon` driver, checked against G.984.3 (2014) with amendments 1 and 2 |
 | OMCI | `gc_omcid`, closed | `omcid`, checked against G.988 (2022) with amendments 1 and 2 |
-| OLT interoperability | Huawei, CTC and Boda private entities | Standard entities plus OLT profiles: auto-detect, Nokia/ALCL, Huawei, ZTE, FiberHome, Dasan |
+| OLT interoperability | Huawei, CTC and Boda private entities | Standard entities plus OLT profiles: auto-detect, Nokia/ALCL, Huawei, ZTE, FiberHome, Dasan, Genexis |
 | EPON | `gcoamd` | `epon-oamd` (IEEE 802.3 OAM, CTC authentication and VLAN modes, VSOL inter-authentication) |
 | Outage recovery | Vendor state machine | Retained MIB replayed on re-range; tested with short and long fibre outages |
 | Upstream FEC | Applied by the MAC when the OLT asks; no status | Same; the state is not reported by the hardware |
@@ -130,7 +131,7 @@ ONU-created entities, compared with the stock firmware's defaults.
 | Downstream priority queues | UNI and VEIP | UNI and VEIP |
 | PPTP Ethernet UNIs | 1 | 1, the board's port (`omci-uni-ports`); 1-16 configurable |
 | ONU-G traffic management option | 2 | 0 by default, configurable |
-| Private entities | Huawei, CTC and Boda | Nokia entities with the Nokia/ALCL profile |
+| Private entities | Huawei, CTC and Boda | Nokia/ALCL, Huawei, ZTE, FiberHome, CTC and Genexis entities |
 
 ### Datapath
 
@@ -208,25 +209,26 @@ the standards.
 
 ## Installation
 
-Back up the unit, boot OpenWrt from RAM, optionally replace the boot loader
-with the OpenWrt U-Boot, then install with `sysupgrade`.
+Everything runs from the serial console: start the OpenWrt U-Boot from RAM
+through the stock boot loader, back up the whole flash with it, install it,
+then flash OpenWrt from it. The OpenWrt U-Boot is required: it protects the
+factory data while flashing, and it is how firmware is updated and restored
+later.
 
 ### 1. Requirements
 
 - A 3.3 V USB-UART adapter, Ethernet cable and the board's normal power supply.
-- A PC with a serial terminal, TFTP server and SCP client.
-- These two images from the same build:
-
-  - `openwrt-galachip-gc1601-tplink_xz000-g7-initramfs-zImage`
-  - `openwrt-galachip-gc1601-tplink_xz000-g7-squashfs-sysupgrade.bin`
-
-- For the optional U-Boot, also these two:
+- A PC with a serial terminal and a TFTP server that also accepts uploads
+  (for example `tftpd-hpa` started with `--create`), for the flash backup.
+- These three files from the same build:
 
   - `openwrt-galachip-gc1601-tplink_xz000-g7-u-boot.bin`
   - `openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-with-spl.bin`
+  - `openwrt-galachip-gc1601-tplink_xz000-g7-squashfs-sysupgrade.bin`
 
-Verify image checksums. Keep the fiber disconnected during installation.
-Do not upload these images through the stock firmware's web interface.
+Verify their checksums and place them in the TFTP root under these names.
+Keep the fiber disconnected during installation. Do not upload these images
+through the stock firmware's web interface.
 
 ### 2. Connect UART and Ethernet
 
@@ -240,101 +242,13 @@ Connect the UART with board power disconnected:
 | VCC | Not connected |
 
 Use the normal power supply. Set the terminal to **115200, 8N1, no flow
-control**. Interrupt autoboot to reach the stock U-Boot `=>` prompt.
+control**. Connect the PC directly by Ethernet and set its address to
+`192.168.1.10/24`; the G7 uses `192.168.1.1`.
 
-Connect the PC directly by Ethernet and set its address to
-`192.168.1.10/24`. The G7 uses `192.168.1.1`; no DHCP server is included.
-Place the initramfs image in the TFTP root under its build name.
+### 3. Start the OpenWrt U-Boot from RAM
 
-### 3. Boot from RAM
-
-Run these at the stock U-Boot prompt, **one line at a time**:
-
-```text
-setenv autostart no
-setenv ipaddr 192.168.1.1
-setenv serverip 192.168.1.10
-mw.l 9080000c 0
-setenv bootargs console=ttyS0,115200n8 earlycon
-tftpboot 41000000 openwrt-galachip-gc1601-tplink_xz000-g7-initramfs-zImage
-```
-
-The `mw.l` command disables the watchdog for this loader session.
-After a successful transfer, confirm the byte count matches the file, then:
-
-```text
-bootz 41000000
-```
-
-This does not write flash. Do not run `saveenv` or change `bootcmd`.
-
-### 4. Back up the stock flash
-
-In the RAM-booted OpenWrt shell, check:
-
-```sh
-cat /proc/mtd
-```
-
-The main regions must match this layout:
-
-| Partition | Offset | Size |
-| --- | --- | ---: |
-| `u-boot` | `0x000000` | 128 KiB |
-| `firmware` | `0x020000` | 3776 KiB |
-| `misc` | `0x3d0000` | 128 KiB |
-| `hwconfig` | `0x3f0000` | 64 KiB |
-
-Child partitions such as `kernel`, `rootfs` and `rootfs_data` are normal.
-Stop if the main layout differs. Never erase `u-boot`, `misc` or `hwconfig`;
-they contain the boot chain and factory data.
-
-Create backups while stock firmware is still in flash:
-
-```sh
-(
-    set -e
-    mkdir /tmp/g7-stock-backup
-    for p in u-boot firmware misc hwconfig; do
-        d=$(awk -v label="\"$p\"" '
-            $4 == label { sub(/:$/, "", $1); print $1 }
-        ' /proc/mtd)
-        [ -n "$d" ] || { echo "Missing partition: $p"; exit 1; }
-        dd if="/dev/$d" of="/tmp/g7-stock-backup/$p.bin" bs=65536 || exit 1
-    done
-    wc -c /tmp/g7-stock-backup/*.bin
-)
-```
-
-Expected sizes in bytes: `u-boot.bin` 131072, `firmware.bin` 3866624,
-`misc.bin` 131072 and `hwconfig.bin` 65536. Do not continue after a read error.
-
-Set a password on the G7 with `passwd`, then run on a Linux PC:
-
-```sh
-mkdir -p g7-stock-backup
-scp -O 'root@192.168.1.1:/tmp/g7-stock-backup/*.bin' g7-stock-backup/
-cd g7-stock-backup
-wc -c *.bin
-sha256sum u-boot.bin firmware.bin misc.bin hwconfig.bin > SHA256SUMS
-cat u-boot.bin firmware.bin misc.bin hwconfig.bin > g7-stock-full.bin
-wc -c g7-stock-full.bin
-```
-
-The full backup must be **4194304 bytes**. Keep copies off the device and
-private; they contain calibration and device/ISP identifiers. Windows
-clients should use SCP rather than SFTP.
-
-### 5. Install the OpenWrt U-Boot (optional)
-
-Skip this step to keep the stock boot loader. The OpenWrt U-Boot boots
-faster, protects `misc` and `hwconfig`, flashes and restores firmware with
-one command and recovers over the serial console; see
-[U-Boot](#u-boot-optional).
-
-With the backups stored on the PC, reboot the G7 and interrupt autoboot at
-the stock U-Boot prompt. Place both U-Boot files in the TFTP root under their
-build names and run, one line at a time:
+Power on and interrupt autoboot to reach the stock U-Boot prompt. Run, **one
+line at a time**:
 
 ```text
 setenv autostart no
@@ -345,8 +259,49 @@ tftpboot 41000000 openwrt-galachip-gc1601-tplink_xz000-g7-u-boot.bin
 go 41000000
 ```
 
-This starts the OpenWrt U-Boot from RAM, without writing flash. At its
-`=>` prompt, install it:
+The `mw.l` command stops the stock watchdog. The OpenWrt U-Boot banner
+(`U-Boot 2026.10-OpenWrt-…`) and its `=>` prompt follow. Nothing has been
+written to flash yet. Do not run `saveenv`.
+
+### 4. Back up the whole flash
+
+At the OpenWrt U-Boot prompt:
+
+```text
+run backup_flash
+```
+
+It reads the whole 4 MiB flash and uploads it to the TFTP server as
+`xz000-g7-flash.bin`. Rename it on the PC, run `backup_flash` a second time
+and compare the two: they must be identical and exactly **4194304 bytes**.
+
+```sh
+sha256sum xz000-g7-flash-1.bin xz000-g7-flash.bin
+wc -c xz000-g7-flash.bin
+```
+
+Keep it as the stock backup, off the device and private: it contains this
+unit's calibration and device and ISP identifiers. Cut the stock firmware
+partition out of it now, for a later return to stock:
+
+```sh
+dd if=xz000-g7-flash.bin of=g7-stock-firmware.bin bs=64k skip=2 count=59
+```
+
+`g7-stock-firmware.bin` must be **3866624 bytes**. The flash layout:
+
+| Partition | Offset | Size |
+| --- | --- | ---: |
+| `u-boot` | `0x000000` | 128 KiB |
+| `firmware` | `0x020000` | 3776 KiB |
+| `misc` | `0x3d0000` | 128 KiB |
+| `hwconfig` | `0x3f0000` | 64 KiB |
+
+Stop here if the backup fails or the two copies differ.
+
+### 5. Install the OpenWrt U-Boot
+
+Still at the prompt of the U-Boot started from RAM:
 
 ```text
 run upgrade_uboot
@@ -354,44 +309,33 @@ run upgrade_uboot
 
 It checks the TPL the way the chip's mask ROM does and the SPL and U-Boot
 proper by their CRCs before writing, rewrites only the blocks that changed,
-and reads them back to compare. Do not power off while it writes. Then
-`reset` and press a key within 3 s to stop autoboot at the new `=>`
-prompt; left alone, it boots the stock firmware still in flash. Details in
+and reads them back to compare. Do not power off while it writes. Then:
+
+```text
+reset
+```
+
+Press a key within 3 s to stop autoboot at the new U-Boot's `=>` prompt;
+left alone, it boots the stock firmware still in flash. Details in
 [INSTALLATION.md](package/boot/uboot-galachip/INSTALLATION.md).
 
-### 6. Install to flash
+### 6. Install OpenWrt
 
-With the OpenWrt U-Boot from step 5, put the sysupgrade image in the TFTP
-root and, at its `=>` prompt (press a key within 3 s of power-on):
+At the installed U-Boot's prompt:
 
 ```text
 run upgrade_tftp
 boot
 ```
 
-It checks the image's tag and size before writing. Otherwise, boot OpenWrt
-from RAM again (step 3) and copy the matching sysupgrade image from the PC:
+`upgrade_tftp` loads the sysupgrade image, checks its tag and size, writes
+only the firmware partition and never touches `misc` or `hwconfig`. OpenWrt
+starts with default settings; open `http://192.168.1.1` and set a root
+password.
 
-```sh
-scp -O openwrt-galachip-gc1601-tplink_xz000-g7-squashfs-sysupgrade.bin \
-    root@192.168.1.1:/tmp/g7-sysupgrade.bin
-```
-
-On the G7, validate it:
-
-```sh
-sysupgrade -T /tmp/g7-sysupgrade.bin
-```
-
-Only after validation succeeds and backups are stored on the PC:
-
-```sh
-sysupgrade -n /tmp/g7-sysupgrade.bin
-```
-
-This replaces the firmware region and reboots with default settings.
-Do not interrupt power or use `-F`. After reboot, open
-`http://192.168.1.1` and set a root password.
+To try a build before flashing it, put
+`openwrt-galachip-gc1601-tplink_xz000-g7-initramfs-zImage` in the TFTP root
+and run `run boot_tftp`: it boots from RAM and writes nothing.
 
 ## PON configuration
 
@@ -492,9 +436,11 @@ sysupgrade /tmp/g7-sysupgrade.bin
 ```
 
 Use `-n` for a clean configuration. Check operation after a power-off cold boot.
+From the U-Boot prompt, `run upgrade_tftp` does the same with default
+settings.
 The 4 MiB flash leaves little room for additional packages.
 
-## U-Boot (optional)
+## U-Boot
 
 The build also publishes an upstream U-Boot 2026.10 for the G7, under
 upstream U-Boot's file names, documented in
@@ -537,8 +483,8 @@ What it does differently from the stock loader, all tested on the board:
 | `…-u-boot-spl.img` | `0x2000`, 32 KiB | SPL; the TPL takes it over YMODEM when the flash copy is broken |
 | `…-u-boot.img` | `0xa000`, 88 KiB | U-Boot proper, LZMA; the SPL takes it over YMODEM when the flash copy is broken |
 
-To install it, follow
-[step 5 of the installation](#5-install-the-openwrt-u-boot-optional). Later updates are `run upgrade_uboot` from the installed
+It is installed in
+[steps 3 to 5 of the installation](#3-start-the-openwrt-u-boot-from-ram). Later updates are `run upgrade_uboot` from the installed
 U-Boot, with the new `…-u-boot-with-spl.bin` in the TFTP root.
 
 Useful commands at the `=>` prompt: `boot` (the default boot from flash),
@@ -553,36 +499,20 @@ Sysupgrade never touches the boot loader.
 
 ## Recovery
 
-With a working stock U-Boot, repeat the RAM-boot procedure and reinstall
-OpenWrt. To return to stock, use **this unit's original raw `firmware.bin`
-backup**, exactly **3866624 bytes**. A vendor update file is not equivalent.
+From the OpenWrt U-Boot prompt (press a key within 3 s of power-on),
+`run boot_tftp` boots a RAM image and `run upgrade_tftp` reflashes OpenWrt.
 
-Place the backup in the TFTP root as `g7-stock-firmware.bin`. Disconnect the
-fiber and run at the stock U-Boot prompt:
-
-```text
-setenv autostart no
-setenv ipaddr 192.168.1.1
-setenv serverip 192.168.1.10
-mw.l 9080000c 0
-tftpboot 41000000 g7-stock-firmware.bin
-printenv filesize
-sf probe
-```
-
-Stop unless the transfer succeeded, `filesize` is `3b0000` and the flash
-is **4 MiB**. The following commands erase and replace only the firmware region:
+To return to the stock firmware, put this unit's `g7-stock-firmware.bin`
+from step 4 (exactly **3866624 bytes**; a vendor update file is not
+equivalent) in the TFTP root, disconnect the fiber and run:
 
 ```text
-sf erase 20000 3b0000
-sf write 41000000 20000 3b0000
-sf read 40c00000 20000 3b0000
-cmp.b 41000000 40c00000 3b0000
+run restore_stock
 ```
 
-Require `Total of 3866624 byte(s) were the same` before power-cycling.
-If verification fails, keep power on and retain the serial session. With the
-OpenWrt U-Boot installed, `run restore_stock` does all of this in one step.
+It checks the tag and size, writes the firmware partition, reads it back and
+compares; the OpenWrt U-Boot stays and boots the stock firmware. The stock
+boot loader itself is the first 128 KiB of `xz000-g7-flash.bin`.
 
 If the boot loader itself is broken: with a broken SPL or U-Boot proper, the
 TPL or SPL waits for `…-u-boot-spl.img` or `…-u-boot.img` over YMODEM
@@ -593,7 +523,7 @@ with [rom-xmodem.py](package/boot/uboot-galachip/tools/rom-xmodem.py)
 (standard XMODEM senders fail with this ROM). Then `run upgrade_uboot`:
 
 ```sh
-python3 rom-xmodem.py /dev/ttyUSB0 openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-tpl.bin
+python3 package/boot/uboot-galachip/tools/rom-xmodem.py /dev/ttyUSB0 openwrt-galachip-gc1601-tplink_xz000-g7-u-boot-tpl.bin
 ```
 
 Damage to `misc` or `hwconfig` can only be repaired from this unit's own

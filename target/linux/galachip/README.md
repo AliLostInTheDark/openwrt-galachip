@@ -16,9 +16,9 @@ The boot loader is in
 | Path | What it holds |
 | --- | --- |
 | `files/drivers/soc/galachip/` | PON core and GPON/EPON MACs: activation, PLOAM, ranging, encryption, MPCP, optics (BOSA) and the xPON device that `omcid` and `epon-oamd` drive |
-| `files/drivers/net/ethernet/galachip/` | Packet engine: Ethernet, the shared buffer pool and queues, `pon0`, and the hardware SFU offload between the LAN port and the PON |
-| `files/drivers/net/{mdio,phy}/` | MDIO bus and the internal Gigabit PHY |
-| `files/drivers/{clk,clocksource,irqchip,spi,i2c,mtd}/` | SCU clocks, timer, FTINTC030 interrupts, FTSPI020 NOR, FTIIC010 I2C and the firmware partition parser |
+| `files/drivers/net/ethernet/galachip/`, `files/net/dsa/` | Packet engine DSA switch (`lan1`, `pon0`), DSA tag driver, shared buffer pool/queues, and hardware SFU offload |
+| `files/drivers/net/{mdio,phy}/`, `files/drivers/phy/galachip/` | MDIO bus, internal Gigabit PHY, and PON SerDes PHY |
+| `files/drivers/{clk,irqchip,spi,i2c,mtd}/` | SCU clocks, FTINTC030 interrupts, FTSPI020 NOR, FTIIC010 I2C and the firmware partition parser |
 | `files/include/` | Device tree bindings and the xPON/OMCI kernel interfaces |
 | `patches-6.18/` | Hooks into upstream files (Kconfig, Makefiles, ARM platform) plus a small OF fix |
 | `dts/` | GC1601 SoC and XZ000-G7 device trees |
