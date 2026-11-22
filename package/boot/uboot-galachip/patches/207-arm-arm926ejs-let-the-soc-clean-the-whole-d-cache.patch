@@ -1,0 +1,25 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] arm: arm926ejs: let the SoC clean the whole D-cache
+
+flush_dcache_all() cleans the D-cache with the ARM926 test-and-clean
+loop. Compatible cores such as the Faraday FA626TE clean it with a single
+clean-and-invalidate-all operation instead, so make the function weak for
+the SoC to replace.
+
+diff --git a/arch/arm/cpu/arm926ejs/cache.c b/arch/arm/cpu/arm926ejs/cache.c
+index 71b8ad0f..b8a4d6e2 100644
+--- a/arch/arm/cpu/arm926ejs/cache.c
++++ b/arch/arm/cpu/arm926ejs/cache.c
+@@ -14,7 +14,11 @@ void invalidate_dcache_all(void)
+ 	asm volatile("mcr p15, 0, %0, c7, c6, 0\n" : : "r"(0));
+ }
+ 
+-void flush_dcache_all(void)
++/*
++ * The test-and-clean loop is an ARM926 feature; a compatible core that cleans
++ * its D-cache another way can provide its own.
++ */
++__weak void flush_dcache_all(void)
+ {
+ 	asm volatile(
+ 		"0:"

@@ -1,0 +1,47 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] spl: allow the TPL stack to move to SDRAM
+
+spl_relocate_stack_gd() already checks CONFIG_IS_ENABLED(STACK_R), but
+there is no TPL_STACK_R and it always takes SPL_STACK_R_ADDR. Add the TPL
+options and take the address of the phase being built, so a TPL that sets
+up DRAM can leave its small SRAM stack as the SPL can.
+
+diff --git a/common/spl/Kconfig.tpl b/common/spl/Kconfig.tpl
+index a535b61e..5fad3e57 100644
+--- a/common/spl/Kconfig.tpl
++++ b/common/spl/Kconfig.tpl
+@@ -141,6 +141,21 @@ config TPL_HAVE_INIT_STACK
+ 	  stack-pointer from the settings for U-Boot proper, but should set its
+ 	  own value.
+ 
++config TPL_STACK_R
++	bool "Enable SDRAM location for TPL stack"
++	help
++	  TPL starts off execution in SRAM and thus typically has only a small
++	  stack available. Since TPL sets up DRAM while in its board_init_f()
++	  function, it is possible for the stack to move there before
++	  board_init_r() is reached. See SPL_STACK_R.
++
++config TPL_STACK_R_ADDR
++	depends on TPL_STACK_R
++	hex "SDRAM location for TPL stack"
++	help
++	  Specify the address in SDRAM for the TPL stack. This will be set up
++	  before board_init_r() is called.
++
+ config TPL_STACK
+ 	hex "Address of the initial stack-pointer for the TPL phase"
+ 	depends on TPL_HAVE_INIT_STACK
+diff --git a/common/spl/spl.c b/common/spl/spl.c
+index 722b18c9..0e817d14 100644
+--- a/common/spl/spl.c
++++ b/common/spl/spl.c
+@@ -921,7 +921,7 @@ ulong spl_relocate_stack_gd(void)
+ {
+ #if CONFIG_IS_ENABLED(STACK_R)
+ 	gd_t *new_gd;
+-	ulong ptr = CONFIG_SPL_STACK_R_ADDR;
++	ulong ptr = CONFIG_VAL(STACK_R_ADDR);
+ 
+ 	if (CONFIG_IS_ENABLED(SYS_REPORT_STACK_F_USAGE))
+ 		spl_relocate_stack_check();

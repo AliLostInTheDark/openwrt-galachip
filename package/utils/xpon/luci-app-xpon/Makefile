@@ -2,12 +2,14 @@
 
 include $(TOPDIR)/rules.mk
 
-PKG_VERSION:=0.1
-PKG_RELEASE:=16
-LUCI_TITLE:=LuCI PON mode selection (GPON or EPON)
+PKG_VERSION:=1.0.0
+PKG_RELEASE:=1
+LUCI_TITLE:=LuCI support for the PON port (PON mode, GPON OMCI and EPON OAM)
 LUCI_PKGARCH:=all
+PKG_MAINTAINER:=Ifran Ali <khanu.i.i.k.2000@gmail.com>
 PKG_LICENSE:=GPL-2.0-only
-LUCI_DEPENDS:=+luci-base +xpon-report
+LUCI_DEPENDS:=@TARGET_galachip_gc1601 +luci-base +xpon-agent +xpon-report
+PKG_PROVIDES:=luci-app-omci luci-app-epon
 
 include $(TOPDIR)/feeds/luci/luci.mk
 

@@ -88,7 +88,7 @@ function alarms(bits) {
 	return names.length ? names.join(', ') : _('None');
 }
 
-/* bosa_thresholds in nW, from xpon.public, to the module's dBm levels. */
+/* bosa_thresholds in nW, from xpon summary, to the module's dBm levels. */
 function levels(t, dir) {
 	var get = function(key) { return dbmOf((t || {})['%s_%s_nw'.format(dir, key)]); };
 	var l = { alarmLo: get('alarm_low'), warnLo: get('warn_low'), warnHi: get('warn_high'), alarmHi: get('alarm_high') };

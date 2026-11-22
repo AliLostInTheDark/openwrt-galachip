@@ -98,7 +98,7 @@ def standalone(dev, data):
     port.write(b'2\r')
     send(port, data, sys.stdout)
 
-    # Stop U-Boot's 1 s autoboot so the SPL can be rewritten from its prompt.
+    # Stop U-Boot's 3 s autoboot so the SPL can be rewritten from its prompt.
     end = time.time() + 15
     seen = b''
     while time.time() < end:

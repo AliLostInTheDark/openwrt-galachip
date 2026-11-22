@@ -4,7 +4,7 @@ board_config_update
 
 case "$(board_name)" in
 tplink,xz000-g7)
-	ucidef_set_interface_lan "eth0 pon0"
+	ucidef_set_interface_lan "lan1 pon0"
 	;;
 esac
 

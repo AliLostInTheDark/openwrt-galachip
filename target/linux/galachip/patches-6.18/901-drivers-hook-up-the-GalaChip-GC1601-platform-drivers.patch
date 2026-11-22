@@ -3,40 +3,40 @@ From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
 Date: Mon, 12 Oct 2026 23:38:44 +0530
 Subject: [PATCH] drivers: hook up the GalaChip GC1601 platform drivers
 
-Build the GC1601 SCU clock, countdown timer, FTINTC030 interrupt
-controller, FTSPI020 SPI flash controller and the GalaChip SoC drivers
+Build the GC1601 SCU clock, FTINTC030 interrupt controller,
+FTSPI020 SPI flash controller and the GalaChip SoC drivers
 (PON MAC, xPON glue, diagnostics).
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
 ---
- drivers/clk/Kconfig          | 8 ++++++++
+ drivers/clk/Kconfig          | 10 ++++++++++
  drivers/clk/Makefile         | 1 +
- drivers/clocksource/Kconfig  | 8 ++++++++
- drivers/clocksource/Makefile | 1 +
  drivers/irqchip/Kconfig      | 6 ++++++
  drivers/irqchip/Makefile     | 1 +
  drivers/soc/Kconfig          | 1 +
  drivers/soc/Makefile         | 1 +
  drivers/spi/Kconfig          | 8 ++++++++
  drivers/spi/Makefile         | 1 +
- 10 files changed, 36 insertions(+)
+ 8 files changed, 29 insertions(+)
 
 diff --git a/drivers/clk/Kconfig b/drivers/clk/Kconfig
 index 3a1611008..9f93b303a 100644
 --- a/drivers/clk/Kconfig
 +++ b/drivers/clk/Kconfig
-@@ -33,6 +33,14 @@ menuconfig COMMON_CLK
+@@ -33,6 +33,16 @@ menuconfig COMMON_CLK
  
  if COMMON_CLK
  
 +config COMMON_CLK_GC1601
-+	bool "GalaChip GC1601 boot clock support"
++	bool "GalaChip GC1601 system control unit clocks"
 +	depends on ARCH_GALACHIP || COMPILE_TEST
 +	depends on OF && HAS_IOMEM
++	select MFD_SYSCON
 +	help
-+	  Decode the bootloader's GC1601 clock dividers without changing
-+	  PLL, DDR or peripheral clock programming.
++	  Clocks of the GC1601 system control unit: the outputs of PLL0 as
++	  the boot loader set it up, the CPU, bus and SPI clocks, and the
++	  selector of the SPI clock. Registers early, as the timer needs it.
 +
  config COMMON_CLK_WM831X
  	tristate "Clock driver for WM831x/2x PMICs"
@@ -53,37 +53,6 @@ index 61ec08404..26ad64482 100644
  obj-$(CONFIG_COMMON_CLK_ASPEED)		+= clk-aspeed.o
  obj-$(CONFIG_MACH_ASPEED_G6)		+= clk-ast2600.o
  obj-$(CONFIG_ARCH_HIGHBANK)		+= clk-highbank.o
-diff --git a/drivers/clocksource/Kconfig b/drivers/clocksource/Kconfig
-index 1119fbd52..764eb3f5b 100644
---- a/drivers/clocksource/Kconfig
-+++ b/drivers/clocksource/Kconfig
-@@ -91,6 +91,14 @@ config FTTMR010_TIMER
- 	  Enables support for the Faraday Technology timer block
- 	  FTTMR010.
- 
-+config GC1601_TIMER
-+	bool "GalaChip GC1601 timer driver" if COMPILE_TEST
-+	depends on ARM && HAS_IOMEM
-+	select CLKSRC_MMIO
-+	select TIMER_OF
-+	help
-+	  Countdown timer with write-one-to-clear interrupt status on GC1601A.
-+
- config IXP4XX_TIMER
- 	bool "Intel XScale IXP4xx timer driver" if COMPILE_TEST
- 	depends on HAS_IOMEM
-diff --git a/drivers/clocksource/Makefile b/drivers/clocksource/Makefile
-index ec4452ee9..279c095aa 100644
---- a/drivers/clocksource/Makefile
-+++ b/drivers/clocksource/Makefile
-@@ -23,6 +23,7 @@ obj-$(CONFIG_OMAP_DM_SYSTIMER)	+= timer-ti-dm-systimer.o
- obj-$(CONFIG_DW_APB_TIMER)	+= dw_apb_timer.o
- obj-$(CONFIG_DW_APB_TIMER_OF)	+= dw_apb_timer_of.o
- obj-$(CONFIG_FTTMR010_TIMER)	+= timer-fttmr010.o
-+obj-$(CONFIG_GC1601_TIMER)		+= timer-gc1601.o
- obj-$(CONFIG_IXP4XX_TIMER)	+= timer-ixp4xx.o
- obj-$(CONFIG_ROCKCHIP_TIMER)      += timer-rockchip.o
- obj-$(CONFIG_CLKSRC_NOMADIK_MTU)	+= nomadik-mtu.o
 diff --git a/drivers/irqchip/Kconfig b/drivers/irqchip/Kconfig
 index a61c6dc63..77ec5fd6f 100644
 --- a/drivers/irqchip/Kconfig

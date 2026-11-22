@@ -60,7 +60,7 @@ regs() {
 queues() {
 	for f in /sys/bus/platform/devices/90c00000.xpon_sdk/debug/dbg_bufcfg \
 		 /sys/kernel/debug/*/dbg_bufcfg \
-		 /sys/class/net/eth0/device/queue_snapshot; do
+		 /sys/kernel/debug/gc1601-eth/queues; do
 		[ -r "$f" ] && { echo "## $f"; cat "$f"; }
 	done
 	[ -r /sys/bus/platform/devices/90cc0000.pon/tcont_stats ] &&

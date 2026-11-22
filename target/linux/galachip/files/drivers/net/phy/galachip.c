@@ -2,10 +2,9 @@
 /*
  * GalaChip GC1601 internal gigabit PHY.
  *
- * Ported from the stock xpon_sdk faraday_1601_config_init and
- * faraday_1601_read_status: the vendor tuning U-Boot does not apply, and a
- * soft reset when the link stays down, which the PHY sometimes needs to
- * link up again.
+ * Applies the analog tuning the boot loader leaves out, and soft-resets the
+ * PHY when the link stays down, which it sometimes needs to link up again.
+ * Both follow what the stock firmware does.
  */
 
 #include <linux/io.h>
@@ -19,7 +18,7 @@
 #define GC1601_SCU_STRAP	0x90a00800
 #define GC1601_SCU_CABOFF	BIT(7)
 
-/* PHY SerDes debug status 0x91400008 bit 11: checked on 100M link-up in Dec-2024 SDK. */
+/* PHY SerDes debug status 0x91400008 bit 11: checked on 100M link-up, as stock. */
 #define GC1601_PHY_DBG_REG	0x91400008
 #define GC1601_PHY_DBG_100M_OK	BIT(11)
 
@@ -123,7 +122,7 @@ static int gc1601_phy_read_status(struct phy_device *phydev)
 static struct phy_driver gc1601_phy_driver[] = {
 	{
 		PHY_ID_MATCH_EXACT(GC1601_PHY_ID),
-		.name		= "GalaChip GC1601",
+		.name		= "GalaChip GC1601 Gigabit PHY",
 		.probe		= gc1601_phy_probe,
 		.config_init	= gc1601_phy_config_init,
 		.read_status	= gc1601_phy_read_status,

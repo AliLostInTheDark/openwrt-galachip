@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/i2c/faraday,ftiic010.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Faraday FTIIC010 I2C controller
+
+maintainers:
+  - Ifran Ali <khanu.i.i.k.2000@gmail.com>
+
+description:
+  I2C master that moves one byte at a time through a data register. SCL is
+  derived from the input clock by a divider computed from clock-frequency.
+
+allOf:
+  - $ref: /schemas/i2c/i2c-controller.yaml#
+
+properties:
+  compatible:
+    const: faraday,ftiic010
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+
+  clocks:
+    maxItems: 1
+
+  clock-frequency:
+    default: 100000
+
+required:
+  - compatible
+  - reg
+  - clocks
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    i2c@90600000 {
+        compatible = "faraday,ftiic010";
+        reg = <0x90600000 0x1000>;
+        clocks = <&scu 5>;
+        clock-frequency = <100000>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        eeprom@50 {
+            compatible = "atmel,24c02";
+            reg = <0x50>;
+            read-only;
+        };
+    };

@@ -1,0 +1,37 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] clk: add the GalaChip GC1601 clock driver
+
+The system control unit of the GC1601 derives the CPU, bus and SPI clocks
+from PLL0. The driver reports their rates; it never changes them.
+
+diff --git a/drivers/clk/Kconfig b/drivers/clk/Kconfig
+index 47da49c8..6ace559c 100644
+--- a/drivers/clk/Kconfig
++++ b/drivers/clk/Kconfig
+@@ -137,6 +137,14 @@ config CLK_CDCE9XX
+ 	  Enable the clock synthesizer driver for CDCE913/925/937/949
+ 	  series of chips.
+ 
++config CLK_GC1601
++	bool "Clock driver for the GalaChip GC1601"
++	depends on CLK && ARCH_GALACHIP
++	default y
++	help
++	  Enable the driver for the clocks of the GC1601 system control unit:
++	  PLL0 and the CPU, bus and SPI clocks derived from it.
++
+ config CLK_ICS8N3QV01
+ 	bool "Enable ICS8N3QV01 VCXO driver"
+ 	depends on CLK
+diff --git a/drivers/clk/Makefile b/drivers/clk/Makefile
+index 4b241a92..d7436f74 100644
+--- a/drivers/clk/Makefile
++++ b/drivers/clk/Makefile
+@@ -35,6 +35,7 @@ obj-$(CONFIG_CLK_AT91) += at91/
+ obj-$(CONFIG_CLK_BCM6345) += clk_bcm6345.o
+ obj-$(CONFIG_CLK_BOSTON) += clk_boston.o
+ obj-$(CONFIG_CLK_CDCE9XX) += clk-cdce9xx.o
++obj-$(CONFIG_CLK_GC1601) += clk-gc1601.o
+ obj-$(CONFIG_CLK_EXYNOS) += exynos/
+ obj-$(CONFIG_CLK_HSDK) += clk-hsdk-cgu.o
+ obj-$(CONFIG_CLK_K210) += clk_k210.o

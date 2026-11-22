@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * DDR controller settings of the XZ000-G7, as the boot loader installed on
+ * the board writes them (the Faraday GPL has the same sequence). What the
+ * single fields mean is not documented; they are replayed unchanged.
+ *
+ * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
+ */
+
+#include <linux/kernel.h>
+#include <asm/arch/sdram.h>
+
+static const struct gc1601_ddr_reg xz000_g7_ddr_regs[] = {
+	{ 0x000, 0x08629d11 }, { 0x004, 0x00000000 }, { 0x008, 0x00000033 },
+	{ 0x00c, 0x00000000 }, { 0x010, 0x40000101 }, { 0x014, 0x06040503 },
+	{ 0x018, 0x01210101 }, { 0x01c, 0x05000118 }, { 0x020, 0x00001f41 },
+	{ 0x024, 0x00000077 }, { 0x028, 0x00000000 }, { 0x02c, 0x00000000 },
+	{ 0x030, 0x16ffd5e5 }, { 0x034, 0x0f050506 }, { 0x038, 0x05080305 },
+	{ 0x03c, 0x00010010 }, { 0x040, 0x0000aa00 }, { 0x048, 0x00555500 },
+	{ 0x04c, 0x00001005 }, { 0x060, 0x00ff0000 }, { 0x064, 0x00000000 },
+	{ 0x068, 0x00000000 }, { 0x06c, 0x00000000 }, { 0x070, 0x000000ff },
+	{ 0x074, 0x00000011 }, { 0x078, 0x00000077 }, { 0x07c, 0x00000000 },
+	{ 0x0a0, 0x81818181 }, { 0x0a4, 0x81818181 }, { 0x0a8, 0x00004e20 },
+	{ 0x0ac, 0x0000c350 }, { 0x0b0, 0x00000002 }, { 0x0b4, 0x03030404 },
+	{ 0x0b8, 0x01010202 }, { 0x130, 0x00000077 }, { 0x138, 0x00000005 },
+};
+
+const struct gc1601_ddr_params gc1601_ddr_params = {
+	.regs = xz000_g7_ddr_regs,
+	.count = ARRAY_SIZE(xz000_g7_ddr_regs),
+};

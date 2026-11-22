@@ -1,13 +1,40 @@
 {
 	"luci-app-xpon": {
-		"description": "Grant access to the PON mode setting and the diagnostic report",
+		"description": "Grant access to the PON pages: PON mode, GPON (OMCI) and EPON (OAM)",
 		"read": {
 			"uci": [
-				"xpon"
+				"xpon",
+				"omci",
+				"network",
+				"epon"
 			],
 			"ubus": {
-				"xpon.public": [
-					"status"
+				"xpon": [
+					"family",
+					"status",
+					"config_list",
+					"config_details",
+					"config_get",
+					"config_inspect",
+					"class_list",
+					"class_get",
+					"mib_list",
+					"mib_get",
+					"status_live",
+					"events",
+					"vlan_status",
+					"summary"
+				]
+			},
+			"file": {
+				"/var/run/epon-oamd.json": [
+					"read"
+				],
+				"/tmp/run/epon-oamd.json": [
+					"read"
+				],
+				"/etc/xpon-rogue": [
+					"read"
 				]
 			}
 		},
@@ -18,10 +45,26 @@
 				],
 				"system": [
 					"reboot"
+				],
+				"file": [
+					"remove",
+					"stat"
+				],
+				"xpon": [
+					"agent_set",
+					"config_set",
+					"mib_set",
+					"mib_delete",
+					"mib_reset",
+					"apply",
+					"tx_release"
 				]
 			},
 			"uci": [
-				"xpon"
+				"xpon",
+				"omci",
+				"network",
+				"epon"
 			],
 			"file": {
 				"/usr/sbin/xpon-report -o -": [
@@ -35,6 +78,12 @@
 				],
 				"/usr/sbin/xpon-mode-switch epon": [
 					"exec"
+				],
+				"/usr/sbin/omci-vlanscan *": [
+					"exec"
+				],
+				"/etc/xpon-rogue": [
+					"write"
 				]
 			}
 		}

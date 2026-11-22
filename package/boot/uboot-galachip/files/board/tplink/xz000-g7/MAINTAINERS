@@ -1,0 +1,7 @@
+TP-LINK XZ000-G7 BOARD
+M:	Ifran Ali <khanu.i.i.k.2000@gmail.com>
+S:	Maintained
+F:	arch/arm/dts/gc1601-tplink-xz000-g7*
+F:	board/tplink/xz000-g7/
+F:	configs/tplink_xz000_g7_defconfig
+F:	configs/tplink_xz000_g7_ram_defconfig

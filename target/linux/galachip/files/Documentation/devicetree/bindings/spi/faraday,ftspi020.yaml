@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/spi/faraday,ftspi020.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Faraday FTSPI020 SPI memory controller
+
+maintainers:
+  - Ifran Ali <khanu.i.i.k.2000@gmail.com>
+
+description:
+  Controller for SPI flash that runs one command at a time and moves the data
+  through a FIFO. SCK is the input clock divided by 2, 4, 6 or 8.
+
+allOf:
+  - $ref: spi-controller.yaml#
+
+properties:
+  compatible:
+    const: faraday,ftspi020
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+
+  clocks:
+    maxItems: 1
+
+  clock-names:
+    items:
+      - const: spiclk
+
+  resets:
+    maxItems: 1
+
+patternProperties:
+  "^flash@[0-3]$":
+    type: object
+    properties:
+      galachip,safe-max-frequency:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description:
+          Frequency in Hz that identification, status, programming and erase
+          commands must not exceed. spi-max-frequency then applies only to
+          reads of 64 bytes or more. Without this property every command may
+          use spi-max-frequency.
+
+required:
+  - compatible
+  - reg
+  - clocks
+  - clock-names
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    spi@a0000000 {
+        compatible = "faraday,ftspi020";
+        reg = <0xa0000000 0x1000>;
+        clocks = <&scu 6>;
+        clock-names = "spiclk";
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        flash@0 {
+            compatible = "jedec,spi-nor";
+            reg = <0>;
+            spi-max-frequency = <100000000>;
+            galachip,safe-max-frequency = <25000000>;
+            spi-rx-bus-width = <2>;
+        };
+    };

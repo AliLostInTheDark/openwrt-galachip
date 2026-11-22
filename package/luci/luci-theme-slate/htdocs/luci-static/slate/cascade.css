@@ -2251,7 +2251,7 @@ body[data-page="admin-status-overview"] div[style*="grid-template-columns"]:has(
 	column-gap: 48px;
 }
 
-/* GPON status summary tiles (luci-app-omci ships fallback styles) */
+/* GPON status summary tiles (luci-app-xpon ships fallback styles) */
 .omci-summary > .omci-card {
 	padding: 16px 18px;
 	background: var(--surface);

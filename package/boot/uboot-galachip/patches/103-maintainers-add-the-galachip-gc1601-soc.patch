@@ -1,0 +1,32 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] MAINTAINERS: add the GalaChip GC1601 SoC
+
+List the files of the GalaChip GC1601 support that are shared by all
+boards with the SoC; each board lists its own in board/<vendor>/<board>.
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 55c39453..41583023 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -323,6 +323,21 @@ F:	arch/arm/cpu/arm1136/mx*/
+ F:	arch/arm/cpu/arm926ejs/mx*/
+ F:	arch/arm/include/asm/arch-mx*/
+ 
++ARM GALACHIP
++M:	Ifran Ali <khanu.i.i.k.2000@gmail.com>
++S:	Maintained
++F:	arch/arm/dts/gc1601*
++F:	arch/arm/include/asm/arch-galachip/
++F:	arch/arm/mach-galachip/
++F:	drivers/clk/clk-gc1601.c
++F:	drivers/net/gc1601_eth.c
++F:	drivers/net/gc1601_mdio.c
++F:	drivers/spi/ftspi020.c
++F:	drivers/timer/fttmr010_timer.c
++F:	include/configs/gc1601.h
++F:	include/dt-bindings/clock/galachip,gc1601-clock.h
++F:	include/env/galachip/
++
+ ARM HISILICON
+ M:	Peter Griffin <peter.griffin@linaro.org>
+ M:	Manivannan Sadhasivam <manivannan.sadhasivam@linaro.org>

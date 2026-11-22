@@ -1,754 +1,449 @@
-// SPDX-License-Identifier: GPL-2.0+
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Faraday FTSPI020 SPI memory driver.
+ * SPI memory controller of the Faraday FTSPI020, as used in the GalaChip GC1601
  *
- * Copyright (C) 2020 Faraday Technology Corporation.
- * Author: Bing-Yao, Luo <bjluo@faraday-tech.com>
- * Upstream adaptation: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+ * The controller runs one flash command at a time. The address, the opcode and
+ * address lengths, the dummy cycles and the data length go into four command
+ * registers; writing the last one starts the command. Data passes through a
+ * FIFO that the CPU reads or fills one 32-bit word at a time.
+ *
+ * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
+ *
+ * The register layout and the access rules were established on the hardware
+ * and with Faraday Technology's driver (Copyright (C) 2020 Faraday Technology
+ * Corporation, Bing-Yao Luo), whose structure this driver partly follows.
  */
 
 #include <linux/bitfield.h>
+#include <linux/bits.h>
 #include <linux/clk.h>
-#include <linux/completion.h>
-#include <linux/delay.h>
+#include <linux/device.h>
 #include <linux/err.h>
-#include <linux/errno.h>
-#include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
-#include <linux/jiffies.h>
-#include <linux/kernel.h>
+#include <linux/limits.h>
+#include <linux/minmax.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
-#include <linux/pm.h>
 #include <linux/reset.h>
-#include <linux/sizes.h>
-#include <linux/unaligned.h>
-
 #include <linux/spi/spi.h>
 #include <linux/spi/spi-mem.h>
-#include <linux/mtd/spi-nor.h>
+#include <linux/string.h>
+#include <linux/time64.h>
+#include <linux/types.h>
+
+#define FTSPI020_CMD0			0x00	/* flash address */
+#define FTSPI020_CMD1			0x04	/* opcode and address lengths, dummy cycles */
+#define FTSPI020_CMD2			0x08	/* data length */
+#define FTSPI020_CMD3			0x0c	/* opcode, CS, protocol; starts the command */
+#define FTSPI020_CTRL			0x10
+#define FTSPI020_STS			0x18
+#define FTSPI020_CR2			0x20
+#define FTSPI020_ISR			0x24
+#define FTSPI020_DATA			0x100	/* FIFO port, 32-bit accesses only */
+
+#define FTSPI020_CMD1_OPCODE_LEN	GENMASK(25, 24)
+#define FTSPI020_CMD1_DUMMY_CYCLES	GENMASK(23, 16)
+#define FTSPI020_CMD1_ADDR_LEN		GENMASK(2, 0)
+
+#define FTSPI020_CMD3_OPCODE		GENMASK(31, 24)
+#define FTSPI020_CMD3_CS		GENMASK(9, 8)
+#define FTSPI020_CMD3_PROTO		GENMASK(7, 5)
+#define FTSPI020_CMD3_DIR		GENMASK(3, 1)
+/* Without this bit the command never reports completion in ISR. */
+#define FTSPI020_CMD3_REPORT_DONE	BIT(0)
+
+#define FTSPI020_DIR_IN			0
+#define FTSPI020_DIR_OUT		1
+
+/* Protocol codes of CMD3, named command-address-data lines. */
+#define FTSPI020_PROTO_1_1_1		0
+#define FTSPI020_PROTO_1_1_2		1
+#define FTSPI020_PROTO_1_1_4		2
+#define FTSPI020_PROTO_1_2_2		3
+#define FTSPI020_PROTO_1_4_4		4
+#define FTSPI020_PROTO_2_2_2		5
+#define FTSPI020_PROTO_4_4_4		6
+
+#define FTSPI020_CTRL_READY_LOC		GENMASK(18, 16)
+#define FTSPI020_CTRL_ABORT		BIT(8)
+#define FTSPI020_CTRL_MODE3		BIT(4)
+/* SCK is the clock divided by 2, 4, 6 or 8: the field holds divider / 2 - 1. */
+#define FTSPI020_CTRL_DIVIDER		GENMASK(1, 0)
+
+#define FTSPI020_STS_TX_READY		BIT(0)
+#define FTSPI020_STS_RX_READY		BIT(1)
+
+#define FTSPI020_CR2_DMA_RX_THRESHOLD	GENMASK(22, 20)
+#define FTSPI020_CR2_RX_XFER_SIZE	GENMASK(13, 12)
+#define FTSPI020_CR2_TX_XFER_SIZE	GENMASK(9, 8)
+#define FTSPI020_CR2_DONE_ENABLE	BIT(1)
+#define FTSPI020_CR2_DMA_ENABLE		BIT(0)
+
+#define FTSPI020_ISR_DONE		BIT(0)	/* write 1 to clear */
+
+/* The FIFO signals ready once it holds, or has room for, this many bytes. */
+#define FTSPI020_XFER_SIZE_CODE		3
+#define FTSPI020_XFER_BYTES		256
+#define FTSPI020_DMA_THRESHOLD_16B	1
+
+#define FTSPI020_MAX_CS			4
+#define FTSPI020_MAX_DIVIDER		8
+#define FTSPI020_BULK_MIN_BYTES		64
+#define FTSPI020_DONE_TIMEOUT_US	USEC_PER_SEC
+#define FTSPI020_FIFO_TIMEOUT_US	(3 * USEC_PER_SEC)
 
 /*
- * The SPI clock runs at 200 MHz and the controller divides it: by 8 for 25 MHz,
- * which is what the flash always got, and by 2 for 100 MHz on large reads.
- * Writes, erases and short reads stay at 25 MHz.
+ * Speed limits of a chip select. Reads of at least FTSPI020_BULK_MIN_BYTES may
+ * use the full spi-max-frequency. Everything else (identification, status,
+ * programming, erasing) is held to galachip,safe-max-frequency when the board
+ * sets one, because only bulk reads were checked at the higher speeds.
  */
-#define FTSPI020_SCK_SLOW_HZ		25000000
-#define FTSPI020_SCK_FAST_HZ		100000000
-#define FTSPI020_FAST_MIN_BYTES		64
-
-static bool fast_sck = true;
-module_param(fast_sck, bool, 0644);
-MODULE_PARM_DESC(fast_sck, "Read the flash faster than 25 MHz; writes stay at 25 MHz (default on)");
-
-static unsigned int fast_hz = FTSPI020_SCK_FAST_HZ;
-module_param(fast_hz, uint, 0644);
-MODULE_PARM_DESC(fast_hz, "SCK of large reads when fast_sck is on: 100000000 (default), 50000000, 33333333 or 25000000. Overrides spi-max-frequency");
-
-#define CONFIG_SPI_FTSPI020_V1_7_0 1
-
-/******************************************************************************
- * FTSPI020 Registers
- *****************************************************************************/
-#define FTSPI020_REG_CMD0               0x00	/* Flash address */
-#define FTSPI020_REG_CMD1               0x04
-#define FTSPI020_REG_CMD2               0x08
-#define FTSPI020_REG_CMD3               0x0c
-#define FTSPI020_REG_CTRL               0x10	/* Control */
-#define FTSPI020_REG_AC_TIME            0x14
-#define FTSPI020_REG_STS                0x18	/* TX/RX FIFO Status */
-#define FTSPI020_REG_CR2                0x20
-#define FTSPI020_REG_ISR                0x24	/* Interrupt Status */
-#define FTSPI020_REG_XIPCMD             0x30
-#define FTSPI020_REG_XIPFO              0x34
-#define FTSPI020_REG_XIPAMB             0x38
-#define FTSPI020_REG_XIPAOL             0x3c
-#define FTSPI020_REG_REVISION           0x50
-#define FTSPI020_REG_FEATURE            0x54
-#define FTSPI020_REG_DATA_PORT          0x100
-
-/*
- * Control Register offset 0x10
- */
-#define FTSPI020_CTRL_READY_LOC         GENMASK(18, 16)
-#define FTSPI020_CTRL_ABORT             BIT(8)
-#define FTSPI020_CTRL_XIP_PORT_IDLE     BIT(7)
-#define FTSPI020_CTRL_CLK_MODE_3        BIT(4)
-#define FTSPI020_CTRL_CLK_DIVIDER       GENMASK(1, 0)
-
-enum {
-	CLK_DIVIDER_2 = 0,
-	CLK_DIVIDER_4 = 1,
-	CLK_DIVIDER_6 = 2,
-	CLK_DIVIDER_8 = 3
+struct ftspi020_cs {
+	unsigned int bulk_hz;
+	unsigned int safe_hz;
+	bool mode3;
 };
 
-/*
- * Status Register offset 0x18
- */
-#define	FTSPI020_STS_RFR                BIT(1) /* RX FIFO ready */
-#define	FTSPI020_STS_TFR                BIT(0) /* TX FIFO ready */
-
-/*
- * Control 2 Register
- */
-#define	FTSPI020_CR2_DMA_RX_THOD        GENMASK(22, 20)
-#define	FTSPI020_CR2_DMA_TX_THOD        GENMASK(18, 16)
-#define	FTSPI020_CR2_RX_XFR_SIZE        GENMASK(13, 12)
-#define	FTSPI020_CR2_TX_XFR_SIZE        GENMASK(9, 8)
-#define	FTSPI020_CR2_CMD_CMPL           BIT(1) /* Command complete enable */
-#define	FTSPI020_CR2_DMA_EN             BIT(0) /* DMA handshake enable */
-
-enum {
-	DMA_THOD_4BYTES = 0,
-	DMA_THOD_16BYTES = 1,
-	DMA_THOD_32BYTES = 2,
-	DMA_THOD_64BYTES = 3,
-	DMA_THOD_128BYTES = 4,
-	DMA_THOD_256BYTES = 5
-};
-
-enum {
-	XFR_SIZE_32BYTES = 0,
-	XFR_SIZE_64BYTES = 1,
-	XFR_SIZE_128BYTES = 2,
-	XFR_SIZE_256BYTES = 3
-};
-
-/*
- * Interrupt Status Register
- */
-#define	FTSPI020_ISR_CMD_CMPL           BIT(0) /* Command complete status */
-
-/*
- * Feature Register
- */
-#define FTSPI020_FEATURE_DAMR           BIT(29)
-#define FTSPI020_FEATURE_DTR_MODE       BIT(24)
-#define FTSPI020_FEATURE_RXFIFO_DEPTH   GENMASK(15, 8)
-#define FTSPI020_FEATURE_TXFIFO_DEPTH   GENMASK(7, 0)
-
-/*
- * CMD1 Register offset 4: Command queue Second Word
- */
-#define FTSPI020_CMD1_CONT_READMODE_EN  BIT(28)
-#define FTSPI020_CMD1_OPCODE_BYTE       GENMASK(25, 24)
-#define FTSPI020_CMD1_DUMMY_CYCLE       GENMASK(23, 16)
-#define FTSPI020_CMD1_ADDR_BYTES        GENMASK(2, 0)
-
-/*
- * CMD3 Register offset 0xc: Command queue Fourth Word
- */
-#define FTSPI020_CMD3_INSTR_CODE        GENMASK(31, 24)
-#define FTSPI020_CMD3_CONTREAD_CODE     GENMASK(23, 16)
-#define FTSPI020_CMD3_CHIP_SELECT       GENMASK(9, 8)
-#define FTSPI020_CMD3_PROTO             GENMASK(7, 5)
-enum {
-	CMD3_PROTO_SERIAL = 0,  /* 1-1-1 */
-	CMD3_PROTO_DUAL,        /* 1-1-2 */
-	CMD3_PROTO_QUAD,        /* 1-1-4 */
-	CMD3_PROTO_DUALIO,      /* 1-2-2 */
-	CMD3_PROTO_QUADIO,      /* 1-4-4 */
-	CMD3_PROTO_OPCODE_2BIT, /* 2-2-2 */
-	CMD3_PROTO_OPCODE_4BIT, /* 4-4-4 */
-};
-
-#define FTSPI020_CMD3_DTR_MODE_EN       BIT(4)
-#define FTSPI020_CMD3_OP_MODE           GENMASK(3, 1)
-enum {
-	CMD3_OP_MODE_DIR_IN = 0,
-	CMD3_OP_MODE_DIR_OUT,
-	CMD3_OP_MODE_NODATA,
-};
-
-#define FTSPI020_CMD3_SPI_NAND          BIT(0)
-
-struct ftspi020_priv {
-	void __iomem *io_base;
+struct ftspi020 {
+	void __iomem *regs;
 	struct clk *clk;
-	struct device *dev;
-	struct reset_control *rstc;
-	struct spi_controller *controller;
-	struct mutex lock;
-	bool needs_abort;
-	u32 tx_transfer_size;
-	u32 rx_transfer_size;
-	u32 max_hz;
-	u32 divider;
-	u32 fast_divider;
-	bool cpha;
-	bool clk_fast;
-	u8 txfifo_depth;
-	u8 rxfifo_depth;
-	phys_addr_t phys_io_base;
+	struct ftspi020_cs cs[FTSPI020_MAX_CS];
+	bool wedged;	/* an abort failed; try again before the next command */
 };
 
-static int ftspi020_wait_complete(struct ftspi020_priv *ctrl, unsigned long timeout_ms)
+static const struct {
+	u8 cmd, addr, data;
+	u8 proto;
+} ftspi020_protos[] = {
+	{ 1, 1, 1, FTSPI020_PROTO_1_1_1 },
+	{ 1, 1, 2, FTSPI020_PROTO_1_1_2 },
+	{ 1, 1, 4, FTSPI020_PROTO_1_1_4 },
+	{ 1, 2, 2, FTSPI020_PROTO_1_2_2 },
+	{ 1, 4, 4, FTSPI020_PROTO_1_4_4 },
+	{ 2, 2, 2, FTSPI020_PROTO_2_2_2 },
+	{ 4, 4, 4, FTSPI020_PROTO_4_4_4 },
+};
+
+static int ftspi020_proto(const struct spi_mem_op *op)
 {
-	unsigned long expire = jiffies + msecs_to_jiffies(timeout_ms);
-	u32 isr;
+	u8 cmd = op->cmd.buswidth ?: 1;
+	u8 addr = op->addr.nbytes ? op->addr.buswidth : 1;
+	u8 data = op->data.nbytes ? op->data.buswidth : 1;
+	unsigned int i;
 
-	do {
-		isr = readl(ctrl->io_base + FTSPI020_REG_ISR);
-		if (isr & FTSPI020_ISR_CMD_CMPL) {
-			writel(isr, ctrl->io_base + FTSPI020_REG_ISR);
-			return 0;
-		}
+	for (i = 0; i < ARRAY_SIZE(ftspi020_protos); i++)
+		if (ftspi020_protos[i].cmd == cmd && ftspi020_protos[i].addr == addr &&
+		    ftspi020_protos[i].data == data)
+			return ftspi020_protos[i].proto;
 
-		udelay(10);
-	} while (time_before(jiffies, expire));
-
-	return -ETIMEDOUT;
+	return -EINVAL;
 }
 
-static int ftspi020_abort(struct ftspi020_priv *ctrl)
+static bool ftspi020_supports_op(struct spi_mem *mem, const struct spi_mem_op *op)
 {
-	u32 val;
-	int ret;
+	u8 dummy_width = op->addr.nbytes ? op->addr.buswidth : op->cmd.buswidth;
 
-	val = readl(ctrl->io_base + FTSPI020_REG_CTRL);
-	writel(val | FTSPI020_CTRL_ABORT, ctrl->io_base + FTSPI020_REG_CTRL);
-	ret = readl_poll_timeout(ctrl->io_base + FTSPI020_REG_CTRL, val,
-				 !(val & FTSPI020_CTRL_ABORT), 10, 1000000);
-	ctrl->needs_abort = !!ret;
-	if (ret) {
-		dev_err(ctrl->dev, "controller abort timed out\n");
-		return ret;
-	}
-	writel(readl(ctrl->io_base + FTSPI020_REG_ISR),
-	       ctrl->io_base + FTSPI020_REG_ISR);
-	return 0;
-}
-
-/*
- * Access the data port a word at a time, as the vendor loader does (one
- * readl for a 1-byte status read, one writel for a 2-byte status write).
- * Byte accesses inside a transfer, used for unaligned buffers, returned
- * corrupt jffs2 data and then stalled the FIFO. A partial last word
- * carries the tail.
- */
-static void ftspi020_write_fifo(void __iomem *port, const u8 *buf, u32 len)
-{
-	u32 val = 0;
-
-	for (; len >= 4; len -= 4, buf += 4)
-		iowrite32(get_unaligned((const u32 *)buf), port);
-
-	if (len) {
-		memcpy(&val, buf, len);
-		iowrite32(val, port);
-	}
-}
-
-static void ftspi020_read_fifo(void __iomem *port, u8 *buf, u32 len)
-{
-	u32 val;
-
-	for (; len >= 4; len -= 4, buf += 4)
-		put_unaligned(ioread32(port), (u32 *)buf);
-
-	if (len) {
-		val = ioread32(port);
-		memcpy(buf, &val, len);
-	}
-}
-
-static int ftspi020_do_data_pio(struct ftspi020_priv *ctrl, const struct spi_mem_op *op)
-{
-	void __iomem *port = ctrl->io_base + FTSPI020_REG_DATA_PORT;
-	bool out = op->data.dir == SPI_MEM_DATA_OUT;
-	u32 len = op->data.nbytes;
-	u32 transfer_size, chunk, val;
-	u8 fifo_ready_mask;
-	u8 *buf;
-	int ret;
-
-	if (out) {
-		buf = (u8 *)op->data.buf.out;
-		transfer_size = ctrl->tx_transfer_size;
-		fifo_ready_mask = FTSPI020_STS_TFR;
-	} else {
-		buf = op->data.buf.in;
-		transfer_size = ctrl->rx_transfer_size;
-		fifo_ready_mask = FTSPI020_STS_RFR;
-	}
-
-	while (len > 0) {
-		chunk = min(len, transfer_size);
-
-		/* Wait for txfifo or rxfifo ready */
-		ret = readl_relaxed_poll_timeout_atomic(ctrl->io_base + FTSPI020_REG_STS, val,
-							(val & fifo_ready_mask), 1,
-							3000000);
-		if (ret) {
-			dev_err(ctrl->dev, "wait fifo timeout(len:%d(%d) sts:%#x(%#x))\n",
-				len, op->data.nbytes, val, fifo_ready_mask);
-			return ret;
-		}
-
-		if (out)
-			ftspi020_write_fifo(port, buf, chunk);
-		else
-			ftspi020_read_fifo(port, buf, chunk);
-
-		buf += chunk;
-		len -= chunk;
-	}
-
-	return 0;
-}
-
-static int ftspi020_firecmd(struct ftspi020_priv *ctrl, u32 cmd3, const struct spi_mem_op *op)
-{
-	int err = 0;
-
-	/* Clear any pending ISR status before firing command */
-	writel(readl(ctrl->io_base + FTSPI020_REG_ISR), ctrl->io_base + FTSPI020_REG_ISR);
-
-	/* HW starts the command */
-	iowrite32(cmd3, ctrl->io_base + FTSPI020_REG_CMD3);
-
-	if (op->data.nbytes) {
-		dev_dbg(ctrl->dev, "%s: nbytes %d, dir %s\n",
-			__func__, op->data.nbytes,
-			(op->data.dir == SPI_MEM_DATA_IN) ? "IN" : "OUT");
-		err = ftspi020_do_data_pio(ctrl, op);
-		if (err)
-			goto abort;
-	}
-
-	err = ftspi020_wait_complete(ctrl, 1000);
-	if (err) {
-		dev_err(ctrl->dev, "wait cmd complete timeout (cmd3=%08x isr=%08x sts=%08x)\n",
-			cmd3, readl(ctrl->io_base + FTSPI020_REG_ISR),
-			readl(ctrl->io_base + FTSPI020_REG_STS));
-		goto abort;
-	}
-
-	return 0;
-
-abort:
-	/* The BSP aborts failed commands; never retry a flash write here. */
-	ftspi020_abort(ctrl);
-	return err;
-}
-
-static int ftspi020_decode_proto(const struct spi_mem_op *op)
-{
-	int cmd_width, addr_width, data_width, ret;
-	u32 proto;
-
-	cmd_width = (op->cmd.buswidth) ? op->cmd.buswidth : 1;
-	addr_width = (op->addr.nbytes) ? op->addr.buswidth : 1;
-	data_width = (op->data.nbytes) ? op->data.buswidth : 1;
-
-	proto = SNOR_PROTO_STR(cmd_width, addr_width, data_width);
-
-	switch (proto) {
-	case SNOR_PROTO_1_1_1:
-		ret = CMD3_PROTO_SERIAL;
-		break;
-	case SNOR_PROTO_1_1_2:
-		ret = CMD3_PROTO_DUAL;
-		break;
-	case SNOR_PROTO_1_1_4:
-		ret = CMD3_PROTO_QUAD;
-		break;
-	case SNOR_PROTO_1_2_2:
-		ret = CMD3_PROTO_DUALIO;
-		break;
-	case SNOR_PROTO_1_4_4:
-		ret = CMD3_PROTO_QUADIO;
-		break;
-	case SNOR_PROTO_2_2_2:
-		ret = CMD3_PROTO_OPCODE_2BIT;
-		break;
-	case SNOR_PROTO_4_4_4:
-		ret = CMD3_PROTO_OPCODE_4BIT;
-		break;
-	default:
-		ret = -EINVAL;
-	}
-
-	return ret;
-}
-
-static u32 ftspi020_get_op_mode(const struct spi_mem_op *op)
-{
-	u32 ret = CMD3_OP_MODE_DIR_OUT;
-
-	if (op->data.nbytes && (op->data.dir == SPI_MEM_DATA_IN))
-		ret = CMD3_OP_MODE_DIR_IN;
-
-	return ret;
-}
-
-static u32 ftspi020_setup_cmd(struct ftspi020_priv *ctrl,
-			      const struct spi_mem_op *op,
-			      u32 chip_select, int proto)
-{
-	u32 cmd;
-
-	if (op->addr.nbytes)
-		iowrite32(op->addr.val, ctrl->io_base + FTSPI020_REG_CMD0);
-	else
-		iowrite32(0, ctrl->io_base + FTSPI020_REG_CMD0);
-
-	cmd = FIELD_PREP(FTSPI020_CMD1_OPCODE_BYTE, op->cmd.nbytes ? op->cmd.nbytes : 1);
-	if (op->addr.nbytes)
-		cmd |= FIELD_PREP(FTSPI020_CMD1_ADDR_BYTES, op->addr.nbytes);
-	if (op->dummy.nbytes && op->dummy.buswidth)
-		cmd |= FIELD_PREP(FTSPI020_CMD1_DUMMY_CYCLE,
-				  op->dummy.nbytes * 8 / op->dummy.buswidth);
-
-	iowrite32(cmd, ctrl->io_base + FTSPI020_REG_CMD1);
-	iowrite32(op->data.nbytes, ctrl->io_base + FTSPI020_REG_CMD2);
-
-	cmd = (FIELD_PREP(FTSPI020_CMD3_CHIP_SELECT, chip_select) |
-	       FIELD_PREP(FTSPI020_CMD3_PROTO, proto) |
-	       FIELD_PREP(FTSPI020_CMD3_OP_MODE, ftspi020_get_op_mode(op)) |
-	       FIELD_PREP(FTSPI020_CMD3_INSTR_CODE, op->cmd.opcode) |
-	       BIT(0)); /* CMD3_CMDIRQ: trigger completion interrupt / status */
-
-	return cmd;
-}
-
-static int ftspi020_exec_op_by_cmd(struct ftspi020_priv *ctrl,
-				   const struct spi_mem_op *op,
-				   u32 ce, int proto)
-{
-	u32 cmd;
-
-	cmd = ftspi020_setup_cmd(ctrl, op, ce, proto);
-	return ftspi020_firecmd(ctrl, cmd, op);
-}
-
-static void ftspi020_set_sck(struct ftspi020_priv *ctrl, u32 hz);
-
-/* Choose the SPI clock for the next operation; the controller is idle and locked. */
-static void ftspi020_tune_sck(struct ftspi020_priv *ctrl, const struct spi_mem_op *op)
-{
-	u32 hz = min(ctrl->max_hz, (u32)FTSPI020_SCK_SLOW_HZ);
-	bool fast;
-
-	if (!ctrl->max_hz)
-		return;
-
-	if (fast_sck != ctrl->clk_fast) {
-		int ret = clk_set_rate(ctrl->clk, fast_sck ? 200000000 : 50000000);
-
-		if (ret)
-			dev_warn(ctrl->dev, "cannot set the SPI clock: %d\n", ret);
-		ctrl->clk_fast = fast_sck;
-		ctrl->divider = 0;
-		dev_info(ctrl->dev, "SPI clock %lu Hz\n", clk_get_rate(ctrl->clk));
-	}
-
-	fast = ctrl->clk_fast && op->data.dir == SPI_MEM_DATA_IN &&
-	       op->data.nbytes >= FTSPI020_FAST_MIN_BYTES;
-	if (fast)
-		hz = fast_hz;
-
-	ftspi020_set_sck(ctrl, hz);
-
-	if (fast && ctrl->divider != ctrl->fast_divider) {
-		ctrl->fast_divider = ctrl->divider;
-		dev_info(ctrl->dev, "large reads at %lu Hz\n",
-			 clk_get_rate(ctrl->clk) / ctrl->divider);
-	}
-}
-
-static int ftspi020_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
-{
-	struct ftspi020_priv *ctrl = spi_controller_get_devdata(mem->spi->controller);
-	struct spi_device *spi = mem->spi;
-	int err, proto;
-	u32 ce;
-
-	mutex_lock(&ctrl->lock);
-	ftspi020_tune_sck(ctrl, op);
-	if (ctrl->needs_abort) {
-		err = ftspi020_abort(ctrl);
-		if (err)
-			goto error;
-	}
-
-	dev_dbg(ctrl->dev, "cmd:%#x mode:%d.%d.%d.%d addr:%#llx.%d len:%#x\n",
-		op->cmd.opcode, op->cmd.buswidth, op->addr.buswidth,
-		op->dummy.buswidth, op->data.buswidth,
-		op->addr.val, op->addr.nbytes, op->data.nbytes);
-
-	proto = ftspi020_decode_proto(op);
-	if (proto < 0) {
-		err = proto;
-		goto error;
-	}
-
-	ce = spi_get_chipselect(spi, 0);
-	err = ftspi020_exec_op_by_cmd(ctrl, op, ce, proto);
-
-error:
-	mutex_unlock(&ctrl->lock);
-	return err;
-}
-
-static bool ftspi020_supports_op(struct spi_mem *mem,
-				 const struct spi_mem_op *op)
-{
 	if (!spi_mem_default_supports_op(mem, op))
 		return false;
 
-	if (op->addr.nbytes > 4 || ftspi020_decode_proto(op) < 0)
+	if (op->cmd.dtr || op->addr.dtr || op->dummy.dtr || op->data.dtr)
 		return false;
 
-	/* Dummy clocks use the address phase's bus width in the command engine. */
-	if (op->dummy.nbytes &&
-	    op->dummy.buswidth != (op->addr.nbytes ? op->addr.buswidth :
-							 op->cmd.buswidth))
+	if (op->addr.nbytes > 4 || ftspi020_proto(op) < 0)
 		return false;
 
+	/* The command engine clocks dummy cycles at the width of the address phase. */
 	if (op->dummy.nbytes &&
-	    (op->dummy.nbytes * 8 / op->dummy.buswidth > 255))
+	    (op->dummy.buswidth != dummy_width ||
+	     op->dummy.nbytes * 8 / op->dummy.buswidth > 255))
 		return false;
 
 	return true;
 }
 
+/* MTD device name: the controller's, plus the chip select when it has several flashes. */
 static const char *ftspi020_get_name(struct spi_mem *mem)
 {
-	struct ftspi020_priv *ctrl = spi_controller_get_devdata(mem->spi->controller);
-	struct device *dev = &mem->spi->dev;
-	const char *name;
+	struct device *ctrl_dev = mem->spi->controller->dev.parent;
 
-	if (of_get_available_child_count(ctrl->dev->of_node) == 1)
-		return dev_name(ctrl->dev);
+	if (of_get_available_child_count(ctrl_dev->of_node) == 1)
+		return dev_name(ctrl_dev);
 
-	name = devm_kasprintf(dev, GFP_KERNEL,
-			      "%s-%d", dev_name(ctrl->dev),
+	return devm_kasprintf(&mem->spi->dev, GFP_KERNEL, "%s-%d", dev_name(ctrl_dev),
 			      spi_get_chipselect(mem->spi, 0));
-	if (!name)
-		return ERR_PTR(-ENOMEM);
-
-	return name;
 }
 
-static const struct spi_controller_mem_ops ftspi020_mem_ops = {
-	.exec_op = ftspi020_exec_op,
-	.supports_op = ftspi020_supports_op,
-	.get_name = ftspi020_get_name,
-};
-
-static void ftspi020_set_sck(struct ftspi020_priv *ctrl, u32 hz)
+static void ftspi020_set_sck(struct ftspi020 *spi, const struct ftspi020_cs *cs,
+			     unsigned int hz)
 {
-	u32 clk_rate, divider = 2, val;
+	unsigned long rate = clk_get_rate(spi->clk);
+	unsigned int divider = 2;
+	u32 ctrl, val;
 
-	clk_rate = clk_get_rate(ctrl->clk);
-	if (!clk_rate)
-		return;
-
-	while ((clk_rate / divider) > hz) {
+	while (divider < FTSPI020_MAX_DIVIDER && rate / divider > hz)
 		divider += 2;
-		if (divider > 8) {
-			divider = 8;
-			break;
-		}
-	}
-	if (divider == ctrl->divider)
-		return;
 
-	val = ioread32(ctrl->io_base + FTSPI020_REG_CTRL);
-	val &= ~FTSPI020_CTRL_CLK_DIVIDER;
-
-	switch (divider) {
-	case 2:
-		val |= FIELD_PREP(FTSPI020_CTRL_CLK_DIVIDER, CLK_DIVIDER_2);
-		break;
-	case 4:
-		val |= FIELD_PREP(FTSPI020_CTRL_CLK_DIVIDER, CLK_DIVIDER_4);
-		break;
-	case 6:
-		val |= FIELD_PREP(FTSPI020_CTRL_CLK_DIVIDER, CLK_DIVIDER_6);
-		break;
-	case 8:
-		val |= FIELD_PREP(FTSPI020_CTRL_CLK_DIVIDER, CLK_DIVIDER_8);
-		break;
-	}
-
-	if (ctrl->cpha)
-		val |= FTSPI020_CTRL_CLK_MODE_3;
-	else
-		val &= ~FTSPI020_CTRL_CLK_MODE_3;
-
-	iowrite32(val, ctrl->io_base + FTSPI020_REG_CTRL);
-	ctrl->divider = divider;
-
-	dev_dbg(ctrl->dev, "spi clock %u, divider %d, ctrl %08x\n",
-		clk_rate / divider, divider, ioread32(ctrl->io_base + FTSPI020_REG_CTRL));
+	ctrl = readl(spi->regs + FTSPI020_CTRL);
+	val = (ctrl & ~(FTSPI020_CTRL_DIVIDER | FTSPI020_CTRL_MODE3)) |
+	      FIELD_PREP(FTSPI020_CTRL_DIVIDER, divider / 2 - 1) |
+	      (cs->mode3 ? FTSPI020_CTRL_MODE3 : 0);
+	if (val != ctrl)
+		writel(val, spi->regs + FTSPI020_CTRL);
 }
 
-static int ftspi020_setup(struct spi_device *spi)
+static unsigned int ftspi020_op_hz(const struct ftspi020_cs *cs, const struct spi_mem_op *op)
 {
-	struct spi_controller *master = spi->controller;
-	struct ftspi020_priv *ctrl = spi_controller_get_devdata(master);
+	bool bulk = op->data.dir == SPI_MEM_DATA_IN && op->data.nbytes >= FTSPI020_BULK_MIN_BYTES;
+	unsigned int hz = bulk ? cs->bulk_hz : cs->safe_hz;
 
-	if (master->busy)
-		return -EBUSY;
+	if (op->max_freq)
+		hz = min(hz, op->max_freq);
 
-	if (!spi->max_speed_hz)
-		return 0;
+	return hz;
+}
 
-	ctrl->max_hz = spi->max_speed_hz;
-	ctrl->cpha = spi->mode & SPI_CPHA;
-	ctrl->divider = 0;
-	ftspi020_set_sck(ctrl, ctrl->max_hz);
+static void ftspi020_start(struct ftspi020 *spi, const struct spi_mem_op *op,
+			   unsigned int cs, int proto)
+{
+	u32 cmd1 = FIELD_PREP(FTSPI020_CMD1_OPCODE_LEN, op->cmd.nbytes ?: 1) |
+		   FIELD_PREP(FTSPI020_CMD1_ADDR_LEN, op->addr.nbytes);
+	bool in = op->data.nbytes && op->data.dir == SPI_MEM_DATA_IN;
+	u32 cmd3;
+
+	if (op->dummy.nbytes)
+		cmd1 |= FIELD_PREP(FTSPI020_CMD1_DUMMY_CYCLES,
+				   op->dummy.nbytes * 8 / op->dummy.buswidth);
+
+	cmd3 = FIELD_PREP(FTSPI020_CMD3_OPCODE, op->cmd.opcode) |
+	       FIELD_PREP(FTSPI020_CMD3_CS, cs) |
+	       FIELD_PREP(FTSPI020_CMD3_PROTO, proto) |
+	       FIELD_PREP(FTSPI020_CMD3_DIR, in ? FTSPI020_DIR_IN : FTSPI020_DIR_OUT) |
+	       FTSPI020_CMD3_REPORT_DONE;
+
+	writel(op->addr.nbytes ? op->addr.val : 0, spi->regs + FTSPI020_CMD0);
+	writel(cmd1, spi->regs + FTSPI020_CMD1);
+	writel(op->data.nbytes, spi->regs + FTSPI020_CMD2);
+
+	/* Forget the status of the previous command, then start this one. */
+	writel(readl(spi->regs + FTSPI020_ISR), spi->regs + FTSPI020_ISR);
+	writel(cmd3, spi->regs + FTSPI020_CMD3);
+}
+
+/*
+ * Move the data a word at a time. Byte accesses to the FIFO port corrupted
+ * data and stalled the FIFO, so a partial last word is read or written whole.
+ */
+static int ftspi020_transfer(struct ftspi020 *spi, const struct spi_mem_op *op)
+{
+	void __iomem *fifo = spi->regs + FTSPI020_DATA;
+	bool in = op->data.dir == SPI_MEM_DATA_IN;
+	u32 ready = in ? FTSPI020_STS_RX_READY : FTSPI020_STS_TX_READY;
+	unsigned int left = op->data.nbytes;
+	const u8 *out = op->data.buf.out;
+	u8 *buf = op->data.buf.in;
+	u32 sts, tail;
+	int ret;
+
+	while (left) {
+		unsigned int n = min(left, FTSPI020_XFER_BYTES);
+
+		ret = readl_poll_timeout_atomic(spi->regs + FTSPI020_STS, sts, sts & ready, 0,
+						FTSPI020_FIFO_TIMEOUT_US);
+		if (ret)
+			return ret;
+
+		if (in) {
+			ioread32_rep(fifo, buf, n / 4);
+			buf += n & ~3;
+			if (n & 3) {
+				tail = ioread32(fifo);
+				memcpy(buf, &tail, n & 3);
+				buf += n & 3;
+			}
+		} else {
+			iowrite32_rep(fifo, out, n / 4);
+			out += n & ~3;
+			if (n & 3) {
+				tail = 0;
+				memcpy(&tail, out, n & 3);
+				iowrite32(tail, fifo);
+				out += n & 3;
+			}
+		}
+		left -= n;
+	}
 
 	return 0;
 }
 
-static int ftspi020_default_setup(struct ftspi020_priv *ctrl)
+static int ftspi020_wait_done(struct ftspi020 *spi)
 {
-	u32 val;
+	u32 isr;
+	int ret;
 
-	val = ioread32(ctrl->io_base + FTSPI020_REG_CTRL);
-	val &= ~(FTSPI020_CTRL_READY_LOC | FTSPI020_CTRL_CLK_DIVIDER);
-	val |= (FIELD_PREP(FTSPI020_CTRL_READY_LOC, 0) |
-		FIELD_PREP(FTSPI020_CTRL_CLK_DIVIDER, CLK_DIVIDER_4));
-	iowrite32(val, ctrl->io_base + FTSPI020_REG_CTRL);
+	ret = readl_poll_timeout_atomic(spi->regs + FTSPI020_ISR, isr, isr & FTSPI020_ISR_DONE, 1,
+					FTSPI020_DONE_TIMEOUT_US);
+	if (!ret)
+		writel(isr, spi->regs + FTSPI020_ISR);
 
-	val = ioread32(ctrl->io_base + FTSPI020_REG_FEATURE);
-	ctrl->rxfifo_depth = FIELD_GET(FTSPI020_FEATURE_RXFIFO_DEPTH, val);
-	ctrl->txfifo_depth = FIELD_GET(FTSPI020_FEATURE_TXFIFO_DEPTH, val);
+	return ret;
+}
 
-	val = ioread32(ctrl->io_base + FTSPI020_REG_CR2);
-	val &= ~(FTSPI020_CR2_CMD_CMPL | FTSPI020_CR2_DMA_EN);
-	val |= FIELD_PREP(FTSPI020_CR2_CMD_CMPL, 1);
-	val |= FIELD_PREP(FTSPI020_CR2_RX_XFR_SIZE, XFR_SIZE_256BYTES);
-	val |= FIELD_PREP(FTSPI020_CR2_TX_XFR_SIZE, XFR_SIZE_256BYTES);
-	val |= FIELD_PREP(FTSPI020_CR2_DMA_RX_THOD, DMA_THOD_16BYTES);
-	iowrite32(val, ctrl->io_base + FTSPI020_REG_CR2);
+static int ftspi020_abort(struct ftspi020 *spi)
+{
+	u32 ctrl;
+	int ret;
 
-	ctrl->rx_transfer_size = (32 << FIELD_GET(FTSPI020_CR2_RX_XFR_SIZE, val));
-	ctrl->tx_transfer_size = (32 << FIELD_GET(FTSPI020_CR2_TX_XFR_SIZE, val));
+	writel(readl(spi->regs + FTSPI020_CTRL) | FTSPI020_CTRL_ABORT, spi->regs + FTSPI020_CTRL);
+	ret = readl_poll_timeout(spi->regs + FTSPI020_CTRL, ctrl, !(ctrl & FTSPI020_CTRL_ABORT),
+				 10, USEC_PER_SEC);
+	spi->wedged = ret;
+	if (!ret)
+		writel(readl(spi->regs + FTSPI020_ISR), spi->regs + FTSPI020_ISR);
 
-	dev_info(ctrl->dev, "CR=%08x, CR2=%08x\n",
-		 ioread32(ctrl->io_base + FTSPI020_REG_CTRL),
-		 ioread32(ctrl->io_base + FTSPI020_REG_CR2));
+	return ret;
+}
+
+static int ftspi020_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
+{
+	struct spi_device *spidev = mem->spi;
+	struct ftspi020 *spi = spi_controller_get_devdata(spidev->controller);
+	unsigned int cs = spi_get_chipselect(spidev, 0);
+	int proto = ftspi020_proto(op);
+	int ret = 0;
+
+	if (proto < 0)
+		return proto;
+
+	if (spi->wedged) {
+		ret = ftspi020_abort(spi);
+		if (ret)
+			return ret;
+	}
+
+	ftspi020_set_sck(spi, &spi->cs[cs], ftspi020_op_hz(&spi->cs[cs], op));
+	ftspi020_start(spi, op, cs, proto);
+
+	if (op->data.nbytes)
+		ret = ftspi020_transfer(spi, op);
+	if (!ret)
+		ret = ftspi020_wait_done(spi);
+	if (ret) {
+		dev_err(&spidev->dev, "command %#x failed: %d\n", op->cmd.opcode, ret);
+		/* The command is dropped, never repeated: a repeated write could do harm. */
+		ftspi020_abort(spi);
+	}
+
+	return ret;
+}
+
+static const struct spi_controller_mem_ops ftspi020_mem_ops = {
+	.supports_op = ftspi020_supports_op,
+	.exec_op = ftspi020_exec_op,
+	.get_name = ftspi020_get_name,
+};
+
+static int ftspi020_setup(struct spi_device *spidev)
+{
+	struct ftspi020 *spi = spi_controller_get_devdata(spidev->controller);
+	struct ftspi020_cs *cs = &spi->cs[spi_get_chipselect(spidev, 0)];
+	u32 safe_hz = 0;
+	int ret;
+
+	/* Only SPI modes 0 and 3 exist. */
+	if (!(spidev->mode & SPI_CPOL) != !(spidev->mode & SPI_CPHA))
+		return -EINVAL;
+
+	cs->mode3 = spidev->mode & SPI_CPHA;
+	cs->bulk_hz = spidev->max_speed_hz;
+	of_property_read_u32(spidev->dev.of_node, "galachip,safe-max-frequency", &safe_hz);
+	cs->safe_hz = safe_hz ? min(safe_hz, cs->bulk_hz) : cs->bulk_hz;
+
+	/* SCK is the clock divided by at least 2: ask for the clock the fastest read needs. */
+	ret = clk_set_rate(spi->clk, 2UL * cs->bulk_hz);
+	if (ret)
+		dev_warn(&spidev->dev, "SPI clock stays at %lu Hz: %d\n",
+			 clk_get_rate(spi->clk), ret);
+
+	dev_dbg(&spidev->dev, "large reads up to %u Hz, other commands up to %u Hz, SPI clock %lu Hz\n",
+		cs->bulk_hz, cs->safe_hz, clk_get_rate(spi->clk));
 
 	return 0;
 }
 
 static int ftspi020_probe(struct platform_device *pdev)
 {
-	struct spi_controller *master;
 	struct device *dev = &pdev->dev;
-	struct resource *res;
-	struct ftspi020_priv *ctrl;
-	int ret;
+	struct reset_control *reset;
+	struct spi_controller *host;
+	struct ftspi020 *spi;
+	long max_clk;
+	u32 val;
 
-	master = devm_spi_alloc_host(&pdev->dev, sizeof(*ctrl));
-	if (!master)
+	host = devm_spi_alloc_host(dev, sizeof(*spi));
+	if (!host)
 		return -ENOMEM;
+	spi = spi_controller_get_devdata(host);
 
-	ctrl = spi_controller_get_devdata(master);
-	ctrl->dev = dev;
-	platform_set_drvdata(pdev, ctrl);
-	ctrl->controller = master;
+	spi->regs = devm_platform_ioremap_resource(pdev, 0);
+	if (IS_ERR(spi->regs))
+		return PTR_ERR(spi->regs);
 
-	/* find the resources */
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "ctrl-port");
-	if (!res)
-		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	ctrl->io_base = devm_ioremap_resource(dev, res);
-	if (IS_ERR(ctrl->io_base))
-		return PTR_ERR(ctrl->io_base);
+	spi->clk = devm_clk_get_enabled(dev, "spiclk");
+	if (IS_ERR(spi->clk))
+		return dev_err_probe(dev, PTR_ERR(spi->clk), "cannot get the SPI clock\n");
 
-	ctrl->phys_io_base = res->start;
+	reset = devm_reset_control_get_optional_shared_deasserted(dev, NULL);
+	if (IS_ERR(reset))
+		return dev_err_probe(dev, PTR_ERR(reset), "cannot release the reset\n");
 
-	ctrl->clk = devm_clk_get(dev, "spiclk");
-	if (IS_ERR(ctrl->clk))
-		return PTR_ERR(ctrl->clk);
+	/* Start at the slowest SCK; setup() picks the speed of each flash. */
+	val = readl(spi->regs + FTSPI020_CTRL);
+	val &= ~(FTSPI020_CTRL_READY_LOC | FTSPI020_CTRL_DIVIDER);
+	val |= FIELD_PREP(FTSPI020_CTRL_DIVIDER, FTSPI020_MAX_DIVIDER / 2 - 1);
+	writel(val, spi->regs + FTSPI020_CTRL);
 
-	ret = clk_prepare_enable(ctrl->clk);
-	if (ret) {
-		dev_err(dev, "cannot enable SPI clock\n");
-		return ret;
-	}
+	/* Report completion in ISR, signal the FIFO per 256 bytes, no DMA. */
+	val = readl(spi->regs + FTSPI020_CR2);
+	val &= ~(FTSPI020_CR2_DMA_ENABLE | FTSPI020_CR2_DMA_RX_THRESHOLD |
+		 FTSPI020_CR2_RX_XFER_SIZE | FTSPI020_CR2_TX_XFER_SIZE);
+	val |= FTSPI020_CR2_DONE_ENABLE |
+	       FIELD_PREP(FTSPI020_CR2_DMA_RX_THRESHOLD, FTSPI020_DMA_THRESHOLD_16B) |
+	       FIELD_PREP(FTSPI020_CR2_RX_XFER_SIZE, FTSPI020_XFER_SIZE_CODE) |
+	       FIELD_PREP(FTSPI020_CR2_TX_XFER_SIZE, FTSPI020_XFER_SIZE_CODE);
+	writel(val, spi->regs + FTSPI020_CR2);
 
-	ctrl->rstc = devm_reset_control_get_optional_shared(dev, "rstn");
-	if (!IS_ERR_OR_NULL(ctrl->rstc))
-		reset_control_deassert(ctrl->rstc);
+	host->mode_bits = SPI_CPOL | SPI_CPHA | SPI_RX_DUAL | SPI_RX_QUAD | SPI_TX_DUAL |
+			  SPI_TX_QUAD;
+	/* The core limits each flash to this: the fastest SCK the clock can give. */
+	max_clk = clk_round_rate(spi->clk, ULONG_MAX);
+	host->max_speed_hz = (max_clk > 0 ? max_clk : clk_get_rate(spi->clk)) / 2;
+	host->num_chipselect = FTSPI020_MAX_CS;
+	host->bus_num = -1;
+	host->setup = ftspi020_setup;
+	host->mem_ops = &ftspi020_mem_ops;
+	host->dev.of_node = dev->of_node;
 
-	mutex_init(&ctrl->lock);
-
-	ret = ftspi020_default_setup(ctrl);
-	if (ret)
-		goto err_disable_clk;
-
-	dev_info(dev, "reg base %px, tx fifo %d rx fifo %d, tx xfr sz %d, rx xfr sz %d\n",
-		 ctrl->io_base, ctrl->txfifo_depth, ctrl->rxfifo_depth,
-		 ctrl->tx_transfer_size, ctrl->rx_transfer_size);
-
-	master->mode_bits = SPI_RX_DUAL | SPI_RX_QUAD |
-			    SPI_TX_DUAL | SPI_TX_QUAD;
-	master->setup = ftspi020_setup;
-	master->bus_num = -1;
-	master->num_chipselect = 4;
-	master->mem_ops = &ftspi020_mem_ops;
-	master->dev.of_node = dev->of_node;
-
-	ret = devm_spi_register_controller(dev, master);
-	if (ret)
-		goto err_destroy_mutex;
-
-	return 0;
-
-err_destroy_mutex:
-	mutex_destroy(&ctrl->lock);
-err_disable_clk:
-	clk_disable_unprepare(ctrl->clk);
-	return ret;
+	return devm_spi_register_controller(dev, host);
 }
 
-static void ftspi020_remove(struct platform_device *pdev)
-{
-	struct ftspi020_priv *ctrl = platform_get_drvdata(pdev);
-
-	clk_disable_unprepare(ctrl->clk);
-	mutex_destroy(&ctrl->lock);
-}
-
-static int ftspi020_suspend(struct device *dev)
-{
-	return 0;
-}
-
-static int ftspi020_resume(struct device *dev)
-{
-	return 0;
-}
-
-static const struct of_device_id ftspi020_dt_ids[] = {
+static const struct of_device_id ftspi020_of_match[] = {
 	{ .compatible = "faraday,ftspi020" },
 	{ }
 };
-MODULE_DEVICE_TABLE(of, ftspi020_dt_ids);
-
-static DEFINE_SIMPLE_DEV_PM_OPS(ftspi020_pm_ops, ftspi020_suspend, ftspi020_resume);
+MODULE_DEVICE_TABLE(of, ftspi020_of_match);
 
 static struct platform_driver ftspi020_driver = {
+	.probe = ftspi020_probe,
 	.driver = {
-		.name	= "ftspi020",
-		.of_match_table = ftspi020_dt_ids,
-		.pm = pm_sleep_ptr(&ftspi020_pm_ops),
+		.name = "ftspi020",
+		.of_match_table = ftspi020_of_match,
 	},
-	.probe		= ftspi020_probe,
-	.remove		= ftspi020_remove,
 };
 module_platform_driver(ftspi020_driver);
 
-MODULE_DESCRIPTION("Faraday FTSPI020 SPI Memory Controller Driver");
-MODULE_AUTHOR("Bing-Yao, Luo <bjluo@faraday-tech.com>");
+MODULE_DESCRIPTION("Faraday FTSPI020 SPI memory controller driver");
+MODULE_AUTHOR("Ifran Ali <khanu.i.i.k.2000@gmail.com>");
 MODULE_LICENSE("GPL");

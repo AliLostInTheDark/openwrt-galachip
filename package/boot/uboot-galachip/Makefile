@@ -13,15 +13,18 @@ $(eval $(call TestHostCommand,python3-lzma,Please install Python 3 with lzma sup
 PKG_LICENSE:=GPL-2.0-only GPL-2.0-or-later LZMA-SDK-9.22
 PKG_LICENSE_FILES:=Licenses/README lib/lzma/LzmaDec.c
 
-define U-Boot/xz000_g7
-  NAME:=TP-Link XZ000-G7
+define U-Boot/Default
   BUILD_TARGET:=galachip
   BUILD_SUBTARGET:=gc1601
-  BUILD_DEVICES:=tplink_xz000-g7
-  UBOOT_IMAGE:=output/artifacts/xz000-g7-uboot-proper.img
+  UBOOT_IMAGE:=output/artifacts/u-boot.img
 endef
 
-UBOOT_TARGETS:=xz000_g7
+define U-Boot/tplink_xz000_g7
+  NAME:=TP-Link XZ000-G7
+  BUILD_DEVICES:=tplink_xz000-g7
+endef
+
+UBOOT_TARGETS:=tplink_xz000_g7
 
 define Build/Prepare
 	$(call Build/Prepare/Default)
@@ -37,24 +40,23 @@ define Build/Compile
 		--source $(PKG_BUILD_DIR) \
 		--output $(PKG_BUILD_DIR)/output \
 		--cross-compile "$(TARGET_CROSS)" \
+		--defconfig $(UBOOT_CONFIG) \
 		--jobs $(or $(patsubst -j%,%,$(filter -j%,$(PKG_JOBS))),1) \
 		--revision "$(shell git rev-parse HEAD 2>/dev/null || echo unknown)" \
 		--localversion="-OpenWrt-$(REVISION)"
 endef
 
-# Upstream names: u-boot-with-spl.bin is the whole boot region for
-# upgrade_uboot, u-boot.bin the RAM image chainloaded with go, u-boot.img
-# proper alone and u-boot-spl.bin the ROM-headed SPL.
+# u-boot-with-spl.bin is the whole boot region for upgrade_uboot, u-boot.bin
+# the RAM image chainloaded with go, u-boot.img proper (also for the SPL's
+# YMODEM recovery), u-boot-spl.img the SPL (also for the TPL's YMODEM
+# recovery) and u-boot-tpl.bin the TPL with its mask ROM header, for a
+# programmer or the mask ROM's UART menu.
 define Build/InstallDev
 	$(INSTALL_DIR) $(STAGING_DIR_IMAGE)
-	$(INSTALL_DATA) $(PKG_BUILD_DIR)/output/artifacts/xz000-g7-bootregion.bin \
-		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot-with-spl.bin
-	$(INSTALL_DATA) $(PKG_BUILD_DIR)/$(UBOOT_IMAGE) \
-		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot.img
-	$(INSTALL_DATA) $(PKG_BUILD_DIR)/output/artifacts/xz000-g7-spl-rom.bin \
-		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot-spl.bin
-	$(INSTALL_DATA) $(PKG_BUILD_DIR)/output/artifacts/xz000-g7-uboot-ram.bin \
-		$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-u-boot.bin
+	$(foreach file,u-boot-with-spl.bin u-boot.bin u-boot.img u-boot-spl.img u-boot-tpl.bin, \
+		$(INSTALL_DATA) $(PKG_BUILD_DIR)/output/artifacts/$(file) \
+			$(STAGING_DIR_IMAGE)/$(BUILD_DEVICES)-$(file)
+	)
 endef
 
 define Package/u-boot/install/default

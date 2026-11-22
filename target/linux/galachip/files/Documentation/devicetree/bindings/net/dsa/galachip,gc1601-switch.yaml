@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/net/dsa/galachip,gc1601-switch.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: GalaChip GC1601 switch
+
+maintainers:
+  - Ifran Ali <khanu.i.i.k.2000@gmail.com>
+
+description:
+  The switch inside the packet engine of the GalaChip GC1601. Port 0 is the
+  PON MAC, port 1 the Gigabit Ethernet UNI and port 2 the CPU port, whose
+  conduit is the packet engine.
+
+allOf:
+  - $ref: dsa.yaml#/$defs/ethernet-ports
+
+properties:
+  compatible:
+    const: galachip,gc1601-switch
+
+  reg:
+    maxItems: 1
+
+required:
+  - compatible
+  - reg
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    switch@90f80000 {
+        compatible = "galachip,gc1601-switch";
+        reg = <0x90f80000 0x20000>;
+
+        ports {
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            port@1 {
+                reg = <1>;
+                label = "lan1";
+                phy-handle = <&phy24>;
+                phy-mode = "sgmii";
+            };
+
+            port@2 {
+                reg = <2>;
+                ethernet = <&packet_engine>;
+                phy-mode = "internal";
+
+                fixed-link {
+                    speed = <1000>;
+                    full-duplex;
+                };
+            };
+        };
+    };

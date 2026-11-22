@@ -112,7 +112,7 @@ xpon_device_register(struct device *parent,
 	mutex_unlock(&xpon_devices_lock);
 
 	xpon_leds_update(xpon, &xpon->state);
-	dev_info(parent, "registered xPON device for %s\n", desc->netdev->name);
+	dev_dbg(parent, "registered xPON device for %s\n", desc->netdev->name);
 	return xpon;
 }
 EXPORT_SYMBOL_GPL(xpon_device_register);

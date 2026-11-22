@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/net/galachip,gc1601-pon.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: GalaChip GC1601 GPON/EPON MAC
+
+maintainers:
+  - Ifran Ali <khanu.i.i.k.2000@gmail.com>
+
+description:
+  The PON MAC of the GalaChip GC1601 ONU SoC. It runs either the ITU-T
+  G.984 GPON transmission convergence layer or the IEEE 802.3ah EPON MAC,
+  through the PON SerDes, towards a BOSA optical module on I2C. Its frames
+  reach the CPU through the packet engine's PON switch port.
+
+properties:
+  compatible:
+    const: galachip,gc1601-pon
+
+  reg:
+    minItems: 4
+    items:
+      - description: GPON MAC
+      - description: optical transmitter power control
+      - description: WAN top-level clocks and enables
+      - description: global WAN mode configuration
+      - description: EPON MAC
+
+  reg-names:
+    minItems: 4
+    items:
+      - const: mac
+      - const: txpwr
+      - const: top
+      - const: global
+      - const: emac
+
+  galachip,scu:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: The system control unit, which holds the PON PLL and resets.
+
+  phys:
+    maxItems: 1
+
+  phy-names:
+    const: serdes
+
+  galachip,bosa-i2c:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description:
+      The I2C bus of the BOSA. Its SFF-8472 registers lose their contents
+      at power-off; the driver programs them from the calibration cell at
+      every boot.
+
+  galachip,switch-port:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: The packet engine's switch port that carries the PON traffic.
+
+  omci-uni-ports:
+    $ref: /schemas/types.yaml#/definitions/phandle-array
+    description:
+      The user ports the OMCI agent reports to the OLT as UNIs, in order.
+
+  nvmem-cells:
+    minItems: 1
+    items:
+      - description: The ONU MAC address, the EPON LLID 0 default.
+      - description: The BOSA calibration, as programmed at the factory.
+
+  nvmem-cell-names:
+    minItems: 1
+    items:
+      - const: mac-address
+      - const: bosa-calibration
+
+  leds:
+    $ref: /schemas/types.yaml#/definitions/phandle-array
+    maxItems: 2
+
+  led-names:
+    maxItems: 2
+    items:
+      enum: [ pon, los ]
+
+required:
+  - compatible
+  - reg
+  - reg-names
+  - galachip,scu
+  - phys
+  - phy-names
+  - galachip,switch-port
+
+additionalProperties: false
+
+examples:
+  - |
+    pon@90cc0000 {
+        compatible = "galachip,gc1601-pon";
+        reg = <0x90cc0000 0x24000>, <0x90c40020 0x4>,
+              <0x90c00000 0x10>, <0x90c40000 0x20>,
+              <0x90c80000 0x2000>;
+        reg-names = "mac", "txpwr", "top", "global", "emac";
+        galachip,scu = <&scu>;
+        phys = <&pon_serdes>;
+        phy-names = "serdes";
+        galachip,bosa-i2c = <&i2c0>;
+        galachip,switch-port = <&switch_pon>;
+        omci-uni-ports = <&switch_lan>;
+        nvmem-cells = <&macaddr_misc>, <&bosa_calibration>;
+        nvmem-cell-names = "mac-address", "bosa-calibration";
+        leds = <&led_pon>, <&led_los>;
+        led-names = "pon", "los";
+    };

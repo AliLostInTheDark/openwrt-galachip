@@ -1,0 +1,36 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] phy: add a PON mode
+
+Add PHY_MODE_PON for the SerDes of a passive optical network MAC, with
+the PON standard as the submode: GPON and EPON run different line rates
+and the MAC switches between them at run time.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+--- a/include/linux/phy/phy.h
++++ b/include/linux/phy/phy.h
+@@ -45,6 +45,7 @@
+ 	PHY_MODE_LVDS,
+ 	PHY_MODE_DP,
+ 	PHY_MODE_HDMI,
++	PHY_MODE_PON,
+ };
+ 
+ enum phy_media {
+--- /dev/null
++++ b/include/linux/phy/phy-pon.h
+@@ -0,0 +1,14 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Submodes of PHY_MODE_PON: the passive optical network standard the SerDes
++ * runs, which sets its line rates.
++ */
++#ifndef __PHY_PON_H_
++#define __PHY_PON_H_
++
++enum phy_pon_mode {
++	PHY_PON_GPON,		/* ITU-T G.984: 2.488 Gb/s down, 1.244 Gb/s up */
++	PHY_PON_EPON,		/* IEEE 802.3ah: 1.25 Gb/s both ways */
++};
++
++#endif /* __PHY_PON_H_ */

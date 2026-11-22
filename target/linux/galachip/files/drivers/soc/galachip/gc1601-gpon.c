@@ -2,8 +2,8 @@
 /*
  * GalaChip GC1601 GPON activation (G.984.3 O1-O7).
  *
- * Ported from the xpon_sdk state machine (local_handle_O1..O7, their entry
- * handlers, chipset_dn_plm_hook and the PLOAM/T-CONT/GEM accessors).
+ * The O1-O7 state machine, its entry actions and the downstream PLOAM
+ * handling follow G.984.3 and the stock firmware's behaviour on this MAC.
  * Downstream PLOAMs and LOS/LOF are sampled by an hrtimer and handled in
  * process context.
  *
@@ -18,6 +18,7 @@
 #include <linux/ctype.h>
 #include <linux/delay.h>
 #include <linux/device.h>
+#include <linux/ethtool.h>
 #include <linux/hex.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
@@ -33,11 +34,14 @@
 #include "gc1601-pon.h"
 
 #define GPON_POLL_NS		(500 * NSEC_PER_USEC)
+/* Without light no PLOAM can arrive: only LOS clearing has to be seen. */
+#define GPON_POLL_LOS_NS	(10 * NSEC_PER_MSEC)
 #define GPON_ACTIVATION_MS	10000	/* O3/O4 */
 #define GPON_POPUP_MS		100	/* O6 */
 #define GPON_PLOAM_REPEAT_NS	(1 * NSEC_PER_MSEC)
 #define GPON_FRAME_BYTES	19440	/* upstream frame at 1.24416 Gb/s */
 #define GPON_WATCHDOG_MS	1000
+#define GPON_IDENTITY_WAIT_MS	30000
 #define GPON_RECOVERY_MS	15000
 #define DBRU_FREE_MIN		0x2fc	/* free packet buffers needed to act */
 #define DBRU_LEVEL_DROP		900	/* taken off a stuck queue's reported level */
@@ -46,7 +50,7 @@
 
 static bool gpon_watchdog = true;
 module_param(gpon_watchdog, bool, 0644);
-MODULE_PARM_DESC(gpon_watchdog, "Re-initialise a hung GPON MAC and release stuck upstream reports in O5, as the stock SDK does (default on)");
+MODULE_PARM_DESC(gpon_watchdog, "Re-initialise a hung GPON MAC and release stuck upstream reports in O5, as the stock firmware does (default on)");
 
 /* ONU block */
 #define ONU_RANDOM_DELAY	0x04
@@ -57,7 +61,7 @@ MODULE_PARM_DESC(gpon_watchdog, "Re-initialise a hung GPON MAC and release stuck
 #define ONU_INSTANCE		0xc0	/* four 6-bit instances per word */
 #define ONU_ALLOC_VALID		BIT(12)
 #define ONU_INSTANCE_FREE	0x28
-#define ONU_RES_RESET		0x6c	/* GMAC_res_reset writes 0; never read */
+#define ONU_RES_RESET		0x6c	/* written 0 to release resources; never read */
 
 /* Optical TX block */
 #define TX_PREAMBLE		0x08	/* T1 17:13, T2 12:8, T3 length 7:0 */
@@ -85,8 +89,8 @@ MODULE_PARM_DESC(gpon_watchdog, "Re-initialise a hung GPON MAC and release stuck
 /* AES block */
 #define AES_KEY			0x44
 #define AES_SWITCH		0x54
-#define AES_HANG		0x94	/* non-zero: the MAC hung (chipset_check_gmac) */
-#define AES_STATE_A		0x9c	/* must agree with AES_STATE_B (chipset_check_gmac2) */
+#define AES_HANG		0x94	/* non-zero: the MAC hung */
+#define AES_STATE_A		0x9c	/* must agree with AES_STATE_B, or the MAC hung */
 #define AES_STATE_B		0xac
 
 #define GPON_BROADCAST		0xff
@@ -278,7 +282,7 @@ static void gc1601_gpon_set_t3(struct gc1601_pon *pon)
 	writel(1, tx_reg(pon, TX_OVERHEAD_COMMIT));
 }
 
-/* chipset_dn_plm_hook for Upstream_Overhead; the binary uses 24-bit delimiters. */
+/* Upstream_Overhead: program the preamble and the 24-bit delimiter. */
 static void gc1601_gpon_program_overhead(struct gc1601_pon *pon, const u8 *d)
 {
 	u32 pre = readl(tx_reg(pon, TX_PREAMBLE));
@@ -336,7 +340,7 @@ void gc1601_gpon_diag_unregister(void)
 }
 EXPORT_SYMBOL_GPL(gc1601_gpon_diag_unregister);
 
-/* chipset_send_plm. The only place a PLOAM is transmitted. */
+/* The only place a PLOAM is transmitted. */
 /*
  * Addressed downstream and all upstream PLOAMs, which the broadcast flood
  * pushes out of ploam_log within a second. Written with pon->lock held.
@@ -416,12 +420,12 @@ static void gc1601_gpon_ack(struct gc1601_pon *pon, const u8 *msg)
 /* ---- state machine ---- */
 
 /*
- * The stock SDK resets the whole chip (sdk_top_level_soft_reset) when the
+ * The stock firmware resets the whole chip when the
  * MAC hangs. That pulse also resets the packet engine Ethernet runs on, so
  * here the GPON MAC alone is set up again and activation starts over.
  * Called with pon->lock held.
  */
-/* GMAC_res_reset, on O2, O6, O7 and MAC re-initialisation. */
+/* Release the MAC's resources, on O2, O6, O7 and MAC re-initialisation. */
 static void gc1601_gpon_res_reset(struct gc1601_pon *pon)
 {
 	writel(0, onu_reg(pon, ONU_RES_RESET));
@@ -436,7 +440,7 @@ static void gc1601_gpon_mac_reinit(struct gc1601_pon *pon)
 		gc1601_pon_tx_on(pon);
 }
 
-/* local_pre_handle_o1 / chipset_check_gmac2. Called with pon->lock held. */
+/* Entry to O1: reset a hung MAC. Called with pon->lock held. */
 static void gc1601_gpon_mac_check(struct gc1601_pon *pon)
 {
 	struct gc1601_gpon *g = &pon->gpon;
@@ -474,16 +478,16 @@ static void gc1601_gpon_timer_stop(struct gc1601_gpon *g)
 }
 
 /*
- * chipset_get_gpon_stats: every counter clears on read and the stock SDK
- * sums them. Names for the FEC words come from its FEC PM ioctl
- * (gcpon_gponGetFecStats, G.988 order); the rest have no name in any stock
- * binary and are shown by block and offset. Upstream bytes wrap within
- * about 34 s at line rate, so O5 samples them every second.
+ * Every counter clears on read, so the driver keeps the sums. The FEC words
+ * are in the order of the G.988 FEC PM attributes; the rest have no known
+ * name and are shown by block and offset. Upstream bytes wrap within about
+ * 34 s at line rate, so O5 samples them every second.
  */
 enum {
 	CNT_FEC_CORR_BYTES, CNT_FEC_CORR_CW, CNT_FEC_UNCORR_CW, CNT_FEC_TOTAL_CW,
 	CNT_BIP_ERRORS, CNT_BIP_BLOCKS, CNT_UP_BYTES,
 };
+static_assert(CNT_UP_BYTES + 1 == GPON_NAMED_COUNTERS);
 
 static const struct {
 	const char *name;
@@ -622,7 +626,7 @@ static void gc1601_gpon_enter(struct gc1601_pon *pon, int state)
 		g->ranged = false;
 		break;
 	case O3:
-		/* local_pre_handle_o3: answer SN grants on the special Alloc-ID. */
+		/* Entry to O3: answer SN grants on the special Alloc-ID. */
 		gc1601_gpon_set_alloc(pon, GPON_TCONT_SN, GPON_ALLOC_SN);
 		writel(0, tx_reg(pon, TX_SN_DELAY));
 		writel(get_random_u32_below(233), onu_reg(pon, ONU_RANDOM_DELAY));
@@ -656,7 +660,7 @@ static void gc1601_gpon_enter(struct gc1601_pon *pon, int state)
 		break;
 	case O7:
 		g->retained_valid = false;
-		/* local_pre_handle_o7: stop everything, drop the provisioning. */
+		/* Entry to O7: stop everything, drop the provisioning. */
 		g->ber_interval_frames = 0;
 		gc1601_gpon_timer_stop(g);
 		gc1601_gpon_res_reset(pon);
@@ -665,7 +669,7 @@ static void gc1601_gpon_enter(struct gc1601_pon *pon, int state)
 		break;
 	}
 
-	/* chipset_gpon_state_change_hook: hardware state is the O-number. */
+	/* The MAC's state field holds the O-number. */
 	val = readl(onu_reg(pon, 0)) & ~PON_ONU_STATE;
 	writel(val | FIELD_PREP(PON_ONU_STATE, state), onu_reg(pon, 0));
 	gc1601_gpon_set_t3(pon);
@@ -676,7 +680,9 @@ static void gc1601_gpon_enter(struct gc1601_pon *pon, int state)
 	gc1601_xpon_report_state(pon, state);
 
 	if (prev != state)
-		dev_info(pon->dev, "GPON O%d -> O%d\n", prev, state);
+		dev_dbg(pon->dev, "GPON O%d -> O%d\n", prev, state);
+	if (state == O5 && prev != O5)
+		dev_info(pon->dev, "registered with the OLT (O5, ONU-ID %u)\n", g->onu_id);
 }
 
 static bool gc1601_gpon_sn_match(struct gc1601_gpon *g, const u8 *msg)
@@ -699,7 +705,7 @@ static void gc1601_gpon_overhead(struct gc1601_pon *pon, const u8 *data)
 	g->have_overhead = true;
 	gc1601_gpon_program_overhead(pon, data);
 	if (changed)
-		dev_info(pon->dev,
+		dev_dbg(pon->dev,
 			 "Upstream_Overhead: guard %u, preamble %u/%u bits pattern %02x, delimiter %02x%02x%02x, flags %02x, pre-assigned delay %u\n",
 			 data[0], data[1], data[2], data[3], data[4], data[5], data[6],
 			 data[7], get_unaligned_be16(data + 8));
@@ -707,7 +713,7 @@ static void gc1601_gpon_overhead(struct gc1601_pon *pon, const u8 *data)
 	if (gc1601_gpon_may_range(g))
 		gc1601_gpon_enter(pon, O3);
 	else if (changed)
-		dev_info(pon->dev, "staying in O2: %s\n",
+		dev_dbg(pon->dev, "staying in O2: %s\n",
 			 g->allow_tx ? "waiting for the ONU identity" : "allow_tx is off");
 }
 
@@ -889,7 +895,7 @@ static void gc1601_gpon_handle(struct gc1601_pon *pon, const u8 *msg)
 			gc1601_gpon_set_onu_id(pon, msg[2]);
 			gc1601_gpon_set_instance(pon, 0, 0);
 			gc1601_gpon_del_alloc(pon, GPON_TCONT_SN);
-			dev_info(pon->dev, "assigned ONU-ID %u\n", msg[2]);
+			dev_dbg(pon->dev, "assigned ONU-ID %u\n", msg[2]);
 			gc1601_gpon_enter(pon, O4);
 		}
 		break;
@@ -908,7 +914,7 @@ static void gc1601_gpon_handle(struct gc1601_pon *pon, const u8 *msg)
 			if (msg[2] == 0) {
 				gc1601_gpon_set_eqd(pon, get_unaligned_be32(msg + 3));
 				if (g->state == O4) {
-					dev_info(pon->dev, "ranged, EqD %u bits\n",
+					dev_dbg(pon->dev, "ranged, EqD %u bits\n",
 						 get_unaligned_be32(msg + 3));
 					gc1601_gpon_enter(pon, O5);
 				}
@@ -1037,7 +1043,7 @@ static bool gc1601_gpon_read_ploam(struct gc1601_pon *pon)
 		}
 		g->head++;
 
-		/* Key switch time is applied at once, as the vendor IRQ path does. */
+		/* Key switch time is applied at once, as the stock firmware does. */
 		onu = p->msg[0];
 		if (p->msg[1] == DN_KEY_SWITCH_TIME &&
 		    (onu == GPON_BROADCAST || onu == READ_ONCE(g->onu_id))) {
@@ -1063,7 +1069,7 @@ static enum hrtimer_restart gc1601_gpon_poll(struct hrtimer *t)
 	int i;
 
 	spin_lock(&g->lock);
-	/* GMAC_int_handle bit assignments; count observations, not exact grants. */
+	/* The interrupt status bits, sampled: counts are observations, not exact grants. */
 	g->mac_irq_last = readl(pon->mac + PON_IRQ);
 	g->sn_grant_samples += !!(g->mac_irq_last & PON_IRQ_SN_GRANT);
 	g->sn_tx_samples += !!(g->mac_irq_last & PON_IRQ_SN_TX);
@@ -1090,7 +1096,7 @@ static enum hrtimer_restart gc1601_gpon_poll(struct hrtimer *t)
 	if (kick)
 		schedule_work(&g->work);
 
-	hrtimer_forward_now(t, ns_to_ktime(GPON_POLL_NS));
+	hrtimer_forward_now(t, ns_to_ktime(los ? GPON_POLL_LOS_NS : GPON_POLL_NS));
 	return HRTIMER_RESTART;
 }
 
@@ -1181,7 +1187,7 @@ static void gc1601_gpon_work(struct work_struct *w)
 }
 
 /*
- * chipset_GMAC_dbru_chk: a T-CONT whose upstream report is stuck while no
+ * Stalled DBRu: a T-CONT whose upstream report is stuck while no
  * data goes up gets its reported queue level lowered and the report
  * reloaded, with the queue manager's almost-full level raised meanwhile.
  * Only an idle upstream qualifies. The flag often stays set after the
@@ -1273,7 +1279,7 @@ out:
 	spin_unlock_irq(&g->lock);
 }
 
-/* local_handle_O5 timers 3 and 4: MAC hang and DBRu, once a second. */
+/* In O5, once a second: check for a hung MAC and stalled DBRu. */
 static void gc1601_gpon_watchdog(struct work_struct *w)
 {
 	struct gc1601_gpon *g = container_of(to_delayed_work(w), struct gc1601_gpon, watchdog);
@@ -1335,7 +1341,7 @@ static void gc1601_gpon_timer(struct work_struct *w)
 	mutex_lock(&pon->lock);
 	if (g->running) {
 		if (g->state == O3 || g->state == O4) {
-			dev_info(pon->dev, "activation timed out in O%d\n", g->state);
+			dev_dbg(pon->dev, "activation timed out in O%d\n", g->state);
 			gc1601_gpon_enter(pon, O2);
 		} else if (g->state == O6) {
 			gc1601_gpon_enter(pon, O1);
@@ -1393,7 +1399,7 @@ int gc1601_gpon_set_allow_tx(struct gc1601_pon *pon, bool allow)
 	g->allow_tx = true;
 	if (g->state != O7 && !g->olt_tx_disabled)
 		gc1601_pon_tx_on(pon);
-	dev_warn(pon->dev, "transmitter allowed: the ONU will answer the OLT\n");
+	dev_info(pon->dev, "transmitter enabled\n");
 	if (g->state == O2 && g->have_overhead && gc1601_gpon_may_range(g))
 		gc1601_gpon_enter(pon, O3);
 	return 0;
@@ -1408,7 +1414,7 @@ void gc1601_gpon_start(struct gc1601_pon *pon)
 		return;
 	/*
 	 * gc1601_pon_start() resets the MAC and turns optical TX off; if
-	 * userspace already set allow_tx before pon_start, restore optical TX.
+	 * userspace already set allow_tx before the MAC started, restore optical TX.
 	 */
 	if (g->allow_tx && !g->olt_tx_disabled && !pon->tx_hold &&
 	    pon->bosa_state == GC1601_BOSA_READY && !gc1601_bosa_soft_tx(pon, true))
@@ -1466,7 +1472,7 @@ static void gc1601_gpon_identity_release(struct gc1601_pon *pon)
 	if (!g->identity_wait)
 		return;
 	g->identity_wait = false;
-	dev_info(pon->dev, "GPON identity wait over, serial number %.4s%08X\n",
+	dev_dbg(pon->dev, "GPON identity wait over, serial number %.4s%08X\n",
 		 g->serial, get_unaligned_be32(g->serial + 4));
 	if (g->running && g->state == O2 && g->have_overhead && gc1601_gpon_may_range(g))
 		gc1601_gpon_enter(pon, O3);
@@ -1484,23 +1490,23 @@ static void gc1601_gpon_identity_timeout(struct work_struct *w)
 }
 
 /*
- * Boot-time start (galachip,gpon-autostart), receive-only until allow_tx.
- * With galachip,gpon-identity-wait-ms the first ranging also waits until
- * omci-agent writes 0 to gpon_identity_wait, or the wait runs out: the stock
- * "gpon startup 0", set the serial, "gpon startup 1" sequence.
+ * First start after probe, receive-only until allow_tx. The first ranging
+ * also waits until userspace releases the identity wait
+ * (XPON_ATTR_IDENTITY_WAIT), or the wait runs out, so the OLT never sees
+ * the default serial number before the configured one: the stock "gpon startup 0", set the serial, "gpon startup 1"
+ * sequence.
  */
 void gc1601_gpon_autostart(struct gc1601_pon *pon)
 {
 	struct gc1601_gpon *g = &pon->gpon;
-	u32 ms = 0;
-
-	device_property_read_u32(pon->dev, "galachip,gpon-identity-wait-ms", &ms);
 
 	mutex_lock(&pon->lock);
-	if (ms && !g->identity_released) {
+	if (!g->identity_released) {
 		g->identity_wait = true;
-		mod_delayed_work(system_wq, &g->identity_timer, msecs_to_jiffies(ms));
-		dev_info(pon->dev, "GPON ranging waits up to %u ms for the ONU identity\n", ms);
+		mod_delayed_work(system_wq, &g->identity_timer,
+				 msecs_to_jiffies(GPON_IDENTITY_WAIT_MS));
+		dev_dbg(pon->dev, "GPON ranging waits up to %u ms for the ONU identity\n",
+			 GPON_IDENTITY_WAIT_MS);
 	}
 	gc1601_gpon_start(pon);
 	mutex_unlock(&pon->lock);
@@ -1508,54 +1514,17 @@ void gc1601_gpon_autostart(struct gc1601_pon *pon)
 
 /* ---- sysfs ---- */
 
-static ssize_t gpon_enable_store(struct device *dev, struct device_attribute *attr,
-				 const char *buf, size_t count)
+/* Let the ONU answer the OLT, once the BOSA holds its calibration. */
+int gc1601_pon_set_allow_tx(struct gc1601_pon *pon, bool on)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	bool on;
 	int ret;
 
-	ret = kstrtobool(buf, &on);
-	if (ret)
-		return ret;
-
-	if (on) {
-		mutex_lock(&pon->lock);
-		if (pon->mode == GC1601_PON_GPON)
-			gc1601_gpon_start(pon);
-		else
-			ret = -EBUSY;
-		mutex_unlock(&pon->lock);
-		if (ret)
-			return ret;
-	} else {
-		/* The works take the lock; stop them before taking it here. */
-		gc1601_gpon_stop(pon);
-		mutex_lock(&pon->lock);
-		gc1601_gpon_set_allow_tx(pon, false);
-		gc1601_gpon_enter(pon, O1);
-		mutex_unlock(&pon->lock);
-	}
-	return count;
-}
-static DEVICE_ATTR_WO(gpon_enable);
-
-static ssize_t allow_tx_store(struct device *dev, struct device_attribute *attr,
-			      const char *buf, size_t count)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	bool on;
-	int ret;
-
-	ret = kstrtobool(buf, &on);
-	if (ret)
-		return ret;
 	if (on && READ_ONCE(pon->bosa_state) != GC1601_BOSA_READY)
 		flush_delayed_work(&pon->bringup);
 
 	mutex_lock(&pon->lock);
 	if (on && pon->bosa_state != GC1601_BOSA_READY) {
-		dev_err(dev, "transmitter refused: the BOSA is not programmed\n");
+		dev_err(pon->dev, "transmitter refused: the BOSA is not programmed\n");
 		ret = -EAGAIN;
 	} else if (pon->mode == GC1601_PON_EPON) {
 		ret = gc1601_epon_set_allow_tx(pon, on);
@@ -1563,78 +1532,66 @@ static ssize_t allow_tx_store(struct device *dev, struct device_attribute *attr,
 		ret = gc1601_gpon_set_allow_tx(pon, on);
 	}
 	mutex_unlock(&pon->lock);
-	return ret ?: count;
+	return ret;
 }
 
-static ssize_t allow_tx_show(struct device *dev, struct device_attribute *attr,
-			     char *buf)
+static int gc1601_dbg_gpon_state_show(struct seq_file *s, void *unused)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-
-	return sysfs_emit(buf, "%d\n", READ_ONCE(pon->mode) == GC1601_PON_EPON ?
-			  pon->epon.allow_tx : pon->gpon.allow_tx);
-}
-static DEVICE_ATTR_RW(allow_tx);
-
-static ssize_t gpon_state_show(struct device *dev, struct device_attribute *attr,
-			       char *buf)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
+	struct gc1601_pon *pon = s->private;
 	struct gc1601_gpon *g = &pon->gpon;
-	ssize_t len;
 	int i;
 
 	mutex_lock(&pon->lock);
-	len = sysfs_emit(buf,
-			 "running=%d allow_tx=%d identity_wait=%d state=O%d onu_id=%u los=%d lof=%d\n"
-			 "ploam_rx=%llu ploam_repeats=%llu ploam_crc_errors=%llu ploam_tx=%llu tx_refused=%llu dropped=%u los_events=%llu lof_events=%llu olt_pee=%llu\n"
-			 "omcc_port=%u omcc_valid=%u gem_ports=%u omci_services=%u omci_rx_errors=%lu omci_crc_errors=%lu sfu_error=%d\n",
-			 g->running, g->allow_tx, g->identity_wait, g->state, g->onu_id,
-			 g->los, g->lof,
-			 g->ploam_rx, g->ploam_repeats, g->ploam_crc_errors, g->ploam_tx, g->tx_refused, g->dropped,
-			 g->los_events, g->lof_events, g->olt_pee, g->omcc_port, g->omcc_valid,
-			 bitmap_weight(g->gem, 4096), pon->xp.services,
-			 pon->xp.omci_rx_errors, pon->xp.omci_crc_errors,
-			 READ_ONCE(pon->xp.sfu_last_error));
-	len += sysfs_emit_at(buf, len,
-		"omcc_hw=%08x omcc_gem_hw=%08x omci_rx_seen=%lu omci_rx_to_core=%lu omci_rx_alloc_failures=%lu\n"
-		"omci_rx_last_len=%u omci_rx_last_header=%08x omci_rx_last_crc=%08x omci_rx_expected_crc=%08x\n"
-		"omci_tx_attempts=%lu omci_tx_failures=%lu omci_tx_last_error=%d\n",
-		readl(pon->mac + PON_OMCC),
-		readl(pon->mac + PON_GEM + 4 * g->omcc_port),
-		READ_ONCE(pon->xp.omci_rx_seen),
-		READ_ONCE(pon->xp.omci_rx_to_core),
-		READ_ONCE(pon->xp.omci_rx_alloc_failures),
-		READ_ONCE(pon->xp.omci_rx_last_len),
-		READ_ONCE(pon->xp.omci_rx_last_header),
-		READ_ONCE(pon->xp.omci_rx_last_crc),
-		READ_ONCE(pon->xp.omci_rx_expected_crc),
-		READ_ONCE(pon->xp.omci_tx_attempts),
-		READ_ONCE(pon->xp.omci_tx_failures),
-		READ_ONCE(pon->xp.omci_tx_last_error));
-	len += sysfs_emit_at(buf, len,
-		"retained_valid=%u retained_omcc=%u key_valid=%u recovery_attempt=%u recovery_runs=%llu recovery_successes=%llu recovery_error=%d\n",
-		g->retained_valid, g->retained_omcc, g->key_valid,
-		g->recovery_attempt, g->recovery_runs, g->recovery_successes,
-		g->recovery_error);
-	len += sysfs_emit_at(buf, len, "generation=%u loss_pending=%u\n",
-			     READ_ONCE(g->generation), READ_ONCE(g->loss_pending));
-	len += sysfs_emit_at(buf, len, "alloc_ids=");
+	seq_printf(s,
+		   "running=%d allow_tx=%d identity_wait=%d state=O%d onu_id=%u los=%d lof=%d\n"
+		   "ploam_rx=%llu ploam_repeats=%llu ploam_crc_errors=%llu ploam_tx=%llu tx_refused=%llu dropped=%u los_events=%llu lof_events=%llu olt_pee=%llu\n"
+		   "omcc_port=%u omcc_valid=%u gem_ports=%u omci_services=%u omci_rx_errors=%lu omci_crc_errors=%lu sfu_error=%d\n",
+		   g->running, g->allow_tx, g->identity_wait, g->state, g->onu_id,
+		   g->los, g->lof,
+		   g->ploam_rx, g->ploam_repeats, g->ploam_crc_errors, g->ploam_tx,
+		   g->tx_refused, g->dropped,
+		   g->los_events, g->lof_events, g->olt_pee, g->omcc_port, g->omcc_valid,
+		   bitmap_weight(g->gem, 4096), pon->xp.services,
+		   pon->xp.omci_rx_errors, pon->xp.omci_crc_errors,
+		   READ_ONCE(pon->xp.sfu_last_error));
+	seq_printf(s,
+		   "omcc_hw=%08x omcc_gem_hw=%08x omci_rx_seen=%lu omci_rx_to_core=%lu omci_rx_alloc_failures=%lu\n"
+		   "omci_rx_last_len=%u omci_rx_last_header=%08x omci_rx_last_crc=%08x omci_rx_expected_crc=%08x\n"
+		   "omci_tx_attempts=%lu omci_tx_failures=%lu omci_tx_last_error=%d\n",
+		   readl(pon->mac + PON_OMCC),
+		   readl(pon->mac + PON_GEM + 4 * g->omcc_port),
+		   READ_ONCE(pon->xp.omci_rx_seen),
+		   READ_ONCE(pon->xp.omci_rx_to_core),
+		   READ_ONCE(pon->xp.omci_rx_alloc_failures),
+		   READ_ONCE(pon->xp.omci_rx_last_len),
+		   READ_ONCE(pon->xp.omci_rx_last_header),
+		   READ_ONCE(pon->xp.omci_rx_last_crc),
+		   READ_ONCE(pon->xp.omci_rx_expected_crc),
+		   READ_ONCE(pon->xp.omci_tx_attempts),
+		   READ_ONCE(pon->xp.omci_tx_failures),
+		   READ_ONCE(pon->xp.omci_tx_last_error));
+	seq_printf(s,
+		   "retained_valid=%u retained_omcc=%u key_valid=%u recovery_attempt=%u recovery_runs=%llu recovery_successes=%llu recovery_error=%d\n",
+		   g->retained_valid, g->retained_omcc, g->key_valid,
+		   g->recovery_attempt, g->recovery_runs, g->recovery_successes,
+		   g->recovery_error);
+	seq_printf(s, "generation=%u loss_pending=%u\n",
+		   READ_ONCE(g->generation), READ_ONCE(g->loss_pending));
+	seq_puts(s, "alloc_ids=");
 	for (i = 0; i < GPON_TCONTS; i++)
 		if (g->alloc[i] != U16_MAX)
-			len += sysfs_emit_at(buf, len, " %d:%u", i, g->alloc[i]);
-	len += sysfs_emit_at(buf, len, "\n");
+			seq_printf(s, " %d:%u", i, g->alloc[i]);
+	seq_putc(s, '\n');
 	if (g->have_overhead)
-		len += sysfs_emit_at(buf, len, "overhead=%10phN\n", g->overhead);
+		seq_printf(s, "overhead=%10phN\n", g->overhead);
 	mutex_unlock(&pon->lock);
-	return len;
+	return 0;
 }
-static DEVICE_ATTR_RO(gpon_state);
+DEFINE_SHOW_ATTRIBUTE(gc1601_dbg_gpon_state);
 
-static ssize_t gpon_events_show(struct device *dev, struct device_attribute *attr,
-				char *buf)
+static int gc1601_dbg_gpon_events_show(struct seq_file *s, void *unused)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
+	struct gc1601_pon *pon = s->private;
 	struct gc1601_gpon *g = &pon->gpon;
 	u64 sn_grant, sn_tx, ranging_grant, ranging_tx, ploam, fifo;
 	unsigned int queued, dropped;
@@ -1657,26 +1614,25 @@ static ssize_t gpon_events_show(struct device *dev, struct device_attribute *att
 	spin_unlock_irq(&g->lock);
 	hangs = READ_ONCE(g->mac_hangs);
 	mismatches = READ_ONCE(g->mac_mismatches);
-	return sysfs_emit(buf,
-			 "mac_irq=%08x sn_grant_samples=%llu sn_tx_samples=%llu ranging_grant_samples=%llu ranging_tx_samples=%llu ploam_irq_samples=%llu fifo_error_samples=%llu queued=%u dropped=%u\n"
-			 "watchdog=%d mac_hangs=%llu mac_mismatches=%llu dbru_fixes=%llu\n"
-			 "dbru_detected=%llu dbru_busy=%llu dbru_rewrites=%llu dbru_buffer_skips=%llu dbru_qmu_errors=%llu dbru_flag_clears=%llu dbru_flag_persists=%llu\n"
-			 "dbru_last_before=%08x dbru_last_rewritten=%08x dbru_last_skipped=%08x dbru_last_after=%08x dbru_last_rate_kbps=%u\n",
-			 irq, sn_grant, sn_tx, ranging_grant, ranging_tx, ploam, fifo,
-			 queued, dropped, gpon_watchdog, hangs, mismatches, dbru.passes,
-			 dbru.detected, dbru.busy, dbru.rewrites, dbru.buffer_skips,
-			 dbru.qmu_errors, dbru.flag_clears, dbru.flag_persists,
-			 dbru.before, dbru.rewritten, dbru.skipped, dbru.after, dbru.rate);
+	seq_printf(s,
+		   "mac_irq=%08x sn_grant_samples=%llu sn_tx_samples=%llu ranging_grant_samples=%llu ranging_tx_samples=%llu ploam_irq_samples=%llu fifo_error_samples=%llu queued=%u dropped=%u\n"
+		   "watchdog=%d mac_hangs=%llu mac_mismatches=%llu dbru_fixes=%llu\n"
+		   "dbru_detected=%llu dbru_busy=%llu dbru_rewrites=%llu dbru_buffer_skips=%llu dbru_qmu_errors=%llu dbru_flag_clears=%llu dbru_flag_persists=%llu\n"
+		   "dbru_last_before=%08x dbru_last_rewritten=%08x dbru_last_skipped=%08x dbru_last_after=%08x dbru_last_rate_kbps=%u\n",
+		   irq, sn_grant, sn_tx, ranging_grant, ranging_tx, ploam, fifo,
+		   queued, dropped, gpon_watchdog, hangs, mismatches, dbru.passes,
+		   dbru.detected, dbru.busy, dbru.rewrites, dbru.buffer_skips,
+		   dbru.qmu_errors, dbru.flag_clears, dbru.flag_persists,
+		   dbru.before, dbru.rewritten, dbru.skipped, dbru.after, dbru.rate);
+	return 0;
 }
-static DEVICE_ATTR_RO(gpon_events);
+DEFINE_SHOW_ATTRIBUTE(gc1601_dbg_gpon_events);
 
-static ssize_t ploam_log_show(struct device *dev, struct device_attribute *attr,
-			      char *buf)
+static int gc1601_dbg_ploam_log_show(struct seq_file *s, void *unused)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
+	struct gc1601_pon *pon = s->private;
 	struct gc1601_gpon *g = &pon->gpon;
 	unsigned int i, n;
-	ssize_t len = 0;
 
 	mutex_lock(&pon->lock);
 	n = min_t(unsigned int, g->log_pos, GPON_PLOAM_LOG);
@@ -1685,15 +1641,15 @@ static ssize_t ploam_log_show(struct device *dev, struct device_attribute *attr,
 		u32 us;
 		u64 sec = div_u64_rem(div_u64(p->ns, NSEC_PER_USEC), USEC_PER_SEC, &us);
 
-		len += sysfs_emit_at(buf, len, "%llu.%06u %*phN\n", sec, us,
-				     GPON_PLOAM_LEN, p->msg);
+		seq_printf(s, "%llu.%06u %*phN\n", sec, us,
+			   GPON_PLOAM_LEN, p->msg);
 	}
 	mutex_unlock(&pon->lock);
-	return len;
+	return 0;
 }
-static DEVICE_ATTR_RO(ploam_log);
+DEFINE_SHOW_ATTRIBUTE(gc1601_dbg_ploam_log);
 
-/* chipset_set_sn: optical TX +0x30/+0x34, big-endian. Called with pon->lock. */
+/* Serial number: optical TX +0x30/+0x34, big-endian. Called with pon->lock. */
 static void gc1601_gpon_write_serial(struct gc1601_pon *pon, const u8 *sn)
 {
 	memcpy(pon->gpon.serial, sn, sizeof(pon->gpon.serial));
@@ -1733,14 +1689,6 @@ void gc1601_gpon_set_identity_locked(struct gc1601_pon *pon, const u8 *serial,
 		pon->gpon.retained_valid = false;
 		memcpy(pon->gpon.password, password, sizeof(pon->gpon.password));
 	}
-}
-
-void gc1601_gpon_set_identity(struct gc1601_pon *pon, const u8 *serial,
-			      const u8 *password)
-{
-	mutex_lock(&pon->lock);
-	gc1601_gpon_set_identity_locked(pon, serial, password);
-	mutex_unlock(&pon->lock);
 }
 
 /* T-CONT, and so packet-engine instance, of an Alloc-ID the OLT assigned. */
@@ -1799,177 +1747,90 @@ void gc1601_gpon_omci_set_gem(struct gc1601_pon *pon, u16 port, bool valid, bool
 	gc1601_gpon_set_gem(pon, port, valid, aes);
 }
 
-/* "VVVVSSSSSSSS": four vendor characters and eight hex digits. */
-static ssize_t serial_number_store(struct device *dev, struct device_attribute *attr,
-				   const char *buf, size_t count)
+/* End the first ranging's wait for the ONU identity: the agent has set it. */
+int gc1601_gpon_release_identity_wait(struct gc1601_pon *pon)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	char vendor[5], tail[9];
-	u8 sn[8];
-	int i;
-
-	if (sscanf(buf, "%4c%8s", vendor, tail) != 2 || strlen(tail) != 8 ||
-	    hex2bin(sn + 4, tail, 4))
-		return -EINVAL;
-	for (i = 0; i < 4; i++) {
-		if (!isalnum(vendor[i]))
-			return -EINVAL;
-		sn[i] = vendor[i];
-	}
-
-	mutex_lock(&pon->lock);
-	if (memcmp(sn, pon->gpon.serial, sizeof(sn))) {
-		gc1601_gpon_write_serial(pon, sn);
-		gc1601_gpon_rerange(pon);
-	}
-	mutex_unlock(&pon->lock);
-	return count;
-}
-
-static ssize_t serial_number_show(struct device *dev, struct device_attribute *attr,
-				  char *buf)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	const u8 *sn = pon->gpon.serial;
-
-	return sysfs_emit(buf, "%.4s%08X\n", sn, get_unaligned_be32(sn + 4));
-}
-static DEVICE_ATTR_RW(serial_number);
-
-/* Ten password bytes sent on Request_Password; shorter input is zero padded. */
-static ssize_t password_store(struct device *dev, struct device_attribute *attr,
-			      const char *buf, size_t count)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	size_t len = count;
-
-	if (len && buf[len - 1] == '\n')
-		len--;
-	if (len > sizeof(pon->gpon.password))
-		return -EINVAL;
-
-	mutex_lock(&pon->lock);
-	memset(pon->gpon.password, 0, sizeof(pon->gpon.password));
-	memcpy(pon->gpon.password, buf, len);
-	mutex_unlock(&pon->lock);
-	return count;
-}
-static DEVICE_ATTR_WO(password);
-
-/* Reads 1 while the first ranging waits; omci-agent writes 0 to end it. */
-static ssize_t gpon_identity_wait_show(struct device *dev,
-				       struct device_attribute *attr, char *buf)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-
-	return sysfs_emit(buf, "%d\n", READ_ONCE(pon->gpon.identity_wait));
-}
-
-static ssize_t gpon_identity_wait_store(struct device *dev,
-					struct device_attribute *attr,
-					const char *buf, size_t count)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	bool wait;
-	int ret;
-
-	ret = kstrtobool(buf, &wait);
-	if (ret)
-		return ret;
-	if (wait)
-		return -EINVAL;
-
 	cancel_delayed_work(&pon->gpon.identity_timer);
 	mutex_lock(&pon->lock);
 	gc1601_gpon_identity_release(pon);
 	mutex_unlock(&pon->lock);
-	return count;
+	return 0;
 }
-static DEVICE_ATTR_RW(gpon_identity_wait);
 
-static ssize_t gpon_ber_show(struct device *dev, struct device_attribute *attr,
-			   char *buf)
+static int gc1601_dbg_gpon_ber_show(struct seq_file *s, void *unused)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
+	struct gc1601_pon *pon = s->private;
 	struct gc1601_gpon *g = &pon->gpon;
-	ssize_t len;
 
 	mutex_lock(&pon->lock);
-	len = sysfs_emit(buf, "interval_frames=%u sequence=%u sent=%llu failed=%llu "
-			 "bip_errors=%llu bip_blocks=%llu\n",
-			 g->ber_interval_frames, g->rei_sequence, g->rei_sent,
-			 g->rei_failed, g->counter[CNT_BIP_ERRORS], g->counter[CNT_BIP_BLOCKS]);
+	seq_printf(s, "interval_frames=%u sequence=%u sent=%llu failed=%llu bip_errors=%llu bip_blocks=%llu\n",
+		   g->ber_interval_frames, g->rei_sequence, g->rei_sent,
+		   g->rei_failed, g->counter[CNT_BIP_ERRORS], g->counter[CNT_BIP_BLOCKS]);
 	mutex_unlock(&pon->lock);
-	return len;
+	return 0;
 }
-static DEVICE_ATTR_RO(gpon_ber);
+DEFINE_SHOW_ATTRIBUTE(gc1601_dbg_gpon_ber);
 
 /* Totals since the driver loaded; read fresh in O5. */
-static ssize_t pon_counters_show(struct device *dev, struct device_attribute *attr,
-				 char *buf)
+static int gc1601_dbg_pon_counters_show(struct seq_file *s, void *unused)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
+	struct gc1601_pon *pon = s->private;
 	struct gc1601_gpon *g = &pon->gpon;
-	ssize_t len = 0;
 	unsigned int i;
 
 	mutex_lock(&pon->lock);
 	if (g->running && g->state == O5)
 		gc1601_gpon_sample_all(pon);
 	for (i = 0; i < GPON_COUNTERS; i++)
-		len += sysfs_emit_at(buf, len, "%s=%llu\n", gc1601_gpon_counters[i].name,
-				     g->counter[i]);
+		seq_printf(s, "%s=%llu\n", gc1601_gpon_counters[i].name,
+			   g->counter[i]);
 	mutex_unlock(&pon->lock);
-	return len;
+	return 0;
 }
-static DEVICE_ATTR_RO(pon_counters);
+DEFINE_SHOW_ATTRIBUTE(gc1601_dbg_pon_counters);
 
 /*
- * chipset_enable_tcont_stat: the counter block +0x50 holds four slots, each a
+ * Per-T-CONT counters: the counter block +0x50 holds four slots, each a
  * T-CONT index with bit 6 enabling it. Slot k counts at +0x80 + 4k (GEM
  * frames), +0xa0 + 4k (bytes) and +0xc0 + 4k (two 16-bit fields, the high
  * one following the grants). All are clear-on-read; totals are kept here.
  */
 #define GC1601_TCONT_STAT_SEL	0x43424140	/* T-CONT 0..3 in slots 0..3 */
 
-static ssize_t tcont_stats_show(struct device *dev, struct device_attribute *attr,
-				char *buf)
+static int gc1601_dbg_tcont_stats_show(struct seq_file *s, void *unused)
 {
-	static u64 frames[4], bytes[4], lo[4], hi[4];
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
+	struct gc1601_pon *pon = s->private;
+	struct gc1601_gpon *g = &pon->gpon;
 	void __iomem *cnt = pon->mac + PON_COUNTERS;
-	ssize_t len = 0;
 	unsigned int k;
 	u32 v;
 
 	mutex_lock(&pon->lock);
 	if (readl(cnt + 0x50) != GC1601_TCONT_STAT_SEL)
 		writel(GC1601_TCONT_STAT_SEL, cnt + 0x50);
-	len += sysfs_emit_at(buf, len, "instances=%08x alloc=%08x %08x\n",
-			     readl(pon->mac + PON_ONU + 0xc0),
-			     readl(pon->mac + PON_ONU + 0x40),
-			     readl(pon->mac + PON_ONU + 0x44));
+	seq_printf(s, "instances=%08x alloc=%08x %08x\n",
+		   readl(pon->mac + PON_ONU + 0xc0),
+		   readl(pon->mac + PON_ONU + 0x40),
+		   readl(pon->mac + PON_ONU + 0x44));
 	for (k = 0; k < 4; k++) {
-		frames[k] += readl(cnt + 0x80 + 4 * k);
-		bytes[k] += readl(cnt + 0xa0 + 4 * k);
+		g->tcont_frames[k] += readl(cnt + 0x80 + 4 * k);
+		g->tcont_bytes[k] += readl(cnt + 0xa0 + 4 * k);
 		v = readl(cnt + 0xc0 + 4 * k);
-		lo[k] += v & 0xffff;
-		hi[k] += v >> 16;
-		len += sysfs_emit_at(buf, len,
-				     "tcont%u frames=%llu bytes=%llu c0_lo=%llu c0_hi=%llu\n",
-				     k, frames[k], bytes[k], lo[k], hi[k]);
+		g->tcont_c0_lo[k] += v & 0xffff;
+		g->tcont_c0_hi[k] += v >> 16;
+		seq_printf(s, "tcont%u frames=%llu bytes=%llu c0_lo=%llu c0_hi=%llu\n",
+			   k, g->tcont_frames[k], g->tcont_bytes[k],
+			   g->tcont_c0_lo[k], g->tcont_c0_hi[k]);
 	}
 	mutex_unlock(&pon->lock);
-	return len;
+	return 0;
 }
-static DEVICE_ATTR_RO(tcont_stats);
+DEFINE_SHOW_ATTRIBUTE(gc1601_dbg_tcont_stats);
 
-static ssize_t ploam_trace_show(struct device *dev, struct device_attribute *attr,
-				char *buf)
+static int gc1601_dbg_ploam_trace_show(struct seq_file *s, void *unused)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
+	struct gc1601_pon *pon = s->private;
 	unsigned int i, n;
-	ssize_t len = 0;
 
 	mutex_lock(&pon->lock);
 	n = min_t(unsigned int, gc1601_ploam_trace_pos, GC1601_PLOAM_TRACE);
@@ -1979,33 +1840,46 @@ static ssize_t ploam_trace_show(struct device *dev, struct device_attribute *att
 		u64 sec = div_u64_rem(div_u64(gc1601_ploam_trace[j].ns, NSEC_PER_USEC),
 				      USEC_PER_SEC, &us);
 
-		len += sysfs_emit_at(buf, len, "%llu.%06u %c %12phN\n", sec, us,
-				     gc1601_ploam_trace[j].dir, gc1601_ploam_trace[j].msg);
+		seq_printf(s, "%llu.%06u %c %12phN\n", sec, us,
+			   gc1601_ploam_trace[j].dir, gc1601_ploam_trace[j].msg);
 	}
 	mutex_unlock(&pon->lock);
-	return len;
+	return 0;
 }
-static DEVICE_ATTR_RO(ploam_trace);
+DEFINE_SHOW_ATTRIBUTE(gc1601_dbg_ploam_trace);
 
-static struct attribute *gc1601_gpon_attrs[] = {
-	&dev_attr_pon_counters.attr,
-	&dev_attr_ploam_trace.attr,
-	&dev_attr_tcont_stats.attr,
-	&dev_attr_gpon_enable.attr,
-	&dev_attr_allow_tx.attr,
-	&dev_attr_gpon_identity_wait.attr,
-	&dev_attr_gpon_ber.attr,
-	&dev_attr_gpon_state.attr,
-	&dev_attr_gpon_events.attr,
-	&dev_attr_ploam_log.attr,
-	&dev_attr_serial_number.attr,
-	&dev_attr_password.attr,
-	NULL
-};
+void gc1601_gpon_debugfs_init(struct gc1601_pon *pon)
+{
+	struct dentry *dir = pon->debugfs;
 
-const struct attribute_group gc1601_gpon_group = {
-	.attrs = gc1601_gpon_attrs,
-};
+	debugfs_create_file("gpon_state", 0400, dir, pon, &gc1601_dbg_gpon_state_fops);
+	debugfs_create_file("gpon_events", 0400, dir, pon, &gc1601_dbg_gpon_events_fops);
+	debugfs_create_file("gpon_ber", 0400, dir, pon, &gc1601_dbg_gpon_ber_fops);
+	debugfs_create_file("ploam_log", 0400, dir, pon, &gc1601_dbg_ploam_log_fops);
+	debugfs_create_file("ploam_trace", 0400, dir, pon, &gc1601_dbg_ploam_trace_fops);
+	debugfs_create_file("pon_counters", 0400, dir, pon, &gc1601_dbg_pon_counters_fops);
+	debugfs_create_file("tcont_stats", 0400, dir, pon, &gc1601_dbg_tcont_stats_fops);
+}
+
+void gc1601_gpon_stats_strings(u8 *data)
+{
+	unsigned int i;
+
+	for (i = 0; i < GPON_NAMED_COUNTERS; i++)
+		ethtool_puts(&data, gc1601_gpon_counters[i].name);
+}
+
+/* Totals since the driver loaded; read fresh in O5. */
+void gc1601_gpon_stats(struct gc1601_pon *pon, u64 *data)
+{
+	struct gc1601_gpon *g = &pon->gpon;
+
+	mutex_lock(&pon->lock);
+	if (g->running && g->state == O5)
+		gc1601_gpon_sample_all(pon);
+	memcpy(data, g->counter, GPON_NAMED_COUNTERS * sizeof(*data));
+	mutex_unlock(&pon->lock);
+}
 
 int gc1601_gpon_init(struct gc1601_pon *pon)
 {

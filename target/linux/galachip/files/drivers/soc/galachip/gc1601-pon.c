@@ -2,234 +2,40 @@
 /*
  * GalaChip GC1601 PON SerDes and MAC bring-up, GPON or EPON.
  *
- * Status reads are side-effect free. The write triggers replay vendor
- * sequences: serdes_init (GPL mach-faraday/serdes.c), gmac_init
- * (xpon_sdk GMAC_hw_init plus optical RX enable) and bosa_program (gccli
- * UX3320S programming from the unit's hwconfig blob). Optical TX is forced
- * off by every path and the BOSA soft TX disable is left set: nothing here
+ * Status reads are side-effect free. Optical TX is forced off by every
+ * bring-up path and the BOSA soft TX disable is left set: nothing here
  * enables the laser.
  *
- * With galachip,pon-bringup the BOSA is programmed once after probe, as the
- * stock rcS does with "gccli bob init" before loading xpon_sdk: the UX3320S
- * keeps no calibration across a power cycle on these units. The WAN mode,
- * SerDes and MAC follow on pon_start, once userspace has chosen GPON or EPON.
+ * A board with a BOSA (galachip,bosa-i2c) has it programmed once after probe,
+ * as the stock firmware does at boot before the PON starts: the UX3320S keeps
+ * no calibration across a power cycle on these units. The WAN mode,
+ * SerDes and MAC follow, receive-only in GPON mode until userspace allows
+ * the transmitter or switches to EPON.
  */
 
 #include <linux/bitfield.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/io.h>
-#include <linux/iopoll.h>
 #include <linux/ktime.h>
 #include <linux/module.h>
-#include <linux/mtd/mtd.h>
+#include <linux/mfd/syscon.h>
 #include <linux/mutex.h>
+#include <linux/nvmem-consumer.h>
 #include <linux/of.h>
+#include <linux/phy/phy.h>
+#include <linux/phy/phy-pon.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
-#include <linux/sysfs.h>
-#include <linux/unaligned.h>
+#include <linux/regmap.h>
+
+#include <net/xpon.h>
 
 #include "gc1601-pon.h"
 
-struct gc1601_pon_seq {
-	u32 addr;
-	u32 val;
-};
-
-static const struct gc1601_pon_seq gpon_serdes_config[] = {
-	{ 0x00194, 0xb7 },
-	{ 0x00198, 0xb7 },
-	{ 0x0019c, 0x06 },
-	{ 0x001a0, 0x0c },
-	{ 0x001a4, 0x1a },
-	{ 0x001a8, 0x1a },
-	{ 0x001ac, 0x01 },
-	{ 0x001b0, 0x02 },
-	{ 0x001b4, 0x17 },
-	{ 0x001b8, 0x0d },
-	{ 0x20194, 0xaa },
-	{ 0x20198, 0x00 },
-	{ 0x2019c, 0x4f },
-	{ 0x201a0, 0xb7 },
-	{ 0x201a4, 0x57 },
-	{ 0x201a8, 0x06 },
-	{ 0x201ac, 0x0c },
-	{ 0x201b0, 0x1a },
-	{ 0x201b4, 0x0a },
-	{ 0x201b8, 0x05 },
-	{ 0x201bc, 0x0f },
-	{ 0x201c0, 0x10 },
-	{ 0x201c4, 0x00 },
-	{ 0x201c8, 0x10 },
-	{ 0x201cc, 0x00 },
-	{ 0x201d0, 0xff },
-	{ 0x201d4, 0xb3 },
-	{ 0x201d8, 0xf7 },
-	{ 0x201dc, 0xd0 },
-	{ 0x201e0, 0xef },
-	{ 0x201e4, 0xfb },
-	{ 0x201e8, 0xff },
-	{ 0x201ec, 0xff },
-	{ 0x201f0, 0xff },
-	{ 0x201f4, 0xff },
-	{ 0x201f8, 0xff },
-	{ 0x201fc, 0xd3 },
-	{ 0x20200, 0xd4 },
-	{ 0x20204, 0xe3 },
-	{ 0x20208, 0xef },
-	{ 0x2020c, 0xfb },
-	{ 0x20210, 0xfb },
-	{ 0x20214, 0xff },
-	{ 0x20218, 0xef },
-	{ 0x2021c, 0xff },
-	{ 0x20220, 0xff },
-	{ 0x20224, 0xd3 },
-	{ 0x20228, 0xd4 },
-	{ 0x2022c, 0xe3 },
-	{ 0x20230, 0xef },
-	{ 0x20234, 0xfb },
-	{ 0x20238, 0xfb },
-	{ 0x2023c, 0xff },
-	{ 0x20240, 0xef },
-	{ 0x20244, 0xff },
-	{ 0x20248, 0xff },
-	{ 0x2024c, 0xfb },
-	{ 0x20250, 0xff },
-	{ 0x20254, 0x3f },
-	{ 0x20258, 0x00 },
-	{ 0x2025c, 0x7d },
-	{ 0x20260, 0x33 },
-	{ 0x20264, 0x02 },
-	{ 0x20268, 0x01 },
-	{ 0x2026c, 0x08 },
-	{ 0x20270, 0x04 },
-	{ 0x20274, 0x04 },
-	{ 0x20278, 0x00 },
-	{ 0x2027c, 0x00 },
-	{ 0x20280, 0x08 },
-	{ 0x20284, 0x04 },
-	{ 0x20288, 0x00 },
-	{ 0x2028c, 0x00 },
-	{ 0x20290, 0x04 },};
-
-static const struct gc1601_pon_seq gpon_serdes_ctrl[] = {
-	{ 0x00, 1 }, { 0x08, 1 }, { 0x14, 0 }, { 0x16, 1 },
-	{ 0x18, 0 }, { 0x1a, 2 }, { 0x3c, 1 }, { 0x3e, 7 },
-};
-
-static const struct gc1601_pon_seq epon_serdes_config[] = {
-	{ 0x00194, 0xbf },
-	{ 0x00198, 0xbf },
-	{ 0x0019c, 0x0a },
-	{ 0x001a0, 0x0a },
-	{ 0x001a4, 0x0e },
-	{ 0x001a8, 0x0e },
-	{ 0x001ac, 0x01 },
-	{ 0x001b0, 0x01 },
-	{ 0x001b4, 0x11 },
-	{ 0x001b8, 0x0d },
-	{ 0x20194, 0xaa },
-	{ 0x20198, 0x00 },
-	{ 0x2019c, 0x3f },
-	{ 0x201a0, 0xbf },
-	{ 0x201a4, 0xbf },
-	{ 0x201a8, 0x0a },
-	{ 0x201ac, 0x0a },
-	{ 0x201b0, 0x0e },
-	{ 0x201b4, 0x0e },
-	{ 0x201b8, 0x03 },
-	{ 0x201bc, 0x1f },
-	{ 0x201c0, 0x10 },
-	{ 0x201c4, 0x00 },
-	{ 0x201c8, 0x10 },
-	{ 0x201cc, 0x00 },
-	{ 0x201d0, 0xff },
-	{ 0x201d4, 0xc3 },
-	{ 0x201d8, 0xf5 },
-	{ 0x201dc, 0xd9 },
-	{ 0x201e0, 0xf2 },
-	{ 0x201e4, 0xfc },
-	{ 0x201e8, 0xfe },
-	{ 0x201ec, 0xff },
-	{ 0x201f0, 0xff },
-	{ 0x201f4, 0xff },
-	{ 0x201f8, 0xff },
-	{ 0x201fc, 0xdb },
-	{ 0x20200, 0xe9 },
-	{ 0x20204, 0xc2 },
-	{ 0x20208, 0xf2 },
-	{ 0x2020c, 0xfc },
-	{ 0x20210, 0xfe },
-	{ 0x20214, 0xf2 },
-	{ 0x20218, 0xf2 },
-	{ 0x2021c, 0xff },
-	{ 0x20220, 0xff },
-	{ 0x20224, 0xdb },
-	{ 0x20228, 0xe9 },
-	{ 0x2022c, 0xc2 },
-	{ 0x20230, 0xf2 },
-	{ 0x20234, 0xfc },
-	{ 0x20238, 0xfe },
-	{ 0x2023c, 0xf2 },
-	{ 0x20240, 0xf2 },
-	{ 0x20244, 0xff },
-	{ 0x20248, 0xff },
-	{ 0x2024c, 0xff },
-	{ 0x20250, 0xf2 },
-	{ 0x20254, 0x3f },
-	{ 0x20258, 0x00 },
-	{ 0x2025c, 0x64 },
-	{ 0x20260, 0x00 },
-	{ 0x20264, 0x02 },
-	{ 0x20268, 0x01 },
-	{ 0x2026c, 0x05 },
-	{ 0x20270, 0x05 },
-	{ 0x20274, 0x04 },
-	{ 0x20278, 0x00 },
-	{ 0x2027c, 0x00 },
-	{ 0x20280, 0x08 },
-	{ 0x20284, 0x04 },
-	{ 0x20288, 0x00 },
-	{ 0x2028c, 0x00 },
-	{ 0x20290, 0x04 },
-};
-static const struct gc1601_pon_seq epon_serdes_ctrl[] = {
-	{ 0x00, 1 }, { 0x08, 1 }, { 0x14, 1 }, { 0x16, 1 },
-	{ 0x18, 1 }, { 0x1a, 1 }, { 0x3c, 1 }, { 0x3e, 7 },
-};
-
-/* galachip_serdes_set_{g,e}pon_normal from the vendor GPL kernel */
-struct gc1601_pon_serdes {
-	const char *name;
-	u32 pll_cfg0, pll_cfg1, pll, pll_clear;
-	const struct gc1601_pon_seq *ctrl, *config;
-	unsigned int config_len;
-	u32 check194, check19c;		/* table readback */
-};
-
-static const struct gc1601_pon_serdes gc1601_pon_serdes_modes[] = {
-	[GC1601_PON_GPON] = {
-		.name = "GPON",
-		.pll_cfg0 = 0x1001a, .pll_cfg1 = 0x353f7d,
-		.pll = 0x3e005f, .pll_clear = 0x7,
-		.ctrl = gpon_serdes_ctrl, .config = gpon_serdes_config,
-		.config_len = ARRAY_SIZE(gpon_serdes_config),
-		.check194 = 0xb7, .check19c = 0x06,
-	},
-	[GC1601_PON_EPON] = {
-		.name = "EPON",
-		.pll_cfg0 = 0x1001c, .pll_cfg1 = 0,
-		.pll = 0x3c005f, .pll_clear = 0x5,
-		.ctrl = epon_serdes_ctrl, .config = epon_serdes_config,
-		.config_len = ARRAY_SIZE(epon_serdes_config),
-		.check194 = 0xbf, .check19c = 0x0a,
-	},
-};
-
 static const char *gc1601_pon_mode_name(int mode)
 {
-	return gc1601_pon_serdes_modes[mode].name;
+	return mode == GC1601_PON_EPON ? "EPON" : "GPON";
 }
 
 void gc1601_pon_tx_off(struct gc1601_pon *pon)
@@ -242,14 +48,14 @@ void gc1601_pon_tx_off(struct gc1601_pon *pon)
 	if (pon->emac && pon->mode == GC1601_PON_EPON)
 		writel(readl(pon->emac + EMAC_CTRL) & ~EMAC_CTRL_TX_EN, pon->emac + EMAC_CTRL);
 
-	/* txpwr_manual_op(0): manual mode, laser power off */
+	/* Manual laser power control, laser off */
 	val = readl(pon->txpwr) & ~(PON_TXPWR_MANUAL | PON_TXPWR_OFF | PON_TXPWR_SEL);
 	writel(val | PON_TXPWR_SEL | PON_TXPWR_OFF, pon->txpwr);
 }
 
 /*
- * txpwr_manual_op(1), then chipset_set_gpon_opt_tx_en(1) or
- * chipset_set_epon_tx_en(1) for the active MAC: only via allow_tx.
+ * Laser power on, then the optical TX enable of the active MAC: only via
+ * allow_tx.
  */
 void gc1601_pon_tx_on(struct gc1601_pon *pon)
 {
@@ -262,30 +68,13 @@ void gc1601_pon_tx_on(struct gc1601_pon *pon)
 		writel(readl(pon->mac + PON_OPT_TX) | PON_OPT_TX_EN, pon->mac + PON_OPT_TX);
 }
 
-static int gc1601_pon_wait_scu(struct gc1601_pon *pon, u32 bit, const char *what)
-{
-	u32 val;
-	int ret;
-
-	ret = readl_poll_timeout(pon->scu + SCU_PON_STATUS, val, val & bit, 10,
-				 PON_LOCK_TIMEOUT_US);
-	if (ret)
-		dev_err(pon->dev, "%s timed out (status %08x)\n", what, val);
-	return ret;
-}
-
-static void gc1601_pon_serdes_clear(struct gc1601_pon *pon, u32 off, u32 bits)
-{
-	writel(readl(pon->serdes + off) & ~bits, pon->serdes + off);
-}
-
 /*
- * xpon_sdk's chip set-up for a WAN mode: GLOBAL_hw_init, the bit GLOBAL_init
- * sets at 0x90c40020 and chipset_config_wanmode(), which selects the GPON or
- * EPON MAC and its upstream clocking.
- * The 0x90c00008 reset pulse of GLOBAL_hw_init is left out: it also resets the
- * packet engine Ethernet runs on. So is the global interrupt mask, which the
- * Ethernet interrupt may depend on.
+ * Chip set-up for a WAN mode: the global PON enable at 0x90c40020 and the
+ * WAN mode register, which selects the GPON or EPON MAC and its upstream
+ * clocking.
+ * The stock firmware also pulses the 0x90c00008 reset here; that is left out
+ * because it also resets the packet engine Ethernet runs on. So is the global
+ * interrupt mask, which the Ethernet interrupt may depend on.
  */
 static void gc1601_pon_global_mode(struct gc1601_pon *pon, int mode)
 {
@@ -299,14 +88,14 @@ static void gc1601_pon_global_mode(struct gc1601_pon *pon, int mode)
 	u32 g18 = readl(pon->global + GLB_CFG18);
 	u32 txpwr = readl(pon->txpwr);
 
-	/* GLOBAL_hw_init */
+	/* All PON clocks on */
 	writel(0xffffffff, pon->top + TOP_CLK_EN);
 	writel(7, pon->global + GLB_CFG10);
 	writel(epon ? GLB_WAN_CFG_EPON : GLB_WAN_CFG_GPON, pon->global + GLB_WAN_CFG);
 	writel(g18 | BIT(16), pon->global + GLB_CFG18);
-	/* GLOBAL_init */
+	/* Global PON enable */
 	writel(readl(pon->txpwr) | PON_TXPWR_GLOBAL_EN, pon->txpwr);
-	/* chipset_config_wanmode() */
+	/* WAN mode and upstream clock */
 	writel((topc & 0xffff8000) | (epon ? TOP_WAN_CLK_EPON : TOP_WAN_CLK_GPON),
 	       pon->top + TOP_WAN_CLK);
 	writel(((g4 | GLB_CTRL_RUN) & ~GLB_CTRL_EPON) | (epon ? GLB_CTRL_EPON_SEL : 0),
@@ -316,7 +105,7 @@ static void gc1601_pon_global_mode(struct gc1601_pon *pon, int mode)
 	       pon->global + GLB_MAC_SEL);
 	writel(epon ? TOP_ENABLE_EPON : TOP_ENABLE_GPON, pon->top + TOP_ENABLE);
 
-	dev_info(pon->dev,
+	dev_dbg(pon->dev,
 		 "%s mode: top %08x/%08x/%08x -> %08x/%08x/%08x, global 04/10/14/18 %08x/%08x/%08x/%08x -> %08x/%08x/%08x/%08x, sel %02x, txpwr %08x -> %08x\n",
 		 gc1601_pon_mode_name(mode), top0, top4, topc, readl(pon->top + TOP_ENABLE),
 		 readl(pon->top + TOP_CLK_EN), readl(pon->top + TOP_WAN_CLK),
@@ -328,66 +117,17 @@ static void gc1601_pon_global_mode(struct gc1601_pon *pon, int mode)
 
 static int gc1601_pon_serdes_init(struct gc1601_pon *pon, int mode)
 {
-	const struct gc1601_pon_serdes *m = &gc1601_pon_serdes_modes[mode];
-	unsigned int i;
-	int ret;
-
 	/*
-	 * board-dt.c: let the MAC send the PLOAM Dying_Gasp itself when the
-	 * supply drops; the stock SDK never handles it in software.
+	 * Let the MAC send the PLOAM Dying_Gasp itself when the supply drops;
+	 * the stock firmware never handles it in software.
 	 */
-	writel(readl(pon->scu + SCU_PON_DG) & ~BIT(0), pon->scu + SCU_PON_DG);
+	regmap_clear_bits(pon->scu, GC1601_SCU_PON_DG, GC1601_SCU_PON_DG_SW);
 
-	writel(m->pll_cfg0, pon->scu + SCU_PON_PLL_CFG0);
-	writel(m->pll_cfg1, pon->scu + SCU_PON_PLL_CFG1);
-	writel(m->pll, pon->scu + SCU_PON_PLL);
-	writel(readl(pon->scu + SCU_PON_PLL) & ~m->pll_clear, pon->scu + SCU_PON_PLL);
-
-	ret = gc1601_pon_wait_scu(pon, SCU_PON_STATUS_PLL_LOCK, "PON PLL lock");
-	if (ret)
-		return ret;
-
-	writel(readl(pon->scu + SCU_PON_PLL) & ~0x40, pon->scu + SCU_PON_PLL);
-	writel(0x11810, pon->scu + SCU_PON_RESET);
-	udelay(20);
-
-	for (i = 0; i < ARRAY_SIZE(gpon_serdes_ctrl); i++)
-		writew(m->ctrl[i].val, pon->serdes_ctrl + m->ctrl[i].addr);
-
-	writel(0x51810, pon->scu + SCU_PON_RESET);
-	udelay(20);
-
-	for (i = 0; i < m->config_len; i++)
-		writel(m->config[i].val, pon->serdes + m->config[i].addr);
-
-	if (readl(pon->serdes + 0x194) != m->check194 ||
-	    readl(pon->serdes + 0x19c) != m->check19c) {
-		dev_err(pon->dev, "SerDes table readback mismatch\n");
-		return -EIO;
-	}
-
-	/* De-assert the SerDes synthesizer and TX/RX resets. */
-	writel(0x1d1810, pon->scu + SCU_PON_RESET);
-	udelay(20);
-
-	writel(0x13, pon->serdes + 0x57 * 4);
-	writel(0xdb, pon->serdes + 0x15 * 4);
-	writel(0x03, pon->serdes + 0x16 * 4);
-	writel(0x00, pon->serdes + 0x17 * 4);
-	writel(0x56, pon->serdes + 0x8008 * 4);
-
-	ret = gc1601_pon_wait_scu(pon, SCU_PON_STATUS_READY, "SerDes ready");
-	if (ret)
-		return ret;
-
-	gc1601_pon_serdes_clear(pon, 0x2001c, 0xc0);
-	gc1601_pon_serdes_clear(pon, 0x20184, 0x08);
-	writel(0x04, pon->serdes + 0x1c);	/* CDR loopback enable */
-	writel(0x13, pon->serdes + 0x20034);	/* loop timing on */
-	return 0;
+	return phy_set_mode_ext(pon->serdes, PHY_MODE_PON,
+				mode == GC1601_PON_EPON ? PHY_PON_EPON : PHY_PON_GPON);
 }
 
-/* GMAC_hw_init from xpon_sdk, with the stock opt_polar_data_low = 1. */
+/* GPON MAC set-up, with the optical data polarity low as on the stock firmware. */
 void gc1601_pon_gmac_init(struct gc1601_pon *pon)
 {
 	void __iomem *tx = pon->mac + PON_OPT_TX;
@@ -407,7 +147,7 @@ void gc1601_pon_gmac_init(struct gc1601_pon *pon)
 	writel(1, pon->mac + PON_COUNTERS + 0x38);
 	writel(1, tx + 0x114);
 
-	/* chipset_set_gpon_opt_delay(16, 2) */
+	/* Optical TX delay: 16 and 2, the stock values */
 	val = readl(tx + PON_OPT_TX_DELAY) & ~GENMASK(8, 0);
 	writel(val | (16 << 4) | 2, tx + PON_OPT_TX_DELAY);
 
@@ -416,7 +156,7 @@ void gc1601_pon_gmac_init(struct gc1601_pon *pon)
 		writel((readl(pon->emac + EMAC_MTU) & ~GENMASK(26, 16)) | (2000 << 16) | 0x40,
 		       pon->emac + EMAC_MTU);
 
-	/* sdk_set_gpon_rx_en: receive path only */
+	/* Receive path only */
 	writel(readl(rx) | PON_OPT_RX_EN, rx);
 }
 
@@ -436,7 +176,7 @@ struct gc1601_bosa_page {
 	u8 verify;	/* bytes compared on readback */
 };
 
-/* gccli order for the UX3320S: bias, modulation, APD, LUT3, then A2 lower. */
+/* UX3320S pages in the stock programming order: bias, modulation, APD, LUT3, A2 lower. */
 static const struct gc1601_bosa_page ux3320s_pages[] = {
 	{ 4, 0x200, 0x69, 0x69 },
 	{ 5, 0x280, 0x69, 0x69 },
@@ -444,12 +184,12 @@ static const struct gc1601_bosa_page ux3320s_pages[] = {
 	/*
 	 * LUT3: 0xd3 onwards holds the ID, markers and live/status registers
 	 * (0xde-0xe0, 0xe8-0xea and 0xf2 do not keep written values). Verify
-	 * the range gccli's LUT3 checksum covers.
+	 * the range the blob's LUT3 checksum covers.
 	 */
 	{ 3, 0x180, 0x7d, 0x53 },
 	/*
-	 * A2 lower: thresholds and calibration constants only. gccli writes
-	 * all 0x80 bytes, but 0x60 onwards is live readings, flags and the
+	 * A2 lower: thresholds and calibration constants only. The stock tool
+	 * writes all 0x80 bytes, but 0x60 onwards is live readings, flags and the
 	 * TX control byte, which the blob would clear (0x6e = 0x02).
 	 */
 	{ 0, 0x100, 0x60, 0x60 },
@@ -464,7 +204,7 @@ static u8 gc1601_bosa_sum(const u8 *buf, unsigned int start, unsigned int end)
 	return sum;
 }
 
-/* The checks gccli applies to a UX3320S blob before programming it. */
+/* The checks the stock tool applies to a UX3320S blob before programming it. */
 static int gc1601_bosa_validate(struct gc1601_pon *pon, const u8 *b)
 {
 	u8 lut3, total;
@@ -490,20 +230,23 @@ static int gc1601_bosa_validate(struct gc1601_pon *pon, const u8 *b)
 	return 0;
 }
 
-static int gc1601_bosa_read_blob(struct gc1601_pon *pon, u8 *buf, size_t len)
+/* The unit's calibration, from flash; -EPROBE_DEFER until the flash is registered. */
+static u8 *gc1601_bosa_read_blob(struct gc1601_pon *pon)
 {
-	struct mtd_info *mtd;
-	size_t retlen;
-	int ret;
+	struct nvmem_cell *cell;
+	size_t len;
+	u8 *blob;
 
-	mtd = get_mtd_device_nm("hwconfig");
-	if (IS_ERR(mtd))
-		return PTR_ERR(mtd);
-	ret = mtd_read(mtd, BOSA_BLOB_OFFSET, len, &retlen, buf);
-	put_mtd_device(mtd);
-	if (ret)
-		return ret;
-	return retlen == len ? 0 : -EIO;
+	cell = nvmem_cell_get(pon->dev, "bosa-calibration");
+	if (IS_ERR(cell))
+		return ERR_CAST(cell);
+	blob = nvmem_cell_read(cell, &len);
+	nvmem_cell_put(cell);
+	if (!IS_ERR(blob) && len != BOSA_UX3320S_LEN) {
+		kfree(blob);
+		return ERR_PTR(-EINVAL);
+	}
+	return blob;
 }
 
 static int gc1601_bosa_write(struct i2c_adapter *adap, u8 reg, const u8 *data,
@@ -519,14 +262,19 @@ static int gc1601_bosa_write(struct i2c_adapter *adap, u8 reg, const u8 *data,
 	return i2c_transfer(adap, &msg, 1) == 1 ? 0 : -EIO;
 }
 
-static int gc1601_bosa_read_regs(struct i2c_adapter *adap, u8 reg, u8 *data, u8 len)
+static int gc1601_bosa_xfer(struct i2c_adapter *adap, u8 addr, u8 reg, u8 *data, u8 len)
 {
 	struct i2c_msg msgs[] = {
-		{ .addr = BOSA_A2_ADDR, .len = 1, .buf = &reg },
-		{ .addr = BOSA_A2_ADDR, .flags = I2C_M_RD, .len = len, .buf = data },
+		{ .addr = addr, .len = 1, .buf = &reg },
+		{ .addr = addr, .flags = I2C_M_RD, .len = len, .buf = data },
 	};
 
 	return i2c_transfer(adap, msgs, 2) == 2 ? 0 : -EIO;
+}
+
+static int gc1601_bosa_read_regs(struct i2c_adapter *adap, u8 reg, u8 *data, u8 len)
+{
+	return gc1601_bosa_xfer(adap, BOSA_A2_ADDR, reg, data, len);
 }
 
 static int gc1601_bosa_set(struct i2c_adapter *adap, u8 reg, u8 val)
@@ -589,6 +337,31 @@ int gc1601_bosa_read(struct gc1601_pon *pon, u8 reg, u8 *buf, u8 len)
 	return ret;
 }
 
+/*
+ * SFF-8472 EEPROM for ethtool -m: the A0 identity page, or the unpaged A2
+ * lower half, which reads garbage until the BOSA is programmed.
+ */
+int gc1601_bosa_eeprom_read(struct gc1601_pon *pon, u8 addr, u8 reg, u8 *buf, u8 len)
+{
+	struct i2c_adapter *adap;
+	u8 n;
+	int ret = 0;
+
+	if (addr == BOSA_A2_ADDR && READ_ONCE(pon->bosa_state) != GC1601_BOSA_READY)
+		return -EAGAIN;
+	if (!pon->bosa_bus)
+		return -ENODEV;
+	adap = of_find_i2c_adapter_by_node(pon->bosa_bus);
+	if (!adap)
+		return -ENODEV;
+	for (; len && !ret; reg += n, buf += n, len -= n) {
+		n = min_t(u8, len, BOSA_CHUNK);
+		ret = gc1601_bosa_xfer(adap, addr, reg, buf, n);
+	}
+	i2c_put_adapter(adap);
+	return ret;
+}
+
 /* BOSA soft TX disable (A2 0x6e bit 6); the laser also needs the MAC path. */
 int gc1601_bosa_soft_tx(struct gc1601_pon *pon, bool enable)
 {
@@ -617,14 +390,12 @@ static int gc1601_bosa_program(struct gc1601_pon *pon)
 	if (!pon->bosa_bus)
 		return -ENODEV;
 
-	blob = kmalloc(BOSA_UX3320S_LEN, GFP_KERNEL);
-	if (!blob)
-		return -ENOMEM;
-
-	ret = gc1601_bosa_read_blob(pon, blob, BOSA_UX3320S_LEN);
-	if (ret) {
-		dev_err(pon->dev, "cannot read BOSA blob from hwconfig: %d\n", ret);
-		goto out_free;
+	blob = gc1601_bosa_read_blob(pon);
+	if (IS_ERR(blob)) {
+		ret = PTR_ERR(blob);
+		if (ret != -EPROBE_DEFER)
+			dev_err(pon->dev, "cannot read the BOSA calibration: %d\n", ret);
+		return ret;
 	}
 	ret = gc1601_bosa_validate(pon, blob);
 	if (ret)
@@ -671,60 +442,14 @@ static int gc1601_pon_bosa_load(struct gc1601_pon *pon)
 	return ret;
 }
 
-#define GC1601_BRINGUP_TRIES	10
-
-#define GC1601_AUTOSTART_SECS	30
-
-static void gc1601_pon_bringup(struct work_struct *w)
-{
-	struct gc1601_pon *pon = container_of(to_delayed_work(w), struct gc1601_pon,
-					      bringup);
-	ktime_t start = ktime_get();
-	int ret;
-
-	/*
-	 * Only the BOSA here: it is the same for both modes (the stock rcS
-	 * programs it before loading xpon_sdk). The WAN mode, SerDes and MAC
-	 * wait for pon_start, once the mode is known.
-	 */
-	mutex_lock(&pon->lock);
-	gc1601_pon_tx_off(pon);
-	ret = gc1601_pon_bosa_load(pon);
-	mutex_unlock(&pon->lock);
-
-	/* The BOSA's I2C adapter may probe after us. */
-	if (ret == -EPROBE_DEFER && ++pon->bringup_tries < GC1601_BRINGUP_TRIES) {
-		queue_delayed_work(system_unbound_wq, &pon->bringup, HZ);
-		return;
-	}
-	if (ret) {
-		dev_err(pon->dev, "PON bring-up failed: %d\n", ret);
-		return;
-	}
-
-	dev_info(pon->dev, "BOSA programmed in %lld ms, laser off\n",
-		 ktime_ms_delta(ktime_get(), start));
-	/*
-	 * The saved GPON/EPON choice lives in UCI, out of reach this early:
-	 * pon-mode selects the mode and writes pon_start. Start anyway if it
-	 * never does (failsafe, no userspace).
-	 */
-	if (device_property_read_bool(pon->dev, "galachip,gpon-autostart"))
-		queue_delayed_work(system_unbound_wq, &pon->autostart,
-				   secs_to_jiffies(GC1601_AUTOSTART_SECS));
-}
-
 /*
  * Set up and start the MAC of the current mode, receive-only until
- * allow_tx: chipset_wanmode_probe order, WAN mode first, then the SerDes.
+ * allow_tx: WAN mode first, then the SerDes, as the stock firmware orders it.
  */
 static void gc1601_pon_start(struct gc1601_pon *pon)
 {
 	ktime_t start = ktime_get();
 	int mode, ret;
-
-	/* Finish any pending boot BOSA bring-up before touching the MAC. */
-	flush_delayed_work(&pon->bringup);
 
 	/* A mode switch already set up and started the new MAC. */
 	if (READ_ONCE(pon->gpon.running) || READ_ONCE(pon->epon.running))
@@ -742,8 +467,8 @@ static void gc1601_pon_start(struct gc1601_pon *pon)
 		dev_err(pon->dev, "%s mode: SerDes failed: %d\n", gc1601_pon_mode_name(mode), ret);
 		return;
 	}
-	dev_info(pon->dev, "PON up in %s mode in %lld ms: SerDes locked, RX on\n",
-		 gc1601_pon_mode_name(mode), ktime_ms_delta(ktime_get(), start));
+	dev_info(pon->dev, "%s MAC up\n", gc1601_pon_mode_name(mode));
+	dev_dbg(pon->dev, "SerDes locked in %lld ms\n", ktime_ms_delta(ktime_get(), start));
 
 	if (mode == GC1601_PON_EPON) {
 		mutex_lock(&pon->lock);
@@ -754,22 +479,42 @@ static void gc1601_pon_start(struct gc1601_pon *pon)
 	}
 }
 
-static void gc1601_pon_autostart(struct work_struct *w)
+#define GC1601_BRINGUP_TRIES	10
+
+static void gc1601_pon_bringup(struct work_struct *w)
 {
 	struct gc1601_pon *pon = container_of(to_delayed_work(w), struct gc1601_pon,
-					      autostart);
+					      bringup);
+	ktime_t start = ktime_get();
+	int ret;
 
-	dev_info(pon->dev, "nothing wrote pon_start: starting %s\n",
-		 gc1601_pon_mode_name(READ_ONCE(pon->mode)));
+	/* The BOSA first, the same for both modes, as the stock firmware does. */
+	mutex_lock(&pon->lock);
+	gc1601_pon_tx_off(pon);
+	ret = pon->bosa_bus ? gc1601_pon_bosa_load(pon) : 0;
+	mutex_unlock(&pon->lock);
+
+	/* The BOSA's I2C adapter may probe after us. */
+	if (ret == -EPROBE_DEFER && ++pon->bringup_tries < GC1601_BRINGUP_TRIES) {
+		queue_delayed_work(system_unbound_wq, &pon->bringup, HZ);
+		return;
+	}
+	if (ret)
+		dev_err(pon->dev, "BOSA bring-up failed: %d\n", ret);
+	else
+		dev_dbg(pon->dev, "BOSA programmed in %lld ms, laser off\n",
+			ktime_ms_delta(ktime_get(), start));
+
+	/* Receive only: the laser waits for allow_tx; pon-mode switches to EPON. */
 	gc1601_pon_start(pon);
 }
 
 /*
- * Switch the WAN MAC as chipset_wanmode_probe does: laser off, both
- * machines stopped, mode registers, SerDes and the new MAC set up, then the
- * new machine started receive-only. The 0x90c00008 reset of the stock
- * sdk_top_level_soft_reset is left out: it also resets the packet engine.
- * omci-agent sets allow_tx again.
+ * Switch the WAN MAC: laser off, both machines stopped, mode registers,
+ * SerDes and the new MAC set up, then the new machine started receive-only.
+ * The stock firmware's 0x90c00008 reset is left out: it also resets the
+ * packet engine.
+ * omci.agent sets allow_tx again.
  */
 int gc1601_pon_set_mode(struct gc1601_pon *pon, enum gc1601_pon_mode mode)
 {
@@ -782,7 +527,6 @@ int gc1601_pon_set_mode(struct gc1601_pon *pon, enum gc1601_pon_mode mode)
 
 	/* Finish a pending boot bring-up (SerDes, BOSA) in the old mode first. */
 	flush_delayed_work(&pon->bringup);
-	cancel_delayed_work_sync(&pon->autostart);
 	/* Both machines' works take the lock: stop them before taking it. */
 	gc1601_gpon_stop(pon);
 	gc1601_epon_stop(pon);
@@ -834,131 +578,45 @@ int gc1601_pon_set_mode(struct gc1601_pon *pon, enum gc1601_pon_mode mode)
 	return 0;
 }
 
-static ssize_t status_show(struct device *dev, struct device_attribute *attr,
-			   char *buf)
+/* The PON block's clocks, resets and optical controls, for bring-up debugging. */
+static int gc1601_dbg_pon_status_show(struct seq_file *s, void *unused)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	u32 scu, tx, rx, rxs, onu;
+	struct gc1601_pon *pon = s->private;
+	u32 scu = 0, pll = 0, reset = 0, tx, rx, rxs, onu;
 
-	scu = readl(pon->scu + SCU_PON_STATUS);
+	regmap_read(pon->scu, GC1601_SCU_PON_STATUS, &scu);
+	regmap_read(pon->scu, GC1601_SCU_PON_PLL, &pll);
+	regmap_read(pon->scu, GC1601_SCU_PON_RESET, &reset);
 	tx = readl(pon->mac + PON_OPT_TX);
 	rx = readl(pon->mac + PON_OPT_RX);
 	rxs = readl(pon->mac + PON_OPT_RX + PON_OPT_RX_STATUS);
 	onu = readl(pon->mac + PON_ONU);
 
-	return sysfs_emit(buf,
-			  "mode=%s\n"
-			  "pll_locked=%d serdes_ready=%d scu=%08x/%08x/%08x\n"
-			  "txpwr=%08x\n"
-			  "optical_tx=%08x enable=%d force=%d\n"
-			  "optical_rx=%08x rx_enable=%d status=%08x los=%d lof=%d\n"
-			  "onu=%08x id=%lu state=%lu\n"
-			  "mac_irq=%08x top=%08x/%08x/%08x global=%08x/%08x/%08x/%08x\n"
-			  "bosa=%s\n",
-			  gc1601_pon_mode_name(READ_ONCE(pon->mode)),
-			  !!(scu & SCU_PON_STATUS_PLL_LOCK), !!(scu & SCU_PON_STATUS_READY),
-			  scu, readl(pon->scu + SCU_PON_PLL), readl(pon->scu + SCU_PON_RESET),
-			  readl(pon->txpwr),
-			  tx, !!(tx & PON_OPT_TX_EN), !!(tx & PON_OPT_TX_FORCE),
-			  rx, !!(rx & PON_OPT_RX_EN), rxs, !!(rxs & PON_OPT_RX_LOS),
-			  !!(rxs & PON_OPT_RX_LOF),
-			  onu, FIELD_GET(PON_ONU_ID, onu), FIELD_GET(PON_ONU_STATE, onu),
-			  READ_ONCE(pon->gpon.mac_irq_last), readl(pon->top + TOP_ENABLE),
-			  readl(pon->top + TOP_CLK_EN), readl(pon->top + TOP_WAN_CLK),
-			  readl(pon->global + GLB_CTRL), readl(pon->global + GLB_CFG10),
-			  readl(pon->global + GLB_WAN_CFG), readl(pon->global + GLB_CFG18),
-			  gc1601_bosa_states[READ_ONCE(pon->bosa_state)]);
+	seq_printf(s,
+		   "mode=%s\n"
+		   "pll_locked=%d serdes_ready=%d scu=%08x/%08x/%08x\n"
+		   "txpwr=%08x\n"
+		   "optical_tx=%08x enable=%d force=%d\n"
+		   "optical_rx=%08x rx_enable=%d status=%08x los=%d lof=%d\n"
+		   "onu=%08x id=%lu state=%lu\n"
+		   "mac_irq=%08x top=%08x/%08x/%08x global=%08x/%08x/%08x/%08x\n"
+		   "bosa=%s\n",
+		   gc1601_pon_mode_name(READ_ONCE(pon->mode)),
+		   !!(scu & GC1601_SCU_PON_STATUS_PLL_LOCK),
+		   !!(scu & GC1601_SCU_PON_STATUS_READY), scu, pll, reset,
+		   readl(pon->txpwr),
+		   tx, !!(tx & PON_OPT_TX_EN), !!(tx & PON_OPT_TX_FORCE),
+		   rx, !!(rx & PON_OPT_RX_EN), rxs, !!(rxs & PON_OPT_RX_LOS),
+		   !!(rxs & PON_OPT_RX_LOF),
+		   onu, FIELD_GET(PON_ONU_ID, onu), FIELD_GET(PON_ONU_STATE, onu),
+		   READ_ONCE(pon->gpon.mac_irq_last), readl(pon->top + TOP_ENABLE),
+		   readl(pon->top + TOP_CLK_EN), readl(pon->top + TOP_WAN_CLK),
+		   readl(pon->global + GLB_CTRL), readl(pon->global + GLB_CFG10),
+		   readl(pon->global + GLB_WAN_CFG), readl(pon->global + GLB_CFG18),
+		   gc1601_bosa_states[READ_ONCE(pon->bosa_state)]);
+	return 0;
 }
-static DEVICE_ATTR_RO(status);
-
-static ssize_t serdes_init_store(struct device *dev, struct device_attribute *attr,
-				 const char *buf, size_t count)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	int ret;
-
-	if (!sysfs_streq(buf, "gpon"))
-		return -EINVAL;
-
-	mutex_lock(&pon->lock);
-	gc1601_pon_tx_off(pon);
-	gc1601_pon_global_mode(pon, pon->mode);
-	ret = gc1601_pon_serdes_init(pon, pon->mode);
-	mutex_unlock(&pon->lock);
-	if (ret)
-		return ret;
-
-	dev_info(dev, "PON SerDes up in %s mode, optical TX off\n",
-		 gc1601_pon_mode_name(pon->mode));
-	return count;
-}
-static DEVICE_ATTR_WO(serdes_init);
-
-static ssize_t gmac_init_store(struct device *dev, struct device_attribute *attr,
-			       const char *buf, size_t count)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-
-	if (!sysfs_streq(buf, "1"))
-		return -EINVAL;
-
-	mutex_lock(&pon->lock);
-	if (pon->mode != GC1601_PON_GPON) {
-		mutex_unlock(&pon->lock);
-		return -EBUSY;
-	}
-	gc1601_pon_tx_off(pon);
-	gc1601_pon_gmac_init(pon);
-	mutex_unlock(&pon->lock);
-
-	dev_info(dev, "GPON MAC initialised, optical RX on, TX off\n");
-	return count;
-}
-static DEVICE_ATTR_WO(gmac_init);
-
-static ssize_t bosa_program_store(struct device *dev, struct device_attribute *attr,
-				  const char *buf, size_t count)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	int ret;
-
-	if (!sysfs_streq(buf, "ux3320s"))
-		return -EINVAL;
-
-	mutex_lock(&pon->lock);
-	gc1601_pon_tx_off(pon);
-	ret = gc1601_pon_bosa_load(pon);
-	mutex_unlock(&pon->lock);
-	if (ret)
-		return ret;
-
-	dev_info(dev, "BOSA programmed from hwconfig and verified, soft TX disable set\n");
-	return count;
-}
-static DEVICE_ATTR_WO(bosa_program);
-
-/* pon-mode, once the mode is set: start that mode's MAC (once). */
-static ssize_t pon_start_store(struct device *dev, struct device_attribute *attr,
-			       const char *buf, size_t count)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-
-	if (!sysfs_streq(buf, "1"))
-		return -EINVAL;
-	flush_delayed_work(&pon->bringup);
-	cancel_delayed_work_sync(&pon->autostart);
-	gc1601_pon_start(pon);
-	return count;
-}
-static DEVICE_ATTR_WO(pon_start);
-
-static ssize_t tx_hold_show(struct device *dev, struct device_attribute *attr,
-			    char *buf)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-
-	return sysfs_emit(buf, "%d\n", READ_ONCE(pon->tx_hold));
-}
+DEFINE_SHOW_ATTRIBUTE(gc1601_dbg_pon_status);
 
 /*
  * The laser stays off while this is 1, whatever allow_tx says: the OLT's
@@ -999,16 +657,11 @@ out:
 	mutex_unlock(&pon->lock);
 }
 
-static ssize_t tx_hold_store(struct device *dev, struct device_attribute *attr,
-			     const char *buf, size_t count)
+/* Hold the laser off, or release it, until told otherwise. */
+int gc1601_pon_set_tx_hold(struct gc1601_pon *pon, bool hold)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	bool hold;
-	int ret;
+	int ret = 0;
 
-	ret = kstrtobool(buf, &hold);
-	if (ret)
-		return ret;
 	mutex_lock(&pon->lock);
 	if (pon->removing) {
 		ret = -ESHUTDOWN;
@@ -1022,35 +675,31 @@ static ssize_t tx_hold_store(struct device *dev, struct device_attribute *attr,
 	gc1601_pon_update_tx_hold(pon);
 out:
 	mutex_unlock(&pon->lock);
-	return ret ?: count;
+	return ret;
 }
-static DEVICE_ATTR_RW(tx_hold);
 
-static ssize_t tx_hold_seconds_show(struct device *dev, struct device_attribute *attr,
-				    char *buf)
+/* The transmitter as the xPON core reports it. */
+void gc1601_pon_get_tx(struct gc1601_pon *pon, struct xpon_tx_state *tx)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
 	unsigned long left = 0, now;
 
 	mutex_lock(&pon->lock);
 	now = jiffies;
 	if (pon->tx_hold_timed && time_before(now, pon->tx_hold_deadline))
 		left = pon->tx_hold_deadline - now;
+	tx->allow = pon->mode == GC1601_PON_EPON ? pon->epon.allow_tx : pon->gpon.allow_tx;
+	tx->hold = pon->tx_hold;
+	tx->hold_seconds = DIV_ROUND_UP(jiffies_to_msecs(left), 1000);
+	tx->identity_wait = pon->gpon.identity_wait;
 	mutex_unlock(&pon->lock);
-	return sysfs_emit(buf, "%u\n", DIV_ROUND_UP(jiffies_to_msecs(left), 1000));
 }
 
 /* Timed CTC holds outlive the daemon; zero releases only timed ownership. */
-static ssize_t tx_hold_seconds_store(struct device *dev, struct device_attribute *attr,
-				     const char *buf, size_t count)
+/* The OLT's timed transmitter off (EPON CTC 0x00A1); 0 releases it. */
+int gc1601_pon_set_tx_hold_seconds(struct gc1601_pon *pon, u32 seconds)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	unsigned int seconds;
-	int ret;
+	int ret = 0;
 
-	ret = kstrtouint(buf, 0, &seconds);
-	if (ret)
-		return ret;
 	if (seconds >= U16_MAX)
 		return -ERANGE;
 	mutex_lock(&pon->lock);
@@ -1071,86 +720,21 @@ static ssize_t tx_hold_seconds_store(struct device *dev, struct device_attribute
 	gc1601_pon_update_tx_hold(pon);
 out:
 	mutex_unlock(&pon->lock);
-	return ret ?: count;
+	return ret;
 }
-static DEVICE_ATTR_RW(tx_hold_seconds);
 
 /*
- * SFF-8472 A2 diagnostics (0x60-0x71), mode independent: EPON has no OMCI
- * ANI-G, so epon-oamd answers CTC optical diagnosis (0x0005) with raw=
- * and LuCI shows the decoded values.
+ * The module's SFF-8472 A2h page: the live readings (0x60-0x71) and the TX
+ * and RX power alarm and warning thresholds (0x18-0x27). Mode independent:
+ * EPON has no ANI-G, so epon-oamd answers CTC optical diagnosis from these.
  */
-static ssize_t bosa_ddm_show(struct device *dev, struct device_attribute *attr,
-			     char *buf)
+int gc1601_pon_get_module(struct gc1601_pon *pon, u8 *diag, u8 *thresholds)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	u8 d[18];
-	int ret;
-
 	if (READ_ONCE(pon->bosa_state) != GC1601_BOSA_READY)
 		return -EAGAIN;
-	ret = gc1601_bosa_read(pon, 0x60, d, sizeof(d));
-	if (ret)
-		return ret;
-	return sysfs_emit(buf,
-			  "temp_mc=%d vcc_uv=%u bias_ua=%u tx_nw=%u rx_nw=%u alarms=%#06x raw=%*phN\n",
-			  (s16)get_unaligned_be16(d) * 1000 / 256,
-			  get_unaligned_be16(d + 2) * 100, get_unaligned_be16(d + 4) * 2,
-			  get_unaligned_be16(d + 6) * 100, get_unaligned_be16(d + 8) * 100,
-			  get_unaligned_be16(d + 16), 10, d);
+	return gc1601_bosa_read(pon, 0x60, diag, XPON_MODULE_DIAG_LEN) ?:
+	       gc1601_bosa_read(pon, 0x18, thresholds, XPON_MODULE_THRESHOLDS_LEN);
 }
-static DEVICE_ATTR_RO(bosa_ddm);
-
-/*
- * SFF-8472 A2h 0x18-0x27: the module's TX and RX power alarm and warning
- * thresholds, from the calibration blob (high alarm, low alarm, high
- * warning, low warning), in nW like bosa_ddm.
- */
-static ssize_t bosa_thresholds_show(struct device *dev,
-				    struct device_attribute *attr, char *buf)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	u8 d[16];
-	int ret;
-
-	if (READ_ONCE(pon->bosa_state) != GC1601_BOSA_READY)
-		return -EAGAIN;
-	ret = gc1601_bosa_read(pon, 0x18, d, sizeof(d));
-	if (ret)
-		return ret;
-	return sysfs_emit(buf,
-			  "tx_alarm_high_nw=%u tx_alarm_low_nw=%u tx_warn_high_nw=%u tx_warn_low_nw=%u "
-			  "rx_alarm_high_nw=%u rx_alarm_low_nw=%u rx_warn_high_nw=%u rx_warn_low_nw=%u\n",
-			  get_unaligned_be16(d) * 100, get_unaligned_be16(d + 2) * 100,
-			  get_unaligned_be16(d + 4) * 100, get_unaligned_be16(d + 6) * 100,
-			  get_unaligned_be16(d + 8) * 100, get_unaligned_be16(d + 10) * 100,
-			  get_unaligned_be16(d + 12) * 100, get_unaligned_be16(d + 14) * 100);
-}
-static DEVICE_ATTR_RO(bosa_thresholds);
-
-static struct attribute *gc1601_pon_attrs[] = {
-	&dev_attr_status.attr,
-	&dev_attr_pon_start.attr,
-	&dev_attr_bosa_ddm.attr,
-	&dev_attr_bosa_thresholds.attr,
-	&dev_attr_tx_hold.attr,
-	&dev_attr_tx_hold_seconds.attr,
-	&dev_attr_serdes_init.attr,
-	&dev_attr_gmac_init.attr,
-	&dev_attr_bosa_program.attr,
-	NULL
-};
-static const struct attribute_group gc1601_pon_group = {
-	.attrs = gc1601_pon_attrs,
-};
-
-static const struct attribute_group *gc1601_pon_groups[] = {
-	&gc1601_pon_group,
-	&gc1601_gpon_group,
-	&gc1601_epon_group,
-	&gc1601_xpon_group,
-	NULL
-};
 
 static void __iomem *gc1601_pon_map(struct platform_device *pdev, const char *name)
 {
@@ -1177,21 +761,17 @@ static int gc1601_pon_probe(struct platform_device *pdev)
 	pon->dev = dev;
 	mutex_init(&pon->lock);
 	INIT_DELAYED_WORK(&pon->bringup, gc1601_pon_bringup);
-	INIT_DELAYED_WORK(&pon->autostart, gc1601_pon_autostart);
 	INIT_DELAYED_WORK(&pon->tx_hold_work, gc1601_pon_tx_hold_expire);
 
 	pon->mac = devm_platform_ioremap_resource_byname(pdev, "mac");
 	if (IS_ERR(pon->mac))
 		return PTR_ERR(pon->mac);
-	pon->serdes = devm_platform_ioremap_resource_byname(pdev, "serdes");
+	pon->serdes = devm_phy_get(dev, "serdes");
 	if (IS_ERR(pon->serdes))
-		return PTR_ERR(pon->serdes);
-	pon->serdes_ctrl = devm_platform_ioremap_resource_byname(pdev, "serdes-ctrl");
-	if (IS_ERR(pon->serdes_ctrl))
-		return PTR_ERR(pon->serdes_ctrl);
-	pon->scu = gc1601_pon_map(pdev, "scu");
+		return dev_err_probe(dev, PTR_ERR(pon->serdes), "no SerDes\n");
+	pon->scu = syscon_regmap_lookup_by_phandle(dev->of_node, "galachip,scu");
 	if (IS_ERR(pon->scu))
-		return PTR_ERR(pon->scu);
+		return dev_err_probe(dev, PTR_ERR(pon->scu), "no SCU\n");
 	pon->txpwr = gc1601_pon_map(pdev, "txpwr");
 	if (IS_ERR(pon->txpwr))
 		return PTR_ERR(pon->txpwr);
@@ -1229,8 +809,15 @@ static int gc1601_pon_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	if (device_property_read_bool(dev, "galachip,pon-bringup"))
-		queue_delayed_work(system_unbound_wq, &pon->bringup, 0);
+	pon->debugfs = debugfs_create_dir("gc1601-pon", NULL);
+	debugfs_create_file("pon_status", 0400, pon->debugfs, pon, &gc1601_dbg_pon_status_fops);
+	gc1601_gpon_debugfs_init(pon);
+	gc1601_epon_debugfs_init(pon);
+	gc1601_xpon_debugfs_init(pon);
+
+	if (pon->bosa_bus)
+		gc1601_pon_hwmon_register(pon);
+	queue_delayed_work(system_unbound_wq, &pon->bringup, 0);
 	return 0;
 }
 
@@ -1241,9 +828,10 @@ static void gc1601_pon_remove(struct platform_device *pdev)
 	mutex_lock(&pon->lock);
 	pon->removing = true;
 	mutex_unlock(&pon->lock);
+	debugfs_remove_recursive(pon->debugfs);
 	cancel_delayed_work_sync(&pon->tx_hold_work);
 	cancel_delayed_work_sync(&pon->bringup);
-	cancel_delayed_work_sync(&pon->autostart);
+	gc1601_pon_hwmon_unregister(pon);
 	gc1601_gpon_exit(pon);
 	gc1601_epon_exit(pon);
 	gc1601_xpon_exit(pon);
@@ -1262,7 +850,6 @@ static struct platform_driver gc1601_pon_driver = {
 	.driver = {
 		.name = "gc1601-pon",
 		.of_match_table = gc1601_pon_of_match,
-		.dev_groups = gc1601_pon_groups,
 	},
 };
 module_platform_driver(gc1601_pon_driver);

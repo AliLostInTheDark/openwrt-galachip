@@ -4,8 +4,8 @@
 'require network';
 
 const callStatus = rpc.declare({
-	object: 'xpon.public',
-	method: 'status',
+	object: 'xpon',
+	method: 'summary',
 	expect: { '': {} }
 });
 

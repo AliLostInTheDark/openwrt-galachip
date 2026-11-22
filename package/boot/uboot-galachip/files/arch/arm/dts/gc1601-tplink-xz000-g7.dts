@@ -1,62 +1,206 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 /dts-v1/;
-/memreserve/ 0x40800000 0x00112000;
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+#include "gc1601.dtsi"
+
 / {
-	model = "TP-Link XZ000-G7 (4 MiB)";
+	model = "TP-Link XZ000-G7";
 	compatible = "tplink,xz000-g7", "galachip,gc1601";
-	#address-cells = <1>;
-	#size-cells = <1>;
-	aliases { serial0 = &uart; spi0 = &spi; ethernet0 = &eth; };
-	chosen { stdout-path = "serial0:115200n8"; };
-	memory@40000000 { device_type = "memory"; reg = <0x40000000 0x02000000>; };
-	scu: clock-controller@90a00000 {
-		compatible = "galachip,gc1601-scu";
-		reg = <0x90a00000 0x1000>;
-		#clock-cells = <1>;
-		bootph-all;
+
+	aliases {
+		serial0 = &uart0;
+		led-boot = &led_power;
+		led-failsafe = &led_power;
+		led-running = &led_power;
+		led-upgrade = &led_power;
 	};
-	timer@90200000 {
-		compatible = "galachip,gc1601-timer";
-		reg = <0x90200000 0x100>;
-		clocks = <&scu 5>;
-		bootph-all;
+
+	chosen {
+		stdout-path = "serial0:115200n8";
 	};
-	uart: serial@90400000 {
-		compatible = "ns16550a";
-		reg = <0x90400000 0x1000>;
-		reg-shift = <2>;
-		reg-io-width = <4>;
-		clock-frequency = <33000000>;
-		bootph-all;
+
+	memory@40000000 {
+		device_type = "memory";
+		reg = <0x40000000 0x02000000>;
 	};
-	spi: spi@a0000000 {
-		compatible = "faraday,ftspi020-gc1601";
-		reg = <0xa0000000 0x1000>;
-		clocks = <&scu 6>;
+
+	reserved-memory {
 		#address-cells = <1>;
-		#size-cells = <0>;
-		flash@0 {
-			compatible = "jedec,spi-nor";
-			reg = <0>;
-			spi-max-frequency = <50000000>;
-			spi-rx-bus-width = <1>;
-			spi-tx-bus-width = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		/* The loader leaves these DMA pointers installed when Linux starts. */
+		loader_dma: dma@40800000 {
+			reg = <0x40800000 0x00112000>;
+		};
+
+		/* Stock's 1440-buffer pool, its free list and the 32-slot jumbo pool. */
+		pe_pool: dma@40a00000 {
+			reg = <0x40a00000 0x00332000>;
+		};
+
+		/*
+		 * Crash logs that survive a watchdog reset: above U-Boot's initial
+		 * stack top (0x40f00000) and below its load address (0x41000000).
+		 */
+		ramoops@40f80000 {
+			compatible = "ramoops";
+			reg = <0x40f80000 0x40000>;
+			no-map;
+			record-size = <0x8000>;
+			console-size = <0x20000>;
+			pmsg-size = <0x8000>;
 		};
 	};
-	mdio: mdio@90100000 {
-		compatible = "galachip,gc1601-mdio";
-		reg = <0x90100000 0x18>;
-		#address-cells = <1>;
-		#size-cells = <0>;
-		phy: ethernet-phy@18 {
-			compatible = "ethernet-phy-ieee802.3-c22";
-			reg = <24>;
+
+	leds {
+		compatible = "gpio-leds";
+
+		led_power: led-power {
+			function = LED_FUNCTION_POWER;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&gpio 0 GPIO_ACTIVE_LOW>;
+			default-state = "on";
+		};
+
+		led_lan: led-lan {
+			function = LED_FUNCTION_LAN;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&gpio 1 GPIO_ACTIVE_LOW>;
+			default-state = "off";
+		};
+
+		led_pon: led-pon {
+			label = "green:pon";
+			gpios = <&gpio 2 GPIO_ACTIVE_LOW>;
+			default-state = "off";
+		};
+
+		led_los: led-los {
+			label = "red:los";
+			gpios = <&gpio 13 GPIO_ACTIVE_LOW>;
+			default-state = "off";
 		};
 	};
-	eth: ethernet@90e00000 {
-		compatible = "galachip,gc1601-eth";
-		reg = <0x90e00000 0x1000>;
-		phy-handle = <&phy>;
-		phy-mode = "gmii";
+
+	keys {
+		compatible = "gpio-keys";
+
+		key-reset {
+			label = "reset";
+			gpios = <&gpio 19 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RESTART>;
+		};
 	};
+};
+
+&gpio {
+	status = "okay";
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&mdio {
+	status = "okay";
+
+	phy24: ethernet-phy@18 {
+		reg = <0x18>;
+	};
+};
+
+&spi {
+	status = "okay";
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		/*
+		 * Reads of 64 bytes or more run at 100 MHz, the SPI clock divided
+		 * by 2. Identification, status, programming and erasing stay at
+		 * 25 MHz: only bulk reads were verified at the higher speeds.
+		 */
+		spi-max-frequency = <100000000>;
+		galachip,safe-max-frequency = <25000000>;
+		spi-rx-bus-width = <2>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "u-boot";
+				reg = <0x000000 0x020000>;
+				read-only;
+			};
+
+			partition@20000 {
+				compatible = "galachip,gc1601-fw";
+				label = "firmware";
+				reg = <0x020000 0x3b0000>;
+			};
+
+			partition@3d0000 {
+				compatible = "nvmem-cells";
+				label = "misc";
+				reg = <0x3d0000 0x020000>;
+				read-only;
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				macaddr_misc: macaddr@1f100 {
+					reg = <0x1f100 0x6>;
+				};
+			};
+
+			partition@3f0000 {
+				label = "hwconfig";
+				reg = <0x3f0000 0x010000>;
+				read-only;
+			};
+		};
+	};
+};
+
+&packet_engine {
+	phy-handle = <&phy24>;
+	phy-mode = "sgmii";
+	nvmem-cells = <&macaddr_misc>;
+	nvmem-cell-names = "mac-address";
+	status = "okay";
+};
+
+&i2c0 {
+	clock-frequency = <100000>;
+	status = "okay";
+
+	/* BOSA controller (UX3320S), SFF-8472 style A0/A2 pages. Read-only. */
+	eeprom@50 {
+		compatible = "atmel,24c02";
+		reg = <0x50>;
+		read-only;
+	};
+
+	eeprom@51 {
+		compatible = "atmel,24c02";
+		reg = <0x51>;
+		read-only;
+	};
+};
+
+&pon {
+	/* BOSA programmed from hwconfig at every boot: it loses its calibration. */
+	galachip,bosa-i2c = <&i2c0>;
+	/* The ONU identity defaults are in /etc/board.json (board.d/03_omci). */
+	omci-uni-ports = <&packet_engine>;
+	nvmem-cells = <&macaddr_misc>;
+	nvmem-cell-names = "mac-address";
+
+	leds = <&led_pon>, <&led_los>;
+	led-names = "pon", "los";
+	status = "okay";
 };

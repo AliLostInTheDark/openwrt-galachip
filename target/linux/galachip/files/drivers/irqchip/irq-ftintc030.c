@@ -1,208 +1,228 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* Copyright (C) 2014 Faraday Technology (Yan-Pai Chen) */
+/*
+ * Faraday FTINTC030 interrupt controller, as found in the GalaChip GC1601
+ *
+ * The controller is laid out like a GIC: a distributor part with enable,
+ * clear, trigger, priority and target registers for the shared peripheral
+ * interrupts (SPIs), and a CPU interface with priority mask, binary point,
+ * acknowledge and end-of-interrupt registers. Vectors 0-31 are reserved for
+ * software and private interrupts, so SPI n is acknowledged as vector n + 32.
+ *
+ * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
+ *
+ * The register layout and the setup values come from Faraday Technology's
+ * driver (Copyright (C) 2014 Faraday Technology, Yan-Pai Chen).
+ */
+#include <linux/bitfield.h>
 #include <linux/io.h>
 #include <linux/irq.h>
 #include <linux/irqchip.h>
 #include <linux/irqdomain.h>
+#include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
 
 #include <asm/exception.h>
-#include <asm/mach/irq.h>
 
-#define FT030_ENABLE	0x004
-#define FT030_CLEAR	0x008
-#define FT030_MODE	0x00c
-#define FT030_POLARITY	0x010
-#define FT030_PRIORITY	0x240
-#define FT030_TARGET	0x420
-#define FT030_PRIMASK	0x684
-#define FT030_BINPOINT	0x688
-#define FT030_ACK		0x68c
-#define FT030_EOI		0x690
-#define FT030_INTCR	0x69c
-#define FT030_CPU_MATCH	0x6a0
-#define FT030_FEATURE	0x700
-#define FT030_SPURIOUS	511
-#define FT030_VECTOR_BASE 32
+/* Distributor, one bit per SPI: a 0x20-byte block of these per 32 SPIs */
+#define FTINTC030_SPI_ENABLE		0x004
+#define FTINTC030_SPI_CLEAR		0x008
+#define FTINTC030_SPI_EDGE		0x00c
+#define FTINTC030_SPI_ACTIVE_LOW	0x010
+/* One byte per SPI */
+#define FTINTC030_SPI_PRIORITY		0x240
+#define FTINTC030_SPI_TARGET		0x420
 
-struct ft030_irqchip {
+/* CPU interface */
+#define FTINTC030_PRIORITY_MASK		0x684
+#define FTINTC030_BINARY_POINT		0x688
+#define FTINTC030_ACK			0x68c
+#define FTINTC030_EOI			0x690
+#define FTINTC030_CPU_CTRL		0x69c
+#define FTINTC030_CPU_MATCH		0x6a0
+
+#define FTINTC030_FEATURE		0x700
+#define FTINTC030_FEATURE_SPIS		GENMASK(10, 2)
+
+#define FTINTC030_VECTOR		GENMASK(8, 0)
+#define FTINTC030_VECTOR_SPURIOUS	511
+#define FTINTC030_VECTOR_SPI_BASE	32
+
+/*
+ * CPU interface setup as Faraday's driver programs it: every priority is let
+ * through, priorities never preempt each other, and bit 2 of the control
+ * register is set (its meaning is not documented).
+ */
+#define FTINTC030_PRIORITY_MASK_ALL	0xf
+#define FTINTC030_BINARY_POINT_NONE	7
+#define FTINTC030_CPU_CTRL_VAL		BIT(2)
+
+struct ftintc030 {
 	void __iomem *base;
 	struct irq_domain *domain;
 	raw_spinlock_t lock;
-	unsigned int nr_irqs;
+	unsigned int nr_spis;
 };
 
-static struct ft030_irqchip *ft030_root;
+static struct ftintc030 ftintc030;
 
-static unsigned int ft030_bank(unsigned long hwirq)
+/* Block offset of a one-bit-per-SPI register; a FIQ block sits after the second one. */
+static unsigned int ftintc030_bank(irq_hw_number_t hwirq)
 {
-	/* The FIQ register window separates the second and third SPI banks. */
-	return (hwirq / 32) * 32 + (hwirq >= 64 ? 0x20 : 0);
+	unsigned int bank = hwirq / 32 * 0x20;
+
+	return hwirq >= 64 ? bank + 0x20 : bank;
 }
 
-static void ft030_update_enable(struct irq_data *d, bool enable)
+static void ftintc030_update(struct irq_data *d, unsigned int reg, bool set)
 {
-	struct ft030_irqchip *f = irq_data_get_irq_chip_data(d);
-	void __iomem *reg = f->base + FT030_ENABLE + ft030_bank(d->hwirq);
+	void __iomem *addr = ftintc030.base + reg + ftintc030_bank(d->hwirq);
 	u32 bit = BIT(d->hwirq % 32);
 	unsigned long flags;
-	u32 value;
+	u32 val;
 
-	raw_spin_lock_irqsave(&f->lock, flags);
-	value = readl(reg);
-	writel(enable ? value | bit : value & ~bit, reg);
-	raw_spin_unlock_irqrestore(&f->lock, flags);
+	raw_spin_lock_irqsave(&ftintc030.lock, flags);
+	val = readl(addr);
+	writel(set ? val | bit : val & ~bit, addr);
+	raw_spin_unlock_irqrestore(&ftintc030.lock, flags);
 }
 
-static void ft030_mask(struct irq_data *d)
+static void ftintc030_mask(struct irq_data *d)
 {
-	ft030_update_enable(d, false);
+	ftintc030_update(d, FTINTC030_SPI_ENABLE, false);
 }
 
-static void ft030_unmask(struct irq_data *d)
+static void ftintc030_unmask(struct irq_data *d)
 {
-	ft030_update_enable(d, true);
+	ftintc030_update(d, FTINTC030_SPI_ENABLE, true);
 }
 
-static void ft030_eoi(struct irq_data *d)
+static void ftintc030_eoi(struct irq_data *d)
 {
-	struct ft030_irqchip *f = irq_data_get_irq_chip_data(d);
-
-	writel(BIT(d->hwirq % 32),
-	       f->base + FT030_CLEAR + ft030_bank(d->hwirq));
-	writel(d->hwirq + FT030_VECTOR_BASE, f->base + FT030_EOI);
+	writel(BIT(d->hwirq % 32), ftintc030.base + FTINTC030_SPI_CLEAR + ftintc030_bank(d->hwirq));
+	writel(d->hwirq + FTINTC030_VECTOR_SPI_BASE, ftintc030.base + FTINTC030_EOI);
 }
 
-static int ft030_set_type(struct irq_data *d, unsigned int type)
+static int ftintc030_set_type(struct irq_data *d, unsigned int type)
 {
-	struct ft030_irqchip *f = irq_data_get_irq_chip_data(d);
-	unsigned int bank = ft030_bank(d->hwirq);
-	u32 bit = BIT(d->hwirq % 32), mode, polarity;
-	unsigned long flags;
-	bool edge, low;
-
 	switch (type) {
 	case IRQ_TYPE_LEVEL_HIGH:
 	case IRQ_TYPE_LEVEL_LOW:
 	case IRQ_TYPE_EDGE_RISING:
 	case IRQ_TYPE_EDGE_FALLING:
-		edge = type & IRQ_TYPE_EDGE_BOTH;
-		low = type == IRQ_TYPE_LEVEL_LOW || type == IRQ_TYPE_EDGE_FALLING;
 		break;
 	default:
 		return -EINVAL;
 	}
 
-	raw_spin_lock_irqsave(&f->lock, flags);
-	mode = readl(f->base + FT030_MODE + bank);
-	polarity = readl(f->base + FT030_POLARITY + bank);
-	writel(edge ? mode | bit : mode & ~bit, f->base + FT030_MODE + bank);
-	writel(low ? polarity | bit : polarity & ~bit,
-	       f->base + FT030_POLARITY + bank);
-	raw_spin_unlock_irqrestore(&f->lock, flags);
+	ftintc030_update(d, FTINTC030_SPI_EDGE, type & IRQ_TYPE_EDGE_BOTH);
+	ftintc030_update(d, FTINTC030_SPI_ACTIVE_LOW,
+			 type & (IRQ_TYPE_LEVEL_LOW | IRQ_TYPE_EDGE_FALLING));
+
 	return 0;
 }
 
-static struct irq_chip ft030_chip = {
+static struct irq_chip ftintc030_chip = {
 	.name = "FTINTC030",
-	.irq_mask = ft030_mask,
-	.irq_unmask = ft030_unmask,
-	.irq_eoi = ft030_eoi,
-	.irq_set_type = ft030_set_type,
+	.irq_mask = ftintc030_mask,
+	.irq_unmask = ftintc030_unmask,
+	.irq_eoi = ftintc030_eoi,
+	.irq_set_type = ftintc030_set_type,
 };
 
-static int ft030_map(struct irq_domain *domain, unsigned int irq,
-		     irq_hw_number_t hwirq)
+static int ftintc030_map(struct irq_domain *domain, unsigned int irq, irq_hw_number_t hwirq)
 {
-	struct ft030_irqchip *f = domain->host_data;
-
-	if (hwirq >= f->nr_irqs)
-		return -EINVAL;
-	irq_set_chip_data(irq, f);
-	irq_set_chip_and_handler(irq, &ft030_chip, handle_fasteoi_irq);
+	irq_set_chip_and_handler(irq, &ftintc030_chip, handle_fasteoi_irq);
 	irq_set_probe(irq);
+
 	return 0;
 }
 
-static const struct irq_domain_ops ft030_domain_ops = {
-	.map = ft030_map,
+static const struct irq_domain_ops ftintc030_domain_ops = {
+	.map = ftintc030_map,
 	.xlate = irq_domain_xlate_twocell,
 };
 
-static void __exception_irq_entry ft030_handle_irq(struct pt_regs *regs)
+static void __exception_irq_entry ftintc030_handle_irq(struct pt_regs *regs)
 {
-	struct ft030_irqchip *f = ft030_root;
-	u32 vector = readl(f->base + FT030_ACK) & 0x1ff;
+	u32 vector = FIELD_GET(FTINTC030_VECTOR, readl(ftintc030.base + FTINTC030_ACK));
 
-	if (vector == FT030_SPURIOUS)
+	if (vector == FTINTC030_VECTOR_SPURIOUS)
 		return;
-	if (vector < FT030_VECTOR_BASE ||
-	    vector >= FT030_VECTOR_BASE + f->nr_irqs ||
-	    generic_handle_domain_irq(f->domain, vector - FT030_VECTOR_BASE)) {
-		writel(vector, f->base + FT030_EOI);
+
+	if (vector < FTINTC030_VECTOR_SPI_BASE ||
+	    generic_handle_domain_irq(ftintc030.domain, vector - FTINTC030_VECTOR_SPI_BASE)) {
+		writel(vector, ftintc030.base + FTINTC030_EOI);
 		pr_warn_ratelimited("FTINTC030: unhandled vector %u\n", vector);
 	}
 }
 
-static int __init ft030_init(struct device_node *np, struct device_node *parent)
+static void __init ftintc030_hw_init(u32 cpu_match)
 {
-	struct ft030_irqchip *f;
-	u32 cpu_match;
-	unsigned int irq, bank;
+	void __iomem *base = ftintc030.base;
+	unsigned int i;
+
+	for (i = 0; i < ftintc030.nr_spis; i += 32) {
+		writel(0, base + FTINTC030_SPI_ENABLE + ftintc030_bank(i));
+		writel(0, base + FTINTC030_SPI_EDGE + ftintc030_bank(i));
+		writel(0, base + FTINTC030_SPI_ACTIVE_LOW + ftintc030_bank(i));
+		writel(~0U, base + FTINTC030_SPI_CLEAR + ftintc030_bank(i));
+	}
+
+	/* Every SPI to every CPU, at the highest priority. */
+	for (i = 0; i < ftintc030.nr_spis; i += 4) {
+		writel(~0U, base + FTINTC030_SPI_TARGET + i);
+		writel(0, base + FTINTC030_SPI_PRIORITY + i);
+	}
+
+	writel(cpu_match, base + FTINTC030_CPU_MATCH);
+	writel(FTINTC030_CPU_CTRL_VAL, base + FTINTC030_CPU_CTRL);
+	writel(FTINTC030_BINARY_POINT_NONE, base + FTINTC030_BINARY_POINT);
+	writel(FTINTC030_PRIORITY_MASK_ALL, base + FTINTC030_PRIORITY_MASK);
+}
+
+static int __init ftintc030_of_init(struct device_node *np, struct device_node *parent)
+{
+	u32 cpu_match, feature;
 	int ret;
 
-	if (parent || ft030_root)
-		return -EINVAL;
 	ret = of_property_read_u32(np, "faraday,cpu-match-id", &cpu_match);
 	if (ret)
 		return ret;
-	f = kzalloc(sizeof(*f), GFP_KERNEL);
-	if (!f)
+
+	ftintc030.base = of_iomap(np, 0);
+	if (!ftintc030.base)
 		return -ENOMEM;
-	f->base = of_iomap(np, 0);
-	if (!f->base) {
-		ret = -ENOMEM;
-		goto free_chip;
-	}
-	raw_spin_lock_init(&f->lock);
-	f->nr_irqs = (readl(f->base + FT030_FEATURE) >> 2) & 0x1ff;
-	if (!f->nr_irqs || f->nr_irqs > FT030_SPURIOUS - FT030_VECTOR_BASE) {
+	raw_spin_lock_init(&ftintc030.lock);
+
+	feature = readl(ftintc030.base + FTINTC030_FEATURE);
+	ftintc030.nr_spis = FIELD_GET(FTINTC030_FEATURE_SPIS, feature);
+	if (!ftintc030.nr_spis ||
+	    ftintc030.nr_spis > FTINTC030_VECTOR_SPURIOUS - FTINTC030_VECTOR_SPI_BASE) {
 		ret = -EINVAL;
-		goto unmap;
-	}
-	f->domain = irq_domain_create_linear(of_fwnode_handle(np), f->nr_irqs,
-					     &ft030_domain_ops, f);
-	if (!f->domain) {
-		ret = -ENOMEM;
-		goto unmap;
+		goto err_unmap;
 	}
 
-	for (irq = 0; irq < f->nr_irqs; irq += 32) {
-		bank = ft030_bank(irq);
-		writel(0, f->base + FT030_ENABLE + bank);
-		writel(0, f->base + FT030_MODE + bank);
-		writel(0, f->base + FT030_POLARITY + bank);
-		writel(~0U, f->base + FT030_CLEAR + bank);
+	ftintc030.domain = irq_domain_create_linear(of_fwnode_handle(np), ftintc030.nr_spis,
+						    &ftintc030_domain_ops, NULL);
+	if (!ftintc030.domain) {
+		ret = -ENOMEM;
+		goto err_unmap;
 	}
-	/* GC1601 has one target byte per SPI, unlike other FTINTC030 variants. */
-	for (irq = 0; irq < f->nr_irqs; irq += 4) {
-		writel(~0U, f->base + FT030_TARGET + irq);
-		writel(0, f->base + FT030_PRIORITY + irq);
-	}
-	writel(cpu_match, f->base + FT030_CPU_MATCH);
-	writel(4, f->base + FT030_INTCR);
-	writel(7, f->base + FT030_BINPOINT);
-	writel(15, f->base + FT030_PRIMASK);
-	ft030_root = f;
-	set_handle_irq(ft030_handle_irq);
+
+	pr_debug("FTINTC030: %u SPIs, CPU control %x, binary point %x, priority mask %x before setup\n",
+		ftintc030.nr_spis, readl(ftintc030.base + FTINTC030_CPU_CTRL),
+		readl(ftintc030.base + FTINTC030_BINARY_POINT),
+		readl(ftintc030.base + FTINTC030_PRIORITY_MASK));
+
+	ftintc030_hw_init(cpu_match);
+	set_handle_irq(ftintc030_handle_irq);
+
 	return 0;
 
-unmap:
-	iounmap(f->base);
-free_chip:
-	kfree(f);
+err_unmap:
+	iounmap(ftintc030.base);
 	return ret;
 }
-IRQCHIP_DECLARE(gc1601_intc, "galachip,gc1601-intc", ft030_init);
+
+IRQCHIP_DECLARE(gc1601_intc, "galachip,gc1601-intc", ftintc030_of_init);

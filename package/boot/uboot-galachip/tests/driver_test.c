@@ -3,17 +3,21 @@
 #include <assert.h>
 #include <sys/mman.h>
 #include "../files/drivers/net/gc1601_eth.c"
-#include "../files/drivers/spi/ftspi020_gc1601.c"
+#include "../files/drivers/spi/ftspi020.c"
 #include "../files/drivers/net/gc1601_mdio.c"
 #include "../files/drivers/clk/clk-gc1601.c"
-#include "../files/include/gc1601_bounds.h"
 
+ulong mock_clk_rate = 200000000;
+ulong mock_clk_requested;
+u32 mock_safe_hz;
 struct phy_device mock_phy = { 1, 1000, DUPLEX_FULL };
 static bool fifo_stuck, abort_stuck, complete_stuck, tx_stuck;
 static bool mdio_stuck, alloc_empty, table_stuck;
 static u32 table_reads, global_reset_writes;
 static u32 completions, releases, acknowledgments, spi_left, spi_position, spi_opcode;
 static u32 spi_written;
+const u32 *mock_ranges;
+int mock_range_cells;
 static u32 raw(uintptr_t a) { return *(u32 *)a; }
 static void set(uintptr_t a, u32 v) { *(u32 *)a = v; }
 
@@ -128,8 +132,8 @@ static void map(uintptr_t start, size_t size)
 
 static void spi_tests(void)
 {
-	struct gc_spi p = { (void *)0xa0000000, 200000000, false };
-	struct udevice bus = { .priv = &p }, child = { .parent = &bus };
+	struct ftspi020 p = { .base = (void *)0xa0000000, .input_rate = 200000000 };
+	struct udevice bus = { .priv = &p, .name = "spi@a0000000" }, child = { .parent = &bus };
 	struct spi_slave slave = { &child };
 	u8 bytes[261];
 	struct spi_mem_op op = {
@@ -140,7 +144,7 @@ static void spi_tests(void)
 	unsigned int i;
 
 	memset(bytes, 0xaa, sizeof(bytes));
-	assert(!gc_spi_exec(&slave, &op));
+	assert(!ftspi020_exec_op(&slave, &op));
 	assert(bytes[0] == 0xaa && bytes[260] == 0xaa);
 	for (i = 0; i < 259; i++)
 		assert(bytes[i + 1] == (i & 255));
@@ -150,42 +154,80 @@ static void spi_tests(void)
 
 		memset(aligned, 0xaa, sizeof(aligned));
 		op.data.buf.in = aligned;
-		assert(!gc_spi_exec(&slave, &op));
+		assert(!ftspi020_exec_op(&slave, &op));
 		for (i = 0; i < 259; i++)
 			assert(((u8 *)aligned)[i] == (i & 255));
 		assert(((u8 *)aligned)[259] == 0xaa);
 		op.data.buf.in = bytes + 1;
 	}
-	assert(gc_spi_speed(&bus, 24999999) == -ERANGE);
-	assert(!gc_spi_speed(&bus, 25000000));
+	assert(ftspi020_set_speed(&bus, 24999999) == -ERANGE);
+	assert(mock_clk_requested == 49999998);
+	assert(!ftspi020_set_speed(&bus, 25000000));
+	assert(!ftspi020_exec_op(&slave, &op));
 	assert((raw(0xa0000010) & 3) == 3);
+	{
+		/* Bulk reads at spi-max-frequency, everything else at the safe speed. */
+		struct spi_mem_op rdid = {
+			.cmd = { 1, 1, 0x9f },
+			.data = { .nbytes = 63, .buswidth = 1, .dir = SPI_MEM_DATA_IN,
+				  .buf.in = bytes },
+		};
+		struct spi_mem_op wren = { .cmd = { 1, 1, 0x06 } };
+
+		mock_safe_hz = 25000000;
+		ftspi020_read_flash(&bus, &p);
+		assert(!ftspi020_set_speed(&bus, 100000000));
+		assert(mock_clk_requested == 200000000);
+		assert(p.bulk_hz == 100000000 && p.safe_hz == 25000000);
+		assert(!ftspi020_exec_op(&slave, &op));
+		assert((raw(0xa0000010) & 3) == 0);
+		assert(!ftspi020_exec_op(&slave, &rdid));
+		assert((raw(0xa0000010) & 3) == 3);
+		assert(!ftspi020_exec_op(&slave, &op));
+		assert(!ftspi020_exec_op(&slave, &wren));
+		assert((raw(0xa0000010) & 3) == 3);
+		/* The SPI clock stays at 50 MHz: 100 MHz is out of reach, ÷2 is the fastest. */
+		mock_clk_rate = 50000000;
+		assert(!ftspi020_set_speed(&bus, 100000000));
+		assert(!ftspi020_exec_op(&slave, &op));
+		assert((raw(0xa0000010) & 3) == 0);
+		assert(!ftspi020_exec_op(&slave, &rdid));
+		assert((raw(0xa0000010) & 3) == 0);
+		mock_clk_rate = 200000000;
+		mock_safe_hz = 0;
+		p.dt_safe_hz = 0;
+		assert(!ftspi020_set_speed(&bus, 50000000));
+		assert(p.safe_hz == 50000000);
+		assert(!ftspi020_exec_op(&slave, &rdid));
+		assert((raw(0xa0000010) & 3) == 1);
+		memset(bytes, 0xaa, sizeof(bytes));
+	}
 	op.data.buswidth = 4;
-	assert(!gc_spi_supports(&slave, &op));
+	assert(!ftspi020_supports_op(&slave, &op));
 	op.data.buswidth = 2;
 	op.cmd.opcode = 0x3b;
 	op.dummy.nbytes = 1;
 	op.dummy.buswidth = 1;
-	assert(gc_spi_supports(&slave, &op));
+	assert(ftspi020_supports_op(&slave, &op));
 	memset(bytes, 0xaa, sizeof(bytes));
-	assert(!gc_spi_exec(&slave, &op));
+	assert(!ftspi020_exec_op(&slave, &op));
 	assert(raw(0xa000000c) == (0x3b000000 | 1 << 5 | BIT(0)));
 	assert((raw(0xa0000004) >> 16 & 0xff) == 8);
 	for (i = 0; i < 259; i++)
 		assert(bytes[i + 1] == (i & 255));
 	op.data.dir = SPI_MEM_DATA_OUT;
-	assert(!gc_spi_supports(&slave, &op));
+	assert(!ftspi020_supports_op(&slave, &op));
 	op.data.dir = SPI_MEM_DATA_IN;
 	op.cmd.opcode = 0x03;
 	op.dummy.nbytes = 0;
 	op.data.buswidth = 1;
-	assert(gc_spi_mode(&bus, SPI_RX_DUAL) == 0);
-	assert(gc_spi_mode(&bus, SPI_RX_QUAD) == -ENOTSUPP);
+	assert(ftspi020_set_mode(&bus, SPI_RX_DUAL) == 0);
+	assert(ftspi020_set_mode(&bus, SPI_RX_QUAD) == -ENOTSUPP);
+	/* Without protected ranges every address and opcode the core sends is run. */
 	op.addr.val = 0xfffffe;
-	assert(gc_spi_exec(&slave, &op) == -EINVAL);
+	assert(!ftspi020_exec_op(&slave, &op));
+	assert(raw(0xa0000000) == 0xfffffe);
 	op.addr.val = 0;
-	op.data.dir = SPI_MEM_DATA_OUT;
-	assert(gc_spi_exec(&slave, &op) == -EROFS);
-	op.data.dir = SPI_MEM_DATA_IN;
 	{
 		static const u32 data[] = { 1, 2, 3 };
 		struct spi_mem_op w = {
@@ -195,65 +237,116 @@ static void spi_tests(void)
 		};
 		struct spi_mem_op e = { .cmd = { 1, 1, 0xd8 }, .addr = { 3, 1, 0x3c0000 } };
 		struct spi_mem_op wren = { .cmd = { 1, 1, 0x06 } };
+		static const u32 addresses[] = { 0, 0x1ff8, 0x20000, 0x3cfff8, 0x3d0000, 0x3f0000 };
+		static const u8 other_opcodes[] = { 0x20, 0x52, 0x60, 0xc7, 0x01 };
+		unsigned int k;
 
-		assert(!gc_spi_exec(&slave, &wren));
+		assert(!ftspi020_exec_op(&slave, &wren));
 		assert(raw(0xa000000c) == (0x06000000 | BIT(1) | BIT(0)));
-		assert(!gc_spi_exec(&slave, &w));
+		assert(!ftspi020_exec_op(&slave, &w));
 		assert(spi_opcode == 2 && spi_written == 6 && !spi_left);
 		assert(raw(0xa0000008) == 11 && (raw(0xa000000c) & BIT(1)));
-		/* The boot region is writable: the ROM UART menu recovers a bad SPL. */
-		w.addr.val = 0x1ff8;
-		assert(!gc_spi_exec(&slave, &w));
-		w.addr.val = 0;
-		assert(!gc_spi_exec(&slave, &w));
-		w.addr.val = 0x3cfff8;
-		assert(gc_spi_exec(&slave, &w) == -EROFS);
-		assert(!gc_spi_exec(&slave, &e));
-		e.addr.val = 0x3d0000;
-		assert(gc_spi_exec(&slave, &e) == -EROFS);
-		e.addr.val = 0;
-		assert(!gc_spi_exec(&slave, &e));
+		for (k = 0; k < ARRAY_SIZE(addresses); k++) {
+			w.addr.val = addresses[k];
+			assert(!ftspi020_exec_op(&slave, &w));
+			assert(raw(0xa0000000) == addresses[k]);
+			e.addr.val = addresses[k];
+			assert(!ftspi020_exec_op(&slave, &e));
+			assert(raw(0xa0000000) == addresses[k] && spi_opcode == 0xd8);
+		}
 		e.addr.val = 0x12000;
-		assert(gc_spi_exec(&slave, &e) == -EINVAL);
-		e.cmd.opcode = 0x20;
-		e.addr.val = 0x1000;
-		assert(!gc_spi_exec(&slave, &e));
-		e.addr.val = 0x2800;
-		assert(gc_spi_exec(&slave, &e) == -EINVAL);
-		e.addr.val = 0x3cf000;
-		assert(!gc_spi_exec(&slave, &e));
-		e.addr.val = 0x3f0000;
-		assert(gc_spi_exec(&slave, &e) == -EROFS);
-		/* Whole-chip erases and status writes stay refused everywhere. */
-		{
-			static const u8 refused[] = { 0x52, 0x60, 0xc7, 0x01 };
-			unsigned int k;
+		for (k = 0; k < ARRAY_SIZE(other_opcodes); k++) {
+			e.cmd.opcode = other_opcodes[k];
+			e.addr.nbytes = 3;
+			assert(!ftspi020_exec_op(&slave, &e));
+			assert(spi_opcode == other_opcodes[k]);
+			e.addr.nbytes = 0;
+			assert(!ftspi020_exec_op(&slave, &e));
+			assert(spi_opcode == other_opcodes[k]);
+		}
 
-			for (k = 0; k < ARRAY_SIZE(refused); k++) {
-				e.cmd.opcode = refused[k];
-				e.addr.nbytes = 3;
-				e.addr.val = 0x20000;
-				assert(gc_spi_exec(&slave, &e));
-				e.addr.nbytes = 0;
-				assert(gc_spi_exec(&slave, &e));
+		/* With 0x3d0000-0x3fffff protected, nothing that changes it is run. */
+		p.nprotected = 1;
+		p.protected[0].start = 0x3d0000;
+		p.protected[0].end = 0x400000;
+		e.addr.nbytes = 3;
+		{
+			static const struct { u8 opcode; u32 addr, nbytes; int ret; } cases[] = {
+				/* page program, including one that wraps inside its page */
+				{ 0x02, 0, 11, 0 }, { 0x02, 0x1ff8, 11, 0 }, { 0x02, 0x20000, 11, 0 },
+				{ 0x02, 0x3cff00, 11, 0 }, { 0x02, 0x3cfff8, 11, -EROFS },
+				{ 0x02, 0x3d0000, 11, -EROFS }, { 0x02, 0x3f0000, 11, -EROFS },
+				{ 0x02, 0x3ffff0, 11, -EROFS },
+				/* 4 KiB, 32 KiB and 64 KiB erases, aligned or not */
+				{ 0x20, 0x3cf000, 0, 0 }, { 0x20, 0x3cffff, 0, 0 },
+				{ 0x20, 0x3d0000, 0, -EROFS }, { 0x20, 0x3d0fff, 0, -EROFS },
+				{ 0x52, 0x3c8000, 0, 0 }, { 0x52, 0x3d0000, 0, -EROFS },
+				{ 0xd8, 0, 0, 0 }, { 0xd8, 0x3c0000, 0, 0 }, { 0xd8, 0x3cffff, 0, 0 },
+				{ 0xd8, 0x3d0000, 0, -EROFS }, { 0xd8, 0x3dffff, 0, -EROFS },
+				{ 0xd8, 0x3f0000, 0, -EROFS },
+			};
+
+			for (k = 0; k < ARRAY_SIZE(cases); k++) {
+				struct spi_mem_op c = cases[k].opcode == 0x02 ? w : e;
+				int expect = cases[k].ret;
+
+				c.cmd.opcode = cases[k].opcode;
+				c.addr.val = cases[k].addr;
+				if (cases[k].opcode == 0x02)
+					c.data.nbytes = cases[k].nbytes;
+				set(0xa000000c, 0xdeadbeef);
+				assert(ftspi020_exec_op(&slave, &c) == expect);
+				/* A refused command never reaches the controller. */
+				assert((raw(0xa000000c) == 0xdeadbeef) == !!expect);
 			}
 		}
+		/* A chip erase touches the protected range too; other commands are not affected. */
+		for (k = 0; k < 2; k++) {
+			e.cmd.opcode = k ? 0x60 : 0xc7;
+			e.addr.nbytes = 0;
+			assert(ftspi020_exec_op(&slave, &e) == -EROFS);
+		}
+		e.cmd.opcode = 0x01;
+		assert(!ftspi020_exec_op(&slave, &e));
+		assert(!ftspi020_exec_op(&slave, &wren));
+		p.nprotected = 0;
+	}
+	/* The ranges come from the flash node's property: pairs of offset and size. */
+	{
+		static const u32 ranges[] = { 0x3d0000, 0x30000, 0x1000, 0, 0x10000, 0x1000,
+					      0x20000, 0x1000, 0x30000, 0x1000, 0x40000, 0x1000 };
+		struct ftspi020 pp = { 0 };
+		struct udevice pbus = { .priv = &pp, .address = (void *)0xa0000000 };
+
+		mock_range_cells = 0;
+		assert(!ftspi020_probe(&pbus) && !pp.nprotected);
+		mock_ranges = ranges;
+		mock_range_cells = ARRAY_SIZE(ranges);
+		memset(&pp, 0, sizeof(pp));
+		assert(!ftspi020_probe(&pbus));
+		/* An empty range is skipped and at most four are kept. */
+		assert(pp.nprotected == 4);
+		assert(pp.protected[0].start == 0x3d0000 && pp.protected[0].end == 0x400000);
+		assert(pp.protected[1].start == 0x10000 && pp.protected[1].end == 0x11000);
+		assert(pp.protected[2].start == 0x20000 && pp.protected[2].end == 0x21000);
+		assert(pp.protected[3].start == 0x30000 && pp.protected[3].end == 0x31000);
+		mock_range_cells = 0;
 	}
 	fifo_stuck = true;
-	assert(gc_spi_exec(&slave, &op) == -ETIMEDOUT);
-	assert(!p.failed);
+	assert(ftspi020_exec_op(&slave, &op) == -ETIMEDOUT);
+	assert(!p.wedged);
 	abort_stuck = true;
-	assert(gc_spi_exec(&slave, &op) == -ETIMEDOUT);
-	assert(p.failed);
+	assert(ftspi020_exec_op(&slave, &op) == -ETIMEDOUT);
+	assert(p.wedged);
 	fifo_stuck = false;
-	assert(gc_spi_exec(&slave, &op) == -EIO);
+	assert(ftspi020_exec_op(&slave, &op) == -EIO);
 	abort_stuck = false;
-	assert(!gc_spi_exec(&slave, &op));
+	assert(!ftspi020_exec_op(&slave, &op));
 	complete_stuck = true;
-	assert(gc_spi_exec(&slave, &op) == -ETIMEDOUT);
+	assert(ftspi020_exec_op(&slave, &op) == -ETIMEDOUT);
 	complete_stuck = false;
-	assert(!gc_spi_exec(&slave, &op));
-	puts("SPI: FIFO tails, dual read, guarded program/erase, lane/address rejection, timeout, failed abort and recovery passed");
+	assert(!ftspi020_exec_op(&slave, &op));
+	puts("SPI: FIFO tails, dual read, per-command speed, protected-range guard, lane/address rejection, timeout, failed abort and recovery passed");
 }
 
 static void network_tests(void)
@@ -402,26 +495,54 @@ static void mdio_tests(void)
 
 static void clock_tests(void)
 {
-	struct udevice dev = { .address = (void *)0x90a00000 };
-	struct clk clk = { .dev = &dev, .id = 5 };
+	struct gc1601_clk_priv priv;
+	struct udevice dev = { .priv = &priv, .address = (void *)0x90a00000 };
+	struct clk clk = { .dev = &dev, .id = GC1601_CLK_APB };
 	unsigned int i;
 
+	/* PLL0 from 25 MHz times 16 * 4: 1.6 GHz */
+	mock_clk_rate = 25000000;
 	set(0x90a00030, 0x10000000);
+	set(0x90a00020, 0);
+	assert(!gc1601_clk_probe(&dev));
 	for (i = 0; i < 4; i++) {
 		set(0x90a00020, i << 20);
-		assert(gc1601_get_rate(&clk) == (i == 1 ? 133333333 : 66666666));
+		assert(gc1601_clk_get_rate(&clk) == (i == 1 ? 133333333 : 66666666));
 	}
-	clk.id = 6;
+	clk.id = GC1601_CLK_CPU;
+	for (i = 0; i < 4; i++) {
+		set(0x90a00020, i << 16);
+		assert(gc1601_clk_get_rate(&clk) ==
+		       (i == 2 ? 533333333 : i == 1 ? 266666666 : 133333333));
+	}
+	clk.id = GC1601_CLK_PLL0_OUT3;
+	assert(gc1601_clk_get_rate(&clk) == 320000000);
+	clk.id = GC1601_CLK_SPI;
 	set(0x90a00810, 0);
-	assert(gc1601_get_rate(&clk) == 50000000);
+	assert(gc1601_clk_get_rate(&clk) == 50000000);
 	set(0x90a00810, BIT(11));
-	assert(gc1601_get_rate(&clk) == 200000000);
-	clk.id = 0;
-	set(0x90a00030, 0xff000000);
-	assert(IS_ERR_VALUE(gc1601_get_rate(&clk)));
+	assert(gc1601_clk_get_rate(&clk) == 200000000);
+	/* The selector bit alone changes; anything above 50 MHz gets 200. */
+	set(0x90a00810, 0x5);
+	assert(gc1601_clk_set_rate(&clk, 200000000) == 200000000);
+	assert(raw(0x90a00810) == (0x5 | BIT(11)));
+	assert(gc1601_clk_set_rate(&clk, 50000001) == 200000000);
+	assert(gc1601_clk_set_rate(&clk, 50000000) == 50000000);
+	assert(raw(0x90a00810) == 0x5);
+	clk.id = GC1601_CLK_APB;
+	assert(gc1601_clk_set_rate(&clk, 200000000) == (ulong)-EINVAL);
+	assert(raw(0x90a00810) == 0x5);
+	clk.id = GC1601_CLK_SPI;
+	clk.id = GC1601_CLK_COUNT;
+	assert(IS_ERR_VALUE(gc1601_clk_get_rate(&clk)));
 	set(0x90a00030, 0);
-	assert(IS_ERR_VALUE(gc1601_get_rate(&clk)));
-	puts("Clocks: all bus selectors, SPI parent division, zero and overflow passed");
+	assert(gc1601_clk_probe(&dev) == -EINVAL);
+	if (sizeof(ulong) == 4) {
+		set(0x90a00030, 0xff000000);
+		assert(gc1601_clk_probe(&dev) == -EINVAL);
+	}
+	mock_clk_rate = 200000000;
+	puts("Clocks: PLL0 outputs, CPU and bus selectors, SPI selector and invalid PLL passed");
 }
 
 int main(void)
@@ -433,10 +554,16 @@ int main(void)
 	map(0x90c00000, 0x41000);
 	map(0x90a00000, 0x1000);
 	map(0x91400000, 0x1000);
-	assert(gc1601_load_range(0x41000000, 0x400000));
-	assert(!gc1601_load_range(0x407fffff, 2));
-	assert(!gc1601_load_range(0xffffffff, 2));
-	assert(!gc1601_load_range(0x40900000, 4));
+	/* 32 MiB of DDR: loads between 0x40080000 and 0x41800000, around the DMA area */
+	assert(gc1601_ddr_load_range(0x40000000, 0x41800000, 0x41000000, 0x400000));
+	assert(gc1601_ddr_load_range(0x40000000, 0x41800000, 0x40080000, 0x780000));
+	assert(!gc1601_ddr_load_range(0x40000000, 0x41800000, 0x40070000, 4));
+	assert(!gc1601_ddr_load_range(0x40000000, 0x41800000, 0x407fffff, 2));
+	assert(!gc1601_ddr_load_range(0x40000000, 0x41800000, 0x40900000, 4));
+	assert(!gc1601_ddr_load_range(0x40000000, 0x41800000, 0x417fffff, 2));
+	assert(!gc1601_ddr_load_range(0x40000000, 0x41800000, 0xffffffff, 2));
+	/* 64 MiB: the top moves with the memory node */
+	assert(gc1601_ddr_load_range(0x40000000, 0x43800000, 0x42000000, 0x1000000));
 	spi_tests();
 	network_tests();
 	mdio_tests();

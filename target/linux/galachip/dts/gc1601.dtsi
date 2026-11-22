@@ -39,12 +39,56 @@
 			      <0x90ddc040 0x0c>, <0x90ddc080 0x20>,
 			      <0x90dcc054 0x04>, <0x90de81ac 0x10>,
 			      <0x90dc4000 0x04>, <0x90dc8000 0x04>,
-			      <0x90ddc000 0x18>, <0x90dec000 0x54>;
+			      <0x90ddc000 0x18>, <0x90dec000 0x54>,
+			      <0x90de8000 0x04>, <0x90de0000 0x50>,
+			      <0x90dd8000 0x30>, <0x91400000 0x04>;
 			reg-names = "gmac", "buffers", "descriptors", "rx", "tx-ring",
 				    "rx-pending", "tx-space", "scheduler-ready",
-				    "buffer-control", "buffer-enable", "tx-config", "statistics";
+				    "buffer-control", "buffer-enable", "tx-config", "statistics",
+				    "scheduler", "output-scheduler", "queues", "sgmii";
 			interrupts = <20 IRQ_TYPE_LEVEL_HIGH>;
+			galachip,scu = <&scu>;
+			galachip,switch = <&switch>;
 			status = "disabled";
+		};
+
+		switch: switch@90f80000 {
+			compatible = "galachip,gc1601-switch";
+			reg = <0x90f80000 0x20000>;
+			status = "disabled";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				switch_pon: port@0 {
+					reg = <0>;
+					phy-mode = "internal";
+					status = "disabled";
+
+					/* Up while the ONU is registered; the PON driver reports it. */
+					fixed-link {
+						speed = <2500>;
+						full-duplex;
+					};
+				};
+
+				switch_lan: port@1 {
+					reg = <1>;
+					status = "disabled";
+				};
+
+				port@2 {
+					reg = <2>;
+					ethernet = <&packet_engine>;
+					phy-mode = "internal";
+
+					fixed-link {
+						speed = <1000>;
+						full-duplex;
+					};
+				};
+			};
 		};
 
 		mdio: mdio@90100000 {
@@ -99,7 +143,7 @@
 		};
 
 		scu: clock-controller@90a00000 {
-			compatible = "galachip,gc1601-scu";
+			compatible = "galachip,gc1601-scu", "syscon";
 			reg = <0x90a00000 0x20000>;
 			#clock-cells = <1>;
 			clocks = <&osc>;
@@ -108,13 +152,22 @@
 
 		pon: pon@90cc0000 {
 			compatible = "galachip,gc1601-pon";
-			reg = <0x90cc0000 0x24000>, <0x91000000 0x300000>,
-			      <0x91300000 0x100>, <0x90a00800 0x20>,
-			      <0x90c40020 0x4>, <0x90c00000 0x10>,
-			      <0x90c40000 0x20>, <0x90c80000 0x2000>;
-			reg-names = "mac", "serdes", "serdes-ctrl", "scu", "txpwr",
-				    "top", "global", "emac";
+			reg = <0x90cc0000 0x24000>, <0x90c40020 0x4>,
+			      <0x90c00000 0x10>, <0x90c40000 0x20>,
+			      <0x90c80000 0x2000>;
+			reg-names = "mac", "txpwr", "top", "global", "emac";
+			galachip,scu = <&scu>;
+			phys = <&pon_serdes>;
+			phy-names = "serdes";
 			status = "disabled";
+		};
+
+		pon_serdes: phy@91000000 {
+			compatible = "galachip,gc1601-pon-serdes";
+			reg = <0x91000000 0x300000>, <0x91300000 0x100>;
+			reg-names = "config", "ctrl";
+			galachip,scu = <&scu>;
+			#phy-cells = <0>;
 		};
 
 		intc: interrupt-controller@96000000 {

@@ -30,17 +30,17 @@ get() {
 	jsonfilter -s "$1" -e "$2" 2>/dev/null
 }
 
-# xpon.public names the mode; an ONU without it runs GPON only.
+# xpon summary names the mode; without it the ONU runs GPON only.
 fetch() {
 	local method=${1:-status}
 
-	PUBLIC=$(call xpon.public status)
+	PUBLIC=$(call xpon summary)
 	MODE=$(get "$PUBLIC" '@.mode')
 	MODE=${MODE:-gpon}
 	STATUS= VLAN=
 	if [ "$MODE" = gpon ]; then
-		STATUS=$(call omci.agent "$method") && STATUS=$(get "$STATUS" '@.status')
-		VLAN=$(call omci.vlan status)
+		STATUS=$(call xpon "$method") && STATUS=$(get "$STATUS" '@.status')
+		VLAN=$(call xpon vlan_status)
 	fi
 	[ -n "$PUBLIC" ] || [ -n "$STATUS" ]
 }
@@ -134,7 +134,7 @@ vlan_line() {
 	fi
 }
 
-# GPON optics come with omcid's status; EPON's from xpon.public.
+# GPON optics come with omcid's status; EPON's from xpon summary.
 optics() {
 	local d
 

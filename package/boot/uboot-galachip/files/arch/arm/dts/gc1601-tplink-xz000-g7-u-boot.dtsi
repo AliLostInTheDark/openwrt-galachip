@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+
+#include "gc1601-u-boot.dtsi"
+
+/ {
+	aliases {
+		ethernet0 = &packet_engine;
+		spi0 = &spi;
+	};
+};
+
+&{/soc/spi@a0000000/flash@0} {
+	bootph-pre-ram;
+	/* misc (MAC address) and hwconfig (optical calibration): never programmed or erased */
+	galachip,protected-ranges = <0x3d0000 0x30000>;
+};

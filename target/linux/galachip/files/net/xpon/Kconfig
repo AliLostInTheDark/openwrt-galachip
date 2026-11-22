@@ -19,13 +19,4 @@ config XPON_OMCI
 	  hardware requests and the identity/configuration store. The OMCI
 	  protocol itself runs in userspace (omcid).
 
-config XPON_OAM
-	tristate "xPON IEEE 802.3ah OAM"
-	default y
-	help
-	  IEEE 802.3ah Ethernet OAM support for EPON links. The initial
-	  implementation provides the per-LLID OAM object and Information
-	  OAMPDU wire definitions. Event, variable and vendor extensions are
-	  added on top of this core.
-
 endif # XPON

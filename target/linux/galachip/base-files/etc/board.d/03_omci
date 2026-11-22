@@ -1,0 +1,20 @@
+. /lib/functions/uci-defaults.sh
+
+board_config_update
+
+# The ONU identity the stock firmware reports (its misc config). The xpon
+# agent (rpcd) applies it to every field omci.main leaves empty.
+case "$(board_name)" in
+tplink,xz000-g7)
+	json_select_object omci
+	json_add_string vendor_id "TPLG"
+	json_add_string equipment_id "XZ000-G7"
+	json_add_string version "XZ000-G7 v1.0"
+	json_add_string onu_type "sfu"
+	json_select ..
+	;;
+esac
+
+board_config_flush
+
+exit 0

@@ -1,0 +1,116 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] spl: legacy: check the CRC of LZMA images before decompressing
+
+With SPL_LEGACY_IMAGE_CRC_CHECK, spl.c checks the data CRC at the load
+address after loading. For an LZMA image the CRC covers the compressed
+payload while the load address holds the decompressed one, so a good
+image fails the check, and a corrupt one is decompressed unchecked.
+
+Check the CRC on the compressed payload before decompressing it and
+skip the later check. Split the decompression into its own function so
+other loaders can use it.
+
+diff --git a/common/spl/spl_legacy.c b/common/spl/spl_legacy.c
+index b3efb3e6..8b951cfb 100644
+--- a/common/spl/spl_legacy.c
++++ b/common/spl/spl_legacy.c
+@@ -9,6 +9,7 @@
+ #include <mapmem.h>
+ #include <asm/sections.h>
+ #include <spl.h>
++#include <u-boot/crc.h>
+ 
+ #include <lzma/LzmaTypes.h>
+ #include <lzma/LzmaDec.h>
+@@ -81,13 +82,41 @@ int spl_parse_legacy_header(struct spl_image_info *spl_image,
+ 	return 0;
+ }
+ 
++int spl_decompress_legacy_lzma(struct spl_image_info *spl_image, void *src)
++{
++	SizeT lzma_len = LZMA_LEN;
++	int ret;
++
++#ifdef CONFIG_SPL_LEGACY_IMAGE_CRC_CHECK
++	/*
++	 * The data CRC covers the compressed payload: check it before
++	 * decompressing, not at the load address afterwards.
++	 */
++	if (crc32(0, src, spl_image->dcrc_length) != spl_image->dcrc) {
++		puts("SPL: Image data CRC check failed!\n");
++		return -EINVAL;
++	}
++	spl_image->dcrc_length = 0;
++#endif
++
++	debug("LZMA: Decompressing %p to %08lx\n", src, spl_image->load_addr);
++	ret = lzmaBuffToBuffDecompress(map_sysmem(spl_image->load_addr,
++						  spl_image->size), &lzma_len,
++				       src, spl_image->size);
++	if (ret) {
++		printf("LZMA decompression error: %d\n", ret);
++		return ret;
++	}
++
++	spl_image->size = lzma_len;
++	return 0;
++}
++
+ int spl_load_legacy_lzma(struct spl_image_info *spl_image,
+ 			 struct spl_load_info *load, ulong offset)
+ {
+-	SizeT lzma_len = LZMA_LEN;
+ 	void *src;
+ 	ulong dataptr, overhead, size;
+-	int ret;
+ 
+ 	/* dataptr points to compressed payload  */
+ 	dataptr = ALIGN_DOWN(sizeof(struct legacy_img_hdr),
+@@ -96,8 +125,6 @@ int spl_load_legacy_lzma(struct spl_image_info *spl_image,
+ 	size = ALIGN(spl_image->size + overhead, spl_get_bl_len(load));
+ 	dataptr += offset;
+ 
+-	debug("LZMA: Decompressing %08lx to %08lx\n",
+-	      dataptr, spl_image->load_addr);
+ 	src = malloc(size);
+ 	if (!src) {
+ 		printf("Unable to allocate %d bytes for LZMA\n",
+@@ -106,14 +133,6 @@ int spl_load_legacy_lzma(struct spl_image_info *spl_image,
+ 	}
+ 
+ 	load->read(load, dataptr, size, src);
+-	ret = lzmaBuffToBuffDecompress(map_sysmem(spl_image->load_addr,
+-						  spl_image->size), &lzma_len,
+-				       src + overhead, spl_image->size);
+-	if (ret) {
+-		printf("LZMA decompression error: %d\n", ret);
+-		return ret;
+-	}
+ 
+-	spl_image->size = lzma_len;
+-	return 0;
++	return spl_decompress_legacy_lzma(spl_image, src + overhead);
+ }
+diff --git a/include/spl.h b/include/spl.h
+index 5078d752..5328ef85 100644
+--- a/include/spl.h
++++ b/include/spl.h
+@@ -517,6 +517,18 @@ int spl_load_simple_fit(struct spl_image_info *spl_image,
+ int spl_load_legacy_lzma(struct spl_image_info *spl_image,
+ 			 struct spl_load_info *load, ulong offset);
+ 
++/**
++ * spl_decompress_legacy_lzma() - Decompress the payload of an LZMA legacy image
++ * @spl_image:	Image description, set up with SPL_COPY_PAYLOAD_ONLY
++ * @src:	Compressed payload, already in memory
++ *
++ * Check the data CRC of the payload when SPL_LEGACY_IMAGE_CRC_CHECK is
++ * enabled, then decompress it to the load address.
++ *
++ * Return: 0 on success, or a negative error on failure
++ */
++int spl_decompress_legacy_lzma(struct spl_image_info *spl_image, void *src);
++
+ /**
+  * spl_load_legacy_img() - Loads a legacy image from a device.
+  * @spl_image:	Image description to set up

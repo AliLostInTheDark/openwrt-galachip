@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <limits.h>
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
@@ -33,7 +34,7 @@ typedef uint16_t __be16;
 #define UCLASS_MDIO 3
 #define UCLASS_CLK 4
 #define DM_FLAG_PRE_RELOC 1
-struct udevice { void *priv, *plat, *address; struct udevice *parent; };
+struct udevice { void *priv, *plat, *address; struct udevice *parent; const char *name; };
 struct udevice_id { const char *compatible; };
 struct mock_driver {
 	const char *name;
@@ -48,11 +49,22 @@ static inline void *dev_get_plat(struct udevice *d) { return d->plat; }
 static inline void *dev_read_addr_ptr(struct udevice *d) { return d->address; }
 static inline struct udevice *dev_get_parent(struct udevice *d) { return d->parent; }
 struct clk { struct udevice *dev; unsigned long id; };
-struct clk_ops { ulong (*get_rate)(struct clk *); };
+struct clk_ops { ulong (*get_rate)(struct clk *); ulong (*set_rate)(struct clk *, ulong); };
 static inline int clk_get_by_index(struct udevice *d, int i, struct clk *c)
 { (void)d; (void)i; (void)c; return 0; }
-static inline ulong clk_get_rate(struct clk *c) { (void)c; return 200000000; }
+extern ulong mock_clk_rate;
+static inline ulong clk_get_rate(struct clk *c) { (void)c; return mock_clk_rate; }
+/* The SPI clock: the rate asked for is kept, mock_clk_rate is what is given. */
+extern ulong mock_clk_requested;
+static inline ulong clk_set_rate(struct clk *c, ulong rate)
+{ (void)c; mock_clk_requested = rate; return mock_clk_rate; }
+#define IS_ENABLED(option) 0
+#define dev_info(dev, ...) ((void)(dev))
 #define IS_ERR_VALUE(a) ((ulong)(a) >= (ulong)-4095)
+#define __iomem
+#define GENMASK(h, l) ((~0U << (l)) & (~0U >> (31 - (h))))
+#define FIELD_GET(mask, reg) (((reg) & (mask)) >> __builtin_ctz(mask))
+#define dev_dbg(dev, ...) ((void)(dev))
 struct phy_device { int link, speed, duplex; };
 extern struct phy_device mock_phy;
 static inline struct phy_device *dm_eth_phy_connect(struct udevice *d)
@@ -97,6 +109,24 @@ struct dm_spi_ops {
 	int (*set_mode)(struct udevice *, uint);
 	const struct spi_controller_mem_ops *mem_ops;
 };
+/* Device tree: one flash node whose galachip,protected-ranges holds mock_range_cells cells. */
+typedef struct { int index; } ofnode;
+extern const u32 *mock_ranges;
+extern int mock_range_cells;
+extern u32 mock_safe_hz;	/* galachip,safe-max-frequency, 0 when unset */
+#define dev_for_each_subnode(node, dev) for ((node).index = 0; (node).index < 1; (node).index++)
+static inline int ofnode_read_size(ofnode node, const char *prop)
+{ (void)node; (void)prop; return mock_range_cells ? mock_range_cells * 4 : -EINVAL; }
+static inline u32 ofnode_read_u32_default(ofnode node, const char *prop, u32 def)
+{ (void)node; (void)prop; return mock_safe_hz ?: def; }
+static inline int ofnode_read_u32_index(ofnode node, const char *prop, int index, u32 *value)
+{
+	(void)node; (void)prop;
+	if (index >= mock_range_cells)
+		return -EINVAL;
+	*value = mock_ranges[index];
+	return 0;
+}
 u32 mock_read(uintptr_t addr);
 void mock_write(u32 value, uintptr_t addr);
 static inline u32 readl(const void *p) { return mock_read((uintptr_t)p); }

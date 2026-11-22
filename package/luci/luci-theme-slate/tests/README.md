@@ -7,7 +7,7 @@ flash firmware, contact a router, or add runtime work to LuCI.
 node package/luci/luci-theme-slate/tests/noncss.mjs
 PLAYWRIGHT_MODULE=/path/to/node_modules/playwright CHROME=/path/to/chrome \
   node package/luci/luci-theme-slate/tests/layout.mjs
-node package/utils/xpon/luci-app-omci/tests/light-status.mjs
+node package/utils/xpon/luci-app-xpon/tests/light-status.mjs
 ```
 
 The template checks need the checkout's host `ucode`, headers and a C compiler.

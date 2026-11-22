@@ -1,0 +1,45 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] net: add the GalaChip GC1601 Ethernet and MDIO drivers
+
+Hook up the drivers of the GC1601 packet engine's Ethernet port and of
+its MDIO bus.
+
+diff --git a/drivers/net/Kconfig b/drivers/net/Kconfig
+index faa08e9e..7c234572 100644
+--- a/drivers/net/Kconfig
++++ b/drivers/net/Kconfig
+@@ -483,6 +483,21 @@ config FSL_FM_10GEC_REGULAR_NOTATION
+ 	  new SoCs on which 10GEC enumeration is consistent with MAC
+ 	  enumeration.
+ 
++config GC1601_ETH
++	bool "GalaChip GC1601 Ethernet support"
++	depends on DM_ETH && ARCH_GALACHIP
++	select PHYLIB
++	help
++	  This driver supports the Ethernet port of the GC1601 packet engine,
++	  with polled transmit and receive through its descriptor rings.
++
++config GC1601_MDIO
++	bool "GalaChip GC1601 MDIO support"
++	depends on DM_MDIO && ARCH_GALACHIP
++	help
++	  This driver supports the Clause 22 MDIO bus of the GC1601, which
++	  reaches the PHY of the Ethernet port.
++
+ config FTMAC100
+ 	bool "Ftmac100 Ethernet Support"
+ 	select MII
+diff --git a/drivers/net/Makefile b/drivers/net/Makefile
+index 4c1f4094..a79ba940 100644
+--- a/drivers/net/Makefile
++++ b/drivers/net/Makefile
+@@ -53,6 +53,8 @@ obj-$(CONFIG_FSL_MC_ENET) += ldpaa_eth/
+ obj-$(CONFIG_FSL_MEMAC) += fm/memac_phy.o
+ obj-$(CONFIG_FSL_PFE) += pfe_eth/
+ obj-$(CONFIG_FTGMAC100) += ftgmac100.o
++obj-$(CONFIG_GC1601_ETH) += gc1601_eth.o
++obj-$(CONFIG_GC1601_MDIO) += gc1601_mdio.o
+ obj-$(CONFIG_FTMAC100) += ftmac100.o
+ obj-$(CONFIG_GMAC_ROCKCHIP) += gmac_rockchip.o
+ obj-$(CONFIG_HIFEMAC_ETH) += hifemac.o

@@ -38,6 +38,34 @@ enum xpon_event {
 	XPON_EVENT_OAM		= BIT(8),
 };
 
+/* The transmitter: TX_ALLOW, TX_HOLD and its timed form, IDENTITY_WAIT. */
+struct xpon_tx_state {
+	bool allow;
+	bool hold;
+	u32 hold_seconds;
+	bool identity_wait;
+};
+
+/* EPON LLID 0: its MAC, OAM link, registration and holdover. */
+struct xpon_epon_state {
+	u8 mac[6];
+	bool oam_link;
+	bool register_en;
+	bool sync;
+	bool nack_silent;
+	u32 registered;
+	u32 holdover_ms;
+	u32 generation;
+};
+
+/* The service flows the switch forwards past the CPU. */
+struct xpon_sfu_state {
+	bool offload;
+	u16 untag_vlan;
+	unsigned int vlan_maps;
+	struct xpon_vlan_map vlan_map[XPON_VLAN_MAP_MAX];
+};
+
 struct xpon_notifier_info {
 	struct xpon_device *xpon;
 	unsigned long changed;
@@ -47,6 +75,23 @@ struct xpon_notifier_info {
 
 struct xpon_device_ops {
 	int (*set_mode)(struct xpon_device *xpon, enum xpon_mode mode);
+	void (*get_tx)(struct xpon_device *xpon, struct xpon_tx_state *tx);
+	int (*set_tx_allow)(struct xpon_device *xpon, bool allow);
+	int (*set_tx_hold)(struct xpon_device *xpon, bool hold);
+	int (*set_tx_hold_seconds)(struct xpon_device *xpon, u32 seconds);
+	int (*release_identity)(struct xpon_device *xpon);
+	void (*get_epon)(struct xpon_device *xpon, struct xpon_epon_state *epon);
+	int (*set_epon_mac)(struct xpon_device *xpon, const u8 *mac);
+	int (*set_epon_oam_link)(struct xpon_device *xpon, bool up, const u32 *generation);
+	int (*set_epon_register)(struct xpon_device *xpon, bool on);
+	int (*set_epon_key)(struct xpon_device *xpon, u8 llid, u8 index, u32 key);
+	int (*set_epon_holdover)(struct xpon_device *xpon, u32 ms);
+	int (*get_module)(struct xpon_device *xpon, u8 *diag, u8 *thresholds);
+	void (*get_sfu)(struct xpon_device *xpon, struct xpon_sfu_state *sfu);
+	int (*set_sfu_offload)(struct xpon_device *xpon, bool on);
+	int (*set_sfu_untag_vlan)(struct xpon_device *xpon, u16 vid);
+	int (*set_sfu_vlan_map)(struct xpon_device *xpon,
+				const struct xpon_vlan_map *map, unsigned int n);
 };
 
 struct xpon_device_desc {

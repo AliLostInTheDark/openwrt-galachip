@@ -1,0 +1,151 @@
+#!/usr/bin/ucode -S
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Enforce the OLT's multicast operations profile on the LAN bridge: the
+ * IGMP/MLD version and timers of its querier, and immediate leave on its
+ * ports. Values the OLT left at 0 keep the local setting, and everything is
+ * put back when the profile goes away.
+ *
+ * The image has no netfilter and no bridge tool, so the group access list,
+ * the upstream report rate and priority, the group limit and the bandwidth
+ * limits are logged when the OLT sets them, not enforced.
+ */
+
+import * as ubus from 'ubus';
+import * as uloop from 'uloop';
+import { readfile, writefile, unlink, popen } from 'fs';
+import { cursor } from 'uci';
+import { syslog, openlog, LOG_INFO, LOG_WARNING, LOG_DAEMON } from 'log';
+import { CLASS, settings } from 'omci.mcast';
+
+const POLL_MS = 5000;
+const STATE_FILE = '/var/run/omci-mcast.state';
+
+/* the local settings, kept across a respawn so they are never lost */
+let bus, applied = null, saved = json(readfile(STATE_FILE) ?? '{}') ?? {};
+
+function log(level, fmt, ...args) {
+	syslog(level, sprintf(fmt, ...args));
+}
+
+function lan_bridge() {
+	return cursor().get('network', 'lan', 'device') ?? 'br-lan';
+}
+
+function bridge_ports(br) {
+	let out = [], p = popen(`ls /sys/class/net/${br}/brif 2>/dev/null`);
+
+	for (let l = p.read('line'); length(l); l = p.read('line'))
+		push(out, trim(l));
+	p.close();
+	return out;
+}
+
+/* Write a sysfs knob, keeping its first value to restore later. */
+function knob(path, value) {
+	let old = trim(readfile(path) ?? '');
+
+	if (!length(old))
+		return;
+	if (saved[path] == null) {
+		saved[path] = old;
+		writefile(STATE_FILE, sprintf('%J', saved));
+	}
+	if (value == null)
+		value = saved[path];
+	if (old != `${value}`)
+		writefile(path, `${value}`);
+}
+
+function restore() {
+	for (let path, value in saved)
+		writefile(path, value);
+	saved = {};
+	unlink(STATE_FILE);
+}
+
+/* The profile limits the OLT set that this image cannot enforce */
+function unenforced(s) {
+	let out = [];
+
+	if (length(s.acl))
+		push(out, `group list ${length(s.acl)} ranges`);
+	if (s.upstream_rate)
+		push(out, `report rate ${s.upstream_rate}/s`);
+	if (s.upstream_pcp != null)
+		push(out, `report priority ${s.upstream_pcp}`);
+	if (s.max_groups)
+		push(out, `max groups ${s.max_groups}`);
+	if (s.max_bandwidth)
+		push(out, `max bandwidth ${s.max_bandwidth}`);
+	return out;
+}
+
+/* sysfs takes the bridge timers in centiseconds */
+function apply(s) {
+	let br = lan_bridge(), base = `/sys/class/net/${br}/bridge`;
+
+	knob(`${base}/multicast_igmp_version`, s.igmp_version);
+	knob(`${base}/multicast_mld_version`, s.mld_version);
+	knob(`${base}/multicast_last_member_count`, s.robustness || null);
+	knob(`${base}/multicast_startup_query_count`, s.robustness || null);
+	knob(`${base}/multicast_query_interval`,
+	     s.query_interval_s ? s.query_interval_s * 100 : null);
+	knob(`${base}/multicast_query_response_interval`,
+	     s.query_response_ds ? s.query_response_ds * 10 : null);
+	knob(`${base}/multicast_last_member_interval`,
+	     s.last_member_ds ? s.last_member_ds * 10 : null);
+
+	for (let port in bridge_ports(br))
+		knob(`/sys/class/net/${port}/brport/multicast_fast_leave`,
+		     s.fast_leave ? 1 : null);
+}
+
+function poll() {
+	let mib = bus.call('xpon', 'mib_list',
+			   { classes: [ CLASS.profile, CLASS.subscriber ] });
+
+	/* the agent is restarting: keep what is applied */
+	if (!mib) {
+		uloop.timer(POLL_MS, poll);
+		return;
+	}
+
+	let s = settings(mib.objects ?? []);
+	let key = sprintf('%J', s);
+
+	if (key != applied) {
+		if (s) {
+			let skipped = unenforced(s);
+
+			apply(s);
+			log(LOG_INFO, 'OLT multicast profile 0x%04x applied: IGMPv%s, fast leave %s',
+			    s.profile, s.igmp_version ?? '-', s.fast_leave ? 'on' : 'off');
+			if (length(skipped))
+				log(LOG_WARNING, 'OLT multicast profile 0x%04x: not enforced: %s',
+				    s.profile, join(', ', skipped));
+		} else if (applied != null || length(saved)) {
+			restore();
+			log(LOG_INFO, 'OLT multicast profile removed, local settings restored');
+		}
+		applied = key;
+	}
+	uloop.timer(POLL_MS, poll);
+}
+
+openlog('omci-mcast', 0, LOG_DAEMON);
+
+/* "omci-mcast clear": put the local settings back, for the init script's stop */
+if (ARGV[0] == 'clear') {
+	restore();
+	exit(0);
+}
+
+uloop.init();
+bus = ubus.connect();
+if (!bus) {
+	log(LOG_WARNING, 'cannot connect to ubus');
+	exit(1);
+}
+poll();
+uloop.run();

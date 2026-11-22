@@ -1,0 +1,28 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] phy: hook up the GalaChip GC1601 PON SerDes driver
+
+Build drivers/phy/galachip, which holds the PON SerDes driver of the
+GC1601.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+--- a/drivers/phy/Kconfig
++++ b/drivers/phy/Kconfig
+@@ -128,6 +128,7 @@
+ source "drivers/phy/broadcom/Kconfig"
+ source "drivers/phy/cadence/Kconfig"
+ source "drivers/phy/freescale/Kconfig"
++source "drivers/phy/galachip/Kconfig"
+ source "drivers/phy/hisilicon/Kconfig"
+ source "drivers/phy/ingenic/Kconfig"
+ source "drivers/phy/lantiq/Kconfig"
+--- a/drivers/phy/Makefile
++++ b/drivers/phy/Makefile
+@@ -20,6 +20,7 @@
+ 					   broadcom/	\
+ 					   cadence/	\
+ 					   freescale/	\
++					   galachip/	\
+ 					   hisilicon/	\
+ 					   ingenic/	\
+ 					   intel/	\

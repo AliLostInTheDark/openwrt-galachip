@@ -1,0 +1,57 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: net: dsa: add a tag driver for the GalaChip GC1601
+
+The GC1601 packet engine's switch takes the egress port from the DMA
+descriptor and reports the ingress port in it, so the tag is a one-byte
+trailer the conduit turns into descriptor bits, and received frames
+carry a port metadata dst instead of a tag.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+diff -ruN a/include/net/dsa.h b/include/net/dsa.h
+--- a/include/net/dsa.h	2026-11-22 19:58:15.651459992 +0530
++++ b/include/net/dsa.h	2026-11-22 19:58:15.665540793 +0530
+@@ -57,6 +57,7 @@
+ #define DSA_TAG_PROTO_BRCM_LEGACY_FCS_VALUE	29
+ #define DSA_TAG_PROTO_MXL862_VALUE		30
+ #define DSA_TAG_PROTO_MXL862_8021Q_VALUE	31
++#define DSA_TAG_PROTO_GC1601_VALUE		32
+ 
+ enum dsa_tag_protocol {
+ 	DSA_TAG_PROTO_NONE		= DSA_TAG_PROTO_NONE_VALUE,
+@@ -91,6 +92,7 @@
+ 	DSA_TAG_PROTO_VSC73XX_8021Q	= DSA_TAG_PROTO_VSC73XX_8021Q_VALUE,
+ 	DSA_TAG_PROTO_MXL862		= DSA_TAG_PROTO_MXL862_VALUE,
+ 	DSA_TAG_PROTO_MXL862_8021Q	= DSA_TAG_PROTO_MXL862_8021Q_VALUE,
++	DSA_TAG_PROTO_GC1601		= DSA_TAG_PROTO_GC1601_VALUE,
+ };
+ 
+ struct dsa_switch;
+diff -ruN a/net/dsa/Kconfig b/net/dsa/Kconfig
+--- a/net/dsa/Kconfig	2026-11-22 19:58:15.652446199 +0530
++++ b/net/dsa/Kconfig	2026-11-22 19:58:15.665618091 +0530
+@@ -198,6 +198,13 @@
+ 	  Say Y or M if you want to enable support for tagging frames with a
+ 	  custom VLAN-based header.
+ 
++config NET_DSA_TAG_GC1601
++	tristate "Tag driver for the GalaChip GC1601 packet engine"
++	help
++	  Say Y or M if you want to enable support for tagging frames for
++	  the switch in the GalaChip GC1601 packet engine, which takes the
++	  egress port from the DMA descriptor.
++
+ config NET_DSA_TAG_XRS700X
+ 	tristate "Tag driver for XRS700x switches"
+ 	help
+diff -ruN a/net/dsa/Makefile b/net/dsa/Makefile
+--- a/net/dsa/Makefile	2026-11-22 19:58:15.652464460 +0530
++++ b/net/dsa/Makefile	2026-11-22 19:58:15.665650708 +0530
+@@ -41,6 +41,7 @@
+ obj-$(CONFIG_NET_DSA_TAG_TRAILER) += tag_trailer.o
+ obj-$(CONFIG_NET_DSA_TAG_VSC73XX_8021Q) += tag_vsc73xx_8021q.o
+ obj-$(CONFIG_NET_DSA_TAG_XRS700X) += tag_xrs700x.o
++obj-$(CONFIG_NET_DSA_TAG_GC1601) += tag_gc1601.o
+ 
+ # for tracing framework to find trace.h
+ CFLAGS_trace.o := -I$(src)

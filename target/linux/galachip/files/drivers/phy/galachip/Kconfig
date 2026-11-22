@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config PHY_GC1601_PON
+	tristate "GalaChip GC1601 PON SerDes"
+	depends on ARCH_GALACHIP || COMPILE_TEST
+	depends on OF && HAS_IOMEM
+	select GENERIC_PHY
+	select MFD_SYSCON
+	help
+	  Enable the SerDes between the optical module and the GPON/EPON MAC
+	  of the GalaChip GC1601. The PON driver sets it to GPON or EPON.

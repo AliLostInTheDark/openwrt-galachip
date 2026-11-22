@@ -29,26 +29,15 @@
 
 #include "gc1601-pon.h"
 
+/* Forward the unicast services in the switch instead of pon0 (XPON_ATTR_SFU_OFFLOAD). */
 static bool sfu_offload = true;
-static int gc1601_xpon_offload_param_set(const char *val, const struct kernel_param *kp);
-static const struct kernel_param_ops gc1601_offload_ops = {
-	.set = gc1601_xpon_offload_param_set,
-	.get = param_get_bool,
-};
-module_param_cb(sfu_offload, &gc1601_offload_ops, &sfu_offload, 0644);
-MODULE_PARM_DESC(sfu_offload, "Forward the unicast services in the switch instead of pon0");
-
-/* EPON frames carry the LLID index where G-PON has the GEM port (minfo 0). */
-static bool epon_offload = true;
-module_param_cb(epon_offload, &gc1601_offload_ops, &epon_offload, 0644);
-MODULE_PARM_DESC(epon_offload, "Forward EPON LLID 0 in the switch, keyed on minfo 0");
 
 static LIST_HEAD(gc1601_offload_devices);
 static DEFINE_MUTEX(gc1601_offload_lock);
 
 /*
  * The service's VLAN on the LAN side: the untagged VLAN and the manual
- * map, written by omci-agent from UCI, win over the class 171 rule.
+ * map, written by omci.agent from UCI, win over the class 171 rule.
  */
 static void gc1601_xpon_lan_mode(struct gc1601_xpon *xp,
 				 const struct gc1601_service *svc,
@@ -86,8 +75,8 @@ static unsigned int gc1601_xpon_service_rank(const struct gc1601_service *svc)
 }
 
 /*
- * Flows for the switch, as the stock SDK classifies GEM ports (record type
- * 3, VLAN and P-bit, in sdk_parse_gemvlan_from_ponmap): every service gets
+ * Flows for the switch, as the stock firmware classifies GEM ports (by VLAN
+ * and P-bit): every service gets
  * its downstream flow, keyed by its GEM port. Upstream, a VLAN whose
  * services split by P-bit gets one VLAN + P-bit flow per service; a VLAN
  * with a single service, or one the LAN side sends untagged, gets a single
@@ -235,7 +224,7 @@ static unsigned int gc1601_xpon_epon_flows(struct gc1601_pon *pon,
 	unsigned int i, j, n = 0;
 
 	gc1601_xpon_epon_lan_map(xp);
-	if (!epon_offload || !READ_ONCE(pon->epon.oam_link))
+	if (!READ_ONCE(pon->epon.oam_link))
 		return 0;
 	spin_lock_bh(&xp->service_lock);
 	if (!xp->lan_maps) {
@@ -426,8 +415,7 @@ static void gc1601_xpon_epon_learn_vlan(struct gc1601_pon *pon,
 	u16 tci, vid;
 	u8 pcp;
 
-	if (READ_ONCE(pon->mode) != GC1601_PON_EPON ||
-	    !READ_ONCE(sfu_offload) || !READ_ONCE(epon_offload))
+	if (READ_ONCE(pon->mode) != GC1601_PON_EPON || !READ_ONCE(sfu_offload))
 		return;
 	hdr = skb_header_pointer(skb, 0, sizeof(buf), &buf);
 	if (!hdr || hdr->h_vlan_proto != htons(ETH_P_8021Q) ||
@@ -492,32 +480,15 @@ void gc1601_xpon_report_alloc(struct gc1601_pon *pon)
 	schedule_work(&pon->xp.reconcile_work);
 }
 
-static ssize_t sfu_untag_vlan_show(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-
-	return sysfs_emit(buf, "%u\n", READ_ONCE(pon->xp.sfu_untag_vlan));
-}
-
 /*
  * The VLAN whose frames the LAN side sends and expects untagged: the switch
  * pushes it upstream and pops it downstream. Untagged frames can only map to
  * one VLAN; 0 keeps every service tagged on the LAN.
  */
-static ssize_t sfu_untag_vlan_store(struct device *dev,
-				    struct device_attribute *attr,
-				    const char *buf, size_t count)
+static int gc1601_xpon_set_sfu_untag_vlan(struct xpon_device *xpon, u16 vid)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	u16 vid;
-	int ret;
+	struct gc1601_pon *pon = xpon_device_priv(xpon);
 
-	ret = kstrtou16(buf, 0, &vid);
-	if (ret)
-		return ret;
-	if (vid > 4094)
-		return -ERANGE;
 	mutex_lock(&pon->lock);
 	spin_lock_bh(&pon->xp.service_lock);
 	WRITE_ONCE(pon->xp.sfu_untag_vlan, vid);
@@ -526,68 +497,39 @@ static ssize_t sfu_untag_vlan_store(struct device *dev,
 	spin_unlock_bh(&pon->xp.service_lock);
 	mutex_unlock(&pon->lock);
 	gc1601_xpon_sfu_update(&pon->xp);
-	return count;
-}
-static DEVICE_ATTR_RW(sfu_untag_vlan);
-
-static ssize_t sfu_vlan_map_show(struct device *dev,
-				 struct device_attribute *attr, char *buf)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	struct gc1601_xpon *xp = &pon->xp;
-	unsigned int i;
-	ssize_t len = 0;
-
-	spin_lock_bh(&xp->service_lock);
-	for (i = 0; i < xp->vlan_maps; i++)
-		len += sysfs_emit_at(buf, len, "%c%u:%u ",
-				     xp->vlan_map[i].mode == GC1601_SFU_LAN_STACKED ? 's' : 't',
-				     xp->vlan_map[i].wan, xp->vlan_map[i].lan);
-	spin_unlock_bh(&xp->service_lock);
-	return len + sysfs_emit_at(buf, len, "\n");
+	return 0;
 }
 
 /*
  * Manual LAN-side VLANs, ahead of what the OLT's class 171 rules ask for:
- * "tWAN:LAN" translates LAN to WAN, "sWAN:LAN" stacks WAN over the LAN tag,
- * separated by spaces. An empty write clears the map.
+ * each translates its LAN VLAN to the WAN one, or stacks the WAN tag over it.
  */
-static ssize_t sfu_vlan_map_store(struct device *dev,
-				  struct device_attribute *attr,
-				  const char *buf, size_t count)
+static int gc1601_xpon_set_sfu_vlan_map(struct xpon_device *xpon,
+					const struct xpon_vlan_map *in, unsigned int n)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
+	struct gc1601_pon *pon = xpon_device_priv(xpon);
 	struct gc1601_xpon *xp = &pon->xp;
 	struct gc1601_vlan_map map[ARRAY_SIZE(xp->vlan_map)];
-	unsigned int n = 0, wan, lan, i, j;
-	const char *p = buf;
-	char mode;
-	int used;
+	unsigned int i, j;
 
-	while (*p) {
-		if (isspace(*p) || *p == ',') {
-			p++;
-			continue;
-		}
-		if (n == ARRAY_SIZE(map) ||
-		    sscanf(p, "%c%u:%u%n", &mode, &wan, &lan, &used) != 3 ||
-		    (mode != 't' && mode != 's') ||
-		    !wan || wan > 4094 || !lan || lan > 4094)
+	if (n > ARRAY_SIZE(map))
+		return -E2BIG;
+	for (i = 0; i < n; i++) {
+		if (!in[i].wan || in[i].wan > 4094 || !in[i].lan || in[i].lan > 4094 ||
+		    in[i].flags & ~XPON_VLAN_MAP_STACKED)
 			return -EINVAL;
-		map[n++] = (struct gc1601_vlan_map) {
-			.wan = wan,
-			.lan = lan,
-			.mode = mode == 's' ? GC1601_SFU_LAN_STACKED :
-					      GC1601_SFU_LAN_TRANSLATE,
+		map[i] = (struct gc1601_vlan_map) {
+			.wan = in[i].wan,
+			.lan = in[i].lan,
+			.mode = in[i].flags & XPON_VLAN_MAP_STACKED ?
+				GC1601_SFU_LAN_STACKED : GC1601_SFU_LAN_TRANSLATE,
 		};
-		p += used;
-	}
-	for (i = 0; i < n; i++)
 		for (j = 0; j < i; j++)
 			if ((map[i].wan == map[j].wan || map[i].lan == map[j].lan) &&
 			    (map[i].wan != map[j].wan || map[i].lan != map[j].lan ||
 			     map[i].mode != map[j].mode))
 				return -EEXIST;
+	}
 
 	mutex_lock(&pon->lock);
 	spin_lock_bh(&xp->service_lock);
@@ -598,17 +540,30 @@ static ssize_t sfu_vlan_map_store(struct device *dev,
 	spin_unlock_bh(&xp->service_lock);
 	mutex_unlock(&pon->lock);
 	gc1601_xpon_sfu_update(xp);
-	return count;
+	return 0;
 }
-static DEVICE_ATTR_RW(sfu_vlan_map);
 
-static ssize_t sfu_offload_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
+static void gc1601_xpon_get_sfu(struct xpon_device *xpon, struct xpon_sfu_state *sfu)
 {
-	return sysfs_emit(buf, "%d\n", READ_ONCE(sfu_offload));
+	struct gc1601_pon *pon = xpon_device_priv(xpon);
+	struct gc1601_xpon *xp = &pon->xp;
+	unsigned int i;
+
+	sfu->offload = READ_ONCE(sfu_offload);
+	spin_lock_bh(&xp->service_lock);
+	sfu->untag_vlan = xp->sfu_untag_vlan;
+	sfu->vlan_maps = xp->vlan_maps;
+	for (i = 0; i < xp->vlan_maps; i++)
+		sfu->vlan_map[i] = (struct xpon_vlan_map) {
+			.wan = xp->vlan_map[i].wan,
+			.lan = xp->vlan_map[i].lan,
+			.flags = xp->vlan_map[i].mode == GC1601_SFU_LAN_STACKED ?
+				 XPON_VLAN_MAP_STACKED : 0,
+		};
+	spin_unlock_bh(&xp->service_lock);
 }
 
-/* The registry pins providers while parameters and device sysfs share this path. */
+/* Apply the offload setting to one device. */
 static int gc1601_xpon_offload_apply(struct gc1601_xpon *xp)
 {
 	struct gc1601_pon *pon = container_of(xp, struct gc1601_pon, xp);
@@ -617,7 +572,7 @@ static int gc1601_xpon_offload_apply(struct gc1601_xpon *xp)
 
 	cancel_delayed_work_sync(&xp->sfu_work);
 	mutex_lock(&pon->lock);
-	on = sfu_offload && (pon->mode != GC1601_PON_EPON || epon_offload);
+	on = sfu_offload;
 	if (!on)
 		ret = gc1601_xpon_clear_sfu(pon);
 	spin_lock_bh(&xp->service_lock);
@@ -660,48 +615,27 @@ static int gc1601_xpon_offload_set(bool *option, bool on)
 	return ret;
 }
 
-static int gc1601_xpon_offload_param_set(const char *val, const struct kernel_param *kp)
-{
-	bool on;
-	int ret;
-
-	ret = kstrtobool(val, &on);
-	return ret ?: gc1601_xpon_offload_set(kp->arg, on);
-}
-
 /*
- * 0 takes the flows out of the switch, so every frame reaches pon0 again
- * (a VLAN scan needs the replies); 1 puts them back.
+ * Off takes the flows out of the switch, so every frame reaches pon0 again
+ * (a VLAN scan needs the replies); on puts them back.
  */
-static ssize_t sfu_offload_store(struct device *dev,
-				 struct device_attribute *attr,
-				 const char *buf, size_t count)
+static int gc1601_xpon_set_sfu_offload(struct xpon_device *xpon, bool on)
 {
-	bool on;
-	int ret;
-
-	ret = kstrtobool(buf, &on);
-	if (ret)
-		return ret;
-	ret = gc1601_xpon_offload_set(&sfu_offload, on);
-	return ret ?: count;
+	return gc1601_xpon_offload_set(&sfu_offload, on);
 }
-static DEVICE_ATTR_RW(sfu_offload);
 
-static ssize_t epon_offload_status_show(struct device *dev,
-				      struct device_attribute *attr, char *buf)
+static int gc1601_dbg_epon_offload_status_show(struct seq_file *s, void *unused)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
+	struct gc1601_pon *pon = s->private;
 	struct gc1601_xpon *xp = &pon->xp;
 	const char *policy;
 	unsigned int i, j, cached;
 	bool valid, learning;
-	ssize_t len;
 
 	spin_lock_bh(&xp->service_lock);
 	if (READ_ONCE(pon->mode) != GC1601_PON_EPON)
 		policy = "inactive";
-	else if (!READ_ONCE(sfu_offload) || !READ_ONCE(epon_offload))
+	else if (!READ_ONCE(sfu_offload))
 		policy = "disabled";
 	else if (!READ_ONCE(pon->epon.data_up))
 		policy = "link-down";
@@ -712,13 +646,13 @@ static ssize_t epon_offload_status_show(struct device *dev,
 	learning = !strcmp(policy, "learning");
 	cached = READ_ONCE(xp->sfu_count);
 	valid = cached <= ARRAY_SIZE(xp->sfu) && !xp->sfu_last_error;
-	len = sysfs_emit(buf,
-		"policy=%s learned=%u capacity=%zu capacity_misses=%lu\n",
-		policy, xp->epon_learned_count, ARRAY_SIZE(xp->epon_learned),
-		xp->epon_capacity_misses);
-	len += sysfs_emit_at(buf, len,
-		"cached_flows=%u cache_valid=%u last_error=%d hardware_hits=unavailable aging=off\n",
-		cached <= ARRAY_SIZE(xp->sfu) ? cached : 0, valid, xp->sfu_last_error);
+	seq_printf(s,
+		   "policy=%s learned=%u capacity=%zu capacity_misses=%lu\n",
+		   policy, xp->epon_learned_count, ARRAY_SIZE(xp->epon_learned),
+		   xp->epon_capacity_misses);
+	seq_printf(s,
+		   "cached_flows=%u cache_valid=%u last_error=%d hardware_hits=unavailable aging=off\n",
+		   cached <= ARRAY_SIZE(xp->sfu) ? cached : 0, valid, xp->sfu_last_error);
 	for (i = 0; i < xp->epon_learned_count; i++) {
 		bool up = false, down = false;
 
@@ -733,26 +667,20 @@ static ssize_t epon_offload_status_show(struct device *dev,
 			      f->pcp == xp->epon_learned[i].pcp;
 			down |= !f->up_only;
 		}
-		len += sysfs_emit_at(buf, len,
-			"vlan=%u pbit=%u programmed_up=%u programmed_down=%u\n",
-			xp->epon_learned[i].vid, xp->epon_learned[i].pcp, up, down);
+		seq_printf(s,
+			   "vlan=%u pbit=%u programmed_up=%u programmed_down=%u\n",
+			   xp->epon_learned[i].vid, xp->epon_learned[i].pcp, up, down);
 	}
 	spin_unlock_bh(&xp->service_lock);
-	return len;
+	return 0;
 }
-static DEVICE_ATTR_RO(epon_offload_status);
+DEFINE_SHOW_ATTRIBUTE(gc1601_dbg_epon_offload_status);
 
-static struct attribute *gc1601_xpon_attrs[] = {
-	&dev_attr_sfu_untag_vlan.attr,
-	&dev_attr_sfu_offload.attr,
-	&dev_attr_sfu_vlan_map.attr,
-	&dev_attr_epon_offload_status.attr,
-	NULL
-};
-
-const struct attribute_group gc1601_xpon_group = {
-	.attrs = gc1601_xpon_attrs,
-};
+void gc1601_xpon_debugfs_init(struct gc1601_pon *pon)
+{
+	debugfs_create_file("epon_offload_status", 0400, pon->debugfs, pon,
+			    &gc1601_dbg_epon_offload_status_fops);
+}
 
 #define OMCI_TRAILER_LEN	4
 #define OMCI_DEV_BASELINE	0x0a
@@ -847,7 +775,7 @@ static int gc1601_xpon_omci_xmit(struct omci_device *odev, struct sk_buff *skb,
 	int ret;
 
 	pon->xp.omci_tx_attempts++;
-	/* OMCI only flows on an operational, transmitting ONU (PMU_xmit: O5). */
+	/* OMCI only flows on an operational (O5), transmitting ONU. */
 	if (!READ_ONCE(g->allow_tx)) {
 		ret = -EPERM;
 		goto out;
@@ -915,25 +843,11 @@ static int gc1601_xpon_set_tcont(struct omci_device *odev, u16 entity_id,
 {
 	struct gc1601_pon *pon = omci_device_priv(odev);
 	struct gc1601_xpon *xp = &pon->xp;
-	const struct gc1601_tcont_qos defaults = {};
 	unsigned int i = entity_id & 0xff;
-	u16 old_alloc;
-	int tcont, ret;
 
 	if (i >= GPON_TCONTS)
 		return -ERANGE;
 	GPON_DIAG(tcont, omci_device_priv(odev), entity_id, alloc_id, valid);
-	spin_lock_bh(&xp->service_lock);
-	old_alloc = xp->tcont_alloc[i];
-	spin_unlock_bh(&xp->service_lock);
-	if (old_alloc != U16_MAX && (!valid || old_alloc != alloc_id)) {
-		tcont = gc1601_gpon_alloc_index(pon, old_alloc);
-		if (tcont >= 0) {
-			ret = gc1601_pe_set_tcont_qos(tcont, &defaults);
-			if (ret)
-				return ret;
-		}
-	}
 	spin_lock_bh(&xp->service_lock);
 	xp->tcont_entity[i] = entity_id;
 	xp->tcont_alloc[i] = valid ? alloc_id : U16_MAX;
@@ -951,27 +865,6 @@ static u16 gc1601_xpon_tcont_alloc(struct gc1601_xpon *xp, u16 entity_id)
 		if (xp->tcont_entity[i] == entity_id)
 			return xp->tcont_alloc[i];
 	return U16_MAX;
-}
-
-static int gc1601_xpon_set_tcont_qos(struct omci_device *odev, u16 entity_id,
-				     const struct omci_tcont_qos *qos)
-{
-	struct gc1601_pon *pon = omci_device_priv(odev);
-	struct gc1601_tcont_qos config = {
-		.enabled = qos->enabled,
-		.policy = qos->policy,
-	};
-	u16 alloc;
-	int tcont;
-
-	spin_lock_bh(&pon->xp.service_lock);
-	alloc = gc1601_xpon_tcont_alloc(&pon->xp, entity_id);
-	spin_unlock_bh(&pon->xp.service_lock);
-	tcont = gc1601_gpon_alloc_index(pon, alloc);
-	if (alloc == U16_MAX || tcont < 0)
-		return 0;	/* Reconcile replays the MIB after a PLOAM grant. */
-	memcpy(config.weight, qos->weight, sizeof(config.weight));
-	return gc1601_pe_set_tcont_qos(tcont, &config);
 }
 
 static int gc1601_xpon_set_gem_port(struct omci_device *odev, u16 entity_id,
@@ -1061,32 +954,6 @@ int gc1601_xpon_withdraw_alloc(struct gc1601_pon *pon, u16 alloc_id)
 static int gc1601_xpon_set_uni(struct omci_device *odev, u16 entity_id, bool enable)
 {
 	return gc1601_pe_set_uni(enable);
-}
-
-static int gc1601_xpon_set_gem_rate(struct omci_device *odev, u16 gem_port,
-				    bool upstream, u32 rate, u32 burst)
-{
-	struct gc1601_pon *pon = omci_device_priv(odev);
-
-	if (rate && pon->gpon.omcc_valid && pon->gpon.omcc_port == gem_port)
-		return -EINVAL;
-	return gc1601_pe_set_gem_rate(gem_port, upstream, rate, burst);
-}
-
-static int gc1601_xpon_set_uni_attrs(struct omci_device *odev, u16 entity_id,
-				     const struct omci_uni_attrs *attrs)
-{
-	struct gc1601_uni_attrs a = {
-		.pause_quanta = attrs->pause_quanta,
-		.ageing_s = attrs->ageing_s,
-		.learn_limit = attrs->learn_limit,
-		.down_kbps = attrs->down_kbps,
-		.up_kbps = attrs->up_kbps,
-		.auto_detection = attrs->auto_detection,
-		.max_frame_size = attrs->max_frame_size,
-	};
-
-	return gc1601_pe_set_uni_attrs(&a);
 }
 
 static void gc1601_xpon_disable_unused_gem(struct gc1601_pon *pon, u16 gem_port)
@@ -1335,19 +1202,6 @@ static void gc1601_xpon_set_operational(struct omci_device *odev, bool operation
 	}
 }
 
-/* omci-agent pushes the ONU identity here; apply serial and password. */
-static void gc1601_xpon_config_changed(struct omci_device *odev, u16 key,
-				       const struct omci_identity *id)
-{
-	struct gc1601_pon *pon = omci_device_priv(odev);
-
-	if (!id)
-		return;
-	gc1601_gpon_set_identity(pon,
-				 id->valid & OMCI_IDENTITY_F_SERIAL_NUMBER ? id->serial_number : NULL,
-				 id->valid & OMCI_IDENTITY_F_PASSWORD ? id->password : NULL);
-}
-
 /* Never wait here: activation can be flushing OMCI work under pon->lock. */
 static int gc1601_xpon_backend_begin(struct omci_device *odev)
 {
@@ -1389,8 +1243,6 @@ static int gc1601_xpon_backend_reset(struct omci_device *odev)
 {
 	struct gc1601_pon *pon = omci_device_priv(odev);
 	struct gc1601_xpon *xp = &pon->xp;
-	const struct gc1601_tcont_qos qos = {};
-	const struct gc1601_uni_attrs attrs = {};
 	unsigned int i;
 	int ret;
 
@@ -1410,12 +1262,7 @@ static int gc1601_xpon_backend_reset(struct omci_device *odev)
 	for_each_set_bit(i, pon->gpon.gem, 4096)
 		if (!pon->gpon.omcc_valid || i != pon->gpon.omcc_port)
 			gc1601_gpon_omci_set_gem(pon, i, false, false);
-	ret = gc1601_pe_clear_gem_rates();
-	for (i = 0; !ret && i < GPON_TCONTS; i++)
-		ret = gc1601_pe_set_tcont_qos(i, &qos);
-	if (!ret)
-		ret = gc1601_pe_set_uni_attrs(&attrs);
-	return ret;
+	return 0;
 }
 
 static const struct omci_device_ops gc1601_xpon_omci_ops = {
@@ -1428,18 +1275,14 @@ static const struct omci_device_ops gc1601_xpon_omci_ops = {
 	.xmit = gc1601_xpon_omci_xmit,
 	.get_ani_topology = gc1601_xpon_get_ani_topology,
 	.set_tcont = gc1601_xpon_set_tcont,
-	.set_tcont_qos = gc1601_xpon_set_tcont_qos,
 	.set_gem_port = gc1601_xpon_set_gem_port,
-	.set_gem_rate = gc1601_xpon_set_gem_rate,
 	.set_uni = gc1601_xpon_set_uni,
-	.set_uni_attrs = gc1601_xpon_set_uni_attrs,
 	.replace_service = gc1601_xpon_replace_service,
 	.delete_service = gc1601_xpon_delete_service,
 	.get_telemetry = gc1601_xpon_get_telemetry,
 	.get_uni_link = gc1601_xpon_get_uni_link,
 	.set_olt_profile = gc1601_xpon_set_olt_profile,
 	.set_operational = gc1601_xpon_set_operational,
-	.config_changed = gc1601_xpon_config_changed,
 };
 
 /* ---- pon0 ---- */
@@ -1534,56 +1377,52 @@ static void gc1601_vlan_set_vid(u8 *frame, u16 vid)
  * link up. The GEM field is left 0; what the EPON MAC expects there is
  * still to be seen on hardware (gc1601-epon-diag logs both directions).
  */
-static netdev_tx_t gc1601_pon0_xmit_epon(struct gc1601_pon *pon, struct sk_buff *skb,
-					 struct net_device *dev)
+static int gc1601_pon0_prepare_epon(struct gc1601_pon *pon, struct sk_buff *skb,
+				    struct gc1601_pon_meta *meta)
 {
-	unsigned int len = skb->len;
-	int ret;
-
-	bool oam = len >= ETH_HLEN &&
+	bool oam = skb->len >= ETH_HLEN &&
 		   get_unaligned_be16(skb->data + 2 * ETH_ALEN) == ETH_P_SLOW;
 
 	if (!gc1601_epon_may_send(pon, oam)) {
-		gc1601_epon_tx_seen(pon, skb->data, len, -ENOLINK);
-		dev->stats.tx_dropped++;
-		dev_kfree_skb_any(skb);
-		return NETDEV_TX_OK;
+		gc1601_epon_tx_seen(pon, skb->data, skb->len, -ENOLINK);
+		return -ENOLINK;
 	}
 	gc1601_xpon_epon_learn_vlan(pon, skb);
-	gc1601_epon_tx_seen(pon, skb->data, len, 0);
-	ret = gc1601_pe_pon_xmit(skb, 0, 0, 0);
-	if (ret == -EBUSY)
-		return NETDEV_TX_BUSY;
-	if (ret) {
-		dev->stats.tx_errors++;
-		return NETDEV_TX_OK;
-	}
-	dev->stats.tx_packets++;
-	dev->stats.tx_bytes += len;
-	return NETDEV_TX_OK;
+	gc1601_epon_tx_seen(pon, skb->data, skb->len, 0);
+	*meta = (struct gc1601_pon_meta){};
+	return 0;
 }
 
-static netdev_tx_t gc1601_pon0_xmit_frame(struct sk_buff *skb, struct net_device *dev)
+/*
+ * An upstream frame: the LAN-side VLAN rewrite, then the GEM port, T-CONT
+ * and queue of its service. May replace *@skbp; on failure the caller
+ * drops it.
+ */
+static int gc1601_pon0_prepare(void *ctx, struct sk_buff **skbp, struct gc1601_pon_meta *meta)
 {
-	struct gc1601_pon *pon = *(struct gc1601_pon **)netdev_priv(dev);
+	struct gc1601_pon *pon = ctx;
+	struct net_device *dev = pon->xp.netdev;
+	struct sk_buff *skb = *skbp;
 	struct gc1601_vlan_map map;
 	struct gc1601_service svc;
-	unsigned int len;
-	int tcont, ret;
+	int tcont, ret = -ENOENT;
 	bool tagged;
 	u16 vid = 0;
 
 	/* OAM discovery must stay untagged, independent of the service VLAN. */
 	if (READ_ONCE(pon->mode) == GC1601_PON_EPON &&
 	    skb->len >= ETH_HLEN &&
-	    get_unaligned_be16(skb->data + 2 * ETH_ALEN) == ETH_P_SLOW)
-		return gc1601_pon0_xmit_epon(pon, skb, dev);
+	    get_unaligned_be16(skb->data + 2 * ETH_ALEN) == ETH_P_SLOW) {
+		ret = gc1601_pon0_prepare_epon(pon, skb, meta);
+		goto out;
+	}
 
 	tagged = !__vlan_get_tag(skb, &vid);
 	if (gc1601_xpon_lan_map(&pon->xp, true, tagged, vid & VLAN_VID_MASK, &map)) {
 		if (map.mode == GC1601_SFU_LAN_TRANSLATE) {
-			if (skb_ensure_writable(skb, VLAN_ETH_HLEN))
-				goto drop;
+			ret = skb_ensure_writable(skb, VLAN_ETH_HLEN);
+			if (ret)
+				goto out;
 			gc1601_vlan_set_vid(skb->data, map.wan);
 		} else {
 			u16 tci = map.wan;
@@ -1591,50 +1430,52 @@ static netdev_tx_t gc1601_pon0_xmit_frame(struct sk_buff *skb, struct net_device
 			/* Match hardware PUSH_COPY: priority comes from the inner tag. */
 			if (map.mode == GC1601_SFU_LAN_STACKED)
 				tci |= vid & VLAN_PRIO_MASK;
-			skb = vlan_insert_tag_set_proto(skb, htons(ETH_P_8021Q), tci);
-			if (!skb) {
+			/* On failure this frees the frame and leaves *skbp NULL. */
+			*skbp = vlan_insert_tag_set_proto(skb, htons(ETH_P_8021Q), tci);
+			if (!*skbp) {
 				dev->stats.tx_dropped++;
-				return NETDEV_TX_OK;
+				return -ENOMEM;
 			}
+			skb = *skbp;
 		}
 	}
-	if (READ_ONCE(pon->mode) == GC1601_PON_EPON)
-		return gc1601_pon0_xmit_epon(pon, skb, dev);
-	len = skb->len;
+	if (READ_ONCE(pon->mode) == GC1601_PON_EPON) {
+		ret = gc1601_pon0_prepare_epon(pon, skb, meta);
+		goto out;
+	}
 
+	ret = -ENOLINK;
 	if (READ_ONCE(pon->gpon.state) != GPON_STATE_O5)
-		goto drop;
+		goto out;
+	ret = -ENOENT;
 	if (!gc1601_pon0_service(&pon->xp, skb, &svc)) {
 		/* No OMCI service carries this VLAN: what an unsupported OLT setup looks like. */
-		GPON_DIAG(tx, pon, 0, -1, skb->data, len, -ENOENT);
-		goto drop;
+		GPON_DIAG(tx, pon, 0, -1, skb->data, skb->len, -ENOENT);
+		goto out;
 	}
 	tcont = gc1601_gpon_alloc_index(pon, svc.alloc_id);
 	if (tcont < 0)
-		goto drop;
+		goto out;
 
-	GPON_DIAG(tx, pon, svc.gem_port, tcont, skb->data, len, 0);
-	ret = gc1601_pe_pon_xmit(skb, svc.gem_port, tcont, svc.queue);
-	if (ret == -EBUSY)
-		return NETDEV_TX_BUSY;
-	if (ret) {
-		dev->stats.tx_errors++;
-		return NETDEV_TX_OK;
-	}
-	dev->stats.tx_packets++;
-	dev->stats.tx_bytes += len;
-	return NETDEV_TX_OK;
-
-drop:
-	dev->stats.tx_dropped++;
-	dev_kfree_skb_any(skb);
-	return NETDEV_TX_OK;
+	GPON_DIAG(tx, pon, svc.gem_port, tcont, skb->data, skb->len, 0);
+	*meta = (struct gc1601_pon_meta){
+		.gem_port = svc.gem_port, .tcont = tcont, .queue = svc.queue,
+	};
+	ret = 0;
+out:
+	if (ret)
+		dev->stats.tx_dropped++;
+	return ret;
 }
 
+/* pon0 as the PON driver's own netdev, without a DSA switch. */
 static netdev_tx_t gc1601_pon0_xmit(struct sk_buff *skb, struct net_device *dev)
 {
+	struct gc1601_pon *pon = *(struct gc1601_pon **)netdev_priv(dev);
+	struct gc1601_pon_meta meta;
 	struct sk_buff *frame;
-	netdev_tx_t ret;
+	unsigned int len;
+	int ret;
 
 	/* Keep the qdisc's frame unchanged if the shared ring asks for a retry. */
 	frame = skb_clone(skb, GFP_ATOMIC);
@@ -1643,17 +1484,70 @@ static netdev_tx_t gc1601_pon0_xmit(struct sk_buff *skb, struct net_device *dev)
 		dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
 	}
-	ret = gc1601_pon0_xmit_frame(frame, dev);
-	if (ret == NETDEV_TX_BUSY)
+	ret = gc1601_pon0_prepare(pon, &frame, &meta);
+	if (ret) {
 		dev_kfree_skb_any(frame);
-	else
 		dev_kfree_skb_any(skb);
-	return ret;
+		return NETDEV_TX_OK;
+	}
+	len = frame->len;
+	ret = gc1601_pe_pon_xmit(frame, &meta);
+	if (ret == -EBUSY) {
+		dev_kfree_skb_any(frame);
+		return NETDEV_TX_BUSY;
+	}
+	dev_kfree_skb_any(skb);
+	if (ret) {
+		dev->stats.tx_errors++;
+		return NETDEV_TX_OK;
+	}
+	dev->stats.tx_packets++;
+	dev->stats.tx_bytes += len;
+	return NETDEV_TX_OK;
 }
 
-/* Packet-engine NAPI context: a downstream frame from one of our GEM ports. */
-static void gc1601_pon0_rx(void *ctx, struct napi_struct *napi, u16 gem_port,
-			   const u8 *data, unsigned int len)
+/*
+ * The PON side must not reach the device's own services (LuCI, SSH). pon0
+ * is a port of the LAN bridge, which hands a frame to the local stack when
+ * it is addressed to the bridge or to one of its ports, so such frames are
+ * dropped here. Forwarded traffic is never addressed to them, and multicast
+ * still reaches the bridge for IGMP snooping.
+ */
+static bool pon_host_guard = true;
+module_param(pon_host_guard, bool, 0644);
+MODULE_PARM_DESC(pon_host_guard, "drop unicast from the PON side addressed to this device (default on)");
+
+static int gc1601_pon0_lower_is(struct net_device *lower, struct netdev_nested_priv *priv)
+{
+	return ether_addr_equal(lower->dev_addr, priv->data);
+}
+
+static bool gc1601_pon0_for_host(struct net_device *dev, const u8 *dst)
+{
+	struct netdev_nested_priv priv = { .data = (void *)dst };
+	struct net_device *br;
+	bool local;
+
+	if (is_multicast_ether_addr(dst))
+		return false;
+	if (ether_addr_equal(dst, dev->dev_addr))
+		return true;
+
+	rcu_read_lock();
+	br = netdev_master_upper_dev_get_rcu(dev);
+	local = br && (ether_addr_equal(dst, br->dev_addr) ||
+		       netdev_walk_all_lower_dev_rcu(br, gc1601_pon0_lower_is, &priv));
+	rcu_read_unlock();
+
+	return local;
+}
+
+/*
+ * Packet-engine NAPI context: a downstream frame from one of our GEM ports,
+ * as the skb the packet engine then delivers.
+ */
+static struct sk_buff *gc1601_pon0_rx(void *ctx, struct napi_struct *napi, u16 gem_port,
+				      const u8 *data, unsigned int len)
 {
 	struct gc1601_pon *pon = ctx;
 	struct net_device *dev = pon->xp.netdev;
@@ -1667,7 +1561,12 @@ static void gc1601_pon0_rx(void *ctx, struct napi_struct *napi, u16 gem_port,
 		GPON_DIAG(rx, pon, gem_port, data, len);
 	if (!netif_running(dev)) {
 		dev->stats.rx_dropped++;
-		return;
+		return NULL;
+	}
+	if (READ_ONCE(pon_host_guard) && len >= ETH_HLEN && gc1601_pon0_for_host(dev, data)) {
+		netdev_info_once(dev, "dropping frames from the PON side addressed to this device\n");
+		dev->stats.rx_dropped++;
+		return NULL;
 	}
 	mapped = len >= VLAN_ETH_HLEN &&
 		 get_unaligned_be16(data + 2 * ETH_ALEN) == ETH_P_8021Q &&
@@ -1679,7 +1578,7 @@ static void gc1601_pon0_rx(void *ctx, struct napi_struct *napi, u16 gem_port,
 	skb = napi_alloc_skb(napi, strip ? len - VLAN_HLEN : len);
 	if (!skb) {
 		dev->stats.rx_dropped++;
-		return;
+		return NULL;
 	}
 	if (strip) {
 		skb_put_data(skb, data, 2 * ETH_ALEN);
@@ -1690,10 +1589,58 @@ static void gc1601_pon0_rx(void *ctx, struct napi_struct *napi, u16 gem_port,
 		if (mapped)
 			gc1601_vlan_set_vid(skb->data, map.lan);
 	}
-	skb->protocol = eth_type_trans(skb, dev);
-	dev->stats.rx_packets++;
-	dev->stats.rx_bytes += len;
-	napi_gro_receive(napi, skb);
+	/* A DSA port counts its own frames. */
+	if (!pon->xp.dsa) {
+		dev->stats.rx_packets++;
+		dev->stats.rx_bytes += len;
+	}
+	return skb;
+}
+
+/* The line rate while registered, as the DSA port's link reports it. */
+static int gc1601_pon0_link(void *ctx)
+{
+	struct gc1601_pon *pon = ctx;
+
+	if (!READ_ONCE(pon->xp.link_up))
+		return 0;
+	return READ_ONCE(pon->mode) == GC1601_PON_EPON ? SPEED_1000 : SPEED_2500;
+}
+
+static int gc1601_pon0_sset_count(void *ctx)
+{
+	return GPON_NAMED_COUNTERS;
+}
+
+static void gc1601_pon0_strings(void *ctx, u8 *data)
+{
+	gc1601_gpon_stats_strings(data);
+}
+
+static void gc1601_pon0_stats(void *ctx, u64 *data)
+{
+	gc1601_gpon_stats(ctx, data);
+}
+
+static const struct gc1601_pon_port_ops gc1601_pon0_port_ops = {
+	.rx = gc1601_pon0_rx,
+	.prepare = gc1601_pon0_prepare,
+	.link = gc1601_pon0_link,
+	.get_sset_count = gc1601_pon0_sset_count,
+	.get_strings = gc1601_pon0_strings,
+	.get_stats = gc1601_pon0_stats,
+};
+
+/* Registered: carrier on our own pon0; a DSA port's link polls link_up. */
+void gc1601_xpon_set_link(struct gc1601_pon *pon, bool up)
+{
+	WRITE_ONCE(pon->xp.link_up, up);
+	if (pon->xp.netdev && !pon->xp.dsa) {
+		if (up)
+			netif_carrier_on(pon->xp.netdev);
+		else
+			netif_carrier_off(pon->xp.netdev);
+	}
 }
 
 static const struct net_device_ops gc1601_pon0_ops = {
@@ -1725,15 +1672,119 @@ static int gc1601_pon0_get_link_ksettings(struct net_device *dev,
 	return 0;
 }
 
+static void gc1601_pon0_get_strings(struct net_device *dev, u32 sset, u8 *data)
+{
+	if (sset == ETH_SS_STATS)
+		gc1601_gpon_stats_strings(data);
+}
+
+static int gc1601_pon0_get_sset_count(struct net_device *dev, int sset)
+{
+	return sset == ETH_SS_STATS ? GPON_NAMED_COUNTERS : -EOPNOTSUPP;
+}
+
+static void gc1601_pon0_get_ethtool_stats(struct net_device *dev,
+					  struct ethtool_stats *stats, u64 *data)
+{
+	gc1601_gpon_stats(*(struct gc1601_pon **)netdev_priv(dev), data);
+}
+
+static int gc1601_pon0_get_module_info(struct net_device *dev,
+				       struct ethtool_modinfo *modinfo)
+{
+	modinfo->type = ETH_MODULE_SFF_8472;
+	modinfo->eeprom_len = ETH_MODULE_SFF_8472_LEN;
+	return 0;
+}
+
+/*
+ * The legacy 512-byte view: A0 at 0-255, A2 at 256-511. A0 reads as zeros if
+ * the BOSA does not answer there, and the paged A2 upper half always does.
+ */
+static int gc1601_pon0_get_module_eeprom(struct net_device *dev,
+					 struct ethtool_eeprom *ee, u8 *data)
+{
+	struct gc1601_pon *pon = *(struct gc1601_pon **)netdev_priv(dev);
+	u32 off = ee->offset, end = ee->offset + ee->len;
+	int ret;
+
+	if (end > ETH_MODULE_SFF_8472_LEN)
+		return -EINVAL;
+	memset(data, 0, ee->len);
+	if (off < 256 &&
+	    gc1601_bosa_eeprom_read(pon, BOSA_A0_ADDR, off, data, min(end, 256U) - off))
+		memset(data, 0, min(end, 256U) - off);
+	if (end > 256 && off < 384) {
+		u32 start = max(off, 256U);
+
+		ret = gc1601_bosa_eeprom_read(pon, BOSA_A2_ADDR, start - 256,
+					      data + start - off, min(end, 384U) - start);
+		if (ret)
+			return ret;
+	}
+	return 0;
+}
+
+static int gc1601_pon0_get_module_eeprom_by_page(struct net_device *dev,
+						 const struct ethtool_module_eeprom *page,
+						 struct netlink_ext_ack *extack)
+{
+	struct gc1601_pon *pon = *(struct gc1601_pon **)netdev_priv(dev);
+	u32 end = page->offset + page->length;
+	int ret;
+
+	if (page->page || page->bank)
+		return -EOPNOTSUPP;
+	if (page->i2c_address == BOSA_A0_ADDR ? end > 256 :
+	    page->i2c_address != BOSA_A2_ADDR || end > 128)
+		return -EOPNOTSUPP;
+	ret = gc1601_bosa_eeprom_read(pon, page->i2c_address, page->offset,
+				      page->data, page->length);
+	return ret ?: page->length;
+}
+
 static const struct ethtool_ops gc1601_pon0_ethtool_ops = {
 	.get_link = ethtool_op_get_link,
 	.get_link_ksettings = gc1601_pon0_get_link_ksettings,
+	.get_strings = gc1601_pon0_get_strings,
+	.get_sset_count = gc1601_pon0_get_sset_count,
+	.get_ethtool_stats = gc1601_pon0_get_ethtool_stats,
+	.get_module_info = gc1601_pon0_get_module_info,
+	.get_module_eeprom = gc1601_pon0_get_module_eeprom,
+	.get_module_eeprom_by_page = gc1601_pon0_get_module_eeprom_by_page,
 };
 
-static int gc1601_pon0_register(struct gc1601_pon *pon)
+/* pon0 as a port of the DSA switch: the switch driver owns the netdev. */
+static int gc1601_pon0_attach(struct gc1601_pon *pon, struct device_node *port)
 {
 	struct net_device *dev;
 	int ret;
+
+	dev = of_find_net_device_by_node(port);
+	if (!dev)
+		return -EPROBE_DEFER;
+	pon->xp.netdev = dev;
+	pon->xp.dsa = true;
+	ret = gc1601_pe_pon_register(NULL, &gc1601_pon0_port_ops, pon);
+	if (ret) {
+		dev_put(dev);
+		pon->xp.netdev = NULL;
+	}
+	return ret;
+}
+
+static int gc1601_pon0_register(struct gc1601_pon *pon)
+{
+	struct device_node *port;
+	struct net_device *dev;
+	int ret;
+
+	port = of_parse_phandle(pon->dev->of_node, "galachip,switch-port", 0);
+	if (port) {
+		ret = gc1601_pon0_attach(pon, port);
+		of_node_put(port);
+		return ret;
+	}
 
 	dev = alloc_etherdev(sizeof(pon));
 	if (!dev)
@@ -1747,7 +1798,13 @@ static int gc1601_pon0_register(struct gc1601_pon *pon)
 	dev->min_mtu = ETH_MIN_MTU;
 	dev->max_mtu = GC1601_MAX_MTU;
 	SET_NETDEV_DEV(dev, pon->dev);
-	eth_hw_addr_random(dev);
+	ret = of_get_ethdev_address(pon->dev->of_node, dev);
+	if (ret == -EPROBE_DEFER) {
+		free_netdev(dev);
+		return ret;
+	}
+	if (ret)
+		eth_hw_addr_random(dev);
 	netif_carrier_off(dev);
 
 	ret = register_netdev(dev);
@@ -1757,7 +1814,7 @@ static int gc1601_pon0_register(struct gc1601_pon *pon)
 	}
 	pon->xp.netdev = dev;
 
-	ret = gc1601_pe_pon_register(dev, gc1601_pon0_rx, pon);
+	ret = gc1601_pe_pon_register(dev, &gc1601_pon0_port_ops, pon);
 	if (ret) {
 		unregister_netdev(dev);
 		free_netdev(dev);
@@ -1771,8 +1828,12 @@ static void gc1601_pon0_unregister(struct gc1601_pon *pon)
 	if (!pon->xp.netdev)
 		return;
 	gc1601_pe_pon_unregister();
-	unregister_netdev(pon->xp.netdev);
-	free_netdev(pon->xp.netdev);
+	if (pon->xp.dsa) {
+		dev_put(pon->xp.netdev);
+	} else {
+		unregister_netdev(pon->xp.netdev);
+		free_netdev(pon->xp.netdev);
+	}
 	pon->xp.netdev = NULL;
 }
 
@@ -1786,12 +1847,12 @@ void gc1601_xpon_report_state(struct gc1601_pon *pon, int state)
 		return;
 	omci_device_set_state(pon->xp.odev, state);
 	if (state == GPON_STATE_O5) {
-		netif_carrier_on(pon->xp.netdev);
+		gc1601_xpon_set_link(pon, true);
 		/* Re-ranging may have moved the Alloc-IDs to other T-CONTs. */
 		WRITE_ONCE(pon->xp.sfu_count, U32_MAX);
 		schedule_work(&pon->xp.reconcile_work);
 	} else {
-		netif_carrier_off(pon->xp.netdev);
+		gc1601_xpon_set_link(pon, false);
 	}
 	gc1601_xpon_sfu_update(&pon->xp);
 	xpon_device_report_carrier(pon->xp.xpon, state == GPON_STATE_O5);
@@ -1861,41 +1922,13 @@ void gc1601_xpon_stop(struct gc1601_pon *pon)
 }
 
 /*
- * Default identity: the vendor ID from the device tree plus the last four
- * bytes of the factory MAC, as the stock firmware derived it. omci-agent's
- * UCI values replace it at runtime.
+ * Factory identity from NVMEM cells, if the board has any. The board's
+ * default identity comes from userspace (omcid's init script, from
+ * /etc/board.json) before the first ranging.
  */
-static int gc1601_xpon_default_identity(struct gc1601_pon *pon,
-					struct omci_identity *id)
-{
-	u8 mac[ETH_ALEN];
-	int ret;
-
-	ret = omci_identity_load(pon->dev, id);
-	if (ret == -EPROBE_DEFER)
-		return ret;
-	if (ret)
-		memset(id, 0, sizeof(*id));
-	if ((id->valid & OMCI_IDENTITY_F_SERIAL_NUMBER) ||
-	    !(id->valid & OMCI_IDENTITY_F_VENDOR_ID))
-		return 0;
-
-	/* The MAC sits in the misc partition, which may not be up yet. */
-	ret = of_get_mac_address(pon->dev->of_node, mac);
-	if (ret == -EPROBE_DEFER)
-		return ret;
-	if (!ret) {
-		memcpy(id->serial_number, id->vendor_id, 4);
-		memcpy(id->serial_number + 4, mac + 2, 4);
-		id->valid |= OMCI_IDENTITY_F_SERIAL_NUMBER;
-		id->serial_source = OMCI_CONFIG_SOURCE_DRIVER;
-	}
-	return 0;
-}
-
 /*
  * The switch tags and untags the services itself; a VLAN device on pon0 in
- * a bridge tags their frames a second time. omci-agent replaces it with
+ * a bridge tags their frames a second time. omci.agent replaces it with
  * pon0 and untag_vlan, but say so if one is bridged anyway.
  */
 static int gc1601_xpon_netdev_event(struct notifier_block *nb,
@@ -1936,8 +1969,85 @@ static int gc1601_xpon_set_mode(struct xpon_device *xpon, enum xpon_mode mode)
 	return ret;
 }
 
+static void gc1601_xpon_get_tx(struct xpon_device *xpon, struct xpon_tx_state *tx)
+{
+	gc1601_pon_get_tx(xpon_device_priv(xpon), tx);
+}
+
+static int gc1601_xpon_set_tx_allow(struct xpon_device *xpon, bool allow)
+{
+	return gc1601_pon_set_allow_tx(xpon_device_priv(xpon), allow);
+}
+
+static int gc1601_xpon_set_tx_hold(struct xpon_device *xpon, bool hold)
+{
+	return gc1601_pon_set_tx_hold(xpon_device_priv(xpon), hold);
+}
+
+static int gc1601_xpon_set_tx_hold_seconds(struct xpon_device *xpon, u32 seconds)
+{
+	return gc1601_pon_set_tx_hold_seconds(xpon_device_priv(xpon), seconds);
+}
+
+static int gc1601_xpon_release_identity(struct xpon_device *xpon)
+{
+	return gc1601_gpon_release_identity_wait(xpon_device_priv(xpon));
+}
+
+static void gc1601_xpon_get_epon(struct xpon_device *xpon, struct xpon_epon_state *epon)
+{
+	gc1601_epon_get(xpon_device_priv(xpon), epon);
+}
+
+static int gc1601_xpon_set_epon_mac(struct xpon_device *xpon, const u8 *mac)
+{
+	return gc1601_epon_set_mac(xpon_device_priv(xpon), mac);
+}
+
+static int gc1601_xpon_set_epon_oam_link(struct xpon_device *xpon, bool up,
+					 const u32 *generation)
+{
+	return gc1601_epon_set_oam_link(xpon_device_priv(xpon), up, generation);
+}
+
+static int gc1601_xpon_set_epon_register(struct xpon_device *xpon, bool on)
+{
+	return gc1601_epon_set_register(xpon_device_priv(xpon), on);
+}
+
+static int gc1601_xpon_set_epon_key(struct xpon_device *xpon, u8 llid, u8 index, u32 key)
+{
+	return gc1601_epon_install_key(xpon_device_priv(xpon), llid, index, key);
+}
+
+static int gc1601_xpon_set_epon_holdover(struct xpon_device *xpon, u32 ms)
+{
+	return gc1601_epon_holdover(xpon_device_priv(xpon), ms);
+}
+
+static int gc1601_xpon_get_module(struct xpon_device *xpon, u8 *diag, u8 *thresholds)
+{
+	return gc1601_pon_get_module(xpon_device_priv(xpon), diag, thresholds);
+}
+
 static const struct xpon_device_ops gc1601_xpon_ops = {
 	.set_mode = gc1601_xpon_set_mode,
+	.get_tx = gc1601_xpon_get_tx,
+	.set_tx_allow = gc1601_xpon_set_tx_allow,
+	.set_tx_hold = gc1601_xpon_set_tx_hold,
+	.set_tx_hold_seconds = gc1601_xpon_set_tx_hold_seconds,
+	.release_identity = gc1601_xpon_release_identity,
+	.get_epon = gc1601_xpon_get_epon,
+	.set_epon_mac = gc1601_xpon_set_epon_mac,
+	.set_epon_oam_link = gc1601_xpon_set_epon_oam_link,
+	.set_epon_register = gc1601_xpon_set_epon_register,
+	.set_epon_key = gc1601_xpon_set_epon_key,
+	.set_epon_holdover = gc1601_xpon_set_epon_holdover,
+	.get_module = gc1601_xpon_get_module,
+	.get_sfu = gc1601_xpon_get_sfu,
+	.set_sfu_offload = gc1601_xpon_set_sfu_offload,
+	.set_sfu_untag_vlan = gc1601_xpon_set_sfu_untag_vlan,
+	.set_sfu_vlan_map = gc1601_xpon_set_sfu_vlan_map,
 };
 
 int gc1601_xpon_init(struct gc1601_pon *pon)
@@ -1949,12 +2059,7 @@ int gc1601_xpon_init(struct gc1601_pon *pon)
 		.ops = &gc1601_xpon_ops,
 		.priv = pon,
 	};
-	struct omci_identity id;
 	int i, ret;
-
-	ret = gc1601_xpon_default_identity(pon, &id);
-	if (ret)
-		return ret;
 
 	for (i = 0; i < GPON_TCONTS; i++)
 		pon->xp.tcont_alloc[i] = U16_MAX;
@@ -1991,11 +2096,6 @@ int gc1601_xpon_init(struct gc1601_pon *pon)
 		return dev_err_probe(pon->dev, ret, "OMCI registration failed\n");
 	}
 
-	if (id.valid & OMCI_IDENTITY_F_SERIAL_NUMBER) {
-		omci_device_set_identity_info(pon->xp.odev, &id);
-		gc1601_gpon_set_identity(pon, id.serial_number,
-					 id.valid & OMCI_IDENTITY_F_PASSWORD ? id.password : NULL);
-	}
 	pon->xp.netdev_nb.notifier_call = gc1601_xpon_netdev_event;
 	if (register_netdevice_notifier(&pon->xp.netdev_nb))
 		pon->xp.netdev_nb.notifier_call = NULL;

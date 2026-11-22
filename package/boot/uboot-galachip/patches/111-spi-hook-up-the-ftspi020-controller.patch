@@ -1,0 +1,30 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] spi: hook up the Faraday FTSPI020 SPI memory controller
+
+--- a/drivers/spi/Kconfig
++++ b/drivers/spi/Kconfig
+@@ -261,6 +261,14 @@
+ 	  Enable the Freescale QSPI driver to use full AHB memory map space for
+ 	  flash access.
+ 
++config FTSPI020_SPI
++	bool "Faraday FTSPI020 SPI memory controller driver"
++	depends on DM_SPI
++	select SPI_MEM
++	help
++	  Enable the driver for the Faraday FTSPI020 SPI memory controller,
++	  which reads and programs the SPI flash of the GalaChip GC1601.
++
+ config GXP_SPI
+ 	bool "SPI driver for GXP"
+ 	imply SPI_FLASH_BAR
+--- a/drivers/spi/Makefile
++++ b/drivers/spi/Makefile
+@@ -39,6 +39,7 @@
+ obj-$(CONFIG_EXYNOS_SPI) += exynos_spi.o
+ obj-$(CONFIG_FSL_DSPI) += fsl_dspi.o
+ obj-$(CONFIG_FSL_ESPI) += fsl_espi.o
++obj-$(CONFIG_FTSPI020_SPI) += ftspi020.o
+ obj-$(CONFIG_SYNQUACER_SPI) += spi-synquacer.o
+ obj-$(CONFIG_GXP_SPI) += gxp_spi.o
+ obj-$(CONFIG_ICH_SPI) +=  ich.o

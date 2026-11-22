@@ -4,7 +4,7 @@
  *
  * The core carries OMCI between the provider and one Generic Netlink owner,
  * omcid, and validates its typed hardware requests. The protocol, MIB and
- * OLT policy live in omcid; the kernel keeps identity and configuration.
+ * OLT policy live in omcid, and so does the ONU identity and configuration.
  */
 
 #include <linux/atomic.h>
@@ -15,6 +15,7 @@
 #include <linux/netdevice.h>
 #include <linux/netlink.h>
 #include <linux/notifier.h>
+#include <linux/of.h>
 #include <linux/slab.h>
 #include <linux/unaligned.h>
 #include <uapi/linux/omci-backend.h>
@@ -32,10 +33,21 @@ static struct genl_family omci_genl_family;
 static void omci_trace_tx(struct omci_device *odev, const void *data,
 			  size_t len, u32 generation);
 
+/* Every backend field is a u32 except these. */
+static const struct nla_policy omci_backend_policy[OMCI_BACKEND_A_MAX + 1] = {
+	[OMCI_BACKEND_A_ENTITY ... OMCI_BACKEND_A_FEC_SECONDS] = { .type = NLA_U32 },
+	[OMCI_BACKEND_A_WEIGHT] = NLA_POLICY_EXACT_LEN(8),
+	[OMCI_BACKEND_A_TREATMENT] = NLA_POLICY_EXACT_LEN(8),
+	[OMCI_BACKEND_A_SERIAL] = NLA_POLICY_EXACT_LEN(8),
+	[OMCI_BACKEND_A_PASSWORD] = NLA_POLICY_EXACT_LEN(10),
+	[OMCI_BACKEND_A_TEMPERATURE_MC] = { .type = NLA_S32 },
+	[OMCI_BACKEND_A_BIP_ERRORS ... OMCI_BACKEND_A_FEC_SECONDS] = { .type = NLA_U64 },
+};
+
 static const struct nla_policy omci_policy[OMCI_ATTR_MAX + 1] = {
 	[OMCI_ATTR_BACKEND_OP] = { .type = NLA_U16 },
 	[OMCI_ATTR_DIAGNOSTICS] = { .type = NLA_U8 },
-	[OMCI_ATTR_BACKEND_DATA] = { .type = NLA_BINARY, .len = OMCI_BACKEND_MAX_DATA },
+	[OMCI_ATTR_BACKEND_ARGS] = NLA_POLICY_NESTED(omci_backend_policy),
 	[OMCI_ATTR_GENERATION] = { .type = NLA_U32 },
 	[OMCI_ATTR_BIND_FLAGS] = { .type = NLA_U32 },
 	[OMCI_ATTR_DEV_ID] = { .type = NLA_U32 },
@@ -43,9 +55,6 @@ static const struct nla_policy omci_policy[OMCI_ATTR_MAX + 1] = {
 		.type = NLA_BINARY,
 		.len = OMCI_MAX_PDU_LEN,
 	},
-	[OMCI_ATTR_AGENT_ENABLED] = { .type = NLA_U8 },
-	[OMCI_ATTR_AGENT_PERMISSIVE] = { .type = NLA_U8 },
-	[OMCI_ATTR_AGENT_FAKE_OMCI] = { .type = NLA_U8 },
 	[OMCI_ATTR_ONU_TYPE] = { .type = NLA_U8 },
 	[OMCI_ATTR_CLASS_ID] = { .type = NLA_U16 },
 	[OMCI_ATTR_ENTITY_ID] = { .type = NLA_U16 },
@@ -56,19 +65,11 @@ static const struct nla_policy omci_policy[OMCI_ATTR_MAX + 1] = {
 	},
 	[OMCI_ATTR_ORIGIN] = { .type = NLA_U8 },
 	[OMCI_ATTR_INDEX] = { .type = NLA_U32 },
-	[OMCI_ATTR_CONFIG_KEY] = { .type = NLA_U16 },
-	[OMCI_ATTR_CONFIG_VALUE] = {
-		.type = NLA_BINARY,
-		.len = OMCI_MAX_CONFIG_VALUE,
-	},
 	[OMCI_ATTR_VLAN_TAGGING_FILTER] = { .type = NLA_NESTED },
 	[OMCI_ATTR_EXTENDED_VLAN] = { .type = NLA_NESTED },
 	[OMCI_ATTR_CLASS_CATEGORY] = { .type = NLA_U8 },
 	[OMCI_ATTR_CLASS_SUPPORT] = { .type = NLA_U8 },
 	[OMCI_ATTR_CLASS_FLAGS] = { .type = NLA_U32 },
-	[OMCI_ATTR_CONFIG_SOURCE] = { .type = NLA_U8 },
-	[OMCI_ATTR_OLT_PROFILE_CONFIGURED] = { .type = NLA_U8 },
-	[OMCI_ATTR_OLT_PROFILE_FORCED] = { .type = NLA_U8 },
 };
 
 void omci_for_each_device(void (*fn)(struct omci_device *odev))
@@ -203,7 +204,7 @@ static int omci_put_status(struct sk_buff *msg, struct omci_device *odev)
 	if (omci_put_telemetry(msg, odev))
 		return -EMSGSIZE;
 
-	return omci_agent_put_status(msg, odev);
+	return nla_put_u8(msg, OMCI_ATTR_UNI_COUNT, odev->uni_count) ? -EMSGSIZE : 0;
 }
 
 static int omci_cmd_get(struct sk_buff *skb, struct genl_info *info)
@@ -538,157 +539,72 @@ out_unlock_devices:
 	return ret;
 }
 
-static int omci_cmd_agent_set(struct sk_buff *skb, struct genl_info *info)
+/* Fill an operation's input structure from its nested fields, exactly those. */
+static int omci_backend_decode(const struct omci_backend_fields *fields,
+			       const struct nlattr *args, void *data,
+			       struct netlink_ext_ack *extack)
 {
-	struct omci_device *odev;
-	bool profile_changed = false;
-	u8 value;
-	int ret = 0;
-
-	mutex_lock(&omci_devices_lock);
-	odev = omci_get_from_info(info);
-	if (!odev) {
-		ret = -ENODEV;
-		goto out;
-	}
-	if (info->attrs[OMCI_ATTR_AGENT_ENABLED]) {
-		value = nla_get_u8(info->attrs[OMCI_ATTR_AGENT_ENABLED]);
-		ret = omci_agent_config_set(odev, OMCI_CONFIG_AGENT_ENABLED,
-					    &value, sizeof(value));
-		if (ret)
-			goto out;
-	}
-	if (info->attrs[OMCI_ATTR_AGENT_PERMISSIVE]) {
-		value = nla_get_u8(info->attrs[OMCI_ATTR_AGENT_PERMISSIVE]);
-		ret = omci_agent_config_set(odev, OMCI_CONFIG_AGENT_PERMISSIVE,
-					    &value, sizeof(value));
-		if (ret)
-			goto out;
-	}
-	if (info->attrs[OMCI_ATTR_AGENT_FAKE_OMCI]) {
-		value = nla_get_u8(info->attrs[OMCI_ATTR_AGENT_FAKE_OMCI]);
-		ret = omci_agent_config_set(odev, OMCI_CONFIG_AGENT_FAKE_OMCI,
-					    &value, sizeof(value));
-		if (ret)
-			goto out;
-	}
-	if (info->attrs[OMCI_ATTR_OLT_PROFILE_CONFIGURED]) {
-		value = nla_get_u8(info->attrs[OMCI_ATTR_OLT_PROFILE_CONFIGURED]);
-		ret = omci_agent_config_set(odev, OMCI_CONFIG_OLT_PROFILE,
-					    &value, sizeof(value));
-		if (ret)
-			goto out;
-		profile_changed = true;
-	}
-	if (info->attrs[OMCI_ATTR_OLT_PROFILE_FORCED]) {
-		value = nla_get_u8(info->attrs[OMCI_ATTR_OLT_PROFILE_FORCED]);
-		ret = omci_agent_config_set(odev, OMCI_CONFIG_OLT_PROFILE_FORCE,
-					    &value, sizeof(value));
-		if (ret)
-			goto out;
-		profile_changed = true;
-	}
-	if (!ret)
-		omci_device_notify(odev, profile_changed ?
-				   OMCI_EVENT_PROFILE_CHANGE :
-				   OMCI_EVENT_CONFIG_CHANGE);
-out:
-	mutex_unlock(&omci_devices_lock);
-	return ret;
-}
-
-static int omci_cmd_config_get(struct sk_buff *skb, struct genl_info *info)
-{
-	u8 value[OMCI_MAX_CONFIG_VALUE];
-	struct omci_device *odev;
-	struct sk_buff *msg;
-	size_t len = sizeof(value);
-	u16 key;
-	u8 source = OMCI_CONFIG_SOURCE_UNSPEC;
-	void *hdr;
+	struct nlattr *tb[OMCI_BACKEND_A_MAX + 1];
+	unsigned int i, present = 0;
 	int ret;
 
-	if (!info->attrs[OMCI_ATTR_CONFIG_KEY])
-		return -EINVAL;
-	key = nla_get_u16(info->attrs[OMCI_ATTR_CONFIG_KEY]);
-
-	mutex_lock(&omci_devices_lock);
-	odev = omci_get_from_info(info);
-	if (!odev) {
-		ret = -ENODEV;
-		goto out_unlock;
-	}
-	ret = omci_agent_config_get(odev, key, value, &len);
+	if (!args)
+		return fields->count ? -EINVAL : 0;
+	ret = nla_parse_nested(tb, OMCI_BACKEND_A_MAX, args, omci_backend_policy, extack);
 	if (ret)
-		goto out_unlock;
-	omci_agent_config_source_get(odev, key, &source);
+		return ret;
+	for (i = 0; i <= OMCI_BACKEND_A_MAX; i++)
+		present += !!tb[i];
+	if (present != fields->count)
+		return -EINVAL;
 
-	msg = genlmsg_new(NLMSG_DEFAULT_SIZE + len, GFP_KERNEL);
-	if (!msg) {
-		ret = -ENOMEM;
-		goto out_unlock;
-	}
-	hdr = genlmsg_put_reply(msg, info, &omci_genl_family, 0,
-				OMCI_CMD_CONFIG_GET);
-	if (!hdr || nla_put_u32(msg, OMCI_ATTR_DEV_ID, odev->id) ||
-	    nla_put_u16(msg, OMCI_ATTR_CONFIG_KEY, key) ||
-	    nla_put(msg, OMCI_ATTR_CONFIG_VALUE, len, value) ||
-	    nla_put_u8(msg, OMCI_ATTR_CONFIG_SOURCE, source)) {
-		nlmsg_free(msg);
-		ret = -EMSGSIZE;
-		goto out_unlock;
-	}
-	genlmsg_end(msg, hdr);
-	mutex_unlock(&omci_devices_lock);
-	return genlmsg_reply(msg, info);
+	memset(data, 0, fields->size);
+	for (i = 0; i < fields->count; i++) {
+		const struct omci_backend_field *f = &fields->field[i];
 
-out_unlock:
-	mutex_unlock(&omci_devices_lock);
-	return ret;
+		if (!tb[f->attr] || nla_len(tb[f->attr]) != f->len)
+			return -EINVAL;
+		memcpy((u8 *)data + f->offset, nla_data(tb[f->attr]), f->len);
+	}
+	return 0;
 }
 
-static int omci_cmd_config_set(struct sk_buff *skb, struct genl_info *info)
+static int omci_backend_encode(struct sk_buff *msg, const struct omci_backend_fields *fields,
+			       const void *data)
 {
-	struct nlattr *value = info->attrs[OMCI_ATTR_CONFIG_VALUE];
-	struct omci_device *odev;
-	u16 key;
-	int ret;
+	struct nlattr *nest;
+	unsigned int i;
 
-	if (!info->attrs[OMCI_ATTR_CONFIG_KEY] || !value)
-		return -EINVAL;
-	key = nla_get_u16(info->attrs[OMCI_ATTR_CONFIG_KEY]);
+	if (!fields->count)
+		return 0;
+	nest = nla_nest_start(msg, OMCI_ATTR_BACKEND_ARGS);
+	if (!nest)
+		return -EMSGSIZE;
+	for (i = 0; i < fields->count; i++) {
+		const struct omci_backend_field *f = &fields->field[i];
+		const void *p = (const u8 *)data + f->offset;
+		int ret;
 
-	mutex_lock(&omci_devices_lock);
-	odev = omci_get_from_info(info);
-	if (!odev) {
-		ret = -ENODEV;
-		goto out;
+		if (f->type == OMCI_BACKEND_FIELD_U64)
+			ret = nla_put_u64_64bit(msg, f->attr, *(const u64 *)p, OMCI_BACKEND_A_PAD);
+		else
+			ret = nla_put(msg, f->attr, f->len, p);
+		if (ret) {
+			nla_nest_cancel(msg, nest);
+			return ret;
+		}
 	}
-	if (odev->userspace_mode) {
-		ret = -EBUSY;
-		goto out;
-	}
-	ret = omci_agent_config_set(odev, key, nla_data(value),
-				    nla_len(value));
-	if (!ret) {
-		u8 event = OMCI_EVENT_CONFIG_CHANGE;
-
-		if (key == OMCI_CONFIG_OLT_PROFILE ||
-		    key == OMCI_CONFIG_OLT_PROFILE_FORCE)
-			event = OMCI_EVENT_PROFILE_CHANGE;
-		omci_device_notify(odev, event);
-	}
-out:
-	mutex_unlock(&omci_devices_lock);
-	return ret;
+	nla_nest_end(msg, nest);
+	return 0;
 }
 
 static int omci_cmd_backend(struct sk_buff *skb, struct genl_info *info)
 {
-	struct nlattr *payload = info->attrs[OMCI_ATTR_BACKEND_DATA];
+	const struct omci_backend_layout *layout;
+	u8 input[OMCI_BACKEND_MAX_DATA] __aligned(8);
+	u8 output[OMCI_BACKEND_MAX_DATA] __aligned(8);
 	struct omci_device *odev;
 	struct sk_buff *msg;
-	u8 output[OMCI_BACKEND_MAX_DATA] __aligned(8);
 	size_t output_len;
 	void *hdr;
 	u16 op;
@@ -698,6 +614,13 @@ static int omci_cmd_backend(struct sk_buff *skb, struct genl_info *info)
 	if (!info->attrs[OMCI_ATTR_BACKEND_OP] || !info->attrs[OMCI_ATTR_GENERATION])
 		return -EINVAL;
 	op = nla_get_u16(info->attrs[OMCI_ATTR_BACKEND_OP]);
+	layout = omci_backend_layout(op);
+	if (!layout)
+		return -EOPNOTSUPP;
+	ret = omci_backend_decode(&layout->in, info->attrs[OMCI_ATTR_BACKEND_ARGS], input,
+				  info->extack);
+	if (ret)
+		return ret;
 	read = op == OMCI_BACKEND_TOPOLOGY || op == OMCI_BACKEND_TELEMETRY ||
 	       op == OMCI_BACKEND_UNI_LINK;
 	mutex_lock(&omci_devices_lock);
@@ -726,8 +649,11 @@ static int omci_cmd_backend(struct sk_buff *skb, struct genl_info *info)
 	ret = nla_get_u32(info->attrs[OMCI_ATTR_GENERATION]) == odev->generation ? 0 : -ESTALE;
 	spin_unlock_bh(&odev->state_lock);
 	if (!ret)
-		ret = omci_backend_execute(odev, op, payload ? nla_data(payload) : NULL,
-					   payload ? nla_len(payload) : 0, output, &output_len);
+		ret = omci_backend_execute(odev, op, layout->in.count ? input : NULL,
+					   layout->in.count ? layout->in.size : 0,
+					   output, &output_len);
+	if (!ret && output_len != (layout->out.count ? layout->out.size : 0))
+		ret = -EPROTO;
 	odev->ops->backend_end(odev);
 	if (ret)
 		goto out;
@@ -740,7 +666,7 @@ static int omci_cmd_backend(struct sk_buff *skb, struct genl_info *info)
 	if (!hdr || nla_put_u16(msg, OMCI_ATTR_BACKEND_OP, op) ||
 	    nla_put_u32(msg, OMCI_ATTR_GENERATION,
 			nla_get_u32(info->attrs[OMCI_ATTR_GENERATION])) ||
-	    (output_len && nla_put(msg, OMCI_ATTR_BACKEND_DATA, output_len, output))) {
+	    omci_backend_encode(msg, &layout->out, output)) {
 		nlmsg_free(msg);
 		ret = -EMSGSIZE;
 		goto out;
@@ -782,24 +708,6 @@ static const struct genl_ops omci_genl_ops[] = {
 		.flags = GENL_ADMIN_PERM,
 		.policy = omci_policy,
 		.doit = omci_cmd_tx,
-	},
-	{
-		.cmd = OMCI_CMD_AGENT_SET,
-		.flags = GENL_ADMIN_PERM,
-		.policy = omci_policy,
-		.doit = omci_cmd_agent_set,
-	},
-	{
-		.cmd = OMCI_CMD_CONFIG_GET,
-		.flags = GENL_ADMIN_PERM,
-		.policy = omci_policy,
-		.doit = omci_cmd_config_get,
-	},
-	{
-		.cmd = OMCI_CMD_CONFIG_SET,
-		.flags = GENL_ADMIN_PERM,
-		.policy = omci_policy,
-		.doit = omci_cmd_config_set,
 	},
 };
 
@@ -1017,6 +925,15 @@ static struct notifier_block omci_netlink_nb = {
 	.notifier_call = omci_netlink_notify,
 };
 
+/* The board's omci-uni-ports, else a four-port HGU like the agent's default. */
+static u8 omci_uni_count(struct device *dev)
+{
+	int count = dev && dev->of_node ?
+		    of_count_phandle_with_args(dev->of_node, "omci-uni-ports", NULL) : 0;
+
+	return count >= 1 && count <= 8 ? count : 4;
+}
+
 struct omci_device *
 omci_device_register(struct xpon_device *xpon, u32 capabilities,
 		     const struct omci_device_ops *ops, void *priv)
@@ -1049,24 +966,8 @@ omci_device_register(struct xpon_device *xpon, u32 capabilities,
 	odev->onu_id = 0xffff;
 	odev->gem_port_id = 0xffff;
 	odev->id = atomic_inc_return(&omci_next_id) - 1;
-
-	{
-		int ret = omci_agent_init(odev);
-
-		if (ret) {
-			kfree(odev);
-			return ERR_PTR(ret);
-		}
-
-		xpon->omci = odev;
-		ret = omci_sysfs_register(odev);
-		if (ret) {
-			xpon->omci = NULL;
-			omci_agent_cleanup(odev);
-			kfree(odev);
-			return ERR_PTR(ret);
-		}
-	}
+	odev->uni_count = omci_uni_count(xpon->parent);
+	xpon->omci = odev;
 
 	mutex_lock(&omci_devices_lock);
 	list_add_tail(&odev->list, &omci_devices);
@@ -1145,10 +1046,8 @@ void omci_device_unregister(struct omci_device *odev)
 	mutex_unlock(&odev->owner_lock);
 	if (owner_net)
 		put_net(owner_net);
-	omci_sysfs_unregister(odev);
 	if (odev->xpon && odev->xpon->omci == odev)
 		odev->xpon->omci = NULL;
-	omci_agent_cleanup(odev);
 	kfree(odev);
 }
 EXPORT_SYMBOL_GPL(omci_device_unregister);
@@ -1171,73 +1070,16 @@ u32 omci_device_id(const struct omci_device *odev)
 }
 EXPORT_SYMBOL_GPL(omci_device_id);
 
-void omci_device_set_identity_info(struct omci_device *odev,
-				   const struct omci_identity *identity)
+/* Ask omcid to replay the services, as after a MIB change. */
+int omci_device_reconcile_services(struct omci_device *odev)
 {
-	if (!odev || !identity)
-		return;
-	if (identity->valid & OMCI_IDENTITY_F_SERIAL_NUMBER)
-		omci_agent_config_set_source(odev, OMCI_CONFIG_SERIAL_NUMBER,
-					     identity->serial_number,
-					     sizeof(identity->serial_number),
-					     identity->serial_source);
-	if (identity->valid & OMCI_IDENTITY_F_VENDOR_ID)
-		omci_agent_config_set_source(odev, OMCI_CONFIG_VENDOR_ID,
-					     identity->vendor_id,
-					     sizeof(identity->vendor_id),
-					     identity->vendor_source);
-	if (identity->valid & OMCI_IDENTITY_F_PASSWORD)
-		omci_agent_config_set_source(odev, OMCI_CONFIG_PASSWORD,
-					     identity->password,
-					     sizeof(identity->password),
-					     identity->password_source);
-	if (identity->valid & OMCI_IDENTITY_F_VERSION)
-		omci_agent_config_set_source(odev, OMCI_CONFIG_VERSION,
-					     identity->version,
-					     sizeof(identity->version),
-					     identity->version_source);
-	if (identity->valid & OMCI_IDENTITY_F_EQUIPMENT_ID)
-		omci_agent_config_set_source(odev, OMCI_CONFIG_EQUIPMENT_ID,
-					     identity->equipment_id,
-					     sizeof(identity->equipment_id),
-					     identity->equipment_source);
-	if (identity->valid & OMCI_IDENTITY_F_LOID)
-		omci_agent_config_set_source(odev, OMCI_CONFIG_LOID,
-					     identity->loid,
-					     sizeof(identity->loid),
-					     identity->loid_source);
-	if (identity->valid & OMCI_IDENTITY_F_LOID_PASSWORD)
-		omci_agent_config_set_source(odev, OMCI_CONFIG_LOID_PASSWORD,
-					     identity->loid_password,
-					     sizeof(identity->loid_password),
-					     identity->loid_password_source);
-}
-EXPORT_SYMBOL_GPL(omci_device_set_identity_info);
+	if (!odev)
+		return -EINVAL;
 
-void omci_device_set_identity(struct omci_device *odev,
-			      const u8 serial_number[8],
-			      const u8 password[10])
-{
-	struct omci_identity identity = {};
-
-	if (serial_number) {
-		memcpy(identity.serial_number, serial_number,
-		       sizeof(identity.serial_number));
-		memcpy(identity.vendor_id, serial_number,
-		       sizeof(identity.vendor_id));
-		identity.valid |= OMCI_IDENTITY_F_SERIAL_NUMBER |
-				  OMCI_IDENTITY_F_VENDOR_ID;
-		identity.serial_source = OMCI_CONFIG_SOURCE_DRIVER;
-		identity.vendor_source = OMCI_CONFIG_SOURCE_DRIVER;
-	}
-	if (password) {
-		memcpy(identity.password, password, sizeof(identity.password));
-		identity.valid |= OMCI_IDENTITY_F_PASSWORD;
-		identity.password_source = OMCI_CONFIG_SOURCE_DRIVER;
-	}
-	omci_device_set_identity_info(odev, &identity);
+	omci_device_notify(odev, OMCI_EVENT_RESOURCE_CHANGE);
+	return -EINPROGRESS;
 }
-EXPORT_SYMBOL_GPL(omci_device_set_identity);
+EXPORT_SYMBOL_GPL(omci_device_reconcile_services);
 
 void omci_device_set_onu_id(struct omci_device *odev, u16 onu_id)
 {
@@ -1366,13 +1208,9 @@ static int __init omci_init(void)
 {
 	int ret;
 
-	ret = omci_sysfs_init();
-	if (ret)
-		return ret;
-
 	ret = genl_register_family(&omci_genl_family);
 	if (ret)
-		goto err_sysfs;
+		return ret;
 
 	ret = netlink_register_notifier(&omci_netlink_nb);
 	if (ret)
@@ -1382,8 +1220,6 @@ static int __init omci_init(void)
 
 err_genl:
 	genl_unregister_family(&omci_genl_family);
-err_sysfs:
-	omci_sysfs_exit();
 	return ret;
 }
 subsys_initcall(omci_init);
@@ -1392,7 +1228,6 @@ static void __exit omci_exit(void)
 {
 	netlink_unregister_notifier(&omci_netlink_nb);
 	genl_unregister_family(&omci_genl_family);
-	omci_sysfs_exit();
 }
 module_exit(omci_exit);
 

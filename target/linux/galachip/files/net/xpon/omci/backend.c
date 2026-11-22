@@ -24,11 +24,8 @@ int omci_backend_execute(struct omci_device *odev, u16 op, const void *data,
 	case OMCI_BACKEND_IDENTITY: {
 		const struct omci_backend_identity *q = data;
 		struct omci_identity identity = {};
-		struct omci_agent_config *config = &odev->agent.config;
-		int ret;
 
-		if (len != sizeof(*q) || !q->valid || (q->valid & ~3) ||
-		    q->reserved[0] || q->reserved[1])
+		if (len != sizeof(*q) || !q->valid || (q->valid & ~3))
 			return -EINVAL;
 		if (!ops->backend_identity)
 			return -EOPNOTSUPP;
@@ -40,23 +37,7 @@ int omci_backend_execute(struct omci_device *odev, u16 op, const void *data,
 			identity.valid |= OMCI_IDENTITY_F_PASSWORD;
 			memcpy(identity.password, q->password, sizeof(identity.password));
 		}
-		ret = ops->backend_identity(odev, &identity);
-		if (ret)
-			return ret;
-		/* Keep the normalized registration readback coherent for daemon restart. */
-		mutex_lock(&odev->agent.lock);
-		if (q->valid & OMCI_BACKEND_ID_SERIAL) {
-			memcpy(config->serial_number, q->serial, sizeof(config->serial_number));
-			memcpy(config->vendor_id, q->serial, sizeof(config->vendor_id));
-			config->serial_source = OMCI_CONFIG_SOURCE_NETLINK;
-			config->vendor_source = OMCI_CONFIG_SOURCE_NETLINK;
-		}
-		if (q->valid & OMCI_BACKEND_ID_PASSWORD) {
-			memcpy(config->password, q->password, sizeof(config->password));
-			config->password_source = OMCI_CONFIG_SOURCE_NETLINK;
-		}
-		mutex_unlock(&odev->agent.lock);
-		return 0;
+		return ops->backend_identity(odev, &identity);
 	}
 	case OMCI_BACKEND_TOPOLOGY: {
 		struct omci_backend_topology *out = output;
@@ -113,33 +94,6 @@ int omci_backend_execute(struct omci_device *odev, u16 op, const void *data,
 		return ops->set_gem_port(odev, q->entity, q->gem_port, q->tcont,
 					 q->direction, q->valid, q->encrypted);
 	}
-	case OMCI_BACKEND_TCONT_QOS: {
-		struct omci_tcont_qos qos;
-		const struct omci_backend_qos *q = data;
-
-		if (len != sizeof(*q))
-			return -EINVAL;
-		if (q->entity > 0xffff || q->enabled > 1 ||
-		    (q->enabled && q->policy != 1 && q->policy != 2))
-			return -ERANGE;
-		qos.enabled = q->enabled;
-		qos.policy = q->policy;
-		memcpy(qos.weight, q->weight, sizeof(qos.weight));
-		if (!ops->set_tcont_qos)
-			return -EOPNOTSUPP;
-		return ops->set_tcont_qos(odev, q->entity, &qos);
-	}
-	case OMCI_BACKEND_GEM_RATE: {
-		const struct omci_backend_rate *q = data;
-
-		if (len != sizeof(*q))
-			return -EINVAL;
-		if (q->gem_port > 0xfff || q->upstream > 1)
-			return -ERANGE;
-		if (!ops->set_gem_rate)
-			return -EOPNOTSUPP;
-		return ops->set_gem_rate(odev, q->gem_port, q->upstream, q->rate, q->burst);
-	}
 	case OMCI_BACKEND_UNI: {
 		const struct omci_backend_uni *q = data;
 
@@ -150,26 +104,6 @@ int omci_backend_execute(struct omci_device *odev, u16 op, const void *data,
 		if (!ops->set_uni)
 			return -EOPNOTSUPP;
 		return ops->set_uni(odev, q->entity, q->enabled);
-	}
-	case OMCI_BACKEND_UNI_ATTRS: {
-		struct omci_uni_attrs a;
-		const struct omci_backend_uni_attrs *q = data;
-
-		if (len != sizeof(*q))
-			return -EINVAL;
-		if (q->entity > 0xffff || q->pause_quanta > 0xffff ||
-		    q->learn_limit > 0xffff || q->auto_detection > 0xff ||
-		    q->max_frame_size > 0xffff)
-			return -ERANGE;
-		a = (struct omci_uni_attrs) {
-			.pause_quanta = q->pause_quanta, .ageing_s = q->ageing_s,
-			.learn_limit = q->learn_limit, .down_kbps = q->down_kbps,
-			.up_kbps = q->up_kbps, .auto_detection = q->auto_detection,
-			.max_frame_size = q->max_frame_size,
-		};
-		if (!ops->set_uni_attrs)
-			return -EOPNOTSUPP;
-		return ops->set_uni_attrs(odev, q->entity, &a);
 	}
 	case OMCI_BACKEND_SERVICE: {
 		struct omci_service_config s;

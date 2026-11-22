@@ -2,13 +2,11 @@
 /*
  * GalaChip GC1601 EPON MAC (IEEE 802.3ah, 1G).
  *
- * Ported from xpon_sdk EMAC_hw_init, chipset_set_llid, chipset_enable_llid
- * and EMAC_int_handle. MPCP discovery,
- * registration, GATE and REPORT run in hardware: the driver programs the
- * LLID 0 MAC, allows registration once the transmitter is allowed, and
- * samples the interrupt and state registers with an hrtimer. Interrupts are
- * left masked; whether the status bits latch while masked is one of the
- * things the gc1601-epon-diag module reports.
+ * MPCP discovery, registration, GATE and REPORT run in hardware: the driver
+ * programs the LLID 0 MAC, allows registration once the transmitter is
+ * allowed, and samples the interrupt and state registers with an hrtimer.
+ * Interrupts are left masked; whether the status bits latch while masked is
+ * one of the things the gc1601-epon-diag module reports.
  */
 
 #include <linux/device.h>
@@ -28,13 +26,15 @@
 #include "gc1601-pon.h"
 
 #define EPON_POLL_NS		(1 * NSEC_PER_MSEC)
+/* Without a signal nothing can register: only the signal returning has to be seen. */
+#define EPON_POLL_NO_SIGNAL_NS	(10 * NSEC_PER_MSEC)
 #define EPON_NACK_SILENCE	(60 * HZ)
 
 static struct gc1601_pon *gc1601_epon_pon;
 static const struct gc1601_epon_diag_ops __rcu *gc1601_epon_diag;
 static DEFINE_MUTEX(gc1601_epon_diag_lock);
 
-/* chipset_set_llid: the MAC byte-swapped into a high and a low word. */
+/* The LLID's MAC address, split into a high and a low word. */
 static void gc1601_epon_set_llid_mac(struct gc1601_pon *pon, unsigned int llid,
 				     const u8 *mac)
 {
@@ -42,7 +42,7 @@ static void gc1601_epon_set_llid_mac(struct gc1601_pon *pon, unsigned int llid,
 	writel(get_unaligned_be32(mac + 2), pon->emac + EMAC_LLID_MAC_LO(llid));
 }
 
-/* The factory MAC, as gcoamd hands gc_sys_info's MAC to eponSetLinkMac. */
+/* The factory MAC, which the stock firmware also uses for the link. */
 static void gc1601_epon_default_mac(struct gc1601_pon *pon)
 {
 	struct gc1601_epon *e = &pon->epon;
@@ -56,7 +56,7 @@ static void gc1601_epon_default_mac(struct gc1601_pon *pon)
 }
 
 /*
- * chipset_set_hold_over: keep the link through a short loss of signal.
+ * Holdover: keep the link through a short loss of signal.
  * The time field counts in 128 ns units; turning it off clears bit 31 and
  * +0x16c and keeps the time. Called with pon->lock held.
  */
@@ -72,7 +72,7 @@ static void gc1601_epon_set_holdover(struct gc1601_pon *pon)
 	writel(!!ms, pon->emac + EMAC_HOLDOVER_ON);
 }
 
-/* EMAC_hw_init with the stock opt_polar_data_low = 1. Called with pon->lock held. */
+/* EPON MAC set-up, optical data polarity low. Called with pon->lock held. */
 void gc1601_epon_hw_init(struct gc1601_pon *pon)
 {
 	void __iomem *emac = pon->emac;
@@ -85,8 +85,8 @@ void gc1601_epon_hw_init(struct gc1601_pon *pon)
 	writel(readl(emac + EMAC_CFG78) & ~EMAC_CFG78_POLAR, emac + EMAC_CFG78);
 	writel(0x1e83, emac + EMAC_CFGF8);
 	writel(0x13, emac + EMAC_CFG134);
-	writel(0, emac + EMAC_SHAPER);		/* chipset_epon_shp_fill: disable upstream shaper */
-	/* chipset_epon_wan_mtu_set(2000) from PMU_init; reset value is 1536 */
+	writel(0, emac + EMAC_SHAPER);		/* upstream shaper off */
+	/* 2000-byte frames, as the stock firmware sets; reset value is 1536 */
 	writel((readl(emac + EMAC_MTU) & ~GENMASK(26, 16)) | (2000 << 16) | 0x40, emac + EMAC_MTU);
 	/* Stock leaves +0x10 and +0x16c at reset (0x01900000, 1) until the OLT sets one. */
 	if (pon->epon.holdover_ms)
@@ -99,12 +99,12 @@ void gc1601_epon_hw_init(struct gc1601_pon *pon)
 	gc1601_epon_default_mac(pon);
 	gc1601_epon_set_llid_mac(pon, 0, pon->epon.mac);
 
-	/* chipset_set_epon_rx_en(1): receive path only */
+	/* Receive path only */
 	writel(readl(emac + EMAC_CTRL) | EMAC_CTRL_RX_EN, emac + EMAC_CTRL);
 }
 
 /*
- * LLID 0 answers the discovery GATE (gcpon_eponEnableLinkReg) only with the
+ * LLID 0 answers the discovery GATE only with the
  * transmitter allowed and epon-oamd not holding it silent. Called with
  * pon->lock held.
  */
@@ -174,13 +174,13 @@ bool gc1601_epon_registered(struct gc1601_pon *pon, unsigned int llid)
 	       READ_ONCE(pon->epon.registered) & BIT(llid);
 }
 
-/* OAM needs the MPCP registration; data also the OAM link (gcpon_eponSetLinkUp). */
+/* OAM needs the MPCP registration; data also needs the OAM link up. */
 bool gc1601_epon_may_send(struct gc1601_pon *pon, bool oam)
 {
 	return gc1601_epon_registered(pon, 0) && (oam || READ_ONCE(pon->epon.oam_link));
 }
 
-/* chipset_set_churning_key: 24-bit key into key slot @index of @llid. */
+/* Churning: 24-bit key into key slot @index of @llid. */
 static void gc1601_epon_set_key(struct gc1601_pon *pon, unsigned int llid,
 				unsigned int index, u32 key)
 {
@@ -279,14 +279,13 @@ static enum hrtimer_restart gc1601_epon_poll(struct hrtimer *t)
 
 	if (queue)
 		schedule_work(&e->work);
-	hrtimer_forward_now(t, ns_to_ktime(EPON_POLL_NS));
+	hrtimer_forward_now(t, ns_to_ktime(signal ? EPON_POLL_NS : EPON_POLL_NO_SIGNAL_NS));
 	return HRTIMER_RESTART;
 }
 
 static void gc1601_epon_report(struct gc1601_pon *pon, bool signal, bool sync,
 			       u8 registered)
 {
-	struct net_device *netdev = pon->xp.netdev;
 	bool mpcp = registered & BIT(0);
 	bool up = mpcp && pon->epon.oam_link;
 	enum xpon_registration_state reg;
@@ -312,15 +311,12 @@ static void gc1601_epon_report(struct gc1601_pon *pon, bool signal, bool sync,
 	 * discovery PDUs never reach the driver; gc1601_epon_may_send() holds
 	 * data back until the OAM link is up.
 	 */
-	if (mpcp)
-		netif_carrier_on(netdev);
-	else
-		netif_carrier_off(netdev);
+	gc1601_xpon_set_link(pon, mpcp);
 	/* LOS means no light, as stock reads it (+0x7c); no sync is not LOS. */
 	xpon_device_report_optical(pon->xp.xpon, signal, !signal);
 	xpon_device_report_carrier(pon->xp.xpon, up);
 	xpon_device_report_registration(pon->xp.xpon, reg);
-	sysfs_notify(&pon->dev->kobj, NULL, "epon_state");
+	xpon_device_report_event(pon->xp.xpon, XPON_EVENT_LLID);
 }
 
 static void gc1601_epon_work(struct work_struct *w)
@@ -362,14 +358,14 @@ static void gc1601_epon_work(struct work_struct *w)
 
 	mutex_lock(&pon->lock);
 	if (nack && !READ_ONCE(e->nack_silent)) {
-		/* local_handle_register: a NACK sends the ONU silent for 60 s. */
+		/* A registration NACK keeps the ONU silent for 60 s. */
 		dev_warn(pon->dev, "EPON: OLT refused the registration, silent for 60 s\n");
 		WRITE_ONCE(e->nack_silent, true);
 		gc1601_epon_update_llid_en(pon);
 		mod_delayed_work(system_wq, &e->nack, EPON_NACK_SILENCE);
 	}
 
-	/* local_pre_handle_init: back to discovery drops what LLIDs 0-3 queued. */
+	/* Back to discovery: drop what LLIDs 0-3 queued. */
 	if (loss || (e->reported && ((e->reported_registered & ~last.registered) ||
 			    (e->reported_signal && !last.signal)))) {
 		unsigned int t;
@@ -429,7 +425,7 @@ void gc1601_epon_start(struct gc1601_pon *pon)
 	mod_delayed_work(system_wq, &e->discovery, HZ);
 	gc1601_epon_report(pon, false, false, 0);
 	hrtimer_start(&e->poll, ns_to_ktime(EPON_POLL_NS), HRTIMER_MODE_REL);
-	dev_info(pon->dev, "EPON MAC running, LLID 0 %pM, %s\n",
+	dev_dbg(pon->dev, "EPON MAC running, LLID 0 %pM, %s\n",
 		 e->mac, e->allow_tx ? "transmitter allowed" : "laser off until allow_tx");
 }
 
@@ -457,8 +453,7 @@ void gc1601_epon_stop(struct gc1601_pon *pon)
 		dev_warn(pon->dev, "EPON offload cleanup failed: %d\n", ret);
 	gc1601_epon_report(pon, false, false, 0);
 	mutex_unlock(&pon->lock);
-	if (pon->xp.netdev)
-		netif_carrier_off(pon->xp.netdev);
+	gc1601_xpon_set_link(pon, false);
 }
 
 /* NAPI context: a downstream frame in EPON mode. */
@@ -529,18 +524,11 @@ void gc1601_epon_diag_unregister(void)
 }
 EXPORT_SYMBOL_GPL(gc1601_epon_diag_unregister);
 
-/* ---- sysfs ---- */
-
-static ssize_t epon_state_show(struct device *dev, struct device_attribute *attr,
-			       char *buf)
+static int gc1601_dbg_epon_state_show(struct seq_file *s, void *unused)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
+	struct gc1601_pon *pon = s->private;
 	struct gc1601_epon *e = &pon->epon;
-	ssize_t len;
 	int i;
-
-	if (!pon->emac)
-		return sysfs_emit(buf, "unsupported\n");
 
 	/* In GPON mode nothing has read the factory MAC for LLID 0 yet. */
 	mutex_lock(&pon->lock);
@@ -548,56 +536,56 @@ static ssize_t epon_state_show(struct device *dev, struct device_attribute *attr
 	mutex_unlock(&pon->lock);
 
 	spin_lock_irq(&e->lock);
-	len = sysfs_emit(buf,
-			 "mode=%s running=%d allow_tx=%d register=%d nack_silent=%d oam_link=%d signal=%d sync=%d registered=%#x mac=%pM holdover_ms=%u generation=%u\n"
-			 "llid_irq=%08x mpcp_irq=%08x events_dropped=%u\n"
-			 "rx_frames=%llu rx_mpcp=%llu rx_oam=%llu rx_minfo_seen=%08x rx_minfo_last=%u\n"
-			 "tx_frames=%llu tx_refused=%llu\n",
-			 READ_ONCE(pon->mode) == GC1601_PON_EPON ? "epon" : "gpon",
-			 e->running, e->allow_tx, e->register_en, e->nack_silent, e->oam_link,
-			 e->signal, e->sync, e->registered, e->mac, e->holdover_ms,
-			 READ_ONCE(e->generation),
-			 e->llid_irq_last, e->mpcp_irq_last, e->dropped,
-			 e->rx_frames, e->rx_mpcp, e->rx_oam, e->rx_minfo_seen, e->rx_minfo_last,
-			 e->tx_frames, e->tx_refused);
+	seq_printf(s,
+		   "mode=%s running=%d allow_tx=%d register=%d nack_silent=%d oam_link=%d signal=%d sync=%d registered=%#x mac=%pM holdover_ms=%u generation=%u\n"
+		   "llid_irq=%08x mpcp_irq=%08x events_dropped=%u\n"
+		   "rx_frames=%llu rx_mpcp=%llu rx_oam=%llu rx_minfo_seen=%08x rx_minfo_last=%u\n"
+		   "tx_frames=%llu tx_refused=%llu\n",
+		   READ_ONCE(pon->mode) == GC1601_PON_EPON ? "epon" : "gpon",
+		   e->running, e->allow_tx, e->register_en, e->nack_silent, e->oam_link,
+		   e->signal, e->sync, e->registered, e->mac, e->holdover_ms,
+		   READ_ONCE(e->generation),
+		   e->llid_irq_last, e->mpcp_irq_last, e->dropped,
+		   e->rx_frames, e->rx_mpcp, e->rx_oam, e->rx_minfo_seen, e->rx_minfo_last,
+		   e->tx_frames, e->tx_refused);
 	for (i = 0; i < 32; i++)
 		if (e->llid_irq_count[i])
-			len += sysfs_emit_at(buf, len, "llid_irq bit %d: %llu\n", i,
-					     e->llid_irq_count[i]);
+			seq_printf(s, "llid_irq bit %d: %llu\n", i, e->llid_irq_count[i]);
 	for (i = 0; i < 32; i++)
 		if (e->mpcp_irq_count[i])
-			len += sysfs_emit_at(buf, len, "mpcp_irq bit %d: %llu\n", i,
-					     e->mpcp_irq_count[i]);
+			seq_printf(s, "mpcp_irq bit %d: %llu\n", i, e->mpcp_irq_count[i]);
 	spin_unlock_irq(&e->lock);
-	return len;
+	return 0;
 }
-static DEVICE_ATTR_RO(epon_state);
+DEFINE_SHOW_ATTRIBUTE(gc1601_dbg_epon_state);
 
-static ssize_t epon_mac_show(struct device *dev, struct device_attribute *attr,
-			     char *buf)
+/* EPON LLID 0 as the xPON core reports it. */
+void gc1601_epon_get(struct gc1601_pon *pon, struct xpon_epon_state *epon)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-
 	mutex_lock(&pon->lock);
 	gc1601_epon_default_mac(pon);
+	ether_addr_copy(epon->mac, pon->epon.mac);
+	epon->oam_link = pon->epon.oam_link;
+	epon->register_en = pon->epon.register_en;
+	epon->holdover_ms = pon->epon.holdover_ms;
+	epon->generation = READ_ONCE(pon->epon.generation);
+	spin_lock_irq(&pon->epon.lock);
+	epon->sync = pon->epon.sync;
+	epon->nack_silent = pon->epon.nack_silent;
+	epon->registered = pon->epon.registered;
+	spin_unlock_irq(&pon->epon.lock);
 	mutex_unlock(&pon->lock);
-	return sysfs_emit(buf, "%pM\n", pon->epon.mac);
 }
 
-/* The LLID 0 MAC the OLT sees; some OLTs authorise ONUs by it. */
-static ssize_t epon_mac_store(struct device *dev, struct device_attribute *attr,
-			      const char *buf, size_t count)
+/* The LLID 0 MAC the OLT sees, all zero for the default; some OLTs authorise by it. */
+int gc1601_epon_set_mac(struct gc1601_pon *pon, const u8 *mac)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	u8 mac[ETH_ALEN];
-	bool reset;
+	bool reset = is_zero_ether_addr(mac);
 
 	if (!pon->emac)
 		return -EOPNOTSUPP;
-	reset = sysfs_streq(buf, "") || sysfs_streq(buf, "default");
-	if (!reset && (!mac_pton(buf, mac) || !is_valid_ether_addr(mac)))
+	if (!reset && !is_valid_ether_addr(mac))
 		return -EINVAL;
-
 	mutex_lock(&pon->lock);
 	if (reset) {
 		eth_zero_addr(pon->epon.mac);
@@ -608,40 +596,17 @@ static ssize_t epon_mac_store(struct device *dev, struct device_attribute *attr,
 	if (pon->mode == GC1601_PON_EPON)
 		gc1601_epon_set_llid_mac(pon, 0, pon->epon.mac);
 	mutex_unlock(&pon->lock);
-	return count;
-}
-static DEVICE_ATTR_RW(epon_mac);
-
-static ssize_t epon_oam_link_show(struct device *dev, struct device_attribute *attr,
-				  char *buf)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-
-	return sysfs_emit(buf, "%d\n", READ_ONCE(pon->epon.oam_link));
+	return 0;
 }
 
-/* Qualify an OAM link-up with its generation so stale discovery cannot win. */
-static ssize_t epon_oam_link_store(struct device *dev, struct device_attribute *attr,
-				   const char *buf, size_t count)
+/* A link-up names its registration, so a stale discovery cannot win. */
+int gc1601_epon_set_oam_link(struct gc1601_pon *pon, bool on, const u32 *generation)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
 	struct gc1601_epon *e = &pon->epon;
-	unsigned int value, generation;
-	char extra;
-	bool on;
-	int ret, fields;
+	int ret = 0;
 
-	fields = sscanf(buf, "%u %u %c", &value, &generation, &extra);
-	if (fields == 2 && value <= 1) {
-		on = value;
-		ret = 0;
-	} else {
-		ret = kstrtobool(buf, &on);
-	}
-	if (ret)
-		return ret;
 	mutex_lock(&pon->lock);
-	if (on && ((fields == 2 && generation != e->generation) ||
+	if (on && ((generation && *generation != e->generation) ||
 		   READ_ONCE(e->oam_reset_pending))) {
 		ret = -ESTALE;
 		goto out;
@@ -655,79 +620,40 @@ static ssize_t epon_oam_link_store(struct device *dev, struct device_attribute *
 		gc1601_epon_report(pon, e->signal, e->sync, e->registered);
 out:
 	mutex_unlock(&pon->lock);
-	return ret ?: count;
-}
-static DEVICE_ATTR_RW(epon_oam_link);
-
-static ssize_t epon_register_show(struct device *dev, struct device_attribute *attr,
-				  char *buf)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-
-	return sysfs_emit(buf, "%d\n", READ_ONCE(pon->epon.register_en));
+	return ret;
 }
 
-/* epon-oamd: 0 keeps LLID 0 off the discovery window (silence after an auth failure). */
-static ssize_t epon_register_store(struct device *dev, struct device_attribute *attr,
-				   const char *buf, size_t count)
+/* Off keeps LLID 0 out of the discovery window: silence after an auth failure. */
+int gc1601_epon_set_register(struct gc1601_pon *pon, bool on)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	bool on;
-	int ret;
-
-	ret = kstrtobool(buf, &on);
-	if (ret)
-		return ret;
 	mutex_lock(&pon->lock);
 	pon->epon.register_en = on;
 	if (!on)
 		WRITE_ONCE(pon->epon.oam_link, false);
 	gc1601_epon_update_llid_en(pon);
 	mutex_unlock(&pon->lock);
-	return count;
+	return 0;
 }
-static DEVICE_ATTR_RW(epon_register);
 
-/* epon-oamd, after a CTC churning New-Key Response: "<llid> <index> <key>". */
-static ssize_t epon_key_store(struct device *dev, struct device_attribute *attr,
-			      const char *buf, size_t count)
+/* A churning key, after the CTC New-Key Response. */
+int gc1601_epon_install_key(struct gc1601_pon *pon, u8 llid, u8 index, u32 key)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	unsigned int llid, index, key;
+	int ret = 0;
 
-	if (sscanf(buf, "%u %u %x", &llid, &index, &key) != 3 ||
-	    llid >= EPON_LLIDS || index > 1 || key > 0xffffff)
+	if (llid >= EPON_LLIDS || index > 1 || key > 0xffffff)
 		return -EINVAL;
 	mutex_lock(&pon->lock);
-	if (pon->mode != GC1601_PON_EPON) {
-		mutex_unlock(&pon->lock);
-		return -EBUSY;
-	}
-	gc1601_epon_set_key(pon, llid, index, key);
+	if (pon->mode != GC1601_PON_EPON)
+		ret = -EBUSY;
+	else
+		gc1601_epon_set_key(pon, llid, index, key);
 	mutex_unlock(&pon->lock);
-	return count;
-}
-static DEVICE_ATTR_WO(epon_key);
-
-static ssize_t epon_holdover_show(struct device *dev, struct device_attribute *attr,
-				  char *buf)
-{
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-
-	return sysfs_emit(buf, "%u\n", READ_ONCE(pon->epon.holdover_ms));
+	return ret;
 }
 
-/* epon-oamd, CTC holdover (0x0008): time in ms, 0 to turn it off. */
-static ssize_t epon_holdover_store(struct device *dev, struct device_attribute *attr,
-				   const char *buf, size_t count)
+/* CTC holdover (0x0008): time in ms, 0 to turn it off. */
+int gc1601_epon_holdover(struct gc1601_pon *pon, u32 ms)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	unsigned int ms;
-	int ret;
-
-	ret = kstrtouint(buf, 0, &ms);
-	if (ret)
-		return ret;
 	if (ms > 1000)
 		return -ERANGE;
 	if (!pon->emac)
@@ -737,14 +663,12 @@ static ssize_t epon_holdover_store(struct device *dev, struct device_attribute *
 	if (pon->mode == GC1601_PON_EPON)
 		gc1601_epon_set_holdover(pon);
 	mutex_unlock(&pon->lock);
-	return count;
+	return 0;
 }
-static DEVICE_ATTR_RW(epon_holdover);
 
 /*
- * The EMAC counters chipset_get_epon_stats reads (G7 and the newer FD511G
- * SDK on the same chip). Stock copies them as running totals; none has a
- * name in any stock binary, so they are shown by offset.
+ * The EMAC counters, the same on the G7 and the FD511G that shares the chip.
+ * None has a known name, so they are shown by offset.
  */
 static const u16 gc1601_epon_counters[] = {
 	0x408, 0x40c, 0x410, 0x818, 0x81c, 0x820, 0x824, 0x828, 0x82c, 0x830,
@@ -752,38 +676,30 @@ static const u16 gc1601_epon_counters[] = {
 	0x1094, 0x1098, 0x109c, 0x10a0, 0x10a4, 0x10a8, 0x10ac, 0x10b0, 0x10b4,
 };
 
-static ssize_t epon_counters_show(struct device *dev, struct device_attribute *attr,
-				  char *buf)
+static int gc1601_dbg_epon_counters_show(struct seq_file *s, void *unused)
 {
-	struct gc1601_pon *pon = dev_get_drvdata(dev);
-	ssize_t len = 0;
+	struct gc1601_pon *pon = s->private;
 	unsigned int i;
 
-	if (!pon->emac)
-		return -EOPNOTSUPP;
-	if (READ_ONCE(pon->mode) != GC1601_PON_EPON)
-		return sysfs_emit(buf, "not in EPON mode\n");
+	if (READ_ONCE(pon->mode) != GC1601_PON_EPON) {
+		seq_puts(s, "not in EPON mode\n");
+		return 0;
+	}
 	for (i = 0; i < ARRAY_SIZE(gc1601_epon_counters); i++)
-		len += sysfs_emit_at(buf, len, "emac_%#x=%u\n", gc1601_epon_counters[i],
-				     readl(pon->emac + gc1601_epon_counters[i]));
-	return len;
+		seq_printf(s, "emac_%#x=%u\n", gc1601_epon_counters[i],
+			   readl(pon->emac + gc1601_epon_counters[i]));
+	return 0;
 }
-static DEVICE_ATTR_RO(epon_counters);
+DEFINE_SHOW_ATTRIBUTE(gc1601_dbg_epon_counters);
 
-static struct attribute *gc1601_epon_attrs[] = {
-	&dev_attr_epon_state.attr,
-	&dev_attr_epon_mac.attr,
-	&dev_attr_epon_oam_link.attr,
-	&dev_attr_epon_register.attr,
-	&dev_attr_epon_key.attr,
-	&dev_attr_epon_holdover.attr,
-	&dev_attr_epon_counters.attr,
-	NULL
-};
-
-const struct attribute_group gc1601_epon_group = {
-	.attrs = gc1601_epon_attrs,
-};
+void gc1601_epon_debugfs_init(struct gc1601_pon *pon)
+{
+	if (!pon->emac)
+		return;
+	debugfs_create_file("epon_state", 0400, pon->debugfs, pon, &gc1601_dbg_epon_state_fops);
+	debugfs_create_file("epon_counters", 0400, pon->debugfs, pon,
+			    &gc1601_dbg_epon_counters_fops);
+}
 
 int gc1601_epon_init(struct gc1601_pon *pon)
 {

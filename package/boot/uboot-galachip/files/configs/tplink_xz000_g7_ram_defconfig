@@ -1,0 +1,6 @@
+#include <configs/tplink_xz000_g7_defconfig>
+
+CONFIG_TEXT_BASE=0x41000000
+CONFIG_BOOTDELAY=-1
+# CONFIG_SPL is not set
+# CONFIG_TPL is not set

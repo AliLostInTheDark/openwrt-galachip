@@ -20,6 +20,7 @@
 #include <linux/io.h>
 #include <linux/math64.h>
 #include <linux/module.h>
+#include <linux/regmap.h>
 #include <linux/seq_file.h>
 #include <linux/unaligned.h>
 #include <linux/workqueue.h>
@@ -213,16 +214,18 @@ static void diag_dump(struct seq_file *m, struct gc1601_pon *pon)
 	u32 top0 = readl(pon->top + TOP_ENABLE), topc = readl(pon->top + TOP_WAN_CLK);
 	u32 g4 = readl(pon->global + GLB_CTRL), g8 = readl(pon->global + 0x08);
 	u32 gc = readl(pon->global + 0x0c), g14 = readl(pon->global + GLB_WAN_CFG);
-	u32 scu = readl(pon->scu + SCU_PON_STATUS);
+	u32 scu = 0;
+
+	regmap_read(pon->scu, GC1601_SCU_PON_STATUS, &scu);
 
 	if (m)
-		seq_printf(m, "mode=%s top00=%08x top0c=%08x glb04=%08x glb08=%08x glb0c=%08x glb14=%08x scu=%08x serdes194=%02x serdes19c=%02x\n",
+		seq_printf(m, "mode=%s top00=%08x top0c=%08x glb04=%08x glb08=%08x glb0c=%08x glb14=%08x scu=%08x\n",
 			   pon->mode == GC1601_PON_EPON ? "epon" : "gpon", top0, topc, g4, g8,
-			   gc, g14, scu, readl(pon->serdes + 0x194), readl(pon->serdes + 0x19c));
+			   gc, g14, scu);
 	else
-		dev_info(pon->dev, "epon-diag: mode=%s top00=%08x top0c=%08x glb04=%08x glb08=%08x glb0c=%08x glb14=%08x scu=%08x serdes194=%02x serdes19c=%02x\n",
+		dev_info(pon->dev, "epon-diag: mode=%s top00=%08x top0c=%08x glb04=%08x glb08=%08x glb0c=%08x glb14=%08x scu=%08x\n",
 			 pon->mode == GC1601_PON_EPON ? "epon" : "gpon", top0, topc, g4, g8,
-			 gc, g14, scu, readl(pon->serdes + 0x194), readl(pon->serdes + 0x19c));
+			 gc, g14, scu);
 	/* The EPON MAC block is held off in GPON mode. */
 	if (pon->mode != GC1601_PON_EPON) {
 		if (m)

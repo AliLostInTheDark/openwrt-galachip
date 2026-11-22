@@ -1,0 +1,35 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: net: dsa: hook up the GalaChip GC1601 switch driver
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+diff -ruN a/drivers/net/dsa/Kconfig b/drivers/net/dsa/Kconfig
+--- a/drivers/net/dsa/Kconfig	2026-11-22 20:01:17.089152645 +0530
++++ b/drivers/net/dsa/Kconfig	2026-11-22 20:01:17.101618961 +0530
+@@ -86,6 +86,15 @@
+ 
+ source "drivers/net/dsa/realtek/Kconfig"
+ 
++config NET_DSA_GC1601
++	tristate "GalaChip GC1601 switch support"
++	depends on OF && GC1601_ETH
++	select NET_DSA_TAG_GC1601
++	help
++	  This driver supports the switch in the packet engine of the
++	  GalaChip GC1601, with the packet engine Ethernet driver as its
++	  conduit.
++
+ config NET_DSA_RZN1_A5PSW
+ 	tristate "Renesas RZ/N1 A5PSW Ethernet switch support"
+ 	depends on OF && (ARCH_RZN1 || COMPILE_TEST)
+diff -ruN a/drivers/net/dsa/Makefile b/drivers/net/dsa/Makefile
+--- a/drivers/net/dsa/Makefile	2026-11-22 20:01:17.089188199 +0530
++++ b/drivers/net/dsa/Makefile	2026-11-22 20:01:17.101676520 +0530
+@@ -7,6 +7,7 @@
+ obj-$(CONFIG_NET_DSA_MT7530_MDIO) += mt7530-mdio.o
+ obj-$(CONFIG_NET_DSA_MT7530_MMIO) += mt7530-mmio.o
+ obj-$(CONFIG_NET_DSA_MV88E6060) += mv88e6060.o
++obj-$(CONFIG_NET_DSA_GC1601) += gc1601.o
+ obj-$(CONFIG_NET_DSA_RZN1_A5PSW) += rzn1_a5psw.o
+ obj-$(CONFIG_NET_DSA_SMSC_LAN9303) += lan9303-core.o
+ obj-$(CONFIG_NET_DSA_SMSC_LAN9303_I2C) += lan9303_i2c.o

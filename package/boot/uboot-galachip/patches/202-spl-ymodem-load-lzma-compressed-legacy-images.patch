@@ -1,0 +1,54 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] spl: ymodem: load LZMA-compressed legacy images
+
+The SPI and other block loaders decompress an LZMA legacy image, but
+YMODEM copies it to the load address as it is. Receive it to
+CONFIG_SYS_LOAD_ADDR, as for gzip, and decompress it from there, so one
+image serves both the flash and the serial recovery.
+
+diff --git a/common/spl/spl_ymodem.c b/common/spl/spl_ymodem.c
+index 2be95713..5deec9d7 100644
+--- a/common/spl/spl_ymodem.c
++++ b/common/spl/spl_ymodem.c
+@@ -96,6 +96,7 @@ int spl_ymodem_load_image(struct spl_image_info *spl_image,
+ 	char buf[BUF_SIZE];
+ 	struct legacy_img_hdr *ih = NULL;
+ 	ulong addr = 0;
++	bool lzma = false;
+ 
+ 	info.mode = xyzModem_ymodem;
+ 	ret = xyzModem_stream_open(&info, &err);
+@@ -142,14 +143,18 @@ int spl_ymodem_load_image(struct spl_image_info *spl_image,
+ 			size += res;
+ 	} else {
+ 		ih = (struct legacy_img_hdr *)buf;
++		lzma = CONFIG_IS_ENABLED(LZMA) &&
++		       image_get_magic(ih) == IH_MAGIC &&
++		       image_get_comp(ih) == IH_COMP_LZMA;
++		if (lzma)
++			spl_image->flags |= SPL_COPY_PAYLOAD_ONLY;
+ 		ret = spl_parse_image_header(spl_image, bootdev, ih);
+ 		if (ret)
+ 			goto end_stream;
+-#ifdef CONFIG_SPL_GZIP
+-		if (ih->ih_comp == IH_COMP_GZIP)
++		if ((IS_ENABLED(CONFIG_SPL_GZIP) && ih->ih_comp == IH_COMP_GZIP) ||
++		    lzma)
+ 			addr = CONFIG_SYS_LOAD_ADDR;
+ 		else
+-#endif
+ 			addr = spl_image->load_addr;
+ 		memcpy((void *)addr, buf, res);
+ 		ih = (struct legacy_img_hdr *)addr;
+@@ -169,6 +174,11 @@ end_stream:
+ 
+ 	printf("Loaded %lu bytes\n", size);
+ 
++	if (!ret && lzma)
++		return spl_decompress_legacy_lzma(spl_image,
++						  (void *)(CONFIG_SYS_LOAD_ADDR +
++							   sizeof(*ih)));
++
+ #ifdef CONFIG_SPL_GZIP
+ 	if (!(IS_ENABLED(CONFIG_SPL_LOAD_FIT) &&
+ 	      image_get_magic((struct legacy_img_hdr *)buf) == FDT_MAGIC) &&

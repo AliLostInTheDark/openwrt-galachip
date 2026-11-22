@@ -1,0 +1,20 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] serial: ns16550: allow the register size for the TPL driver
+
+A TPL with TPL_SYS_NS16550_SERIAL and driver model serial in the other
+phases cannot set SYS_NS16550_REG_SIZE, and ns16550.h then fails with
+"Please define NS16550 registers size". Let the TPL option enable it too.
+
+diff --git a/drivers/serial/Kconfig b/drivers/serial/Kconfig
+index ffc58d66..74fb9347 100644
+--- a/drivers/serial/Kconfig
++++ b/drivers/serial/Kconfig
+@@ -851,7 +851,7 @@ config SYS_NS16550_PORT_MAPPED
+ 
+ config SYS_NS16550_REG_SIZE
+ 	int "ns16550 register width and endianness"
+-	depends on SYS_NS16550_SERIAL || SPL_SYS_NS16550_SERIAL
++	depends on SYS_NS16550_SERIAL || SPL_SYS_NS16550_SERIAL || TPL_SYS_NS16550_SERIAL
+ 	range -4 4
+ 	default -4 if ARCH_OMAP2PLUS || ARCH_SUNXI
+ 	default 1

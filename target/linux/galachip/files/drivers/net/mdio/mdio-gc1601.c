@@ -68,48 +68,6 @@ static int gc1601_mdio_write(struct mii_bus *bus, int phy, int reg, u16 value)
 	return gc1601_mdio_transfer(bus, phy, reg, true, value);
 }
 
-static ssize_t phy_status_show(struct device *dev,
-			       struct device_attribute *attr, char *buf)
-{
-	struct mii_bus *bus = dev_get_drvdata(dev);
-	struct phy_device *phy = phy_find_first(bus);
-	int addr;
-	int id1, id2, control, status, vendor;
-
-	if (!phy)
-		return -ENODEV;
-	addr = phy->mdio.addr;
-	id1 = mdiobus_read(bus, addr, MII_PHYSID1);
-	if (id1 < 0)
-		return id1;
-	id2 = mdiobus_read(bus, addr, MII_PHYSID2);
-	if (id2 < 0)
-		return id2;
-	control = mdiobus_read(bus, addr, MII_BMCR);
-	if (control < 0)
-		return control;
-	/* BMSR link status is latched low; use the second read. */
-	status = mdiobus_read(bus, addr, MII_BMSR);
-	if (status < 0)
-		return status;
-	status = mdiobus_read(bus, addr, MII_BMSR);
-	if (status < 0)
-		return status;
-	vendor = mdiobus_read(bus, addr, 0x18);
-	if (vendor < 0)
-		return vendor;
-	return sysfs_emit(buf, "phy=%d id=%04x%04x bmcr=%04x bmsr=%04x link=%u vendor18=%04x\n",
-			  addr, id1, id2, control, status, !!(status & BMSR_LSTATUS),
-			  vendor);
-}
-static DEVICE_ATTR_RO(phy_status);
-
-static struct attribute *gc1601_mdio_attrs[] = {
-	&dev_attr_phy_status.attr,
-	NULL,
-};
-ATTRIBUTE_GROUPS(gc1601_mdio);
-
 static int gc1601_mdio_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -133,7 +91,7 @@ static int gc1601_mdio_probe(struct platform_device *pdev)
 	ret = devm_of_mdiobus_register(dev, bus, dev->of_node);
 	if (ret)
 		return dev_err_probe(dev, ret, "MDIO registration failed\n");
-	dev_info(dev, "MDIO ready; no MAC/DMA initialization\n");
+	dev_dbg(dev, "MDIO bus registered\n");
 	return 0;
 }
 
@@ -148,7 +106,6 @@ static struct platform_driver gc1601_mdio_driver = {
 	.driver = {
 		.name = "gc1601-mdio",
 		.of_match_table = gc1601_mdio_match,
-		.dev_groups = gc1601_mdio_groups,
 	},
 };
 module_platform_driver(gc1601_mdio_driver);

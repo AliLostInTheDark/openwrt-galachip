@@ -1,7 +1,19 @@
 {
-	"admin/network/xpon": {
+	"admin/pon": {
+		"title": "PON",
+		"order": 55,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-xpon"
+			]
+		}
+	},
+	"admin/pon/mode": {
 		"title": "PON Mode",
-		"order": 64,
+		"order": 10,
 		"action": {
 			"type": "view",
 			"path": "xpon/mode"
@@ -9,7 +21,247 @@
 		"depends": {
 			"acl": [
 				"luci-app-xpon"
-			]
+			],
+			"fs": {
+				"/usr/sbin/epon-oamd": "executable"
+			}
+		}
+	},
+	"admin/pon/omci": {
+		"title": "GPON",
+		"order": 20,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-xpon"
+			],
+			"uci": {
+				"xpon": {
+					"main": {
+						"mode": "gpon"
+					}
+				}
+			}
+		}
+	},
+	"admin/pon/omci/status": {
+		"title": "Overview",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "omci/status"
+		}
+	},
+	"admin/pon/omci/config": {
+		"title": "Settings",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "omci/config"
+		}
+	},
+	"admin/pon/omci/mib": {
+		"title": "MIB Inspector",
+		"order": 30,
+		"action": {
+			"type": "firstchild"
+		}
+	},
+	"admin/pon/omci/mib/read": {
+		"title": "Browser",
+		"order": 5,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/read"
+		}
+	},
+	"admin/pon/omci/mib/inventory": {
+		"title": "Equipment",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/inventory"
+		}
+	},
+	"admin/pon/omci/mib/gpon": {
+		"title": "ANI",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/gpon"
+		}
+	},
+	"admin/pon/omci/mib/bridge": {
+		"title": "UNI and layer 2",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/bridge"
+		}
+	},
+	"admin/pon/omci/mib/multicast": {
+		"title": "Multicast",
+		"order": 40,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/multicast"
+		}
+	},
+	"admin/pon/omci/mib/voice": {
+		"title": "Voice",
+		"order": 41,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/voice"
+		}
+	},
+	"admin/pon/omci/mib/performance": {
+		"title": "Performance",
+		"order": 42,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/performance"
+		}
+	},
+	"admin/pon/omci/mib/other": {
+		"title": "Other",
+		"order": 50,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/other"
+		}
+	},
+	"admin/pon/omci/mib/nokia": {
+		"title": "Nokia / ALCL",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/nokia"
+		}
+	},
+	"admin/pon/omci/mib/huawei": {
+		"title": "Huawei",
+		"order": 61,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/huawei"
+		}
+	},
+	"admin/pon/omci/mib/zte": {
+		"title": "ZTE",
+		"order": 62,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/zte"
+		}
+	},
+	"admin/pon/omci/mib/fiberhome": {
+		"title": "FiberHome",
+		"order": 63,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/fiberhome"
+		}
+	},
+	"admin/pon/omci/mib/ctc": {
+		"title": "CTC",
+		"order": 64,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/ctc"
+		}
+	},
+	"admin/pon/omci/mib/genexis": {
+		"title": "Genexis",
+		"order": 65,
+		"action": {
+			"type": "view",
+			"path": "omci/mib/genexis"
+		}
+	},
+	"admin/pon/omci_off": {
+		"title": "GPON",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "xpon/off"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-xpon"
+			],
+			"uci": {
+				"xpon": {
+					"main": {
+						"mode": "epon"
+					}
+				}
+			}
+		}
+	},
+	"admin/pon/omci/ports": {
+		"title": "LAN VLANs",
+		"order": 25,
+		"action": {
+			"type": "view",
+			"path": "omci/ports"
+		}
+	},
+	"admin/pon/epon": {
+		"title": "EPON",
+		"order": 30,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-xpon"
+			],
+			"uci": {
+				"xpon": {
+					"main": {
+						"mode": "epon"
+					}
+				}
+			}
+		}
+	},
+	"admin/pon/epon/status": {
+		"title": "Status",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "epon/status"
+		}
+	},
+	"admin/pon/epon/config": {
+		"title": "Configuration",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "epon/config"
+		}
+	},
+	"admin/pon/epon_off": {
+		"title": "EPON",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "xpon/off"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-xpon"
+			],
+			"uci": {
+				"xpon": {
+					"main": {
+						"mode": "gpon"
+					}
+				}
+			}
 		}
 	}
 }

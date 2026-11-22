@@ -67,14 +67,14 @@ var costs = {
 };
 
 var callPublic = rpc.declare({
-	object: 'xpon.public',
-	method: 'status',
+	object: 'xpon',
+	method: 'summary',
 	expect: { '': {} }
 });
 
 var limitsCache;
 
-/* bosa_thresholds in nW, as xpon.public passes them, to dBm levels. */
+/* bosa_thresholds in nW, as xpon summary passes them, to dBm levels. */
 function levels(t, dir) {
 	var dbm = function(key) {
 		var n = Number(t['%s_%s_nw'.format(dir, key)]);

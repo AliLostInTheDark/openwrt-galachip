@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/interrupt-controller/galachip,gc1601-intc.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: GalaChip GC1601 interrupt controller (Faraday FTINTC030)
+
+maintainers:
+  - Ifran Ali <khanu.i.i.k.2000@gmail.com>
+
+description:
+  A Faraday FTINTC030, laid out like a GIC distributor and CPU interface.
+  The GC1601 variant has one target byte per shared peripheral interrupt.
+
+properties:
+  compatible:
+    const: galachip,gc1601-intc
+
+  reg:
+    maxItems: 1
+
+  interrupt-controller: true
+
+  '#interrupt-cells':
+    const: 2
+
+  '#address-cells':
+    const: 0
+
+  faraday,cpu-match-id:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description:
+      Value written to the CPU match register of the CPU interface, which
+      selects the interrupts targeted at this CPU.
+
+required:
+  - compatible
+  - reg
+  - interrupt-controller
+  - '#interrupt-cells'
+  - faraday,cpu-match-id
+
+additionalProperties: false
+
+examples:
+  - |
+    interrupt-controller@96000000 {
+        compatible = "galachip,gc1601-intc";
+        reg = <0x96000000 0x1000>;
+        interrupt-controller;
+        #interrupt-cells = <2>;
+        #address-cells = <0>;
+        faraday,cpu-match-id = <1>;
+    };

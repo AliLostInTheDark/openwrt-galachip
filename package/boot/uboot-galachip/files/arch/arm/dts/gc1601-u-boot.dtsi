@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+
+/ {
+	/* U-Boot resets through the watchdog; the TPL and SPL do it on the registers. */
+	wdt-reboot {
+		compatible = "wdt-reboot";
+		wdt = <&watchdog>;
+	};
+};
+
+&osc {
+	bootph-all;
+};
+
+&scu {
+	bootph-all;
+};
+
+&spi {
+	bootph-pre-ram;
+};
+
+&timer {
+	bootph-all;
+};
+
+&uart0 {
+	bootph-all;
+};
+

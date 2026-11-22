@@ -1,0 +1,69 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: [PATCH] arm: add the GalaChip GC1601 SoC
+
+The GC1601 has a Faraday FA626TE core, an ARMv5TE that runs the ARM926EJ-S
+CPU code with its low-level init skipped. Its machine code and boards live
+in mach-galachip.
+
+diff --git a/arch/arm/Kconfig b/arch/arm/Kconfig
+index 1b474a34..27deb2eb 100644
+--- a/arch/arm/Kconfig
++++ b/arch/arm/Kconfig
+@@ -762,6 +762,23 @@ config ARCH_EXYNOS
+ 	imply CMD_DM
+ 	imply FAT_WRITE
+ 
++config ARCH_GALACHIP
++	bool "GalaChip SoCs"
++	select CPU_ARM926EJS
++	select SUPPORT_SPL
++	select SUPPORT_TPL
++	select CLK
++	select DM
++	select DM_SERIAL
++	select OF_CONTROL
++	select TIMER
++	imply SYSRESET
++	imply SYSRESET_WATCHDOG
++	imply WDT_FTWDT010
++	help
++	  Support for the GalaChip GC1601 GPON SoC, built around a Faraday
++	  FA626TE (ARMv5TE) core.
++
+ config ARCH_S5PC1XX
+ 	bool "Samsung S5PC1XX"
+ 	select CPU_V7A
+@@ -2313,6 +2330,8 @@ source "arch/arm/mach-davinci/Kconfig"
+ 
+ source "arch/arm/mach-exynos/Kconfig"
+ 
++source "arch/arm/mach-galachip/Kconfig"
++
+ source "arch/arm/mach-hpe/gxp/Kconfig"
+ 
+ source "arch/arm/mach-highbank/Kconfig"
+diff --git a/arch/arm/Makefile b/arch/arm/Makefile
+index de975fc9..c246648f 100644
+--- a/arch/arm/Makefile
++++ b/arch/arm/Makefile
+@@ -62,6 +62,7 @@ machine-$(CONFIG_ARCH_BCMBCA)		+= bcmbca
+ machine-$(CONFIG_ARCH_BCMSTB)		+= bcmstb
+ machine-$(CONFIG_ARCH_DAVINCI)		+= davinci
+ machine-$(CONFIG_ARCH_EXYNOS)		+= exynos
++machine-$(CONFIG_ARCH_GALACHIP)		+= galachip
+ machine-$(CONFIG_ARCH_GXP)		+= hpe
+ machine-$(CONFIG_ARCH_HIGHBANK)		+= highbank
+ machine-$(CONFIG_ARCH_HISTB)		+= histb
+diff --git a/arch/arm/dts/Makefile b/arch/arm/dts/Makefile
+index 37d3b6fd..bc721002 100644
+--- a/arch/arm/dts/Makefile
++++ b/arch/arm/dts/Makefile
+@@ -8,6 +8,8 @@ dtb-$(CONFIG_TARGET_SCM3005) += ax3005-scm3005.dtb
+ 
+ dtb-$(CONFIG_TARGET_SMDKC100) += s5pc1xx-smdkc100.dtb
+ dtb-$(CONFIG_TARGET_S5P_GONI) += s5pc1xx-goni.dtb
++
++dtb-$(CONFIG_ARCH_GALACHIP) += gc1601-tplink-xz000-g7.dtb
+ dtb-$(CONFIG_ARCH_EXYNOS4) += exynos4210-origen.dtb \
+ 	exynos4210-smdkv310.dtb \
+ 	exynos4210-universal_c210.dtb \

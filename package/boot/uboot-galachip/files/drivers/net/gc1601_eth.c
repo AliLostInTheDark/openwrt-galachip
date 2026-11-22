@@ -10,6 +10,7 @@
 #include <miiphy.h>
 #include <asm/io.h>
 #include <asm/barriers.h>
+#include <asm/arch/gc1601.h>
 #include <linux/delay.h>
 #include <linux/iopoll.h>
 

@@ -8,7 +8,6 @@
 
 want=$1
 LOCK=/var/run/xpon-mode-switch.lock
-PON=/sys/class/net/pon0/device
 
 case "$want" in
 gpon|epon) ;;
@@ -36,14 +35,14 @@ start_daemons() {
 # disabled the transmitter for good (pon-mode keeps that hold).
 hold_tx() {
 	[ -f /etc/xpon-rogue ] && return
-	[ -w "$PON/tx_hold" ] && echo "$1" > "$PON/tx_hold"
+	xponctl set tx_hold "$1" 2>/dev/null
 }
 
-# A mode switch clears allow_tx and omci.agent only sets it once, at rpcd
+# A mode switch clears allow_tx and the xpon agent only sets it once, at rpcd
 # start, so without this the laser stays off in the new mode.
 allow_tx() {
 	[ "$(uci -q get omci.main.transmit)" = 0 ] && return
-	[ -w "$PON/allow_tx" ] && echo 1 > "$PON/allow_tx"
+	xponctl set tx_allow 1 2>/dev/null
 }
 
 # LuCI caches the menu with the uci "depends" results (the EPON entries show
@@ -90,10 +89,10 @@ if [ "$(current)" != "$want" ]; then
 	exit 1
 fi
 
-# omcid forgets what omci.agent applied: apply the UCI identity again.
+# omcid forgets what the xpon agent applied: apply the UCI identity again.
 if [ "$want" = gpon ]; then
 	wait_omcid
-	ubus -t 5 call omci.agent apply '{}' >/dev/null 2>&1
+	ubus -t 5 call xpon apply '{}' >/dev/null 2>&1
 fi
 hold_tx 0
 allow_tx

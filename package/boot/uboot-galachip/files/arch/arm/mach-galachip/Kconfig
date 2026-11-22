@@ -1,0 +1,30 @@
+if ARCH_GALACHIP
+
+choice
+	prompt "GalaChip board select"
+
+config TARGET_TPLINK_XZ000_G7
+	bool "TP-Link XZ000-G7"
+	help
+	  The TP-Link XZ000-G7 GPON ONT: a GC1601 with 32 MiB of DDR and
+	  4 MiB of SPI NOR flash.
+
+endchoice
+
+config SYS_SOC
+	default "galachip"
+
+config SYS_CONFIG_NAME
+	default "gc1601"
+
+config GC1601_SPL_SPI_OFFS
+	hex "Offset of the U-Boot SPL image in the SPI flash"
+	depends on TPL
+	default 0x2000
+	help
+	  The TPL loads the SPL, a legacy image, from this offset of the SPI
+	  flash. The mask ROM's image for the TPL comes before it.
+
+source "board/tplink/xz000-g7/Kconfig"
+
+endif

@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * ethdiag: the GalaChip GC1601 packet engine's state as U-Boot hands it to
+ * Linux
+ *
+ * Copyright (C) 2026 Ifran Ali <khanu.i.i.k.2000@gmail.com>
+ */
+
+#include <command.h>
+#include <linux/string.h>
+#include <asm/io.h>
+#include <asm/arch/gc1601.h>
+
+static int do_ethdiag(struct cmd_tbl *cmd, int flag, int argc, char *const argv[])
+{
+	if (argc == 2 && strcmp(argv[1], "verbose"))
+		return CMD_RET_USAGE;
+	printf("scu=%08x/%08x/%08x ddr=%08x/%08x\n",
+	       readl((void *)0x90a00020), readl((void *)0x90a00030),
+	       readl((void *)0x90a00810), readl((void *)0x90b00004),
+	       readl((void *)0x90b00020));
+	printf("gmac=%08x/%08x pm=%08x/%08x/%08x pool=%08x/%08x/%08x\n",
+	       readl((void *)0x90e00000), readl((void *)0x90e00008),
+	       readl((void *)0x90dc0020), readl((void *)0x90dc0024),
+	       readl((void *)0x90dc0074), readl((void *)0x90dc0028),
+	       readl((void *)0x90dc0034), readl((void *)0x90dc0030));
+	printf("rx=%08x/%08x/%08x tx=%08x/%08x/%08x/%08x/%08x/%08x\n",
+	       readl((void *)0x90dd4000), readl((void *)0x90dd4018),
+	       readl((void *)0x90dd4020), readl((void *)0x90ddc040),
+	       readl((void *)0x90ddc000), readl((void *)0x90ddc008),
+	       readl((void *)0x90ddc00c), readl((void *)0x90ddc010),
+	       readl((void *)0x90ddc014));
+	gc1601_eth_diagnostic(argc == 2);
+	return 0;
+}
+
+U_BOOT_CMD(ethdiag, 2, 1, do_ethdiag, "read GC1601 handoff registers", "[verbose]");

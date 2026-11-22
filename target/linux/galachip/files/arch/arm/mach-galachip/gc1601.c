@@ -19,7 +19,7 @@ static void __init gc1601_init_machine(void)
 {
 	void __iomem *scu_ddr;
 
-	/* Match Faraday GC1601 BSP board-dt.c: clear SCU 0x83c DDR drive bits 20:15. */
+	/* As the stock kernel does: clear SCU 0x83c DDR drive bits 20:15. */
 	scu_ddr = ioremap(GC1601_SCU_DDR_DRV, 4);
 	if (scu_ddr) {
 		writel(readl(scu_ddr) & ~GC1601_SCU_DDR_DRV_MASK, scu_ddr);
@@ -29,7 +29,7 @@ static void __init gc1601_init_machine(void)
 	gc1601_wdt = ioremap(GC1601_WDT_BASE, SZ_4K);
 }
 
-/* Same sequence as the Faraday GC1601 BSP: system reset on a 1000-tick pclk count. */
+/* Watchdog system reset after a 1000-tick PCLK count. */
 static void gc1601_restart(enum reboot_mode mode, const char *cmd)
 {
 	if (!gc1601_wdt)

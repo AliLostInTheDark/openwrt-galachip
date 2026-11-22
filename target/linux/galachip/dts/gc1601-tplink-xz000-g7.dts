@@ -36,11 +36,6 @@
 			reg = <0x40800000 0x00112000>;
 		};
 
-		/* Stock's 1440-buffer pool, its free list and the 32-slot jumbo pool. */
-		pe_pool: dma@40a00000 {
-			reg = <0x40a00000 0x00332000>;
-		};
-
 		/*
 		 * Crash logs that survive a watchdog reset: above U-Boot's initial
 		 * stack top (0x40f00000) and below its load address (0x41000000).
@@ -118,7 +113,13 @@
 	flash@0 {
 		compatible = "jedec,spi-nor";
 		reg = <0>;
-		spi-max-frequency = <50000000>;
+		/*
+		 * Reads of 64 bytes or more run at 100 MHz, the SPI clock divided
+		 * by 2. Identification, status, programming and erasing stay at
+		 * 25 MHz: only bulk reads were verified at the higher speeds.
+		 */
+		spi-max-frequency = <100000000>;
+		galachip,safe-max-frequency = <25000000>;
 		spi-rx-bus-width = <2>;
 
 		partitions {
@@ -152,19 +153,40 @@
 			};
 
 			partition@3f0000 {
+				compatible = "nvmem-cells";
 				label = "hwconfig";
 				reg = <0x3f0000 0x010000>;
 				read-only;
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				bosa_calibration: calibration@1000 {
+					reg = <0x1000 0x380>;
+				};
 			};
 		};
 	};
 };
 
 &packet_engine {
-	phy-handle = <&phy24>;
-	phy-mode = "sgmii";
 	nvmem-cells = <&macaddr_misc>;
 	nvmem-cell-names = "mac-address";
+	status = "okay";
+};
+
+&switch {
+	status = "okay";
+};
+
+&switch_pon {
+	label = "pon0";
+	status = "okay";
+};
+
+&switch_lan {
+	label = "lan1";
+	phy-handle = <&phy24>;
+	phy-mode = "sgmii";
 	status = "okay";
 };
 
@@ -187,27 +209,13 @@
 };
 
 &pon {
+	/* BOSA programmed from hwconfig at every boot: it loses its calibration. */
 	galachip,bosa-i2c = <&i2c0>;
-	/*
-	 * Bring the PON up at boot like the stock rcS: SerDes, BOSA tables from
-	 * hwconfig (lost on every power cycle), GPON MAC receive-only. The laser
-	 * stays off until allow_tx; the first ranging also waits for omci-agent
-	 * to apply the UCI identity.
-	 */
-	galachip,pon-bringup;
-	galachip,gpon-autostart;
-	galachip,gpon-identity-wait-ms = <30000>;
-	/*
-	 * Stock identity from the misc config (X_TP_OmciCapability, DeviceInfo).
-	 * Default serial: vendor + factory MAC; omci-agent sets the ISP one.
-	 */
-	omci-vendor-id = "TPLG";
-	omci-equipment-id = "XZ000-G7";
-	omci-version = "XZ000-G7 v1.0";
-	omci-onu-type = /bits/ 8 <1>;	/* SFU */
-	omci-uni-ports = <&packet_engine>;
-	nvmem-cells = <&macaddr_misc>;
-	nvmem-cell-names = "mac-address";
+	galachip,switch-port = <&switch_pon>;
+	/* The ONU identity defaults are in /etc/board.json (board.d/03_omci). */
+	omci-uni-ports = <&switch_lan>;
+	nvmem-cells = <&macaddr_misc>, <&bosa_calibration>;
+	nvmem-cell-names = "mac-address", "bosa-calibration";
 
 	leds = <&led_pon>, <&led_los>;
 	led-names = "pon", "los";

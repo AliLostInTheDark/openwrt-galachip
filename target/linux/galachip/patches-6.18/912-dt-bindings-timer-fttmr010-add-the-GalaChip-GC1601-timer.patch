@@ -1,0 +1,18 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Subject: dt-bindings: timer: faraday,fttmr010: add the GalaChip GC1601 timer
+
+The GC1601 timer is an FTTMR010 that counts down and needs its interrupt
+status cleared, so it gets its own compatible.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+--- a/Documentation/devicetree/bindings/timer/faraday,fttmr010.yaml
++++ b/Documentation/devicetree/bindings/timer/faraday,fttmr010.yaml
+@@ -26,6 +26,7 @@
+           - aspeed,ast2600-timer
+           - cortina,gemini-timer
+           - faraday,fttmr010
++          - galachip,gc1601-timer
+ 
+   reg:
+     maxItems: 1

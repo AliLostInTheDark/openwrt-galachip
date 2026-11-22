@@ -4,11 +4,13 @@
 
 #include <linux/bitmap.h>
 #include <linux/bits.h>
+#include <linux/debugfs.h>
 #include <linux/hrtimer.h>
 #include <linux/if_ether.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/rcupdate.h>
+#include <linux/seq_file.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
@@ -40,34 +42,30 @@
 #define PON_OPT_RX_LOF		BIT(2)
 #define PON_OPT_RX_LOS		BIT(3)
 
-/* SCU PON PLL and SerDes reset window, relative to 0x90a00800 */
-#define SCU_PON_STATUS		0x00
-#define SCU_PON_PLL		0x04
-#define SCU_PON_PLL_CFG0	0x08
-#define SCU_PON_PLL_CFG1	0x0c
-#define SCU_PON_RESET		0x14
-#define SCU_PON_DG		0x18	/* bit 0 clear: hardware dying gasp on */
-
-#define SCU_PON_STATUS_READY	BIT(2)
-#define SCU_PON_STATUS_PLL_LOCK	BIT(8)
-
-#define PON_LOCK_TIMEOUT_US	10000
+/* SCU registers of the PON block */
+#define GC1601_SCU_PON_STATUS		0x800
+#define GC1601_SCU_PON_STATUS_READY	BIT(2)
+#define GC1601_SCU_PON_STATUS_PLL_LOCK	BIT(8)
+#define GC1601_SCU_PON_PLL		0x804
+#define GC1601_SCU_PON_RESET		0x814
+#define GC1601_SCU_PON_DG		0x818
+#define GC1601_SCU_PON_DG_SW		BIT(0)	/* clear: the MAC sends the dying gasp */
 
 /* UX3320S BOSA: SFF-8472 style A2 page at 0x51, page select at 0x7f */
+#define BOSA_A0_ADDR		0x50
 #define BOSA_A2_ADDR		0x51
 #define BOSA_PAGE		0x7f
 #define BOSA_CTRL		0x6e
 #define BOSA_SOFT_TX_DIS	BIT(6)
 #define BOSA_CHUNK		16
 #define BOSA_WRITE_DELAY_MS	5
-#define BOSA_BLOB_OFFSET	0x1000	/* in the hwconfig partition */
 #define BOSA_UX3320S_LEN	0x380
 
-/* Global block 0x90c40020: manual TX power control (xpon_sdk txpwr_manual_op) */
+/* Global block 0x90c40020: manual laser power control */
 #define PON_TXPWR_OFF		BIT(2)
 #define PON_TXPWR_MANUAL	BIT(4)
 #define PON_TXPWR_SEL		BIT(5)
-#define PON_TXPWR_GLOBAL_EN	BIT(15)	/* set by GLOBAL_init */
+#define PON_TXPWR_GLOBAL_EN	BIT(15)	/* global PON enable */
 
 /* Top-level block enables and WAN clocking, 0x90c00000 (shared with Ethernet) */
 #define TOP_ENABLE		0x00
@@ -91,7 +89,7 @@
 #define GLB_CFG18		0x18
 
 /*
- * EPON MAC at 0x90c80000 (xpon_sdk EMAC_*). MPCP discovery, registration,
+ * EPON MAC at 0x90c80000. MPCP discovery, registration,
  * GATE and REPORT run in hardware for up to four LLIDs; LLID n uses T-CONT
  * queue set n.
  */
@@ -119,7 +117,7 @@
 #define EMAC_CFGF8		0xf8
 #define EMAC_CFG134		0x134
 #define EMAC_MTU		0x13c	/* bits 26:16: frame limit */
-#define EMAC_HOLDOVER_ON	0x16c	/* chipset_set_hold_over flag */
+#define EMAC_HOLDOVER_ON	0x16c	/* keep the link through a short loss of signal */
 #define EMAC_SYNC		0x148	/* 0: downstream synchronised */
 #define EMAC_CFG170		0x170
 #define EMAC_SIZE		0x2000
@@ -154,6 +152,7 @@ struct gc1601_ploam {
 
 #define GPON_TCONTS		16
 #define GPON_COUNTERS		19
+#define GPON_NAMED_COUNTERS	7	/* the identified ones, for ethtool -S */
 #define GPON_SERVICES		64	/* a Nokia OLT installs one per VLAN and priority */
 #define GPON_STATE_O5		5
 
@@ -183,6 +182,7 @@ struct gc1601_gpon {
 	u8 rei_sequence;
 	u64 rei_sent, rei_failed;
 	u64 counter[GPON_COUNTERS];	/* clear-on-read PON counters, summed */
+	u64 tcont_frames[4], tcont_bytes[4], tcont_c0_lo[4], tcont_c0_hi[4];
 	u64 fec_seconds;		/* seconds with uncorrectable codewords */
 	u64 fec_uncorr_seen;		/* uncorrectable total at the last second */
 	u64 dbru_bytes;			/* upstream bytes at the last DBRu check */
@@ -335,6 +335,8 @@ struct omci_device;
 struct gc1601_xpon {
 	struct list_head offload_node;
 	struct net_device *netdev;	/* pon0, the WAN side of the bridge */
+	bool dsa;			/* pon0 is a DSA switch port, not ours */
+	bool link_up;			/* registered: GPON O5, EPON MPCP */
 	struct xpon_device *xpon;
 	struct omci_device *odev;
 	bool started;
@@ -411,17 +413,21 @@ enum gc1601_bosa_state {
 	GC1601_BOSA_FAILED,
 };
 
+struct phy;
+struct regmap;
+
 struct gc1601_pon {
 	struct device *dev;
 	void __iomem *mac;
-	void __iomem *serdes;
-	void __iomem *serdes_ctrl;
-	void __iomem *scu;
+	struct phy *serdes;
+	struct regmap *scu;
 	void __iomem *txpwr;
 	void __iomem *top;
 	void __iomem *global;
 	void __iomem *emac;
 	struct device_node *bosa_bus;
+	struct device *hwmon;
+	struct dentry *debugfs;
 	struct mutex lock;
 	bool tx_hold;			/* laser off for the OLT or a rogue state */
 	bool tx_hold_admin;
@@ -430,7 +436,6 @@ struct gc1601_pon {
 	unsigned long tx_hold_deadline;
 	struct delayed_work tx_hold_work;
 	struct delayed_work bringup;
-	struct delayed_work autostart;	/* starts the MAC if userspace does not */
 	unsigned int bringup_tries;
 	int bosa_state;			/* enum gc1601_bosa_state */
 	int mode;			/* enum gc1601_pon_mode, under lock */
@@ -446,9 +451,26 @@ int gc1601_bosa_soft_tx(struct gc1601_pon *pon, bool enable);
 int gc1601_gpon_init(struct gc1601_pon *pon);
 void gc1601_gpon_autostart(struct gc1601_pon *pon);
 void gc1601_gpon_exit(struct gc1601_pon *pon);
-extern const struct attribute_group gc1601_gpon_group;
-extern const struct attribute_group gc1601_xpon_group;
+void gc1601_gpon_debugfs_init(struct gc1601_pon *pon);
+void gc1601_xpon_debugfs_init(struct gc1601_pon *pon);
+int gc1601_pon_get_module(struct gc1601_pon *pon, u8 *diag, u8 *thresholds);
+void gc1601_gpon_stats_strings(u8 *data);
+void gc1601_gpon_stats(struct gc1601_pon *pon, u64 *data);
 int gc1601_xpon_init(struct gc1601_pon *pon);
+void gc1601_xpon_set_link(struct gc1601_pon *pon, bool up);
+struct xpon_tx_state;
+int gc1601_pon_set_allow_tx(struct gc1601_pon *pon, bool on);
+int gc1601_pon_set_tx_hold(struct gc1601_pon *pon, bool hold);
+int gc1601_pon_set_tx_hold_seconds(struct gc1601_pon *pon, u32 seconds);
+void gc1601_pon_get_tx(struct gc1601_pon *pon, struct xpon_tx_state *tx);
+int gc1601_gpon_release_identity_wait(struct gc1601_pon *pon);
+struct xpon_epon_state;
+void gc1601_epon_get(struct gc1601_pon *pon, struct xpon_epon_state *epon);
+int gc1601_epon_set_mac(struct gc1601_pon *pon, const u8 *mac);
+int gc1601_epon_set_oam_link(struct gc1601_pon *pon, bool on, const u32 *generation);
+int gc1601_epon_set_register(struct gc1601_pon *pon, bool on);
+int gc1601_epon_install_key(struct gc1601_pon *pon, u8 llid, u8 index, u32 key);
+int gc1601_epon_holdover(struct gc1601_pon *pon, u32 ms);
 void gc1601_xpon_exit(struct gc1601_pon *pon);
 int gc1601_xpon_start(struct gc1601_pon *pon);
 void gc1601_xpon_stop(struct gc1601_pon *pon);
@@ -461,8 +483,6 @@ void gc1601_xpon_report_channel(struct gc1601_pon *pon, u16 port, bool valid);
 void gc1601_xpon_reset_session(struct gc1601_pon *pon);
 void gc1601_gpon_set_identity_locked(struct gc1601_pon *pon, const u8 *serial,
 				     const u8 *password);
-void gc1601_gpon_set_identity(struct gc1601_pon *pon, const u8 *serial,
-			      const u8 *password);
 void gc1601_gpon_omci_set_gem(struct gc1601_pon *pon, u16 port, bool valid,
 			      bool aes);
 int gc1601_gpon_alloc_index(struct gc1601_pon *pon, u16 alloc_id);
@@ -470,6 +490,14 @@ int gc1601_gpon_restore_service(struct gc1601_pon *pon, u16 gem_port, u16 alloc_
 int gc1601_xpon_clear_sfu(struct gc1601_pon *pon);
 int gc1601_xpon_withdraw_alloc(struct gc1601_pon *pon, u16 alloc_id);
 int gc1601_bosa_read(struct gc1601_pon *pon, u8 reg, u8 *buf, u8 len);
+int gc1601_bosa_eeprom_read(struct gc1601_pon *pon, u8 addr, u8 reg, u8 *buf, u8 len);
+#if IS_ENABLED(CONFIG_HWMON)
+void gc1601_pon_hwmon_register(struct gc1601_pon *pon);
+void gc1601_pon_hwmon_unregister(struct gc1601_pon *pon);
+#else
+static inline void gc1601_pon_hwmon_register(struct gc1601_pon *pon) { }
+static inline void gc1601_pon_hwmon_unregister(struct gc1601_pon *pon) { }
+#endif
 int gc1601_pon_set_mode(struct gc1601_pon *pon, enum gc1601_pon_mode mode);
 int gc1601_gpon_set_allow_tx(struct gc1601_pon *pon, bool allow);
 void gc1601_gpon_start(struct gc1601_pon *pon);
@@ -492,7 +520,7 @@ void gc1601_epon_rx_seen(struct gc1601_pon *pon, u16 minfo, const u8 *data,
 			 unsigned int len);
 void gc1601_epon_tx_seen(struct gc1601_pon *pon, const u8 *data, unsigned int len,
 			 int ret);
-extern const struct attribute_group gc1601_epon_group;
+void gc1601_epon_debugfs_init(struct gc1601_pon *pon);
 
 struct gc1601_pon *gc1601_gpon_diag_register(const struct gc1601_gpon_diag_ops *ops);
 void gc1601_gpon_diag_unregister(void);

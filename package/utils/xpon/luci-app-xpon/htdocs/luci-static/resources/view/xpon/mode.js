@@ -15,10 +15,10 @@ return view.extend({
 		widgets.style();
 		var m, s, o;
 
-		m = new form.Map('xpon', _('PON mode'),
-			_('The PON port runs one MAC at a time. The ONU only registers on the OLT in the mode that matches the fibre network: GPON (ITU-T G.984, configured by OMCI) or EPON (IEEE 802.3ah, configured by OAM).'));
+		m = new form.Map('xpon', _('PON Mode'),
+			_('The PON interface runs one optical access mode at a time. Choose GPON (ITU-T G.984 / G.988 OMCI) or EPON (IEEE 802.3ah / CTC OAM) to match the Optical Line Terminal (OLT).'));
 		s = m.section(form.NamedSection, 'main', 'xpon');
-		o = s.option(form.ListValue, 'mode', _('Mode'),
+		o = s.option(form.ListValue, 'mode', _('Access Mode'),
 			_('A new mode takes effect when you apply it, with or without a reboot.'));
 		o.value('gpon', _('GPON'));
 		o.value('epon', _('EPON'));

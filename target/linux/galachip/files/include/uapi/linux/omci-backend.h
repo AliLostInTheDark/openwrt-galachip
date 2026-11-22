@@ -4,8 +4,9 @@
 #include <linux/types.h>
 
 /*
- * Native-endian netlink payloads, fixed-width fields, no pointers or C bools.
- * Every opcode requires its exact payload length; unknown opcodes fail.
+ * Typed hardware operations for the exclusive OMCI agent (OMCI_CMD_BACKEND):
+ * the operation in OMCI_ATTR_BACKEND_OP, its fields nested in
+ * OMCI_ATTR_BACKEND_ARGS. Unknown operations fail.
  */
 enum omci_backend_op {
 	OMCI_BACKEND_TOPOLOGY = 1,
@@ -25,37 +26,85 @@ enum omci_backend_op {
 	OMCI_BACKEND_RESET,
 };
 
-struct omci_backend_topology {
-	__u32 tcont_base, scheduler_base, queue_base;
-	__u32 maximum_queue_size, allocated_queue_size;
-	__u32 tcont_count, queues_per_tcont, queue_config_option, scheduler_policy;
-	__u32 gem_port_count, qos_configuration, downstream_queues_per_uni, flags;
+/*
+ * OMCI_ATTR_BACKEND_ARGS nests these. Each operation lists the fields it
+ * takes and, for the reads, the fields it returns; a request must carry
+ * exactly its operation's fields.
+ */
+enum omci_backend_attr {
+	OMCI_BACKEND_A_UNSPEC,
+	OMCI_BACKEND_A_PAD,
+	OMCI_BACKEND_A_ENTITY,			/* u32 */
+	OMCI_BACKEND_A_ALLOC_ID,		/* u32 */
+	OMCI_BACKEND_A_VALID,			/* u32 */
+	OMCI_BACKEND_A_GEM_PORT,		/* u32 */
+	OMCI_BACKEND_A_TCONT,			/* u32: T-CONT entity */
+	OMCI_BACKEND_A_DIRECTION,		/* u32: 1 up, 2 down, 3 both */
+	OMCI_BACKEND_A_ENCRYPTED,		/* u32 */
+	OMCI_BACKEND_A_ENABLED,			/* u32 */
+	OMCI_BACKEND_A_POLICY,			/* u32 */
+	OMCI_BACKEND_A_WEIGHT,			/* 8 bytes: queue weights */
+	OMCI_BACKEND_A_UPSTREAM,		/* u32 */
+	OMCI_BACKEND_A_RATE,			/* u32 */
+	OMCI_BACKEND_A_BURST,			/* u32 */
+	OMCI_BACKEND_A_PAUSE_QUANTA,		/* u32 */
+	OMCI_BACKEND_A_AGEING_S,		/* u32 */
+	OMCI_BACKEND_A_LEARN_LIMIT,		/* u32 */
+	OMCI_BACKEND_A_DOWN_KBPS,		/* u32 */
+	OMCI_BACKEND_A_UP_KBPS,			/* u32 */
+	OMCI_BACKEND_A_AUTO_DETECTION,		/* u32 */
+	OMCI_BACKEND_A_MAX_FRAME_SIZE,		/* u32 */
+	OMCI_BACKEND_A_COOKIE,			/* u32 */
+	OMCI_BACKEND_A_UNI_ENTITY,		/* u32 */
+	OMCI_BACKEND_A_GEM_ENTITY,		/* u32 */
+	OMCI_BACKEND_A_TCONT_ENTITY,		/* u32 */
+	OMCI_BACKEND_A_VLAN,			/* u32 */
+	OMCI_BACKEND_A_PCP,			/* u32 */
+	OMCI_BACKEND_A_QUEUE,			/* u32 */
+	OMCI_BACKEND_A_UNI_MODE,		/* u32 */
+	OMCI_BACKEND_A_UNI_VLAN,		/* u32 */
+	OMCI_BACKEND_A_MULTICAST_ANI,		/* u32 */
+	OMCI_BACKEND_A_FLAGS,			/* u32: OMCI_BACKEND_SVC_* or topology flags */
+	OMCI_BACKEND_A_TREATMENT,		/* 8 bytes: VLAN treatment */
+	OMCI_BACKEND_A_UP,			/* u32 */
+	OMCI_BACKEND_A_PROFILE_CONFIGURED,	/* u32 */
+	OMCI_BACKEND_A_PROFILE_EFFECTIVE,	/* u32 */
+	OMCI_BACKEND_A_PROFILE_FORCED,		/* u32 */
+	OMCI_BACKEND_A_PROFILE_QUIRKS,		/* u32 */
+	OMCI_BACKEND_A_OPERATIONAL,		/* u32 */
+	OMCI_BACKEND_A_SERIAL,			/* 8 bytes */
+	OMCI_BACKEND_A_PASSWORD,		/* 10 bytes */
+	OMCI_BACKEND_A_TCONT_BASE,		/* u32 */
+	OMCI_BACKEND_A_SCHEDULER_BASE,		/* u32 */
+	OMCI_BACKEND_A_QUEUE_BASE,		/* u32 */
+	OMCI_BACKEND_A_MAX_QUEUE_SIZE,		/* u32 */
+	OMCI_BACKEND_A_ALLOCATED_QUEUE_SIZE,	/* u32 */
+	OMCI_BACKEND_A_TCONT_COUNT,		/* u32 */
+	OMCI_BACKEND_A_QUEUES_PER_TCONT,	/* u32 */
+	OMCI_BACKEND_A_QUEUE_CONFIG_OPTION,	/* u32 */
+	OMCI_BACKEND_A_SCHEDULER_POLICY,	/* u32 */
+	OMCI_BACKEND_A_GEM_PORT_COUNT,		/* u32 */
+	OMCI_BACKEND_A_QOS_CONFIGURATION,	/* u32 */
+	OMCI_BACKEND_A_DOWN_QUEUES_PER_UNI,	/* u32 */
+	OMCI_BACKEND_A_TEMPERATURE_MC,		/* s32 */
+	OMCI_BACKEND_A_VOLTAGE_UV,		/* u32 */
+	OMCI_BACKEND_A_BIAS_UA,			/* u32 */
+	OMCI_BACKEND_A_TX_POWER_NW,		/* u32 */
+	OMCI_BACKEND_A_RX_POWER_NW,		/* u32 */
+	OMCI_BACKEND_A_ALARMS,			/* u32 */
+	OMCI_BACKEND_A_DOWN_FEC,		/* u32 */
+	OMCI_BACKEND_A_UP_FEC,			/* u32 */
+	OMCI_BACKEND_A_BIP_ERRORS,		/* u64 */
+	OMCI_BACKEND_A_FEC_CORRECTED_BYTES,	/* u64 */
+	OMCI_BACKEND_A_FEC_CORRECTED_CODEWORDS,	/* u64 */
+	OMCI_BACKEND_A_FEC_UNCORRECTABLE,	/* u64 */
+	OMCI_BACKEND_A_FEC_TOTAL_CODEWORDS,	/* u64 */
+	OMCI_BACKEND_A_FEC_SECONDS,		/* u64 */
+
+	__OMCI_BACKEND_A_MAX,
 };
 
-struct omci_backend_tcont {
-	__u32 entity, alloc_id, valid;
-};
-
-struct omci_backend_gem {
-	__u32 entity, gem_port, tcont, direction, valid, encrypted;
-};
-
-struct omci_backend_qos {
-	__u32 entity, enabled, policy; __u8 weight[8];
-};
-
-struct omci_backend_rate {
-	__u32 gem_port, upstream, rate, burst;
-};
-
-struct omci_backend_uni {
-	__u32 entity, enabled;
-};
-
-struct omci_backend_uni_attrs {
-	__u32 entity, pause_quanta, ageing_s, learn_limit, down_kbps, up_kbps;
-	__u32 auto_detection, max_frame_size;
-};
+#define OMCI_BACKEND_A_MAX (__OMCI_BACKEND_A_MAX - 1)
 
 #define OMCI_BACKEND_SVC_VLAN (1U << 0)
 #define OMCI_BACKEND_SVC_PCP (1U << 1)
@@ -63,45 +112,7 @@ struct omci_backend_uni_attrs {
 #define OMCI_BACKEND_SVC_MULTICAST_ANI (1U << 3)
 #define OMCI_BACKEND_SVC_MULTICAST (1U << 4)
 #define OMCI_BACKEND_SVC_DEFAULT (1U << 5)
-struct omci_backend_service {
-	__u32 cookie, uni_entity, gem_entity, gem_port, tcont_entity, alloc_id;
-	__u32 vlan, pcp, queue, direction, uni_mode, uni_vlan, multicast_ani, flags;
-	__u8 treatment[8];
-};
-
-struct omci_backend_cookie {
-	__u32 cookie;
-};
-
-struct omci_backend_link {
-	__u32 entity, up;
-};
-
-struct omci_backend_profile {
-	__u32 configured, effective, forced, quirks;
-};
-
-struct omci_backend_operational {
-	__u32 operational;
-};
-
-struct omci_backend_telemetry {
-	__u32 valid;
-	__s32 temperature_mc;
-	__u32 voltage_uv, bias_ua, tx_power_nw, rx_power_nw, alarms;
-	__u32 downstream_fec, upstream_fec, reserved;
-	__aligned_u64 bip_errors;
-	__aligned_u64 fec[5];
-};
-
-#define OMCI_BACKEND_MAX_DATA 96
 
 #define OMCI_BACKEND_ID_SERIAL (1U << 0)
 #define OMCI_BACKEND_ID_PASSWORD (1U << 1)
-struct omci_backend_identity {
-	__u32 valid;
-	__u8 serial[8];
-	__u8 password[10];
-	__u8 reserved[2];
-};
 #endif

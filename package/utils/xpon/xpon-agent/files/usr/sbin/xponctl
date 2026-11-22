@@ -1,0 +1,62 @@
+#!/usr/bin/ucode
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * The PON interface over the xpon generic netlink family.
+ *   xponctl [-i IFNAME] get
+ *   xponctl [-i IFNAME] set tx_allow|tx_hold|identity_wait 0|1
+ *   xponctl [-i IFNAME] set tx_hold_seconds|epon_holdover_ms VALUE
+ *   xponctl [-i IFNAME] set epon_oam_link|epon_register 0|1
+ *   xponctl [-i IFNAME] set epon_mac aa:bb:cc:dd:ee:ff|default
+ *   xponctl [-i IFNAME] set sfu_offload 0|1
+ *   xponctl [-i IFNAME] set sfu_untag_vlan VID
+ *   xponctl [-i IFNAME] set sfu_vlan_map "tWAN:LAN sWAN:LAN ..."|""
+ */
+
+import { xpon_get, xpon_set, error } from 'omci';
+
+let args = [ ...ARGV ], ifname = 'pon0';
+
+if (args[0] == '-i') {
+	ifname = args[1];
+	args = slice(args, 2);
+}
+
+function usage() {
+	warn('usage: xponctl [-i IFNAME] get | set NAME VALUE\n');
+	exit(2);
+}
+
+switch (args[0]) {
+case 'get': {
+	let tx = xpon_get(ifname);
+
+	if (tx == null) {
+		warn(`xponctl: ${error().message}\n`);
+		exit(1);
+	}
+	let show = (k, v) => print(`${k}=${type(v) == 'bool' ? (v ? 1 : 0) : v}\n`);
+
+	for (let k, v in tx) {
+		if (type(v) == 'object')
+			for (let k2, v2 in v)
+				show(`${k}.${k2}`, v2);
+		else
+			show(k, v);
+	}
+	break;
+}
+case 'set':
+	if (length(args) != 3)
+		usage();
+	let text = args[1] in [ 'epon_mac', 'sfu_vlan_map' ];
+
+	if (!text && !match(args[2], /^[0-9]+$/))
+		usage();
+	if (!xpon_set(ifname, args[1], text ? args[2] : int(args[2]))) {
+		warn(`xponctl: ${error().message}\n`);
+		exit(1);
+	}
+	break;
+default:
+	usage();
+}

@@ -215,36 +215,6 @@ struct omci_ani_topology {
 };
 
 /**
- * struct omci_uni_attrs - G.988 attributes the OLT sets for an Ethernet UNI
- * @pause_quanta: PPTP Ethernet UNI (ME 11) pause time, in pause quanta of
- *	512 bit times; 0 disables pause frames
- * @ageing_s: MAC bridge service profile (ME 45) dynamic filtering ageing
- *	time in seconds; 0 selects the default
- * @learn_limit: MAC learning depth of the UNI bridge port (ME 47), else of
- *	its bridge (ME 45); 0 means no limit
- * @down_kbps: peak rate of the bridge port's outbound traffic descriptor
- *	(ME 280, towards the UNI) in kbit/s; 0 means unlimited
- * @up_kbps: peak rate of its inbound traffic descriptor, in kbit/s
- * @auto_detection: G.988 PPTP Ethernet UNI auto-detection configuration
- * @max_frame_size: maximum Ethernet frame size; zero restores the board default
- */
-struct omci_uni_attrs {
-	u16 pause_quanta;
-	u32 ageing_s;
-	u16 learn_limit;
-	u32 down_kbps;
-	u32 up_kbps;
-	u8 auto_detection;
-	u16 max_frame_size;
-};
-
-struct omci_tcont_qos {
-	bool enabled;
-	u8 policy;		/* G.988: 1 = strict priority, 2 = WRR */
-	u8 weight[8];		/* indexed by related-port priority */
-};
-
-/**
  * struct omci_device_ops - hardware transport and provisioning operations
  * @backend_begin: acquire nonblocking session serialization
  * @backend_end: release session serialization
@@ -255,18 +225,14 @@ struct omci_tcont_qos {
  * @xmit: transmit an OMCI PDU; consumes @skb only on success
  * @get_ani_topology: describe pre-existing ANI scheduling resources
  * @set_tcont: configure a T-CONT mapping
- * @set_tcont_qos: apply explicitly configured T-CONT scheduling
  * @set_gem_port: configure a GEM port
- * @set_gem_rate: apply a GEM's peak-rate descriptor, in bytes/s and bytes
  * @set_uni: enable or disable a UNI
- * @set_uni_attrs: apply a UNI's pause, MAC table and rate attributes
  * @replace_service: atomically add or replace a normalized upstream service
  * @delete_service: remove a normalized upstream service by cookie
  * @get_telemetry: refresh PON FEC and optical telemetry
  * @get_uni_link: report whether a PPTP Ethernet UNI has carrier
  * @set_olt_profile: apply a resolved OLT interoperability profile
  * @set_operational: report whether the active OMCI agent is operational
- * @config_changed: report a normalized runtime OMCI configuration change
  */
 struct omci_device_ops {
 	/* Nonblocking session serialization for netlink provisioning. */
@@ -283,16 +249,10 @@ struct omci_device_ops {
 				struct omci_ani_topology *topology);
 	int (*set_tcont)(struct omci_device *odev, u16 entity_id,
 			 u16 alloc_id, bool valid);
-	int (*set_tcont_qos)(struct omci_device *odev, u16 entity_id,
-			     const struct omci_tcont_qos *qos);
 	int (*set_gem_port)(struct omci_device *odev, u16 entity_id,
 			    u16 gem_port_id, u16 tcont_entity_id,
 			    u8 direction, bool valid, bool encrypted);
-	int (*set_gem_rate)(struct omci_device *odev, u16 gem_port_id,
-			    bool upstream, u32 rate, u32 burst);
 	int (*set_uni)(struct omci_device *odev, u16 entity_id, bool enable);
-	int (*set_uni_attrs)(struct omci_device *odev, u16 entity_id,
-			     const struct omci_uni_attrs *attrs);
 	int (*replace_service)(struct omci_device *odev,
 			       const struct omci_service_config *service);
 	int (*delete_service)(struct omci_device *odev, u32 cookie);
@@ -303,8 +263,6 @@ struct omci_device_ops {
 	int (*set_olt_profile)(struct omci_device *odev,
 			       const struct omci_olt_profile_state *state);
 	void (*set_operational)(struct omci_device *odev, bool operational);
-	void (*config_changed)(struct omci_device *odev, u16 key,
-			       const struct omci_identity *identity);
 };
 
 struct omci_device *
@@ -317,13 +275,6 @@ void omci_device_stop(struct omci_device *odev);
 void *omci_device_priv(const struct omci_device *odev);
 u32 omci_device_id(const struct omci_device *odev);
 
-int omci_identity_load(struct device *dev, struct omci_identity *identity);
-void gpon_random_serial_number(const u8 vendor[4], struct omci_identity *identity);
-void omci_device_set_identity_info(struct omci_device *odev,
-				   const struct omci_identity *identity);
-void omci_device_set_identity(struct omci_device *odev,
-			      const u8 serial_number[8],
-			      const u8 password[10]);
 void omci_device_set_onu_id(struct omci_device *odev, u16 onu_id);
 void omci_device_set_channel(struct omci_device *odev, u16 gem_port_id,
 			     bool valid);
@@ -333,5 +284,109 @@ void omci_device_receive(struct omci_device *odev, struct sk_buff *skb,
 			 u16 gem_port_id, u32 flags);
 int omci_device_reconcile_services(struct omci_device *odev);
 bool omci_device_userspace_agent(const struct omci_device *odev);
+
+/*
+ * The fields of each typed backend operation, as omci_backend_execute()
+ * takes and returns them. The netlink layer carries them as the
+ * OMCI_BACKEND_A_* attributes omci_backend_layout() maps them to.
+ */
+struct omci_backend_topology {
+	u32 tcont_base, scheduler_base, queue_base;
+	u32 maximum_queue_size, allocated_queue_size;
+	u32 tcont_count, queues_per_tcont, queue_config_option, scheduler_policy;
+	u32 gem_port_count, qos_configuration, downstream_queues_per_uni, flags;
+};
+
+struct omci_backend_tcont {
+	u32 entity, alloc_id, valid;
+};
+
+struct omci_backend_gem {
+	u32 entity, gem_port, tcont, direction, valid, encrypted;
+};
+
+struct omci_backend_qos {
+	u32 entity, enabled, policy;
+	u8 weight[8];
+};
+
+struct omci_backend_rate {
+	u32 gem_port, upstream, rate, burst;
+};
+
+struct omci_backend_uni {
+	u32 entity, enabled;
+};
+
+struct omci_backend_uni_attrs {
+	u32 entity, pause_quanta, ageing_s, learn_limit, down_kbps, up_kbps;
+	u32 auto_detection, max_frame_size;
+};
+
+struct omci_backend_service {
+	u32 cookie, uni_entity, gem_entity, gem_port, tcont_entity, alloc_id;
+	u32 vlan, pcp, queue, direction, uni_mode, uni_vlan, multicast_ani, flags;
+	u8 treatment[8];
+};
+
+struct omci_backend_cookie {
+	u32 cookie;
+};
+
+struct omci_backend_link {
+	u32 entity, up;
+};
+
+struct omci_backend_profile {
+	u32 configured, effective, forced, quirks;
+};
+
+struct omci_backend_operational {
+	u32 operational;
+};
+
+struct omci_backend_telemetry {
+	u32 valid;
+	s32 temperature_mc;
+	u32 voltage_uv, bias_ua, tx_power_nw, rx_power_nw, alarms;
+	u32 downstream_fec, upstream_fec;
+	u64 bip_errors;
+	u64 fec[5];
+};
+
+struct omci_backend_identity {
+	u32 valid;
+	u8 serial[8];
+	u8 password[10];
+};
+
+/* The largest of the structures above */
+#define OMCI_BACKEND_MAX_DATA 96
+
+enum omci_backend_field_type {
+	OMCI_BACKEND_FIELD_U32,
+	OMCI_BACKEND_FIELD_S32,
+	OMCI_BACKEND_FIELD_U64,
+	OMCI_BACKEND_FIELD_BINARY,
+};
+
+struct omci_backend_field {
+	u16 attr;	/* enum omci_backend_attr */
+	u16 offset;
+	u8 type;	/* enum omci_backend_field_type */
+	u8 len;
+};
+
+struct omci_backend_fields {
+	const struct omci_backend_field *field;
+	u8 count;
+	u8 size;	/* of the structure the fields fill */
+};
+
+struct omci_backend_layout {
+	struct omci_backend_fields in, out;
+};
+
+const struct omci_backend_layout *omci_backend_layout(u16 op);
 
 #endif /* _NET_OMCI_H */

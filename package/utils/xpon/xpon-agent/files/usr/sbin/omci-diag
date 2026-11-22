@@ -1,0 +1,65 @@
+#!/bin/sh
+# Collect what is needed to debug OMCI provisioning against an OLT.
+#   omci-diag          print status, the PON driver's state, the OLT <-> ONU
+#                      summary and the OMCI log
+#   omci-diag report   the decoded OLT <-> ONU conversation (omci-report):
+#                      PLOAM and OMCI both ways, failures, the datapath
+#   omci-diag trace    start or stop recording every OMCI exchange
+#   omci-diag full [S] record S seconds (default 60) of OMCI, then print
+#                      everything, the full report included; a recording
+#                      started earlier with "trace" (or at boot with
+#                      omci.main.trace=1) is kept
+trace=/tmp/omcid-trace.txt
+dbg=/sys/kernel/debug/gc1601-pon
+pon=/sys/class/xpon/pon0/device
+
+trace_toggle() {
+	pid=$(pidof omcid) || { echo "omcid is not running" >&2; exit 1; }
+	kill -USR1 "$pid"
+}
+
+tracing() {
+	ls -l "/proc/$(pidof omcid)/fd" 2>/dev/null | grep -q "$trace"
+}
+
+section() {
+	[ -r "$2" ] || return 0
+	echo "== $1 ($2)"
+	cat "$2"
+}
+
+case "$1" in
+report)
+	exec omci-report
+	;;
+trace)
+	trace_toggle
+	echo "OMCI trace toggled: a recording goes to $trace and stops at 1 MiB"
+	exit 0
+	;;
+full)
+	if ! tracing; then
+		rm -f "$trace"
+		trace_toggle
+	fi
+	echo "recording OMCI for ${2:-60} s..." >&2
+	sleep "${2:-60}"
+	trace_toggle
+	;;
+esac
+
+echo "== omcictl status"
+omcictl status
+section "PON state" "$dbg/gpon_state"
+section "PON events" "$dbg/gpon_events"
+echo "== LAN VLANs and switch offload"
+xponctl get | grep '^sfu_'
+if [ "$1" = full ]; then
+	section "PLOAM log" "$dbg/ploam_log"
+	section "PLOAM trace" "$dbg/ploam_trace"
+fi
+echo
+if [ "$1" = full ]; then omci-report; else omci-report -b; fi
+echo
+echo "== log"
+logread | grep -i "omci\|gpon\|xpon\|Alloc-ID" | tail -n 200

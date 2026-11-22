@@ -12,25 +12,14 @@
  * the menu has the PON pages; the menu also says which mode runs.
  */
 
-var DEV = '/sys/class/net/pon0/device/';
+var callSummary = rpc.declare({ object: 'xpon', method: 'summary' });
 
 var callStatus = rpc.declare({
-	object: 'omci.agent',
+	object: 'xpon',
 	method: 'status_live',
 	params: [ 'device' ],
 	expect: { status: {} }
 });
-
-function parse(raw) {
-	var out = {};
-
-	String(raw || '').split(/\s+/).forEach(function(word) {
-		var i = word.indexOf('=');
-		if (i > 0)
-			out[word.substring(0, i)] = word.substring(i + 1);
-	});
-	return out;
-}
 
 function power(nw) {
 	var dbm = widgets.dbm(nw);
@@ -49,13 +38,13 @@ function gpon() {
 
 function epon() {
 	return Promise.all([
-		L.resolveDefault(fs.read(DEV + 'epon_state'), null),
-		L.resolveDefault(fs.read(DEV + 'bosa_ddm'), null),
+		L.resolveDefault(callSummary(), {}),
 		L.resolveDefault(fs.read('/var/run/epon-oamd.json'), null)
 	]).then(function(data) {
-		var hw = parse(data[0]), ddm = parse(data[1]), oam = {}, stage;
+		var sum = data[0] || {}, hw = (sum.epon && sum.epon.mac) || {}, ddm = sum.ddm || {};
+		var oam = {}, stage;
 
-		try { oam = JSON.parse(data[2] || '{}'); } catch (e) {}
+		try { oam = JSON.parse(data[1] || '{}'); } catch (e) {}
 		if (hw.signal != '1')
 			stage = _('no light');
 		else if (!(+hw.registered & 1))
@@ -78,9 +67,9 @@ return baseclass.extend({
 			var nodes = net.children || {};
 
 			if (nodes.omci)
-				return this.start(gpon, 'admin/network/omci/status');
+				return this.start(gpon, 'admin/pon/omci/status');
 			if (nodes.epon)
-				return this.start(epon, 'admin/network/epon/status');
+				return this.start(epon, 'admin/pon/epon/status');
 		}, this));
 	},
 

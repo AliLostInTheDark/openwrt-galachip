@@ -3,7 +3,7 @@
 #define _UAPI_LINUX_OMCI_H
 
 #define OMCI_GENL_NAME		"omci"
-#define OMCI_GENL_VERSION	17
+#define OMCI_GENL_VERSION	18
 #define OMCI_MAX_PDU_LEN	1980
 #define OMCI_MAX_ATTR_DATA	384	/* G.988 Large string: 1 + 15 x 25 */
 #define OMCI_MAX_CONFIG_VALUE	64
@@ -24,7 +24,8 @@
  * omcid is the only OMCI responder: until it binds, received frames are
  * dropped. Its AGENT bind latches exclusive response and MIB ownership to
  * userspace; the hardware backend and PLOAM activation stay in the kernel.
- * The MIB and class commands are served by omcid, not the kernel.
+ * The agent, configuration, MIB and class commands are served by omcid,
+ * not the kernel: omcid owns the ONU identity and configuration.
  */
 enum omci_cmd {
 	OMCI_CMD_UNSPEC,
@@ -121,13 +122,14 @@ enum omci_attr {
 	OMCI_ATTR_BIND_FLAGS,
 	OMCI_ATTR_TRACE_DROPPED,
 	OMCI_ATTR_BACKEND_OP,
-	OMCI_ATTR_BACKEND_DATA,
+	OMCI_ATTR_BACKEND_ARGS,	/* nested enum omci_backend_attr */
 	OMCI_ATTR_RESPONDER_MODE,
 	OMCI_ATTR_LOID_STATUS,
 	OMCI_ATTR_DIAGNOSTICS,	/* native control: include on-demand alarm text */
 	OMCI_ATTR_ALARM_TEXT,
 	OMCI_ATTR_MCAST_TABLES,	/* raw multicast table rows */
 	OMCI_ATTR_OLT_WRITTEN,	/* u8: the OLT Set this ONU-created object */
+	OMCI_ATTR_UNI_COUNT,	/* u8: the user ports the board has */
 
 	__OMCI_ATTR_MAX,
 };

@@ -8,7 +8,7 @@ Subject: [PATCH] cmd: bound GC1601 serial, TFTP and NOR RAM buffers
  #include <image.h>
  #include <lmb.h>
 +#ifdef CONFIG_ARCH_GALACHIP
-+#include <gc1601_bounds.h>
++#include <asm/arch/gc1601.h>
 +#endif
  #include <mapmem.h>
  #include <net.h>
@@ -49,7 +49,7 @@ Subject: [PATCH] cmd: bound GC1601 serial, TFTP and NOR RAM buffers
  #include <led.h>
  #include <lmb.h>
 +#ifdef CONFIG_ARCH_GALACHIP
-+#include <gc1601_bounds.h>
++#include <asm/arch/gc1601.h>
 +#endif
  #include <log.h>
  #include <mapmem.h>
@@ -72,7 +72,7 @@ Subject: [PATCH] cmd: bound GC1601 serial, TFTP and NOR RAM buffers
  #include <time.h>
  #include <spi_flash.h>
 +#ifdef CONFIG_ARCH_GALACHIP
-+#include <gc1601_bounds.h>
++#include <asm/arch/gc1601.h>
 +#endif
  #include <asm/cache.h>
  #include <jffs2/jffs2.h>

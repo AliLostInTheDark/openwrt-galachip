@@ -162,7 +162,7 @@ const xponModule = (url, ...names) => fetch(url).then(r => r.text()).then(source
 	new Function('baseclass', ...names, source)({ extend: x => x }));
 const xponModules = () => Promise.all([
 	xponModule('/package/utils/xpon/luci-app-xpon/htdocs/luci-static/resources/xpon/widgets.js'),
-	xponModule('/package/utils/xpon/luci-app-omci/htdocs/luci-static/resources/omci/mib.js')
+	xponModule('/package/utils/xpon/luci-app-xpon/htdocs/luci-static/resources/omci/mib.js')
 ]);
 const domShim = { content: (node, content) => node.replaceChildren(...[].concat(content).filter(c => c != null && c !== '')) };
 const scenario = params.get('case') || 'form';
@@ -221,7 +221,7 @@ else {
 	}
 	else if (scenario === 'epon') {
 		luciShims();
-		window.ready = Promise.all([xponModules(), fetch('/package/utils/xpon/luci-app-epon/htdocs/luci-static/resources/view/epon/status.js')
+		window.ready = Promise.all([xponModules(), fetch('/package/utils/xpon/luci-app-xpon/htdocs/luci-static/resources/view/epon/status.js')
 			.then(r => r.text())]).then(([[widgets], source]) => {
 				widgets.style();
 				const page = new Function('view', 'poll', 'dom', 'fs', 'uci', 'ui', 'widgets', 'E', '_', source)(
@@ -241,7 +241,7 @@ else {
 			...[100, 200, 4000].map((vid, i) => ({ class_id: 84, entity_id: i + 1, origin_name: 'olt',
 				vlan_filter: { entries: [{ vid, pbit: 0 }] } }))
 		];
-		window.ready = Promise.all([xponModules(), fetch('/package/utils/xpon/luci-app-omci/htdocs/luci-static/resources/view/omci/status.js')
+		window.ready = Promise.all([xponModules(), fetch('/package/utils/xpon/luci-app-xpon/htdocs/luci-static/resources/view/omci/status.js')
 			.then(r => r.text())]).then(([[widgets, mib], source]) => {
 				const view = { extend: x => x };
 				const page = new Function('view', 'poll', 'dom', 'omci', 'mib', 'widgets', 'E', '_', source)(

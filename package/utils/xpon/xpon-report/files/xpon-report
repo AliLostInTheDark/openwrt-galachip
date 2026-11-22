@@ -16,8 +16,7 @@ usage() {
 	and let the link come up (or fail) once:
 	  modprobe gc1601-gpon-diag   (GPON)
 	  modprobe gc1601-epon-diag   (EPON)
-	On Realtek Luna, no extra diagnostics module is needed. The full GPON
-	dump (-f) reads hardware PM counters, which may clear on read.
+	The full dump (-f) reads hardware counters, which may clear on read.
 	EOT
 	exit 1
 }
@@ -36,15 +35,14 @@ while getopts "o:fOuh" opt; do
 	esac
 done
 
-PON=/sys/class/net/pon0/device
+PONDBG=/sys/kernel/debug/gc1601-pon
 XPON=/sys/class/xpon/pon0
-ETH=
-for d in /sys/bus/platform/devices/*.packet-engine; do
-	[ -d "$d" ] && ETH=$d && break
+ETH=/sys/kernel/debug/gc1601-eth
+ETHDEV=
+for d in /sys/bus/platform/devices/*.packet-engine/net/*; do
+	[ -d "$d" ] && ETHDEV=${d##*/} && break
 done
-omci_status=$(ubus call omci.agent status 2>/dev/null)
-taurus=
-grep -qs 'realtek,taurus' /proc/device-tree/compatible && taurus=1
+omci_status=$(ubus call xpon status 2>/dev/null)
 
 section() {
 	printf '\n===== %s =====\n' "$1"
@@ -104,7 +102,6 @@ build_mask() {
 				cwmp.device.serial; do
 				uci -q get "$k"
 			done
-			cat "$PON/serial_number" "$XPON/omci/serial_number" 2>/dev/null
 			printf '%s\n' "$omci_status" | jsonfilter \
 				-e '@.status.identity.serial' -e '@.status.identity.loid' 2>/dev/null
 		} | while IFS= read -r s; do
@@ -139,63 +136,7 @@ build_mask() {
 	} > "$1"
 }
 
-# Realtek Taurus (RTL9607DQ, cortina-gpon): only what this platform has.
-collect_taurus() {
-	section "System"
-	run date
-	run uptime
-	show /etc/openwrt_release /proc/version
-	run cat /tmp/sysinfo/model
-
-	section "GPON (Realtek Taurus)"
-	show "$XPON/mode_current" "$XPON/state" "$XPON/carrier" /proc/gpon
-	run omcictl status
-	run omcictl config list
-
-	section "OMCI"
-	show /tmp/omcid-olt-diag.txt /etc/omci/olt-profiles.conf
-	run omcictl mib list
-	if [ "$full" = 1 ]; then run omci-report; else run omci-report -b; fi
-	run logread -e omcid
-
-	section "Services and LAN VLAN"
-	run ubus call omci.vlan status
-	run bridge link show
-
-	section "Voice"
-	run omcictl mib show 53
-	run omcictl mib show 141
-	run logread -e omci-voice
-
-	section "TR-069"
-	run ubus call cwmp status
-
-	section "Management access from the PON"
-	run nft list table bridge pon_guard
-	run nft list chain inet fw4 input_wan
-
-	section "Network"
-	run ip -s -d link show
-	run ip addr show
-	run ip route show
-	run ip -6 route show
-	show /proc/net/dev
-
-	section "Settings"
-	run uci show xpon
-	run uci show omci
-	run uci show cwmp
-	run uci show network
-
-	section "Kernel log (PON)"
-	dmesg | grep -E 'cortina-gpon|cortina-xpon|omci|xpon|pon0|BOSA|bosa' 2>&1
-
-	section "Kernel log"
-	dmesg
-}
-
 collect() {
-	[ -n "$taurus" ] && { collect_taurus; return; }
 	section "System"
 	run date
 	run uptime
@@ -206,47 +147,32 @@ collect() {
 	show "$XPON/mode_current" "$XPON/mode_available" "$XPON/state" "$XPON/carrier"
 	run uci -q get xpon.main.mode
 	run lsmod
-	show "$PON/status" "$PON/tx_hold" "$PON/bosa_ddm"
+	show "$PONDBG/pon_status"
+	run xponctl get
 	[ -f /etc/xpon-rogue ] && echo "/etc/xpon-rogue present: transmitter held off"
 
 	section "GPON"
-	show "$PON/gpon_state" "$PON/gpon_events" "$PON/allow_tx" "$PON/gpon_identity_wait" "$PON/gpon_ber" \
-	     "$PON/ploam_log" "$PON/ploam_trace" "$PON/pon_counters" "$PON/tcont_stats"
-	if [ -r /proc/gpon_health ]; then
-		section "Realtek GPON"
-		show /proc/gpon_health /proc/gpon_timing /proc/gpon_prov /proc/gpon_log
-		if [ "$full" = 1 ]; then
-			show /proc/gpon /proc/ethdump
-		fi
-		if command -v omci-report >/dev/null 2>&1; then
-			if [ "$full" = 1 ]; then run omci-report; else run omci-report -b; fi
-		fi
-	fi
+	show "$PONDBG/gpon_state" "$PONDBG/gpon_events" \
+	     "$PONDBG/gpon_ber" "$PONDBG/ploam_log" "$PONDBG/ploam_trace" "$PONDBG/pon_counters" \
+	     "$PONDBG/tcont_stats"
+	run ethtool -S pon0
+	if [ "$full" = 1 ]; then run omci-report; else run omci-report -b; fi
 
 	section "OMCI"
-	for f in "$XPON"/omci/*; do
-		case "${f##*/}" in
-		password|loid|loid_password) ;;	# write-only secrets
-		*) show "$f" ;;
-		esac
-	done
-	printf -- '--- ubus call omci.agent status\n%s\n' "$omci_status"
-	show "$ETH/omci_stats"
+	printf -- '--- ubus call xpon status\n%s\n' "$omci_status"
+	[ -n "$ETHDEV" ] && run ethtool -S "$ETHDEV"
 
 	section "EPON"
-	show "$PON/epon_state" "$PON/epon_register" "$PON/epon_oam_link" "$PON/epon_holdover" /var/run/epon-oamd.json
+	show "$PONDBG/epon_state" /var/run/epon-oamd.json
 	[ -d /sys/kernel/debug/gc1601-epon ] && show /sys/kernel/debug/gc1601-epon/regs
 
 	section "LAN VLAN and switch offload"
-	show "$PON/sfu_untag_vlan" "$PON/sfu_lan_tagged" "$PON/sfu_vlan_map" "$PON/sfu_offload"
-	show "$PON/l2_offload" "$PON/l2_offload_bindings" "$PON/l2_offload_counters" \
-	     /sys/module/rtl9602c_eth/parameters/lan_tx_steer
-	run ubus call omci.vlan status
+	run ubus call xpon vlan_status
 
 	section "Packet engine"
-	show "$ETH/diagnostics" "$ETH/rx_snapshot" "$ETH/tx_config"
+	show "$ETH/diagnostics" "$ETH/rx" "$ETH/tx_config"
 	if [ "$full" = 1 ]; then
-		show "$ETH/queue_snapshot" "$ETH/ingress_snapshot"
+		show "$ETH/queues" "$ETH/ingress"
 	fi
 
 	section "Network"
