@@ -241,7 +241,7 @@ function render(group, data, title, description) {
 				E('td', { 'class': 'td nowrap' }, hex(o.entity_id, 4)),
 				E('td', { 'class': 'td' }, [ o.name || c.name || '-' ]),
 				E('td', { 'class': 'td', 'title': mibView.originHelp(o) }, [ mibView.originText(o) ]),
-				E('td', { 'class': 'td', 'style': 'overflow-wrap:anywhere;max-width:32em' }, [ mibView.summary(o) ]),
+				E('td', { 'class': 'td', 'style': 'overflow-wrap:break-word;max-width:32em' }, [ mibView.summary(o) ]),
 				E('td', { 'class': 'td nowrap' }, [
 					modalButton(_('Details'), 'action', function() {
 						return omci.mibGet(0, o.class_id, o.entity_id).then(showDetails).catch(notifyError);

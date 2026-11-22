@@ -206,7 +206,7 @@ return view.extend({
 			node.prepend(E('style', {}, `
 .omci-vlan-page .cbi-value-field { min-width: 0; }
 .omci-vlan-page .cbi-value-field > select { max-width: 100%; }
-.omci-vlan-page .cbi-value-description { overflow-wrap: anywhere; }
+.omci-vlan-page .cbi-value-description { overflow-wrap: break-word; }
 @media (max-width: 600px) {
  .omci-vlan-page .cbi-value:not(.hidden) { display: block; }
  .omci-vlan-page .cbi-value label.cbi-value-title { display: block; float: none; width: auto; text-align: left; padding: 0 0 .5rem; }

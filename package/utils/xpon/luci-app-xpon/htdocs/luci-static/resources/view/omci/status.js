@@ -137,7 +137,9 @@ function row(label, value, id) {
 function section(title, rows) {
 	return E('div', { 'class': 'cbi-section' }, [
 		E('h3', {}, title),
-		E('table', { 'class': 'table' }, rows)
+		E('div', { 'class': 'omci-table-scroll' }, [
+			E('table', { 'class': 'table' }, rows)
+		])
 	]);
 }
 
@@ -190,23 +192,37 @@ function line(status) {
 	]);
 }
 
+function isOnline(status) {
+	return !status || (status.channel_up !== false && (status.state == null || status.state === 5));
+}
+
 /* What the OLT provisioned, in sentences, from the MIB objects it created or configured. */
-function provisioned(objects, vlan) {
+function provisioned(objects, vlan, status) {
 	var allocs = mib.allocIds(objects), gems = mib.gemPorts(objects);
 	var vlans = mib.provisionedVlans(objects), paths = mib.dataPaths(objects), lead = [];
 	var vids = Object.keys(vlans).map(Number).sort(function(a, b) { return a - b; });
+	var online = isOnline(status);
 	var pathTable = null;
 
 	if (!(objects || []).some(mib.oltProvisioned))
 		return E('p', { 'class': 'xpon-lead' },
 			_('The OLT has not provisioned anything yet. Its services appear here once the ONU is registered and the OLT has sent its configuration.'));
 
-	lead.push(allocs.length ?
-		_('The OLT grants upstream bandwidth on Alloc-ID %s and carries its services on GEM port %s.').format(allocs.join(', '), gems.join(', ') || '-') :
-		_('The OLT has not bound a T-CONT yet, so nothing can be sent upstream.'));
-	lead.push(vids.length ? _('Its services use VLAN %s.').format(vids.join(', ')) :
-		_('It set no VLAN rule: the service runs untagged.'));
-	lead.push(_('Towards the LAN: %s.').format(vlanText(vlan)));
+	if (!online) {
+		lead.push(_('The PON link is down; the configuration below is retained in RAM from the last OLT session (inactive until O5).'));
+		if (allocs.length)
+			lead.push(_('Last granted Alloc-ID %s on GEM port %s.').format(allocs.join(', '), gems.join(', ') || '-'));
+		if (vids.length)
+			lead.push(_('VLAN %s.').format(vids.join(', ')));
+		lead.push(_('Towards the LAN: %s.').format(vlanText(vlan)));
+	} else {
+		lead.push(allocs.length ?
+			_('The OLT grants upstream bandwidth on Alloc-ID %s and carries its services on GEM port %s.').format(allocs.join(', '), gems.join(', ') || '-') :
+			_('The OLT has not bound a T-CONT yet, so nothing can be sent upstream.'));
+		lead.push(vids.length ? _('Its services use VLAN %s.').format(vids.join(', ')) :
+			_('It set no VLAN rule: the service runs untagged.'));
+		lead.push(_('Towards the LAN: %s.').format(vlanText(vlan)));
+	}
 
 	/*
 	 * One row per GEM port. The VLAN cards above already name each VLAN's
@@ -217,22 +233,24 @@ function provisioned(objects, vlan) {
 		var titles = [ _('GEM'), _('Alloc-ID'), _('Direction'), _('P-bits'), _('UNI tag rules (ME 171)') ];
 		var shortDir = { 1: _('Up'), 2: _('Down'), 3: _('Both') };
 
-		pathTable = E('table', { 'class': 'table omci-paths' }, [
-			E('tr', { 'class': 'tr table-titles' }, titles.map(function(t) {
-				return E('th', { 'class': 'th left' }, t);
-			}))
-		].concat(paths.map(function(p) {
-			var pbits = p.prios.length == 8 ? '0-7' : (p.prios.length ? p.prios.join(', ') : '-');
+		pathTable = E('div', { 'class': 'omci-table-scroll' }, [
+			E('table', { 'class': 'table omci-paths' }, [
+				E('tr', { 'class': 'tr table-titles' }, titles.map(function(t) {
+					return E('th', { 'class': 'th left' }, t);
+				}))
+			].concat(paths.map(function(p) {
+				var pbits = p.prios.length == 8 ? '0-7' : (p.prios.length ? p.prios.join(', ') : '-');
 
-			return E('tr', { 'class': 'tr' }, [
-				E('td', { 'class': 'td left', 'data-title': titles[0] }, String(p.gem)),
-				E('td', { 'class': 'td left', 'data-title': titles[1] }, p.alloc != null ? String(p.alloc) : '-'),
-				E('td', { 'class': 'td left', 'data-title': titles[2] }, shortDir[p.dir] || p.direction),
-				E('td', { 'class': 'td left', 'data-title': titles[3] }, pbits),
-				E('td', { 'class': 'td left omci-rules', 'data-title': titles[4] },
-					p.uniRules.length ? p.uniRules.map(function(r) { return E('div', {}, r); }) : '-')
-			]);
-		})));
+				return E('tr', { 'class': 'tr' }, [
+					E('td', { 'class': 'td left nowrap', 'data-title': titles[0] }, String(p.gem)),
+					E('td', { 'class': 'td left nowrap', 'data-title': titles[1] }, p.alloc != null ? String(p.alloc) : '-'),
+					E('td', { 'class': 'td left nowrap', 'data-title': titles[2] }, shortDir[p.dir] || p.direction),
+					E('td', { 'class': 'td left nowrap', 'data-title': titles[3] }, pbits),
+					E('td', { 'class': 'td left omci-rules', 'data-title': titles[4] },
+						p.uniRules.length ? p.uniRules.map(function(r) { return E('div', {}, r); }) : '-')
+				]);
+			})))
+		]);
 	}
 
 	return E([], [
@@ -283,12 +301,12 @@ function injectStyle() {
 		'.omci-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:0 0 18px}',
 		'.omci-card{border:1px solid var(--border-color-medium,#ccc);border-radius:6px;padding:12px 14px;background:var(--background-color-high,#fff)}',
 		'.omci-card-label{font-size:12px;opacity:.72;margin-bottom:5px}',
-		'.omci-card-value{font-size:18px;font-weight:600;overflow-wrap:anywhere}',
-		'.omci-quirks{font-family:monospace;font-size:12px;overflow-wrap:anywhere}',
+		'.omci-card-value{font-size:18px;font-weight:600;overflow-wrap:break-word}',
+		'.omci-quirks{font-family:monospace;font-size:12px;overflow-wrap:break-word}',
 		'.omci-paths{margin-top:12px;width:100%}',
-		'.omci-paths .omci-rules{overflow-wrap:anywhere;font-size:12px}',
+		'.omci-paths .omci-rules{overflow-wrap:break-word;font-size:12px}',
 		'@media (min-width:768px){.omci-paths .th,.omci-paths .td{white-space:nowrap;width:1%}' +
-			'.omci-paths .omci-rules{white-space:normal;width:auto}}'
+			'.omci-paths .omci-rules{white-space:normal;width:auto;min-width:220px}}'
 	].join('')));
 }
 
@@ -452,13 +470,15 @@ function renderEvents(data) {
 		});
 	}
 
-	return E('table', { 'class': 'table' }, [
-		E('tr', { 'class': 'tr table-titles' }, [
-			E('th', { 'class': 'th left', 'width': '20%' }, _('Time (Uptime)')),
-			E('th', { 'class': 'th left', 'width': '12%' }, _('Type')),
-			E('th', { 'class': 'th left' }, _('Event'))
-		])
-	].concat(rows));
+	return E('div', { 'class': 'omci-table-scroll' }, [
+		E('table', { 'class': 'table' }, [
+			E('tr', { 'class': 'tr table-titles' }, [
+				E('th', { 'class': 'th left', 'width': '20%' }, _('Time (Uptime)')),
+				E('th', { 'class': 'th left', 'width': '12%' }, _('Type')),
+				E('th', { 'class': 'th left' }, _('Event'))
+			])
+		].concat(rows))
+	]);
 }
 
 function fmtEnum(val) {
@@ -468,15 +488,17 @@ function fmtEnum(val) {
 }
 
 function simpleTable(titles, rows) {
-	return E('table', { 'class': 'table' }, [
-		E('tr', { 'class': 'tr table-titles' }, titles.map(function(t) {
-			return E('th', { 'class': 'th left' }, t);
-		}))
-	].concat(rows.map(function(cols) {
-		return E('tr', { 'class': 'tr' }, cols.map(function(c, i) {
-			return E('td', { 'class': 'td left', 'data-title': titles[i] }, [ text(c) ]);
-		}));
-	})));
+	return E('div', { 'class': 'omci-table-scroll' }, [
+		E('table', { 'class': 'table' }, [
+			E('tr', { 'class': 'tr table-titles' }, titles.map(function(t) {
+				return E('th', { 'class': 'th left' }, t);
+			}))
+		].concat(rows.map(function(cols) {
+			return E('tr', { 'class': 'tr' }, cols.map(function(c, i) {
+				return E('td', { 'class': 'td left', 'data-title': titles[i] }, [ text(c) ]);
+			}));
+		})))
+	]);
 }
 
 function renderOltDetails(objects) {
@@ -600,7 +622,7 @@ function snapshot(status, vlan, events, withSecrets) {
 	};
 }
 
-function loadProvisioned(vlan) {
+function loadProvisioned(vlan, status) {
 	var node = document.getElementById('omci-provisioned-root');
 	var detailsNode = document.getElementById('omci-olt-details-root');
 
@@ -608,7 +630,7 @@ function loadProvisioned(vlan) {
 		return Promise.resolve();
 	return L.resolveDefault(omci.mibList(0), []).then(function(objects) {
 		cachedObjects = objects || [];
-		dom.content(node, provisioned(objects, vlan));
+		dom.content(node, provisioned(objects, vlan, status));
 		if (detailsNode)
 			dom.content(detailsNode, renderOltDetails(cachedObjects));
 	});
@@ -648,7 +670,7 @@ return view.extend({
 		limits = data[2] || {};
 		cachedEvents = data[3] || { events: [] };
 		v = values(status);
-		var mibSync = status.mib_sync, vlan = data[1], seen = eventKey(status);
+		var mibSync = status.mib_sync, vlan = data[1], seen = eventKey(status), online = isOnline(status);
 
 		poll.add(function() {
 			/* A load during an apply finds no configuration, and OLT-G
@@ -670,11 +692,18 @@ return view.extend({
 				}
 				if (status.mib_sync != mibSync) {
 					mibSync = status.mib_sync;
-					return loadProvisioned(vlan);
+					online = isOnline(status);
+					return loadProvisioned(vlan, status);
+				}
+				if (isOnline(status) != online) {
+					online = isOnline(status);
+					var provNode = document.getElementById('omci-provisioned-root');
+					if (provNode && cachedObjects.length)
+						dom.content(provNode, provisioned(cachedObjects, vlan, status));
 				}
 			});
 		}, 10);
-		window.setTimeout(function() { loadProvisioned(vlan); }, 0);
+		window.setTimeout(function() { loadProvisioned(vlan, status); }, 0);
 
 		return layout.apply(E([], [
 			E('h2', {}, _('OMCI status')),

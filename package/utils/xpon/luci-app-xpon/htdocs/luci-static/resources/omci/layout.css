@@ -7,17 +7,17 @@
 	max-width: 100%;
 }
 :is(.omci-page, .omci-mib-editor) :is(.cbi-value-title, .cbi-value-description, .cbi-map-descr, .cbi-section-descr) {
-	overflow-wrap: anywhere;
+	overflow-wrap: break-word;
 }
 .omci-page :is(.omci-card, .xpon-panel, .xpon-card) {
 	min-width: 0;
 }
 .omci-page .table td:not(.nowrap) {
-	overflow-wrap: anywhere;
+	overflow-wrap: break-word;
 }
 .omci-page pre {
 	white-space: pre-wrap;
-	overflow-wrap: anywhere;
+	overflow-wrap: break-word;
 }
 .omci-table-scroll {
 	max-width: 100%;
