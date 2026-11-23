@@ -375,6 +375,11 @@ Open **Network -> EPON -> Configuration**.
 GPON labels the last option **Control by OLT**; EPON uses **Set by the OLT**.
 Keep the default Ethernet/PON bridge and avoid tagging the same service twice.
 
+Set the service VLAN only with this setting. The switch then tags and
+untags in hardware at line rate. Do not create VLAN devices (`pon0.<vid>`),
+bridges or PPPoE/IPoE interfaces on the G7 itself: that traffic goes
+through the CPU in software, which saturates at about 40 Mbit/s.
+
 Connect the fiber and check the corresponding GPON or EPON status page.
 Use a different management subnet if your router also uses `192.168.1.0/24`.
 
