@@ -41,13 +41,14 @@
 			      <0x90dc4000 0x04>, <0x90dc8000 0x04>,
 			      <0x90ddc000 0x18>, <0x90dec000 0x54>,
 			      <0x90de8000 0x04>, <0x90de0000 0x50>,
-			      <0x90dd8000 0x30>, <0x91400000 0x04>;
+			      <0x90dd8000 0x30>;
 			reg-names = "gmac", "buffers", "descriptors", "rx", "tx-ring",
 				    "rx-pending", "tx-space", "scheduler-ready",
 				    "buffer-control", "buffer-enable", "tx-config", "statistics",
-				    "scheduler", "output-scheduler", "queues", "sgmii";
+				    "scheduler", "output-scheduler", "queues";
 			interrupts = <20 IRQ_TYPE_LEVEL_HIGH>;
 			galachip,scu = <&scu>;
+			galachip,ge-serdes = <&ge_serdes>;
 			galachip,switch = <&switch>;
 			status = "disabled";
 		};
@@ -168,6 +169,11 @@
 			reg-names = "config", "ctrl";
 			galachip,scu = <&scu>;
 			#phy-cells = <0>;
+		};
+
+		ge_serdes: syscon@91400000 {
+			compatible = "galachip,gc1601-ge-serdes", "syscon";
+			reg = <0x91400000 0x10>;
 		};
 
 		intc: interrupt-controller@96000000 {

@@ -50,6 +50,8 @@
 		mdio: mdio@90100000 {
 			compatible = "galachip,gc1601-mdio";
 			reg = <0x90100000 0x18>;
+			galachip,scu = <&scu>;
+			galachip,ge-serdes = <&ge_serdes>;
 			#address-cells = <1>;
 			#size-cells = <0>;
 			status = "disabled";
@@ -115,6 +117,11 @@
 			reg-names = "mac", "serdes", "serdes-ctrl", "scu", "txpwr",
 				    "top", "global", "emac";
 			status = "disabled";
+		};
+
+		ge_serdes: syscon@91400000 {
+			compatible = "galachip,gc1601-ge-serdes", "syscon";
+			reg = <0x91400000 0x10>;
 		};
 
 		intc: interrupt-controller@96000000 {

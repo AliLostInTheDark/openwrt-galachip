@@ -8,8 +8,8 @@
  'require firewall';
  'require tools.widgets as widgets';
  'require tools.network as nettools';
-@@ -65,14 +66,14 @@
- 	    up   = dev ? dev.isUp() : false;
+@@ -76,14 +77,14 @@
+ 	    up   = has_link(dev);
  
  	return E('span', { class: 'cbi-tooltip-container' }, [
 -		E('img', { 'class' : 'middle', 'src': L.resource('icons/%s%s.svg').format(
@@ -26,7 +26,7 @@
  				_('Device'),    dev ? dev.getName() : _('Not present'),
  				_('Connected'), up ? _('yes') : _('no'),
  				_('MAC'),       dev ? dev.getMAC() : null,
-@@ -137,7 +138,7 @@
+@@ -165,7 +166,7 @@
  	dom.content(node, [
  		E('img', {
  			'src': L.resource('icons/%s%s.svg').format(dev ? dev.getType() : 'ethernet', ifc && ifc.isUp() ? '' : '_disabled'),
@@ -35,7 +35,7 @@
  		}),
  		ifc ? render_status(E('span'), ifc, true) : E('em', _('Interface not present or not connected yet.'))
  	]);
-@@ -331,7 +332,7 @@
+@@ -360,7 +361,7 @@
  				dom.content(stat, [
  					E('img', {
  						'src': L.resource('icons/%s%s.svg').format(dev ? dev.getType() : 'ethernet', ifc.isUp() ? '' : '_disabled'),
@@ -44,7 +44,7 @@
  					}),
  					render_status(E('span'), ifc, true)
  				]);
-@@ -380,7 +381,8 @@
+@@ -409,7 +410,8 @@
  			network.getDevices(),
  			fs.lines('/etc/iproute2/rt_tables'),
  			L.resolveDefault(callNetworkDeviceStatus(), {}),
@@ -54,7 +54,7 @@
  		]);
  	},
  
-@@ -479,6 +481,7 @@
+@@ -508,6 +510,7 @@
  	},
  
  	render([dslModemType, netDevs, rtTables, devStatus]) {
@@ -62,7 +62,7 @@
  
  		if (this.interfaceBridgeWithIfnameSections().length)
  			return this.renderBridgeMigration();
-@@ -1793,10 +1796,18 @@
+@@ -1832,10 +1835,18 @@
  		o.textvalue = function(section_id) {
  			const dev = getDevice(section_id);
  

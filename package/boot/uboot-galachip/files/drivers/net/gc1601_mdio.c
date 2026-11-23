@@ -4,6 +4,7 @@
 #include <miiphy.h>
 #include <phy.h>
 #include <asm/io.h>
+#include <dm/ofnode.h>
 #include <linux/delay.h>
 #include <linux/iopoll.h>
 
@@ -46,16 +47,28 @@ static int gc_mdio_write(struct udevice *d, int a, int devad, int r, u16 v)
 	return gc_mdio_xfer(d, a, devad, r, v, true);
 }
 
+#define GC_SCU_GE_CTRL		0x810
+#define GC_SCU_GE_PHY_EN	BIT(13)
+
+static void *gc_mdio_syscon(struct udevice *dev, const char *prop)
+{
+	ofnode node = ofnode_parse_phandle(dev_ofnode(dev), prop, 0);
+	fdt_addr_t addr = ofnode_valid(node) ? ofnode_get_addr(node) : FDT_ADDR_T_NONE;
+
+	return addr == FDT_ADDR_T_NONE ? NULL : (void *)addr;
+}
+
+/* Power the GE PHY block, then step its SerDes through the start sequence. */
 static int gc_mdio_probe(struct udevice *dev)
 {
-	void *scu = (void *)0x90a00810;
-	void *serdes = (void *)0x91400000;
 	static const u32 sequence[] = { 0x4000, 0x20000, 0x20002, 0x20003, 3 };
+	void *scu = gc_mdio_syscon(dev, "galachip,scu");
+	void *serdes = gc_mdio_syscon(dev, "galachip,ge-serdes");
 	unsigned int i;
 
-	if (!dev_read_addr_ptr(dev))
+	if (!dev_read_addr_ptr(dev) || !scu || !serdes)
 		return -EINVAL;
-	setbits_le32(scu, BIT(13));
+	setbits_le32(scu + GC_SCU_GE_CTRL, GC_SCU_GE_PHY_EN);
 	mdelay(50);
 	for (i = 0; i < ARRAY_SIZE(sequence); i++) {
 		writel(sequence[i], serdes);

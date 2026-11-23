@@ -104,6 +104,8 @@
 
 	phy24: ethernet-phy@18 {
 		reg = <0x18>;
+		galachip,scu = <&scu>;
+		galachip,ge-serdes = <&ge_serdes>;
 	};
 };
 

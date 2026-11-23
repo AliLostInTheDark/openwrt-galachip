@@ -58,13 +58,12 @@ regs() {
 }
 
 queues() {
+	# The stock driver's buffer dump, then ours (debugfs).
 	for f in /sys/bus/platform/devices/90c00000.xpon_sdk/debug/dbg_bufcfg \
-		 /sys/kernel/debug/*/dbg_bufcfg \
-		 /sys/kernel/debug/gc1601-eth/queues; do
+		 /sys/kernel/debug/gc1601-eth/queues \
+		 /sys/kernel/debug/gc1601-pon/tcont_stats; do
 		[ -r "$f" ] && { echo "## $f"; cat "$f"; }
 	done
-	[ -r /sys/bus/platform/devices/90cc0000.pon/tcont_stats ] &&
-		{ echo "## tcont_stats"; cat /sys/bus/platform/devices/90cc0000.pon/tcont_stats; }
 }
 
 watch() {

@@ -94,7 +94,6 @@ enum gc1601_window {
 	GC1601_SCHEDULER,
 	GC1601_OUTPUT_SCHEDULER,
 	GC1601_QUEUES,
-	GC1601_SGMII,
 	GC1601_NUM_WINDOWS,
 };
 
@@ -205,6 +204,7 @@ struct gc1601_eth {
 	void __iomem *base[GC1601_NUM_WINDOWS];
 	void __iomem *sched_base;
 	struct regmap *scu;
+	struct regmap *ge_serdes;
 	void __iomem *os_base;		/* 0x90de0000: output scheduler, queue flush */
 	/* Banks touched only by the cold (loader-equivalent) init. */
 	void __iomem *switch_base;

@@ -7,28 +7,29 @@
  * Both follow what the stock firmware does.
  */
 
-#include <linux/io.h>
+#include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/phy.h>
+#include <linux/regmap.h>
 
 #define GC1601_PHY_ID		0x16010000
 #define GC1601_PAGE_SEL		0x1f
 
-/* SCU 0x90a00800 bit 7: gc1601_phy_caboff() (set when cable is unplugged). */
-#define GC1601_SCU_STRAP	0x90a00800
+/* SCU strap bit 7: set while the cable is unplugged. */
+#define GC1601_SCU_STRAP	0x800
 #define GC1601_SCU_CABOFF	BIT(7)
 
-/* PHY SerDes debug status 0x91400008 bit 11: checked on 100M link-up, as stock. */
-#define GC1601_PHY_DBG_REG	0x91400008
-#define GC1601_PHY_DBG_100M_OK	BIT(11)
+/* GE SerDes debug status bit 11: checked on 100M link-up, as stock. */
+#define GC1601_SERDES_DBG	0x8
+#define GC1601_SERDES_100M_OK	BIT(11)
 
 /* Link-down polls before a reset, and resets before giving up until link. */
 #define GC1601_DOWN_POLLS	10
 #define GC1601_RESETS		10
 
 struct gc1601_phy_priv {
-	void __iomem *scu_strap;
-	void __iomem *serdes_dbg;
+	struct regmap *scu;
+	struct regmap *ge_serdes;
 	unsigned int down_polls;
 	unsigned int resets_left;
 };
@@ -62,6 +63,22 @@ static int gc1601_phy_tune(struct phy_device *phydev)
 	return phy_modify_paged(phydev, 0, 0x12, ~0x07ff, 0x5000);
 }
 
+static bool gc1601_reg_test(struct regmap *map, unsigned int reg, u32 bit)
+{
+	unsigned int val;
+
+	return map && !regmap_read(map, reg, &val) && (val & bit);
+}
+
+/* Both checks are optional: without the phandle the PHY simply skips them. */
+static struct regmap *gc1601_phy_syscon(struct phy_device *phydev, const char *prop)
+{
+	struct regmap *map;
+
+	map = syscon_regmap_lookup_by_phandle(phydev->mdio.dev.of_node, prop);
+	return IS_ERR(map) ? NULL : map;
+}
+
 static int gc1601_phy_probe(struct phy_device *phydev)
 {
 	struct gc1601_phy_priv *priv;
@@ -69,8 +86,8 @@ static int gc1601_phy_probe(struct phy_device *phydev)
 	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
-	priv->scu_strap = devm_ioremap(&phydev->mdio.dev, GC1601_SCU_STRAP, 4);
-	priv->serdes_dbg = devm_ioremap(&phydev->mdio.dev, GC1601_PHY_DBG_REG, 4);
+	priv->scu = gc1601_phy_syscon(phydev, "galachip,scu");
+	priv->ge_serdes = gc1601_phy_syscon(phydev, "galachip,ge-serdes");
 	priv->resets_left = GC1601_RESETS;
 	phydev->priv = priv;
 	return 0;
@@ -93,8 +110,9 @@ static int gc1601_phy_read_status(struct phy_device *phydev)
 	if (phydev->link) {
 		priv->down_polls = 0;
 		priv->resets_left = GC1601_RESETS;
-		if (phydev->speed == SPEED_100 && priv->serdes_dbg &&
-		    !(readl(priv->serdes_dbg) & GC1601_PHY_DBG_100M_OK)) {
+		if (phydev->speed == SPEED_100 && priv->ge_serdes &&
+		    !gc1601_reg_test(priv->ge_serdes, GC1601_SERDES_DBG,
+				     GC1601_SERDES_100M_OK)) {
 			phydev_dbg(phydev, "100M link without SerDes bit 11: resetting the PHY\n");
 			ret = phy_set_bits(phydev, MII_BMCR, BMCR_RESET);
 			if (ret)
@@ -103,7 +121,7 @@ static int gc1601_phy_read_status(struct phy_device *phydev)
 		}
 		return 0;
 	}
-	if (priv->scu_strap && (readl(priv->scu_strap) & GC1601_SCU_CABOFF))
+	if (gc1601_reg_test(priv->scu, GC1601_SCU_STRAP, GC1601_SCU_CABOFF))
 		return 0;
 	if (phydev->autoneg != AUTONEG_ENABLE || !priv->resets_left ||
 	    ++priv->down_polls <= GC1601_DOWN_POLLS)

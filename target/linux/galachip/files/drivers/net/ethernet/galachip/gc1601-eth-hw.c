@@ -104,13 +104,12 @@ static int gc1601_cvrd_verify(struct gc1601_eth *priv)
 static void gc1601_cold_phy_init(struct gc1601_eth *priv)
 {
 	static const u32 steps[] = { 0x4000, 0x20000, 0x00020002, 0x00020003, 0x3 };
-	void __iomem *sgmii = priv->base[GC1601_SGMII];
 	unsigned int i;
 
 	regmap_set_bits(priv->scu, GC1601_SCU_GE_CTRL, GC1601_SCU_GE_PHY_EN);
 	usleep_range(50000, 51000);
 	for (i = 0; i < ARRAY_SIZE(steps); i++) {
-		writel(steps[i], sgmii);
+		regmap_write(priv->ge_serdes, 0, steps[i]);
 		usleep_range(10000, 11000);
 	}
 	usleep_range(90000, 91000);

@@ -25,7 +25,6 @@ static const char * const gc1601_reg_names[GC1601_NUM_WINDOWS] = {
 	[GC1601_SCHEDULER] = "scheduler",
 	[GC1601_OUTPUT_SCHEDULER] = "output-scheduler",
 	[GC1601_QUEUES] = "queues",
-	[GC1601_SGMII] = "sgmii",
 };
 
 /* The LAN port's link changed: program the GMAC and start the TX probe. */
@@ -1826,6 +1825,11 @@ static int gc1601_eth_probe(struct platform_device *pdev)
 	priv->scu = syscon_regmap_lookup_by_phandle(dev->of_node, "galachip,scu");
 	if (IS_ERR(priv->scu)) {
 		ret = dev_err_probe(dev, PTR_ERR(priv->scu), "no SCU\n");
+		goto err_free_netdev;
+	}
+	priv->ge_serdes = syscon_regmap_lookup_by_phandle(dev->of_node, "galachip,ge-serdes");
+	if (IS_ERR(priv->ge_serdes)) {
+		ret = dev_err_probe(dev, PTR_ERR(priv->ge_serdes), "no GE SerDes\n");
 		goto err_free_netdev;
 	}
 	/* The switch tables, which the SFU offload and the cold init program. */
