@@ -34,7 +34,8 @@ function speed(dev, seen) {
 		if (parent)
 			parents = [ parent ];
 	}
-	else if (dev.getType() == 'ethernet')
+	/* lan1 is a DSA user port, which LuCI types as 'switch'. */
+	else if (dev.getType() == 'ethernet' || dev.getType() == 'switch')
 		return dev.getSpeed() > 0 ? dev.getSpeed() : null;
 	const rates = parents.map(function(parent) { return speed(parent, new Set(seen)); });
 	return Math.max(0, ...rates) || null;
