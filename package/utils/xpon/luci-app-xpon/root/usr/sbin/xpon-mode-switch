@@ -97,3 +97,8 @@ fi
 hold_tx 0
 allow_tx
 log "now in $want mode"
+
+# The menu (GPON or EPON entries) is built once by uhttpd and cached by the
+# browser for the whole login. Once this call has returned, restart uhttpd to
+# rebuild it and rpcd to end every session, so the browser logs in again.
+setsid sh -c 'sleep 2; /etc/init.d/uhttpd restart; /etc/init.d/rpcd restart' </dev/null >/dev/null 2>&1 &

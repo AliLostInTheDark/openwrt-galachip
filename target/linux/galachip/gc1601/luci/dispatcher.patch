@@ -1,0 +1,36 @@
+--- a/usr/share/ucode/luci/dispatcher.uc
++++ b/usr/share/ucode/luci/dispatcher.uc
+@@ -445,8 +445,20 @@
+ 	}
+ }
+ 
++let tree_hash;
++
++/*
++ * uhttpd runs each request in a child forked from the process that loaded
++ * this module: build the tree there once, so requests inherit it, and
++ * rebuild it only when the menu files change.
++ */
+ function menu_json(acl) {
+-	tree ??= build_pagetree();
++	let hashval = hash_filelist(glob('/usr/share/luci/menu.d/*.json', '/usr/lib/lua/luci/controller/*.lua', '/usr/lib/lua/luci/controller/*/*.lua'));
++
++	if (!tree || hashval != tree_hash) {
++		tree = build_pagetree();
++		tree_hash = hashval;
++	}
+ 
+ 	if (acl)
+ 		apply_tree_acls(tree, acl);
+@@ -1111,4 +1123,11 @@
+ 	}
+ };
+ 
++try {
++	menu_json();
++}
++catch (e) {
++	tree = null;
++}
++
+ export default dispatch;

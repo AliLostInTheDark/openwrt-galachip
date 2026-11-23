@@ -1,0 +1,35 @@
+--- a/usr/share/rpcd/ucode/luci
++++ b/usr/share/rpcd/ucode/luci
+@@ -109,6 +109,8 @@
+ 	return found;
+ }
+ 
++let features;
++
+ const methods = {
+ 	getVersion: {
+ 		call: function(request) {
+@@ -262,6 +264,14 @@
+ 
+ 	getFeatures: {
+ 		call: function() {
++			/*
++			 * Probing starts dnsmasq, odhcpd, ipset and apk: about 0.3 s on
++			 * a slow CPU, on every page load. The answer only changes with
++			 * the installed packages, so keep it for the life of rpcd.
++			 */
++			if (features)
++				return features;
++
+ 			let result = {
+ 				firewall:   access('/sbin/fw3') == true,
+ 				firewall4:  access('/sbin/fw4') == true,
+@@ -385,6 +395,8 @@
+ 				}
+ 			}
+ 
++			features = result;
++
+ 			return result;
+ 		}
+ 	},

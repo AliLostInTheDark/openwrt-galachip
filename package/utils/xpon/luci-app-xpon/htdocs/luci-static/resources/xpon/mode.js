@@ -19,6 +19,41 @@ var callReboot = rpc.declare({
 
 var names = { gpon: 'GPON', epon: 'EPON' };
 
+/* Answers once rpcd serves the calls the login page makes. */
+function rpcdReady() {
+	return fetch(L.env.ubuspath, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'call',
+			params: [ '00000000000000000000000000000000', 'luci', 'getFeatures', {} ] })
+	}).then(function(res) {
+		return res.json();
+	}).then(function(reply) {
+		return Array.isArray(reply.result) && reply.result[0] == 0;
+	}).catch(function() {
+		return false;
+	});
+}
+
+/*
+ * xpon-mode-switch restarts uhttpd and rpcd shortly after it returns: wait
+ * for them to go down and come back before loading a page, else the login
+ * page's first calls fail.
+ */
+function awaitRestart(url) {
+	var went_down = false, start = Date.now();
+
+	(function poll() {
+		rpcdReady().then(function(up) {
+			went_down = went_down || !up;
+			if ((went_down && up) || Date.now() - start > 60000)
+				window.location.href = url;
+			else
+				window.setTimeout(poll, 500);
+		});
+	})();
+}
+
 return baseclass.extend({
 	names: names,
 
@@ -44,8 +79,16 @@ return baseclass.extend({
 		return fs.exec('/usr/sbin/xpon-mode-switch', [ mode ]).then(function(res) {
 			if (res.code)
 				throw new Error((res.stderr || '').trim() || _('exit code %d').format(res.code));
-			/* The page we are on may be the inactive mode's stub, which no longer exists. */
-			window.location.href = L.url('admin', 'network', mode == 'epon' ? 'epon' : 'omci', 'status');
+			/*
+			 * The switch restarts rpcd, which ends this login: the menu
+			 * (GPON or EPON entries) is only rebuilt at the next login.
+			 */
+			ui.menu.flushCache();
+			ui.showModal(_('Switched to %s').format(names[mode]), [
+				E('p', { 'class': 'spinning' },
+					_('Logging out so the menu shows the %s pages. Log in again to continue.').format(names[mode]))
+			]);
+			awaitRestart(L.url('admin', 'pon', mode == 'epon' ? 'epon' : 'omci', 'status'));
 		}).catch(function(e) {
 			ui.hideModal();
 			ui.addNotification(null, E('p', _('Switching to %s failed: %s').format(names[mode], e.message)), 'error');
@@ -60,6 +103,7 @@ return baseclass.extend({
 		}).then(function() {
 			return callCommit('xpon');
 		}).then(function() {
+			ui.menu.flushCache();
 			return callReboot();
 		}).then(function() {
 			ui.showModal(_('Rebooting…'), [
