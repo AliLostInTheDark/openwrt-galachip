@@ -52,12 +52,19 @@
 
 	leds {
 		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_leds>;
 
 		led_power: led-power {
 			function = LED_FUNCTION_POWER;
 			color = <LED_COLOR_ID_GREEN>;
 			gpios = <&gpio 0 GPIO_ACTIVE_LOW>;
+			/*
+			 * Stay lit from U-Boot through the LED's probe, then blink
+			 * without a dark gap; diag.sh makes it solid at boot end.
+			 */
 			default-state = "on";
+			linux,default-trigger = "timer";
 		};
 
 		led_lan: led-lan {
@@ -93,6 +100,13 @@
 
 &gpio {
 	status = "okay";
+};
+
+&pinctrl {
+	pinctrl_leds: leds-pins {
+		pins = "gpio0", "gpio1", "gpio2", "gpio13";
+		function = "gpio";
+	};
 };
 
 &uart0 {

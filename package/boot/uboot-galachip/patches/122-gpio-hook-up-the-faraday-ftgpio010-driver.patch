@@ -1,0 +1,26 @@
+--- a/drivers/gpio/Kconfig
++++ b/drivers/gpio/Kconfig
+@@ -220,6 +220,13 @@ config DA8XX_GPIO
+ 	help
+ 	  This driver supports the DA8xx GPIO controller
+ 
++config FTGPIO010_GPIO
++	bool "Faraday FTGPIO010 GPIO driver"
++	depends on DM_GPIO
++	help
++	  This driver supports the Faraday FTGPIO010 GPIO controller, as
++	  found in the GalaChip GC1601.
++
+ config FXL6408_GPIO
+ 	bool "FXL6408 I2C GPIO expander driver"
+ 	depends on DM_GPIO && DM_I2C
+--- a/drivers/gpio/Makefile
++++ b/drivers/gpio/Makefile
+@@ -41,6 +41,7 @@ obj-$(CONFIG_SANDBOX_GPIO)	+= sandbox.o
+ obj-$(CONFIG_TEGRA_GPIO)	+= tegra_gpio.o
+ obj-$(CONFIG_TEGRA186_GPIO)	+= tegra186_gpio.o
+ obj-$(CONFIG_DA8XX_GPIO)	+= da8xx_gpio.o
++obj-$(CONFIG_FTGPIO010_GPIO)	+= ftgpio010.o
+ obj-$(CONFIG_ALTERA_PIO)	+= altera_pio.o
+ obj-$(CONFIG_MPC8XXX_GPIO)	+= mpc8xxx_gpio.o
+ obj-$(CONFIG_QE_GPIO)	+= qe_gpio.o

@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/pinctrl/galachip,gc1601-pinctrl.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: GalaChip GC1601 pin controller
+
+maintainers:
+  - Ifran Ali <khanu.i.i.k.2000@gmail.com>
+
+description:
+  Pin multiplexing controller for the GalaChip GC1601 system control unit,
+  routing GPIO 0-15 lines to their pads via the SCU syscon.
+
+properties:
+  compatible:
+    const: galachip,gc1601-pinctrl
+
+  galachip,scu:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: Phandle to the GC1601 SCU syscon node.
+
+patternProperties:
+  '-pins$':
+    type: object
+    $ref: pinmux-node.yaml#
+    unevaluatedProperties: false
+
+    properties:
+      pins:
+        items:
+          enum:
+            - gpio0
+            - gpio1
+            - gpio2
+            - gpio3
+            - gpio4
+            - gpio5
+            - gpio6
+            - gpio7
+            - gpio8
+            - gpio9
+            - gpio10
+            - gpio11
+            - gpio12
+            - gpio13
+            - gpio14
+            - gpio15
+
+      function:
+        const: gpio
+
+    required:
+      - pins
+      - function
+
+required:
+  - compatible
+  - galachip,scu
+
+additionalProperties: false
+
+examples:
+  - |
+    pinctrl: pinctrl {
+        compatible = "galachip,gc1601-pinctrl";
+        galachip,scu = <&scu>;
+
+        pinctrl_leds: leds-pins {
+            pins = "gpio0", "gpio1", "gpio2", "gpio13";
+            function = "gpio";
+        };
+    };

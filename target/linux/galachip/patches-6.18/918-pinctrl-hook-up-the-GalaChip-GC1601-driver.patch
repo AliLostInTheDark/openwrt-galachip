@@ -1,0 +1,42 @@
+From: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+Date: Mon, 23 Nov 2026 21:21:00 +0530
+Subject: [PATCH] pinctrl: hook up the GalaChip GC1601 driver
+
+Build the GalaChip GC1601 SCU pin controller driver.
+
+Signed-off-by: Ifran Ali <khanu.i.i.k.2000@gmail.com>
+---
+ drivers/pinctrl/Kconfig  | 11 +++++++++++
+ drivers/pinctrl/Makefile |  1 +
+ 2 files changed, 12 insertions(+)
+
+--- a/drivers/pinctrl/Kconfig
++++ b/drivers/pinctrl/Kconfig
+@@ -264,6 +264,17 @@ config PINCTRL_FALCON
+ 	help
+ 	  This driver supports the pinctrl block on Lantiq Falcon SoCs.
+ 
++config PINCTRL_GC1601
++	bool "GalaChip GC1601 pin controller driver"
++	depends on ARCH_GALACHIP || COMPILE_TEST
++	depends on OF
++	select PINMUX
++	select GENERIC_PINCONF
++	select MFD_SYSCON
++	help
++	  Pin controller driver for the GalaChip GC1601 system control unit,
++	  routing GPIO 0-15 lines to their pads.
++
+ config PINCTRL_GEMINI
+ 	bool "Gemini pin controller driver"
+ 	depends on ARCH_GEMINI || COMPILE_TEST
+--- a/drivers/pinctrl/Makefile
++++ b/drivers/pinctrl/Makefile
+@@ -28,6 +28,7 @@ obj-$(CONFIG_PINCTRL_EQUILIBRIUM)   += p
+ obj-$(CONFIG_PINCTRL_EP93XX)	+= pinctrl-ep93xx.o
+ obj-$(CONFIG_PINCTRL_EYEQ5)	+= pinctrl-eyeq5.o
+ obj-$(CONFIG_PINCTRL_GEMINI)	+= pinctrl-gemini.o
++obj-$(CONFIG_PINCTRL_GC1601)	+= pinctrl-gc1601.o
+ obj-$(CONFIG_PINCTRL_INGENIC)	+= pinctrl-ingenic.o
+ obj-$(CONFIG_PINCTRL_K210)	+= pinctrl-k210.o
+ obj-$(CONFIG_PINCTRL_K230)	+= pinctrl-k230.o

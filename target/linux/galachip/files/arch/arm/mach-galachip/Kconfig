@@ -8,6 +8,8 @@ config ARCH_GALACHIP
 	select FARADAY_FTINTC030
 	select MFD_SYSCON
 	select FTTMR010_TIMER
+	select PINCTRL
+	select PINCTRL_GC1601
 	help
 	  Support for GalaChip GC1601A platforms using the Faraday FA626TE.
 	  This enables the RAM, serial console, interrupt and timer foundation.

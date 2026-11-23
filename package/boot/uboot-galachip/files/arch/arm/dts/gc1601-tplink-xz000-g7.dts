@@ -57,6 +57,8 @@
 
 	leds {
 		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_leds>;
 
 		led_power: led-power {
 			function = LED_FUNCTION_POWER;
@@ -98,6 +100,13 @@
 
 &gpio {
 	status = "okay";
+};
+
+&pinctrl {
+	pinctrl_leds: leds-pins {
+		pins = "gpio0", "gpio1", "gpio2", "gpio13";
+		function = "gpio";
+	};
 };
 
 &uart0 {

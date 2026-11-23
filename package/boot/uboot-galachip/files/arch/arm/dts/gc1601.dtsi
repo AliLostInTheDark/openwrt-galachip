@@ -26,6 +26,12 @@
 		clock-frequency = <25000000>;
 	};
 
+	/* Pin functions live in the SCU; the node has no registers of its own. */
+	pinctrl: pinctrl {
+		compatible = "galachip,gc1601-pinctrl";
+		galachip,scu = <&scu>;
+	};
+
 	soc {
 		compatible = "simple-bus";
 		#address-cells = <1>;
